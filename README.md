@@ -123,6 +123,3 @@ README.md  — you're looking at it
 ## Status
 
 🚧 Early development — Milestone 1 (Proposal & Requirements) in progress.
-
----
-*Built for CSE 416, Fall 2026, at Stony Brook University.*
