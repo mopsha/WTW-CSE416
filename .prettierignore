@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.expo/
+package-lock.json
+M1/
+assets/

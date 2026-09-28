@@ -1,14 +1,25 @@
 {
+  "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
     "noUncheckedIndexedAccess": true,
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "skipLibCheck": true,
-    "types": ["jest"]
+    "types": ["jest"],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@shared/*": ["./supabase/functions/_shared/*"]
+    }
   },
-  "include": ["supabase/functions/_shared/**/*.ts", "tests/**/*.ts"]
+  "include": [
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "tests/**/*.ts",
+    "tests/**/*.tsx",
+    "supabase/functions/_shared/**/*.ts",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ]
 }
