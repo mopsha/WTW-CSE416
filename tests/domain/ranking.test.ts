@@ -6,7 +6,7 @@ import {
   type Answer,
   type CandidateAnswer,
   type RankedCandidate,
-} from '../../supabase/functions/_shared/domain/ranking.ts';
+} from '@shared/domain/ranking.ts';
 
 const CENTER = { lat: 40.9126, lng: -73.1234 }; // SBU Academic Mall
 const near = { lat: 40.913, lng: -73.1234 }; // ~45 m from center
