@@ -24,7 +24,12 @@ interface Answer {
 type Load =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; candidates: Candidate[]; pickState: PickState | null };
+  | {
+      status: 'ready';
+      candidates: Candidate[];
+      pickState: PickState | null;
+      hostId: string | null;
+    };
 
 /** Reads the deck and my existing answers (RLS: only mine) so I resume where I left off. */
 async function loadDeck(pickId: string, userId: string) {
@@ -40,7 +45,13 @@ async function loadDeck(pickId: string, userId: string) {
     candidates.map((c) => c.placeId),
     new Set(saved.keys()),
   );
-  return { candidates, saved, index, pickState: outcome?.state ?? null };
+  return {
+    candidates,
+    saved,
+    index,
+    pickState: outcome?.state ?? null,
+    hostId: outcome?.hostId ?? null,
+  };
 }
 
 export default function SwipeScreen() {
@@ -58,7 +69,12 @@ export default function SwipeScreen() {
         if (!active) return;
         setAnswers(deck.saved);
         setIndex(deck.index);
-        setLoad({ status: 'ready', candidates: deck.candidates, pickState: deck.pickState });
+        setLoad({
+          status: 'ready',
+          candidates: deck.candidates,
+          pickState: deck.pickState,
+          hostId: deck.hostId,
+        });
       },
       (e: unknown) => active && setLoad({ status: 'error', message: messageOf(e) }),
     );
@@ -105,6 +121,10 @@ export default function SwipeScreen() {
   const saving = [...answers.values()].filter((a) => a.status === 'saving').length;
   const allAnswered = ids.length > 0 && ids.every((id) => answers.has(id));
   const allSaved = allAnswered && ids.every((id) => answers.get(id)?.status === 'saved');
+
+  const isHost = load.status === 'ready' && load.hostId === session.user.id;
+  const openResults = () =>
+    router.replace({ pathname: '/pick/[id]/results', params: { id: pickId } });
 
   const retryFailed = () => {
     for (const [placeId, a] of failed) void save(placeId, a.value);
@@ -197,23 +217,34 @@ export default function SwipeScreen() {
       ) : (
         <View style={[styles.done, styles.gap]}>
           <Text style={styles.title} accessibilityRole="header">
-            You&apos;ve answered all {total}.
+            {isHost ? `You’ve answered all ${total}.` : `You’re done! All ${total} answered.`}
           </Text>
           <Text style={styles.muted}>
             {saving > 0
               ? 'Saving your answers…'
               : failed.length > 0
-                ? 'Some answers didn’t save. Retry above before ranking.'
-                : 'Your answers stay private. Only the group ranking is shared.'}
+                ? 'Some answers didn’t save. Retry above to finish.'
+                : isHost
+                  ? 'Ranking closes swiping for everyone. Answers stay private; only the group ranking is shared.'
+                  : 'Waiting for the host to close swiping. Your answers stay private.'}
           </Text>
-          <Button
-            label="Rank"
-            disabled={!allSaved}
-            loading={saving > 0}
-            onPress={() =>
-              router.replace({ pathname: '/pick/[id]/results', params: { id: pickId } })
-            }
-          />
+          {isHost ? (
+            <Button
+              label="Rank"
+              accessibilityHint="Closes swiping for everyone and shows the group ranking"
+              disabled={!allSaved}
+              loading={saving > 0}
+              onPress={openResults}
+            />
+          ) : (
+            <Button
+              label="Check results"
+              variant="secondary"
+              disabled={!allSaved}
+              loading={saving > 0}
+              onPress={openResults}
+            />
+          )}
           <Button label="Review my answers" variant="link" onPress={() => setIndex(0)} />
         </View>
       )}

@@ -6,120 +6,143 @@ import { Button } from '@/components/Button';
 import { ErrorBanner } from '@/components/ErrorBanner';
 import { PlacePhoto } from '@/components/PlaceCard';
 import { colors } from '@/components/theme';
+import { useSession } from '@/hooks/useAuth';
 import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
 import { ordinal } from '@/lib/places';
 import { queries } from '@/lib/queries';
-import type { Candidate, PickOutcome, RankedPlace } from '@/lib/types';
+import {
+  shouldRequestRank,
+  viewFromDecision,
+  viewFromStored,
+  type ResultsView,
+} from '@/lib/results';
+import type { Candidate } from '@/lib/types';
 
-// Users see RANK ONLY. Nothing on this screen may show a score; queries never fetch one.
+// Users see RANK ONLY. Nothing on this screen may show a score; neither the API nor our
+// queries return one.
 
-type View_ =
+type Load =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | {
-      status: 'ready';
-      outcome: PickOutcome;
-      ranking: RankedPlace[];
-      places: Map<string, Candidate>;
-    };
+  | { status: 'ready'; view: ResultsView; places: Map<string, Candidate> };
 
-/** POST /rank (unless the Pick is already past ranking), then read the outcome via RLS. */
-async function rankAndRead(pickId: string): Promise<Extract<View_, { status: 'ready' }>> {
-  const before = await queries.getPickOutcome(pickId);
-  if (!before) throw new Error('This Pick doesn’t exist or you’re not in it.');
-  if (before.state === 'swiping' || before.state === 'ranking') await api.rankPick(pickId);
+/** The host of a swiping Pick ranks it (POST /rank); everyone else reads what's stored. */
+async function loadResults(pickId: string, userId: string) {
+  const outcome = await queries.getPickOutcome(pickId);
+  if (!outcome) throw new Error('This Pick doesn’t exist or you’re not in it.');
 
-  const [outcome, ranking, candidates] = await Promise.all([
-    queries.getPickOutcome(pickId),
-    queries.getRankingResults(pickId),
-    queries.getCandidates(pickId),
-  ]);
-  return {
-    status: 'ready',
-    outcome: outcome ?? before,
-    ranking,
-    places: new Map(candidates.map((c) => [c.placeId, c])),
-  };
+  let view: ResultsView;
+  if (shouldRequestRank(outcome, userId)) {
+    view = viewFromDecision((await api.rankPick(pickId)).decision);
+  } else if (outcome.state === 'completed' || outcome.state === 'final_vote') {
+    view = viewFromStored(outcome, await queries.getRankingResults(pickId));
+  } else {
+    view = viewFromStored(outcome, []);
+  }
+  const candidates = await queries.getCandidates(pickId);
+  return { view, places: new Map(candidates.map((c) => [c.placeId, c])) };
 }
+
+const WAITING_COPY = {
+  host: {
+    title: 'Waiting for the host',
+    body: 'Results appear once the host closes swiping. Your answers stay private until then.',
+  },
+  ranking: { title: 'Ranking in progress…', body: 'This usually takes a few seconds.' },
+  not_started: { title: 'This Pick hasn’t started yet.', body: 'Check back once swiping opens.' },
+} as const;
 
 export default function ResultsScreen() {
   const { id: pickId = '' } = useLocalSearchParams<{ id: string }>();
-  const [view, setView] = useState<View_>({ status: 'loading' });
+  const session = useSession();
+  const [load, setLoad] = useState<Load>({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let active = true;
-    rankAndRead(pickId).then(
-      (ready) => active && setView(ready),
-      (e: unknown) => active && setView({ status: 'error', message: messageOf(e) }),
+    loadResults(pickId, session.user.id).then(
+      (ready) => active && setLoad({ status: 'ready', ...ready }),
+      (e: unknown) => active && setLoad({ status: 'error', message: messageOf(e) }),
     );
     return () => {
       active = false;
     };
-  }, [pickId, attempt]);
+  }, [pickId, session.user.id, attempt]);
 
   const retry = () => {
-    setView({ status: 'loading' });
+    setLoad({ status: 'loading' });
     setAttempt((a) => a + 1);
   };
   const home = () => router.dismissTo('/');
 
-  if (view.status === 'loading') {
+  if (load.status === 'loading') {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.muted}>Ranking your group&apos;s answers…</Text>
+        <Text style={styles.muted}>Loading results…</Text>
       </View>
     );
   }
-  if (view.status === 'error') {
+  if (load.status === 'error') {
     return (
       <View style={styles.padded}>
-        <ErrorBanner message={view.message} onRetry={retry} />
+        <ErrorBanner message={load.message} onRetry={retry} />
       </View>
     );
   }
 
-  const { outcome, ranking, places } = view;
-  const winner = outcome.winnerPlaceId ? places.get(outcome.winnerPlaceId) : undefined;
-
+  const { view, places } = load;
   let body;
-  if (outcome.state === 'canceled') {
-    body = <Text style={styles.title}>This Pick was canceled.</Text>;
-  } else if (winner) {
-    body = (
-      <>
-        <Text style={styles.title} accessibilityRole="header">
-          {outcome.decidedBy === 'clear_winner' ? 'Clear winner!' : 'The group picked'}
-        </Text>
-        <ResultPlace place={winner} big />
-      </>
-    );
-  } else {
-    const finalists = ranking.filter((r) => r.finalist);
-    const top = (finalists.length ? finalists : ranking.slice(0, 3)).sort(
-      (a, b) => a.rank - b.rank,
-    );
-    body = top.length ? (
-      <>
-        <Text style={styles.title} accessibilityRole="header">
-          Your group&apos;s top picks
-        </Text>
-        {outcome.state === 'final_vote' ? (
+  switch (view.kind) {
+    case 'winner': {
+      const winner = places.get(view.placeId);
+      body = (
+        <>
+          <Text style={styles.title} accessibilityRole="header">
+            {view.clearWinner ? 'Clear winner!' : 'The group picked'}
+          </Text>
+          {winner ? <ResultPlace place={winner} big /> : null}
+        </>
+      );
+      break;
+    }
+    case 'vote':
+      body = (
+        <>
+          <Text style={styles.title} accessibilityRole="header">
+            Your group&apos;s top picks
+          </Text>
           <Text style={styles.muted}>No clear winner, so the group votes on these next.</Text>
-        ) : null}
-        {top.map((r) => {
-          const place = places.get(r.placeId);
-          return place ? <ResultPlace key={r.placeId} place={place} rank={r.rank} /> : null;
-        })}
-      </>
-    ) : (
-      <>
-        <Text style={styles.title}>Results aren&apos;t ready yet.</Text>
-        <Button label="Check again" variant="secondary" onPress={retry} />
-      </>
-    );
+          {view.finalists.map((r) => {
+            const place = places.get(r.placeId);
+            return place ? <ResultPlace key={r.placeId} place={place} rank={r.rank} /> : null;
+          })}
+        </>
+      );
+      break;
+    case 'waiting':
+      body = (
+        <>
+          <Text style={styles.title} accessibilityRole="header">
+            {WAITING_COPY[view.reason].title}
+          </Text>
+          <Text style={styles.muted}>{WAITING_COPY[view.reason].body}</Text>
+          <Button label="Check again" variant="secondary" onPress={retry} />
+        </>
+      );
+      break;
+    case 'canceled':
+      body = <Text style={styles.title}>This Pick was canceled.</Text>;
+      break;
+    case 'empty':
+      body = (
+        <>
+          <Text style={styles.title}>Results aren&apos;t ready yet.</Text>
+          <Button label="Check again" variant="secondary" onPress={retry} />
+        </>
+      );
+      break;
   }
 
   return (

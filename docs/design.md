@@ -192,11 +192,11 @@ The four M2 screens, in order. Every screen also runs without a backend in mock 
 
    ![Home](img/home.png)
 
-3. **Swipe**: one card at a time (photo, name, price level, rating) with Yes / Maybe / No buttons or a swipe (right = Yes, left = No, up = Maybe). Shows progress ("7 / 20"), resumes at my first unanswered card, saves each answer optimistically and offers Retry if a save fails. "Rank" appears once every answer is saved.
+3. **Swipe**: one card at a time (photo, name, price level, rating) with Yes / Maybe / No buttons or a swipe (right = Yes, left = No, up = Maybe). Shows progress ("7 / 20"), resumes at my first unanswered card, saves each answer optimistically and offers Retry if a save fails. Once every answer is saved, the **host** sees "Rank" (which closes swiping for everyone); other participants see "Waiting for the host".
 
    ![Swipe](img/swipe.png)
 
-4. **Results**: calls the API to rank, then shows rank only: 1st / 2nd / 3rd with name and photo, or "Clear winner!" with one place. No scores anywhere.
+4. **Results**: the host’s Rank calls `POST /picks/:id/rank`; everyone else sees "Waiting for the host" until then, and reads the stored result afterwards. Shows rank only: 1st / 2nd / 3rd with name and photo, or "Clear winner!" with one place. No scores anywhere.
 
    ![Results](img/results.png)
 
