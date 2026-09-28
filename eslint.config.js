@@ -8,6 +8,6 @@ module.exports = defineConfig([
   prettierConfig,
   {
     // Edge Functions run on Deno; lint only the shared pure-TS domain code.
-    ignores: ['dist/*', 'supabase/functions/*', '!supabase/functions/_shared/'],
+    ignores: ['dist/*', '.expo/*', 'supabase/functions/*', '!supabase/functions/_shared/'],
   },
 ]);
