@@ -3,7 +3,7 @@
 import { getAccessToken } from './auth';
 import { API_BASE_URL, USE_MOCK } from './config';
 import { MOCK_API_BASE_URL, mockFetch } from './mock/api';
-import type { PreferenceValue } from './types';
+import type { PreferenceValue, RankDecision, RankPosition } from './types';
 
 /** Error codes the app itself produces; server codes pass through as-is. */
 export type ClientErrorCode = 'network_error' | 'not_signed_in' | `http_${number}`;
@@ -40,8 +40,16 @@ export interface ApiClientOptions {
   fetch: FetchLike;
 }
 
-export interface OkResponse {
-  ok: true;
+/** GET /health and POST /picks/:id/swipes. */
+export interface StatusResponse {
+  status: 'ok';
+}
+
+/** POST /picks/:id/rank (host only). Rank positions only; scores stay server-side. */
+export interface RankResponse {
+  /** Top three, in order. */
+  results: RankPosition[];
+  decision: RankDecision;
 }
 
 export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOptions) {
@@ -93,11 +101,11 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
   const pickPath = (pickId: string) => `/picks/${encodeURIComponent(pickId)}`;
 
   return {
-    health: () => request<unknown>('GET', '/health', { auth: false }),
+    health: () => request<StatusResponse>('GET', '/health', { auth: false }),
     submitSwipe: (pickId: string, placeId: string, value: PreferenceValue) =>
-      request<OkResponse>('POST', `${pickPath(pickId)}/swipes`, { body: { placeId, value } }),
-    /** Ranks the Pick. Read the result from ranking_results / picks (see queries.ts). */
-    rankPick: (pickId: string) => request<unknown>('POST', `${pickPath(pickId)}/rank`),
+      request<StatusResponse>('POST', `${pickPath(pickId)}/swipes`, { body: { placeId, value } }),
+    /** Host only: closes swiping and ranks. Others get 403 FORBIDDEN. */
+    rankPick: (pickId: string) => request<RankResponse>('POST', `${pickPath(pickId)}/rank`),
   };
 }
 

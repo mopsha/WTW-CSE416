@@ -43,6 +43,20 @@ export interface RankedPlace {
 
 export interface PickOutcome {
   state: PickState;
+  /** Only the host may close swiping and rank (POST /picks/:id/rank returns 403 otherwise). */
+  hostId: string;
   winnerPlaceId: string | null;
   decidedBy: 'clear_winner' | 'vote' | null;
 }
+
+/** A place's position in the ranking. The API never sends scores. */
+export interface RankPosition {
+  placeId: string;
+  rank: number;
+}
+
+/** What POST /picks/:id/rank decided (see docs/api-integration.md). */
+export type RankDecision =
+  | { kind: 'winner'; winner: RankPosition }
+  /** Top three, plus anyone tied with #1 beyond that. */
+  | { kind: 'vote'; finalists: RankPosition[] };

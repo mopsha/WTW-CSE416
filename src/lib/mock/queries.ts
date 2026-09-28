@@ -1,17 +1,17 @@
 import type { Queries } from '../queries';
-import { DEMO_PICK, DEMO_PICK_ID, MOCK_PLACES } from './fixtures';
-import { mockState } from './store';
+import { MOCK_PLACES } from './fixtures';
+import { mockPicks } from './store';
 
 const delay = () => new Promise((r) => setTimeout(r, 200));
 
 export const mockQueries: Queries = {
   async listMyPicks() {
     await delay();
-    return [{ ...DEMO_PICK, state: mockState.outcome.state }];
+    return [...mockPicks.values()].map((p) => ({ ...p.summary, state: p.outcome.state }));
   },
   async getCandidates(pickId) {
     await delay();
-    if (pickId !== DEMO_PICK_ID) return [];
+    if (!mockPicks.has(pickId)) return [];
     return MOCK_PLACES.map(({ placeId, name, photoUrl, priceLevel, rating }) => ({
       placeId,
       name,
@@ -22,15 +22,16 @@ export const mockQueries: Queries = {
   },
   async getMyPreferences(pickId) {
     await delay();
-    if (pickId !== DEMO_PICK_ID) return [];
-    return [...mockState.myPreferences].map(([placeId, value]) => ({ placeId, value }));
+    const pick = mockPicks.get(pickId);
+    return pick ? [...pick.myPreferences].map(([placeId, value]) => ({ placeId, value })) : [];
   },
   async getRankingResults(pickId) {
     await delay();
-    return pickId === DEMO_PICK_ID ? [...mockState.ranking] : [];
+    return [...(mockPicks.get(pickId)?.ranking ?? [])];
   },
   async getPickOutcome(pickId) {
     await delay();
-    return pickId === DEMO_PICK_ID ? { ...mockState.outcome } : null;
+    const pick = mockPicks.get(pickId);
+    return pick ? { ...pick.outcome } : null;
   },
 };

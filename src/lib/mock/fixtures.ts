@@ -1,20 +1,26 @@
 // Local fixture for EXPO_PUBLIC_USE_MOCK=1. Fictional places around Stony Brook.
 import type { Candidate, PickSummary, PreferenceValue } from '../types';
+import { MOCK_USER_ID } from './auth';
 
 export interface MockPlace extends Candidate {
   lat: number;
   lng: number;
 }
 
-export const DEMO_PICK_ID = 'demo-pick';
 export const DEMO_CENTER = { lat: 40.9126, lng: -73.1234 }; // SBU Academic Mall
+export const MOCK_FRIEND_ID = 'mock-friend';
 
-export const DEMO_PICK: PickSummary = {
-  id: DEMO_PICK_ID,
-  state: 'swiping',
-  category: 'food',
-  deadlineAt: null,
-};
+/** Two Picks over the same 20 places: one I host (I can rank), one a friend hosts (I wait). */
+export const MOCK_PICKS: readonly (PickSummary & { hostId: string })[] = [
+  { id: 'demo-pick', state: 'swiping', category: 'food', deadlineAt: null, hostId: MOCK_USER_ID },
+  {
+    id: 'friend-pick',
+    state: 'swiping',
+    category: 'activities',
+    deadlineAt: null,
+    hostId: MOCK_FRIEND_ID,
+  },
+];
 
 const photo = (seed: string) => `https://picsum.photos/seed/wtw-${seed}/800/600`;
 

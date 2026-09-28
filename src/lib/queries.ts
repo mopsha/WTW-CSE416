@@ -90,17 +90,23 @@ const supabaseQueries: Queries = {
   async getPickOutcome(pickId) {
     const { data, error } = await getSupabase()
       .from('picks')
-      .select('state, winner_place_id, decided_by')
+      .select('state, host_id, winner_place_id, decided_by')
       .eq('id', pickId)
       .maybeSingle();
     if (error) throw new QueryError(error.message);
     if (!data) return null;
     const row = data as {
       state: PickState;
+      host_id: string;
       winner_place_id: string | null;
       decided_by: PickOutcome['decidedBy'];
     };
-    return { state: row.state, winnerPlaceId: row.winner_place_id, decidedBy: row.decided_by };
+    return {
+      state: row.state,
+      hostId: row.host_id,
+      winnerPlaceId: row.winner_place_id,
+      decidedBy: row.decided_by,
+    };
   },
 };
 

@@ -1,24 +1,32 @@
 // In-memory "backend" state for mock mode. Resets when the app reloads, or via resetMockData().
-import type { PickOutcome, PreferenceValue, RankedPlace } from '../types';
-import { DEMO_PICK } from './fixtures';
+import type { PickOutcome, PickSummary, PreferenceValue, RankedPlace } from '../types';
+import { MOCK_PICKS } from './fixtures';
 
-interface MockState {
+export interface MockPick {
+  summary: PickSummary;
   outcome: PickOutcome;
-  /** My answers for the demo Pick, by placeId. */
+  /** My answers, by placeId. */
   myPreferences: Map<string, PreferenceValue>;
   ranking: RankedPlace[];
 }
 
-function initial(): MockState {
-  return {
-    outcome: { state: DEMO_PICK.state, winnerPlaceId: null, decidedBy: null },
-    myPreferences: new Map(),
-    ranking: [],
-  };
+function initial(): Map<string, MockPick> {
+  return new Map(
+    MOCK_PICKS.map(({ hostId, ...summary }) => [
+      summary.id,
+      {
+        summary,
+        outcome: { state: summary.state, hostId, winnerPlaceId: null, decidedBy: null },
+        myPreferences: new Map(),
+        ranking: [],
+      },
+    ]),
+  );
 }
 
-export const mockState: MockState = initial();
+export const mockPicks: Map<string, MockPick> = initial();
 
 export function resetMockData() {
-  Object.assign(mockState, initial());
+  mockPicks.clear();
+  for (const [id, pick] of initial()) mockPicks.set(id, pick);
 }

@@ -22,8 +22,8 @@ async function caught(p: Promise<unknown>): Promise<ApiError> {
 
 describe('parseErrorBody', () => {
   test('reads { error: { code, message } }', () => {
-    expect(parseErrorBody({ error: { code: 'invalid_state', message: 'Closed.' } })).toEqual({
-      code: 'invalid_state',
+    expect(parseErrorBody({ error: { code: 'INVALID_PICK_STATE', message: 'Closed.' } })).toEqual({
+      code: 'INVALID_PICK_STATE',
       message: 'Closed.',
     });
   });
@@ -43,9 +43,11 @@ describe('parseErrorBody', () => {
 describe('createApiClient', () => {
   test('POSTs the swipe with the bearer token and JSON body', async () => {
     const fetch = jest.fn<ReturnType<FetchLike>, Parameters<FetchLike>>(async () =>
-      jsonResponse(200, { ok: true }),
+      jsonResponse(200, { status: 'ok' }),
     );
-    await expect(client(fetch).submitSwipe('pick 1', 'place-9', 2)).resolves.toEqual({ ok: true });
+    await expect(client(fetch).submitSwipe('pick 1', 'place-9', 2)).resolves.toEqual({
+      status: 'ok',
+    });
 
     const [url, init] = fetch.mock.calls[0]!;
     expect(url).toBe(`${BASE}/picks/pick%201/swipes`);
@@ -59,10 +61,10 @@ describe('createApiClient', () => {
 
   test('turns the API error shape into a typed ApiError', async () => {
     const fetch: FetchLike = async () =>
-      jsonResponse(409, { error: { code: 'invalid_state', message: 'This Pick is closed.' } });
+      jsonResponse(409, { error: { code: 'INVALID_PICK_STATE', message: 'Pick must be swiping' } });
     const err = await caught(client(fetch).rankPick('p1'));
-    expect(err.code).toBe('invalid_state');
-    expect(err.message).toBe('This Pick is closed.');
+    expect(err.code).toBe('INVALID_PICK_STATE');
+    expect(err.message).toBe('Pick must be swiping');
     expect(err.status).toBe(409);
   });
 
@@ -91,7 +93,7 @@ describe('createApiClient', () => {
 
   test('/health needs no token', async () => {
     const fetch = jest.fn<ReturnType<FetchLike>, Parameters<FetchLike>>(async () =>
-      jsonResponse(200, { ok: true }),
+      jsonResponse(200, { status: 'ok' }),
     );
     await client(fetch, null).health();
     expect(fetch.mock.calls[0]![1].headers).not.toHaveProperty('Authorization');
@@ -99,6 +101,24 @@ describe('createApiClient', () => {
 
   test('accepts an empty success body', async () => {
     const fetch: FetchLike = async () => new Response(null, { status: 204 });
-    await expect(client(fetch).rankPick('p1')).resolves.toBeNull();
+    await expect(client(fetch).submitSwipe('p1', 'x', 1)).resolves.toBeNull();
+  });
+
+  test('returns the rank decision (positions only)', async () => {
+    const body = {
+      results: [{ placeId: 'a', rank: 1 }],
+      decision: { kind: 'winner', winner: { placeId: 'a', rank: 1 } },
+    };
+    const fetch: FetchLike = async () => jsonResponse(200, body);
+    await expect(client(fetch).rankPick('p1')).resolves.toEqual(body);
+  });
+
+  test('a non-host rank attempt surfaces the 403 FORBIDDEN code', async () => {
+    const fetch: FetchLike = async () =>
+      jsonResponse(403, {
+        error: { code: 'FORBIDDEN', message: 'Only the host can close swiping and rank' },
+      });
+    const err = await caught(client(fetch).rankPick('p1'));
+    expect([err.code, err.status]).toEqual(['FORBIDDEN', 403]);
   });
 });
