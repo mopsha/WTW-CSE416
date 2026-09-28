@@ -104,8 +104,7 @@ export function rankCandidates(
 }
 
 export type Decision =
-  | { kind: 'winner'; winner: RankedCandidate }
-  | { kind: 'vote'; finalists: RankedCandidate[] };
+  { kind: 'winner'; winner: RankedCandidate } | { kind: 'vote'; finalists: RankedCandidate[] };
 
 /**
  * Decide whether the group needs a final vote.
@@ -119,8 +118,30 @@ export function clearWinner(ranked: readonly RankedCandidate[]): Decision {
   if (!second || first.score - second.score >= CLEAR_WINNER_MARGIN - EPSILON) {
     return { kind: 'winner', winner: first };
   }
-  const finalists = ranked.filter(
-    (c, i) => i < 3 || Math.abs(c.score - first.score) <= EPSILON,
-  );
+  const finalists = ranked.filter((c, i) => i < 3 || Math.abs(c.score - first.score) <= EPSILON);
   return { kind: 'vote', finalists };
+}
+
+/**
+ * Winner of the final vote. Spec tie-break: most votes → higher score → closer → place id.
+ * After the vote count that is exactly rankCandidates' order, so ties go to the better rank.
+ * No ballots at all (deadline passed) means #1 wins.
+ * @param finalists decision.finalists from clearWinner
+ * @param votes     the placeId of every ballot cast
+ */
+export function voteWinner(
+  finalists: readonly RankedCandidate[],
+  votes: readonly string[],
+): RankedCandidate {
+  const tally = new Map(finalists.map((c) => [c.placeId, 0]));
+  for (const placeId of votes) {
+    const count = tally.get(placeId);
+    if (count === undefined) throw new RangeError(`vote for non-finalist ${placeId}`);
+    tally.set(placeId, count + 1);
+  }
+  const [winner] = [...finalists].sort(
+    (a, b) => (tally.get(b.placeId) ?? 0) - (tally.get(a.placeId) ?? 0) || a.rank - b.rank,
+  );
+  if (!winner) throw new RangeError('cannot decide a vote with no finalists');
+  return winner;
 }

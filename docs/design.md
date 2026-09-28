@@ -95,7 +95,7 @@ erDiagram
 
 ## Pick state machine (Alan)
 
-Code: `supabase/functions/_shared/domain/pickState.ts` (`canTransition(from, to, actor)`).
+Code: `supabase/functions/_shared/domain/pickState.ts` (`canTransition(from, to, actor)`; `dueToClose` for the deadline / close-threshold rule).
 The API is the only writer of `picks.state` and rejects every action that does not belong to the current state
 (for example a swipe after ranking, or a vote for a non-finalist).
 
@@ -162,7 +162,7 @@ Other reference points (all locked by tests): all Yes = 100, all No = 15, nobody
 Otherwise the group votes among the top 3 (or the 1–2 that exist). If #1 is tied, it is never a clear winner; everyone tied for #1 is a finalist, even if that makes more than 3.
 Float noise is ignored (differences under 1e-9 count as equal), so an exact 10-point gap always counts.
 
-**Final-vote tie-break:** most votes → higher score → closer to the center → place id.
+**Final-vote tie-break:** most votes → higher score → closer to the center → place id (`voteWinner`; no ballots by the deadline means #1 wins).
 
 **What users see:** rank only (1st / 2nd / 3rd, or "Clear winner!"). Scores are stored in `ranking_results.score` for tests and debugging and are never sent to the app.
 
