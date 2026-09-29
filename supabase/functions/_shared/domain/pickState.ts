@@ -44,9 +44,10 @@ export function dueToClose(p: {
   done: number;
   n: number;
   thresholdPct: number;
-  deadlineAt: Date;
+  /** picks.deadline_at; null = no deadline, only the threshold closes it. */
+  deadlineAt: Date | null;
   now: Date;
 }): boolean {
   // integer math: 2 of 3 at a 67% threshold must not pass on float rounding
-  return p.now >= p.deadlineAt || p.done * 100 >= p.thresholdPct * p.n;
+  return (p.deadlineAt !== null && p.now >= p.deadlineAt) || p.done * 100 >= p.thresholdPct * p.n;
 }

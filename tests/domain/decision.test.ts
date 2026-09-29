@@ -41,6 +41,14 @@ describe('dueToClose', () => {
     expect(dueToClose({ done: 3, n: 4, thresholdPct: 100, deadlineAt, now: before })).toBe(false);
     expect(dueToClose({ done: 4, n: 4, thresholdPct: 100, deadlineAt, now: before })).toBe(true);
   });
+  test('no deadline: only the threshold closes it', () => {
+    expect(dueToClose({ done: 3, n: 4, thresholdPct: 100, deadlineAt: null, now: before })).toBe(
+      false,
+    );
+    expect(dueToClose({ done: 4, n: 4, thresholdPct: 100, deadlineAt: null, now: before })).toBe(
+      true,
+    );
+  });
   test('threshold boundary is inclusive and exact', () => {
     expect(dueToClose({ done: 3, n: 4, thresholdPct: 75, deadlineAt, now: before })).toBe(true);
     expect(dueToClose({ done: 2, n: 3, thresholdPct: 67, deadlineAt, now: before })).toBe(false);
