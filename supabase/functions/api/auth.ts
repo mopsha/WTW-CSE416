@@ -1,13 +1,19 @@
 import { ApiError } from '../_shared/api/errors.ts';
-import { createServiceClient } from './serviceClient.ts';
+import { AuthError, createGetUser } from '../_shared/auth/getUser.ts';
 
-// TODO(Razin): replace this adapter with the shared getUser(req) when it lands.
-// No existing auth helper is present. Validate with Auth; never merely decode a JWT.
+const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+const apiKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+// Razin's shared helper: Supabase Auth validates the token; it is never merely decoded.
+const verify = createGetUser({ supabaseUrl, apiKey });
+
 export async function getUser(req: Request): Promise<{ id: string }> {
-  const match = /^Bearer\s+(\S+)$/i.exec(req.headers.get('Authorization') ?? '');
-  if (!match) throw new ApiError(401, 'UNAUTHENTICATED', 'A Bearer access token is required');
-  const { data, error } = await createServiceClient().auth.getUser(match[1]);
-  if (error || !data.user)
-    throw new ApiError(401, 'UNAUTHENTICATED', 'Invalid or expired access token');
-  return { id: data.user.id };
+  if (!supabaseUrl || !apiKey) {
+    throw new ApiError(503, 'SERVER_NOT_CONFIGURED', 'Backend environment is not configured');
+  }
+  try {
+    return await verify(req);
+  } catch (e) {
+    if (e instanceof AuthError) throw new ApiError(e.status, e.code, e.message);
+    throw e;
+  }
 }

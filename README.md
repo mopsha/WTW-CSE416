@@ -157,9 +157,8 @@ in this README. The current starter screen does not yet consume the public varia
 
 ### 3. Start Supabase and prepare data
 
-Razin's `supabase/config.toml`, migration/RLS and SQL seed are not yet present.
-For an empty local Supabase instance only, initialize once with `supabase init`
-(skip this when team config lands), then:
+Docker Desktop must be running. `supabase start` applies the migrations and the demo seed
+(first run downloads the images and takes a few minutes):
 
 ```sh
 supabase start
@@ -167,26 +166,34 @@ supabase status
 ```
 
 Use status output locally to configure the public URL/anon key; do not share secret
-keys from that output. After the team migration, seed, and heartbeat RPCs land:
+keys from that output. To reset to a fresh seeded state at any time:
 
 ```sh
 supabase db reset
 ```
 
-This resets **local data** and replays migrations/SQL seeds. It cannot seed WTW today.
-`supabase/seed/places.json` is mock provider fixture data, not a database seed script.
-The team seed must create a swiping Pick, participant rows and matching candidates;
-use real local Auth user IDs. Review the adapter contract before integration.
+The seed creates one demo Pick in `swiping` (id `de000000-0000-4000-8000-000000000001`)
+with 20 placeholder candidates and 3 bot participants who already answered.
+Sign in once in the app (email code; locally the email arrives in Mailpit at
+http://127.0.0.1:54324), then join the demo Pick **as host** so you can tap Rank.
+In Studio's SQL editor (http://127.0.0.1:54323) or `psql`:
+
+```sql
+select private.seed_add_participant(
+  (select id from auth.users where email = 'you@example.com'), true);
+```
+
+Without `true` you join as a participant: swiping works, Rank returns 403 (host only).
 
 ### 4. Serve the API (separate terminal)
 
 ```sh
-supabase functions serve api --no-verify-jwt
+supabase functions serve api
 curl http://127.0.0.1:54321/functions/v1/api/health
 ```
 
-Health returns `{"status":"ok"}` without touching the database. The flag lets the
-function handle JWT verification itself and keep health public; POST routes always
+Health returns `{"status":"ok"}` without touching the database. `config.toml` sets
+`verify_jwt = false` for `api` so the function verifies JWTs itself and keeps health public; POST routes always
 verify the Bearer access token with Auth. Align hosted function configuration with
 [the API integration contract](docs/api-integration.md) before deployment.
 

@@ -175,9 +175,9 @@ Float noise is ignored (differences under 1e-9 count as equal), so an exact 10-p
 ```mermaid
 flowchart TD
     App[Expo React Native App] --> Auth[Supabase Auth]
-    App -->|reads through RLS - pending integration| DB[(Supabase Postgres + RLS)]
-    App -->|Bearer token - UI pending| API[Hono Edge Function api]
-    API -->|service-role atomic writes - DB adapter pending| DB
+    App -->|reads through RLS| DB[(Supabase Postgres + RLS)]
+    App -->|Bearer token| API[Hono Edge Function api]
+    API -->|service-role atomic writes via RPCs| DB
     API --> Domain[Pure TypeScript ranking and state logic]
     API -.->|discovery integration planned| Provider[PlaceProvider]
     Provider --> Mock[MockProvider - placeholder JSON now]
@@ -187,13 +187,12 @@ flowchart TD
     Cron[pg_cron - planned] -.->|separate server authentication required| API
 ```
 
-Implemented: starter app, ranking/state/geometry, Hono heartbeat handlers, verified
-Auth adapter, server client, error envelope, transactional DB adapter contract,
-mock provider and CI configuration. Database RPCs, schema/RLS, auth UI and seeded
-Pick flow are still missing. Mock places are explicitly unapproved placeholders.
-The provider is independently usable; candidate discovery is not yet a heartbeat route.
-Realtime subscriptions, Google Places, caching/rate limits and cron scheduling are
-planned. Cron must use a separate authenticated server entry point; it must not
+Implemented: starter app, ranking/state/geometry, Hono heartbeat handlers, Razin's
+shared getUser, server client, error envelope, schema/RLS, the transactional heartbeat
+RPCs, the seeded demo Pick, mock provider and CI configuration. Mock places are explicitly
+unapproved placeholders. The provider is independently usable; candidate discovery is
+not yet a heartbeat route. Realtime subscriptions, Google Places, caching/rate limits
+and cron scheduling are planned. Cron must use a separate authenticated server entry point; it must not
 impersonate a user or bypass host authorization on the heartbeat routes.
 
 All application writes go through `api`; mobile reads use RLS. Ranking reuses Alan's

@@ -45,7 +45,7 @@ Backend: `deno check --config supabase/functions/api/deno.json supabase/function
 and `deno test --config supabase/functions/api/deno.json supabase/functions/api/app_test.ts`.
 
 With Supabase CLI + Docker and project configuration: `supabase start`,
-`supabase functions serve api --no-verify-jwt`. `supabase db reset` resets the local
-DB and applies committed migrations/seeds, once Razin supplies them. See README
+`supabase functions serve api` (config.toml sets `verify_jwt = false` for api). `supabase db reset` resets the local
+DB and applies committed migrations and the demo seed. See README
 for setup prerequisites and which steps are blocked. Supabase commands are verified
 against the official CLI reference, not claimed to have run locally.

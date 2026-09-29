@@ -1,6 +1,6 @@
 # Heartbeat integration contract (Josh)
 
-Status: API/domain integration implemented; **database adapter blocked on Razin's migration**.
+Status: implemented end to end. The RPCs below are in `supabase/migrations/0002_heartbeat_rpcs.sql` (Razin).
 There is no schema, RLS, Supabase config, SQL seed, or shared authentication helper in this checkout.
 The RPC names below are a proposed adapter contract, not existing database functions.
 Do not deploy the heartbeat as complete until database integration tests pass.
@@ -22,8 +22,8 @@ Errors: `{ "error": { "code": "...", "message": "..." } }`.
 400 invalid input, 401 invalid/missing token, 403 forbidden, 404 missing resource,
 409 wrong state/concurrent change, 500 unexpected failure, 503 unconfigured backend.
 Gateway errors before the function executes are controlled by Supabase.
-To let the handler own authentication/error formatting and public health, serve with
-`--no-verify-jwt`; when Razin adds config, use `[functions.api] verify_jwt = false`.
+To let the handler own authentication/error formatting and public health, `supabase/config.toml`
+sets `[functions.api] verify_jwt = false`.
 Every mutation route explicitly verifies the caller through Supabase Auth.
 
 ## Database adapter TODO (Razin + Josh)
@@ -61,7 +61,7 @@ Before enabling: test revoked direct writes/RPC access, foreign candidates, outs
 forged client user IDs, simultaneous rank/swipe, cancellation during ranking, retries,
 and rollback on failed persistence with real Postgres.
 
-`api/auth.ts` is a small temporary getUser adapter that validates the bearer token with
-Supabase Auth. Replace it with Razin's shared helper when available; no second auth system.
+`api/auth.ts` wraps Razin's shared `getUser` (`_shared/auth/getUser.ts`), which validates
+the bearer token with Supabase Auth; no second auth system.
 Alan's ranking/state/geo modules are reused unchanged. Mike's auth screens, seeded Pick
-reader, swipe UI, API client and ranked result screen are still missing.
+reader, swipe UI, API client and ranked result screen are in Mike's app (PR #2).

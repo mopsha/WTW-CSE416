@@ -429,6 +429,6 @@ enabled = true
 # The "api" function authenticates every mutation itself with getUser(req)
 # (supabase/functions/_shared/auth/getUser.ts) and serves a public /health, so the
 # gateway must not reject requests first. See docs/api-integration.md.
-# Uncomment when supabase/functions/api/ lands (supabase start fails without index.ts):
-# [functions.api]
-# verify_jwt = false
+# api verifies tokens itself and keeps /health public:
+[functions.api]
+verify_jwt = false
