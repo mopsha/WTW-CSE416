@@ -26,6 +26,11 @@ function RootStack() {
     if (!loading) void SplashScreen.hideAsync();
   }, [loading]);
 
+  // Keep the splash up until the stored session is read. Rendering the guarded Stack
+  // earlier treats a signed-in user as signed out for a moment, which redirects deep
+  // links (e.g. a reload on /pick/:id/swipe) back to Home.
+  if (loading) return null;
+
   return (
     <>
       <StatusBar style="dark" />
