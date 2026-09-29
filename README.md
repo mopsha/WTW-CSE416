@@ -117,8 +117,8 @@ Displayed to users as a **WTW Match Score** — an explainable, transparent scor
 
 Current checkout includes Alan's ranking/state/geometry logic, Josh's API and mock
 provider, and Razin's shared auth, Supabase configuration, schema/RLS, transactional
-RPCs and SQL seed. Mike's auth/Pick/swipe/results screens and API client are still
-absent here; the app is a starter screen. The database/API contract is in
+RPCs and SQL seed, and Mike's app: email-code sign-in, Home, Swipe and Results screens
+with the API client (plus a no-backend mock mode). The database/API contract is in
 [docs/api-integration.md](docs/api-integration.md). Local database and authenticated
 HTTP checks are required before claiming the complete heartbeat works.
 
@@ -155,7 +155,11 @@ Backend runtime only:
 The Supabase local/hosted Edge runtime supplies these backend variables. For a
 standalone runtime, configure them in its environment, never in `.env.local`,
 `app.json`, an `EXPO_PUBLIC_*` variable, or source control. No real secrets belong
-in this README. The current starter screen does not yet consume the public variables.
+in this README.
+
+**No backend yet?** Set `EXPO_PUBLIC_USE_MOCK=1` in `.env.local` to run every screen
+against a local 20-place fixture (sign-in code `123456`). Leave it unset (or `0`) for the
+real backend.
 
 ### 3. Start Supabase and prepare data
 
@@ -176,7 +180,7 @@ supabase db reset
 
 The seed creates one demo Pick in `swiping` (id `de000000-0000-4000-8000-000000000001`)
 with 20 placeholder candidates and 3 bot participants who already answered.
-Once Mike’s auth screens are integrated, sign in once in the app (email code; locally the email arrives in Mailpit at
+Sign in once in the app (email code; locally the email arrives in Mailpit at
 http://127.0.0.1:54324), then join the demo Pick **as host** so you can tap Rank.
 In Studio's SQL editor (http://127.0.0.1:54323) or `psql`:
 
@@ -222,8 +226,8 @@ npx expo start
 Scan the QR on your phone. A phone cannot reach your computer using `127.0.0.1`:
 set the **mobile** Supabase URL to your computer's reachable LAN address and allow
 local traffic through your firewall. Keep backend runtime URLs as supplied by Supabase.
-Restart Expo after changing public variables. The current screen lists Pick states;
-sign-in/swiping/results depend on Mike's work.
+Restart Expo after changing public variables. Sign in with the emailed code, open the
+demo Pick from Home, swipe all 20 cards, then tap Rank (host) to see the top three.
 
 ### 6. Validate
 
@@ -248,7 +252,7 @@ Expo commands follow the [Expo CLI reference](https://docs.expo.dev/more/expo-cl
 
 ```text
 app/                             Expo Router screens
-src/{components,hooks,lib}/       Reusable app code (currently placeholders)
+src/{components,hooks,lib}/       UI components, auth hook, Supabase/API clients, mock mode
 supabase/functions/api/           Hono Edge Function and server adapters
 supabase/functions/_shared/       Pure domain, heartbeat, provider modules
 supabase/seed/places.json         Placeholder places for MockProvider
