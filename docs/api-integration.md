@@ -1,9 +1,9 @@
 # Heartbeat integration contract (Josh)
 
-Status: implemented end to end. The RPCs below are in `supabase/migrations/0002_heartbeat_rpcs.sql` (Razin).
-There is no schema, RLS, Supabase config, SQL seed, or shared authentication helper in this checkout.
-The RPC names below are a proposed adapter contract, not existing database functions.
-Do not deploy the heartbeat as complete until database integration tests pass.
+Status: API and database contracts are implemented. The RPCs are in
+`supabase/migrations/0002_heartbeat_rpcs.sql` (Razin); schema/RLS, SQL seed,
+Supabase config and shared authentication are present. Real database and hosted
+verification must pass before calling the integration end-to-end verified.
 
 ## HTTP contract
 
@@ -26,13 +26,11 @@ To let the handler own authentication/error formatting and public health, `supab
 sets `[functions.api] verify_jwt = false`.
 Every mutation route explicitly verifies the caller through Supabase Auth.
 
-## Database adapter TODO (Razin + Josh)
+## Database adapter (Razin + Josh)
 
-`api/store.ts` uses only the server-side service-role client. Implement these operations
-in Razin's migration, or replace that adapter with equivalent transactional operations.
-The documented table/column names come from Alan's design, not a shipped schema.
-RPC execution must be revoked from PUBLIC, anon, and authenticated and granted only
-to service_role. Never accept direct mobile calls to these service-only operations.
+`api/store.ts` uses only the server-side service-role client. Razin's migration
+implements these operations against the committed schema. RPC execution is revoked
+from PUBLIC, anon, and authenticated and granted only to service_role. Never accept direct mobile calls to these service-only operations.
 
 1. `heartbeat_load_pick(p_pick_id, p_user_id)` returns null if absent, denies nonparticipants,
    otherwise returns one coherent JSON snapshot matching `PickSnapshot` in
@@ -55,7 +53,7 @@ to service_role. Never accept direct mobile calls to these service-only operatio
    Rows contain place_id, rank, score, finalist; validate they match the fixed candidate pool.
    Roll back all changes on failure. Retrying after completion returns 409; client reloads.
 
-RPCs should raise SQLSTATE `PT400`, `PT403`, `PT404`, or `PT409` for expected errors.
+RPCs raise SQLSTATE `PT400`, `PT403`, `PT404`, or `PT409` for expected errors.
 Other database errors are masked as 500; missing RPCs (`PGRST202`) return 503.
 Before enabling: test revoked direct writes/RPC access, foreign candidates, outsiders,
 forged client user IDs, simultaneous rank/swipe, cancellation during ranking, retries,

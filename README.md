@@ -115,11 +115,12 @@ Displayed to users as a **WTW Match Score** — an explainable, transparent scor
 
 ## Local development (Week 1)
 
-Current checkout: Alan's ranking/state/geometry logic, Josh's API orchestration and
-mock provider, CI, and Expo starter screen exist. **The complete phone heartbeat is
-blocked** on Razin's Supabase configuration/migrations/RLS/SQL seed and Mike's auth,
-Pick/swipe/results screens and API client. The API database RPC adapter contract is
-in [docs/api-integration.md](docs/api-integration.md). Missing RPCs return 503.
+Current checkout includes Alan's ranking/state/geometry logic, Josh's API and mock
+provider, and Razin's shared auth, Supabase configuration, schema/RLS, transactional
+RPCs and SQL seed. Mike's auth/Pick/swipe/results screens and API client are still
+absent here; the app is a starter screen. The database/API contract is in
+[docs/api-integration.md](docs/api-integration.md). Local database and authenticated
+HTTP checks are required before claiming the complete heartbeat works.
 
 ### 1. Prerequisites and install
 
@@ -148,6 +149,7 @@ Backend runtime only:
 | Variable | Value |
 |---|---|
 | `SUPABASE_URL` | Internal/backend Supabase URL |
+| `SUPABASE_ANON_KEY` | Public key used by the backend shared Auth verifier |
 | `SUPABASE_SERVICE_ROLE_KEY` | Secret service-role key used only in Edge Functions |
 
 The Supabase local/hosted Edge runtime supplies these backend variables. For a
@@ -174,7 +176,7 @@ supabase db reset
 
 The seed creates one demo Pick in `swiping` (id `de000000-0000-4000-8000-000000000001`)
 with 20 placeholder candidates and 3 bot participants who already answered.
-Sign in once in the app (email code; locally the email arrives in Mailpit at
+Once Mike’s auth screens are integrated, sign in once in the app (email code; locally the email arrives in Mailpit at
 http://127.0.0.1:54324), then join the demo Pick **as host** so you can tap Rank.
 In Studio's SQL editor (http://127.0.0.1:54323) or `psql`:
 
@@ -197,12 +199,12 @@ Health returns `{"status":"ok"}` without touching the database. `config.toml` se
 verify the Bearer access token with Auth. Align hosted function configuration with
 [the API integration contract](docs/api-integration.md) before deployment.
 
-Once DB integration is installed, use a signed-in user's access token:
+With the local stack running, use a signed-in user's access token:
 
 ```sh
 curl -X POST "$EXPO_PUBLIC_SUPABASE_URL/functions/v1/api/picks/$PICK_ID/swipes" \
   -H "Authorization: Bearer $ACCESS_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"placeId":"placeholder-cafe","value":2}'
+  -d '{"placeId":"placeholder-place-01","value":2}'
 curl -X POST "$EXPO_PUBLIC_SUPABASE_URL/functions/v1/api/picks/$PICK_ID/rank" \
   -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
@@ -230,8 +232,10 @@ npm run lint
 npm run typecheck
 npm test -- --runInBand
 npx expo export --platform android
-deno check --config supabase/functions/api/deno.json supabase/functions/api/index.ts
-deno test --config supabase/functions/api/deno.json supabase/functions/api/app_test.ts
+deno check --frozen --config supabase/functions/api/deno.json supabase/functions/api/index.ts
+deno test --frozen --config supabase/functions/api/deno.json supabase/functions/api/app_test.ts
+supabase db reset
+supabase test db
 ```
 
 `npm test` is the existing Jest script; `--runInBand` limits worker usage. Android

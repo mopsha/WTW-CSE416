@@ -2,10 +2,7 @@ import { ApiError, type ErrorStatus } from '../_shared/api/errors.ts';
 import type { HeartbeatStore, PickSnapshot } from '../_shared/api/heartbeat.ts';
 import { createServiceClient } from './serviceClient.ts';
 
-/** TODO(Razin): implement/confirm the RPC contract in docs/api-integration.md.
- * No migration exists yet. Missing RPCs fail closed instead of writing against
- * guessed tables or doing nontransactional state checks and mutations.
- */
+/** Service-role adapter for the transactional RPCs in 0002_heartbeat_rpcs.sql. */
 export function createStore(): HeartbeatStore {
   async function rpc(name: string, args: Record<string, unknown>) {
     const { data, error } = await createServiceClient().rpc(name, args);

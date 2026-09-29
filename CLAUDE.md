@@ -18,7 +18,7 @@ Realtime (planned), one Hono TypeScript Edge Function `api`, Jest and GitHub Act
 - `supabase/functions/_shared/places/`: provider types and mock implementation.
 - `supabase/seed/places.json`: explicitly placeholder provider data, not a SQL seed.
 - `tests/`: Jest tests; Edge HTTP tests live in `api/app_test.ts` and run in Deno.
-- `docs/design.md`: owned design sections; `docs/api-integration.md`: pending DB contract.
+- `docs/design.md`: owned design sections; `docs/api-integration.md`: implemented DB contract.
 - `.github/workflows/ci.yml`: validation; `M1/`: proposal/slides.
 
 ## Architecture and development rules
@@ -29,7 +29,7 @@ Realtime (planned), one Hono TypeScript Edge Function `api`, Jest and GitHub Act
   recheck authorization and state, since service role bypasses RLS.
 - `_shared/domain` stays pure TypeScript. No React Native or Deno-specific imports in
   shared backend/domain code. Use explicit `.ts` imports where required by Deno.
-- Reuse Alan's ranking/state functions, Razin's eventual schema/auth helper, Mike's client.
+- Reuse Alan's ranking/state functions, Razin's schema/auth helper, Mike's client.
 - One database migration per PR, branch per task, and PR review before merge.
   Do not create a branch or commit on someone's behalf without authorization.
 - Read AGENTS.md and version-matching Expo docs before changing Expo/React Native APIs.
