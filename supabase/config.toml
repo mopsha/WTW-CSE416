@@ -222,12 +222,14 @@ enable_signup = true
 # addresses. If disabled, only the new email is required to confirm.
 double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
-enable_confirmations = false
+# On (as on hosted): a first-time user receives the "confirmation" template with the code,
+# a returning user receives "magic_link". verifyOtp({ type: 'email' }) accepts both.
+enable_confirmations = true
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = false
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
 max_frequency = "1s"
-# Number of characters used in the email OTP.
+# Number of characters used in the email OTP. WTW uses a 6-digit code.
 otp_length = 6
 # Number of seconds before the email OTP expires (defaults to 1 hour).
 otp_expiry = 3600
@@ -241,6 +243,16 @@ otp_expiry = 3600
 # pass = "env(SENDGRID_API_KEY)"
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
+
+# WTW signs in with a 6-digit email code (signInWithOtp + verifyOtp), not a clickable link.
+# Both templates a first-time or returning user can receive must show {{ .Token }}.
+[auth.email.template.magic_link]
+subject = "Your WTW sign-in code"
+content_path = "./supabase/templates/magic_link.html"
+
+[auth.email.template.confirmation]
+subject = "Your WTW sign-up code"
+content_path = "./supabase/templates/confirmation.html"
 
 # Uncomment to customize email template
 # [auth.email.template.invite]
@@ -413,3 +425,10 @@ enabled = true
 # formatted with uppercase keywords, indent 2, max width 180, trailing commas,
 # and column/key alignment. Set to "null" to emit raw, unformatted SQL.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":180,\"commaStyle\":\"trailing\"}"
+
+# The "api" function authenticates every mutation itself with getUser(req)
+# (supabase/functions/_shared/auth/getUser.ts) and serves a public /health, so the
+# gateway must not reject requests first. See docs/api-integration.md.
+# Uncomment when supabase/functions/api/ lands (supabase start fails without index.ts):
+# [functions.api]
+# verify_jwt = false
