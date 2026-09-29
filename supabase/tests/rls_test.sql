@@ -21,17 +21,17 @@ select is((select display_name from profiles where id = '11111111-1111-4111-8111
 
 select private.seed_add_participant('11111111-1111-4111-8111-111111111111');
 insert into preferences (pick_id, place_id, user_id, value) values
-  ('de000000-0000-4000-8000-000000000001', 'placeholder-place-01', '11111111-1111-4111-8111-111111111111', 2);
+  ('de000000-0000-4000-8000-000000000001', 'seed-place-01', '11111111-1111-4111-8111-111111111111', 2);
 insert into ranking_results (pick_id, place_id, rank, finalist, score) values
-  ('de000000-0000-4000-8000-000000000001', 'placeholder-place-01', 1, true, 88.5);
+  ('de000000-0000-4000-8000-000000000001', 'seed-place-01', 1, true, 88.5);
 
 select throws_ok(
   $$insert into preferences (pick_id, place_id, user_id, value) values
-    ('de000000-0000-4000-8000-000000000001', 'placeholder-place-02', '11111111-1111-4111-8111-111111111111', 3)$$,
+    ('de000000-0000-4000-8000-000000000001', 'seed-place-02', '11111111-1111-4111-8111-111111111111', 3)$$,
   '23514', null, 'preferences.value must be 0..2');
 select throws_ok(
   $$insert into preferences (pick_id, place_id, user_id, value) values
-    ('de000000-0000-4000-8000-000000000001', 'placeholder-place-02', '22222222-2222-4222-8222-222222222222', 1)$$,
+    ('de000000-0000-4000-8000-000000000001', 'seed-place-02', '22222222-2222-4222-8222-222222222222', 1)$$,
   '23503', null, 'only participants can have preferences');
 
 -- ---------------------------------------------------------------- participant
@@ -51,7 +51,7 @@ select throws_ok($$select * from ranking_results$$, '42501', null, 'select * on 
 select throws_ok($$select score from ranking_results$$, '42501', null, 'score is not readable');
 select throws_ok(
   $$insert into preferences (pick_id, place_id, user_id, value) values
-    ('de000000-0000-4000-8000-000000000001', 'placeholder-place-03', auth.uid(), 2)$$,
+    ('de000000-0000-4000-8000-000000000001', 'seed-place-03', auth.uid(), 2)$$,
   '42501', null, 'clients cannot insert preferences');
 select throws_ok($$update picks set state = 'canceled'$$, '42501', null, 'clients cannot update picks');
 select throws_ok($$delete from pick_participants$$, '42501', null, 'clients cannot delete participants');
@@ -97,7 +97,7 @@ select throws_ok(
 create temporary table v0 on commit drop as
   select heartbeat_load_pick('de000000-0000-4000-8000-000000000001', '11111111-1111-4111-8111-111111111111') ->> 'version' as v;
 select lives_ok(
-  $$select heartbeat_upsert_swipe('de000000-0000-4000-8000-000000000001', '11111111-1111-4111-8111-111111111111', 'placeholder-place-01', 0)$$,
+  $$select heartbeat_upsert_swipe('de000000-0000-4000-8000-000000000001', '11111111-1111-4111-8111-111111111111', 'seed-place-01', 0)$$,
   'upsert_swipe updates an answer');
 select isnt(
   heartbeat_load_pick('de000000-0000-4000-8000-000000000001', '11111111-1111-4111-8111-111111111111') ->> 'version',
@@ -106,7 +106,7 @@ select throws_ok(
   $$select heartbeat_upsert_swipe('de000000-0000-4000-8000-000000000001', '11111111-1111-4111-8111-111111111111', 'nope', 1)$$,
   'PT400', null, 'upsert_swipe rejects foreign candidates');
 select throws_ok(
-  $$select heartbeat_upsert_swipe('de000000-0000-4000-8000-000000000001', '22222222-2222-4222-8222-222222222222', 'placeholder-place-01', 1)$$,
+  $$select heartbeat_upsert_swipe('de000000-0000-4000-8000-000000000001', '22222222-2222-4222-8222-222222222222', 'seed-place-01', 1)$$,
   'PT403', null, 'upsert_swipe rejects outsiders');
 
 -- Ranking payload built from the current snapshot: rank by place id, winner = rank 1.
@@ -114,7 +114,7 @@ create temporary table snap on commit drop as
   select heartbeat_load_pick('de000000-0000-4000-8000-000000000001', 'b0700000-0000-4000-8000-000000000001') as s;
 create temporary table payload on commit drop as
   select jsonb_build_object(
-    'state', 'completed', 'winnerPlaceId', 'placeholder-place-01',
+    'state', 'completed', 'winnerPlaceId', 'seed-place-01',
     'rows', jsonb_agg(jsonb_build_object('place_id', c ->> 'placeId', 'rank', i, 'score', 100 - i, 'finalist', false))
   ) as p
   from snap, jsonb_array_elements(s -> 'candidates') with ordinality as t(c, i);
@@ -140,7 +140,7 @@ reset role;
 select is(
   (select row(state::text, winner_place_id, decided_by, (select count(*)::int from ranking_results r where r.pick_id = p.id))::text
    from picks p where id = 'de000000-0000-4000-8000-000000000001'),
-  '(completed,placeholder-place-01,clear_winner,20)', 'ranking persisted with winner metadata');
+  '(completed,seed-place-01,clear_winner,20)', 'ranking persisted with winner metadata');
 
 select * from finish();
 rollback;

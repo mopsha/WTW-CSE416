@@ -179,7 +179,7 @@ supabase db reset
 ```
 
 The seed creates one demo Pick in `swiping` (id `de000000-0000-4000-8000-000000000001`)
-with 20 placeholder candidates and 3 bot participants who already answered.
+with 20 real Stony Brook-area food places (stock photos for now) and 3 bot participants who already answered.
 Sign in once in the app (email code; locally the email arrives in Mailpit at
 http://127.0.0.1:54324), then join the demo Pick **as host** so you can tap Rank.
 In Studio's SQL editor (http://127.0.0.1:54323) or `psql`:
@@ -208,7 +208,7 @@ With the local stack running, use a signed-in user's access token:
 ```sh
 curl -X POST "$EXPO_PUBLIC_SUPABASE_URL/functions/v1/api/picks/$PICK_ID/swipes" \
   -H "Authorization: Bearer $ACCESS_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"placeId":"placeholder-place-01","value":2}'
+  -d '{"placeId":"seed-place-01","value":2}'
 curl -X POST "$EXPO_PUBLIC_SUPABASE_URL/functions/v1/api/picks/$PICK_ID/rank" \
   -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
