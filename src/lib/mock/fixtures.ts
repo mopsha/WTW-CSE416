@@ -24,44 +24,44 @@ export const MOCK_PICKS: readonly (PickSummary & { hostId: string })[] = [
 
 const photo = (seed: string) => `https://picsum.photos/seed/wtw-${seed}/800/600`;
 
-// [name, priceLevel 1-4, rating 0-5, lat offset, lng offset]
-const RAW: readonly [string, number, number, number, number][] = [
-  ['Seawolf Noodle Bar', 1, 4.4, 0.002, 0.001],
-  ['Harbor Taqueria', 1, 4.6, 0.011, -0.004],
-  ['Setauket Slice', 1, 4.2, 0.018, 0.006],
-  ['Old Field Oyster House', 3, 4.7, 0.031, -0.012],
-  ['Nicolls Road Diner', 2, 4.0, -0.006, 0.009],
-  ['Port Jeff Ramen Co.', 2, 4.5, 0.038, 0.021],
-  ['Stony Brook Sushi Lab', 3, 4.3, 0.004, -0.008],
-  ['Three Village Thai', 2, 4.6, 0.014, 0.014],
-  ['Mill Pond Bakery', 1, 4.8, 0.009, -0.019],
-  ['Long Island Smokehouse', 2, 4.1, -0.021, 0.017],
-  ['Campus Falafel Cart', 1, 4.5, 0.001, 0.002],
-  ['Brookhaven Burger Joint', 2, 3.9, -0.013, -0.006],
-  ['Wading River Wood-Fired', 3, 4.4, 0.027, 0.03],
-  ['Sound Beach Poke', 2, 4.2, 0.022, -0.027],
-  ['Route 25A Dumplings', 1, 4.7, 0.016, 0.003],
-  ['Centereach Curry House', 2, 4.3, -0.024, 0.004],
-  ['Belle Terre Bistro', 4, 4.6, 0.041, 0.015],
-  ['Shoreline Creperie', 2, 4.0, 0.035, -0.02],
-  ['Lake Grove Korean BBQ', 3, 4.5, -0.03, -0.015],
-  ['Night Owl Bagels', 1, 4.1, 0.006, 0.012],
+// Same 20 real places, order and coordinates as supabase/seed.sql (keep them in sync).
+// Price levels are our estimates; ratings stay null until the Google Places provider;
+// photos are stock placeholders. [name, priceLevel 1-4, lat, lng]
+const RAW: readonly [string, number, number, number][] = [
+  ['Súp Vietnamese Phở & Grill', 2, 40.9193847, -73.1297139],
+  ["DJ's Clam Shack", 2, 40.9233111, -73.126503],
+  ['Kung Fu Tea', 1, 40.9225234, -73.1274348],
+  ["Sweet Mama's", 2, 40.9174711, -73.146546],
+  ['Crazy Beans', 2, 40.917065, -73.1463017],
+  ['Schnitzels', 2, 40.9163002, -73.1463856],
+  ['LUCA', 3, 40.917318, -73.147334],
+  ['Brew Cheese', 2, 40.9177021, -73.1464392],
+  ["Robinson's Tea Room", 2, 40.917065, -73.1463017],
+  ['Mirabelle Tavern (Three Village Inn)', 3, 40.9191835, -73.1482395],
+  ['Country House', 3, 40.9126723, -73.142145],
+  ['Bliss', 3, 40.9267281, -73.1181114],
+  ["Mario's Italian Restaurant", 2, 40.9423169, -73.1039015],
+  ['Toast Coffeehouse', 2, 40.9271254, -73.0501623],
+  ['Tiger Lily Café', 1, 40.9466112, -73.0670743],
+  ['Salsa Salsa', 1, 40.9455179, -73.0683675],
+  ['Prohibition Kitchen', 2, 40.9462443, -73.0687358],
+  ['Pasta Pasta', 3, 40.9455243, -73.0673115],
+  ['Ruvo', 3, 40.9442612, -73.0681948],
+  ['Wave Seafood Kitchen (Danfords)', 3, 40.9477909, -73.0687261],
 ];
 
-export const MOCK_PLACES: readonly MockPlace[] = RAW.map(
-  ([name, priceLevel, rating, dLat, dLng], i) => {
-    const n = String(i + 1).padStart(2, '0');
-    return {
-      placeId: `mock-place-${n}`,
-      name,
-      photoUrl: photo(n),
-      priceLevel,
-      rating,
-      lat: DEMO_CENTER.lat + dLat,
-      lng: DEMO_CENTER.lng + dLng,
-    };
-  },
-);
+export const MOCK_PLACES: readonly MockPlace[] = RAW.map(([name, priceLevel, lat, lng], i) => {
+  const n = String(i + 1).padStart(2, '0');
+  return {
+    placeId: `mock-place-${n}`,
+    name,
+    photoUrl: photo(n),
+    priceLevel,
+    rating: null,
+    lat,
+    lng,
+  };
+});
 
 /** Three other (pretend) participants' answers, one per place, deterministic so demos repeat. */
 export const OTHER_PARTICIPANT_ANSWERS: readonly (readonly PreferenceValue[])[] = [
