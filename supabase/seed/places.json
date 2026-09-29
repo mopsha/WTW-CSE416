@@ -1,0 +1,23 @@
+[
+  {
+    "placeId": "placeholder-cafe",
+    "name": "Placeholder campus cafe (not approved)",
+    "category": "food",
+    "lat": 40.9126,
+    "lng": -73.1234
+  },
+  {
+    "placeId": "placeholder-park",
+    "name": "Placeholder campus park (not approved)",
+    "category": "activities",
+    "lat": 40.9166,
+    "lng": -73.1234
+  },
+  {
+    "placeId": "placeholder-diner",
+    "name": "Placeholder distant diner (not approved)",
+    "category": "food",
+    "lat": 40.95,
+    "lng": -73.1234
+  }
+]
