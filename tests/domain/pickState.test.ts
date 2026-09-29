@@ -4,7 +4,7 @@ import {
   isTerminal,
   type Actor,
   type PickState,
-} from '../../supabase/functions/_shared/domain/pickState.ts';
+} from '@shared/domain/pickState.ts';
 
 const ACTORS: Actor[] = ['host', 'participant', 'system'];
 
