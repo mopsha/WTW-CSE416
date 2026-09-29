@@ -33,3 +33,21 @@ export function canTransition(from: PickState, to: PickState, actor: Actor): boo
 export function isTerminal(state: PickState): boolean {
   return state === 'completed' || state === 'canceled';
 }
+
+/**
+ * Should the system close the current phase? Yes at the deadline, or once at least
+ * thresholdPct percent of the n participants are done.
+ * swiping → ranking: done = finished swiping, thresholdPct = picks.close_threshold (default 100).
+ * final_vote → completed: done = ballots cast, thresholdPct = 100.
+ */
+export function dueToClose(p: {
+  done: number;
+  n: number;
+  thresholdPct: number;
+  /** picks.deadline_at; null = no deadline, only the threshold closes it. */
+  deadlineAt: Date | null;
+  now: Date;
+}): boolean {
+  // integer math: 2 of 3 at a 67% threshold must not pass on float rounding
+  return (p.deadlineAt !== null && p.now >= p.deadlineAt) || p.done * 100 >= p.thresholdPct * p.n;
+}
