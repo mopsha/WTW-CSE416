@@ -113,13 +113,147 @@ WTW Score = 100 × (0.70 × preference + 0.20 × consensus + 0.10 × coverage) �
 
 Displayed to users as a **WTW Match Score** — an explainable, transparent scoring model, not an AI prediction. Weights are a starting hypothesis to be validated with unit tests and user feedback.
 
-## Repo Structure
+## Local development (Week 1)
 
+Current checkout includes Alan's ranking/state/geometry logic, Josh's API and mock
+provider, and Razin's shared auth, Supabase configuration, schema/RLS, transactional
+RPCs and SQL seed. Mike's auth/Pick/swipe/results screens and API client are still
+absent here; the app is a starter screen. The database/API contract is in
+[docs/api-integration.md](docs/api-integration.md). Local database and authenticated
+HTTP checks are required before claiming the complete heartbeat works.
+
+### 1. Prerequisites and install
+
+Use Node 22.13+ (22 LTS), npm, Git, and Expo Go or a compatible development build.
+For backend integration install the [Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started)
+and Docker with its daemon running. Deno 2 is needed for standalone Edge checks.
+
+```sh
+git clone https://github.com/mopsha/WTW-CSE416.git
+cd WTW-CSE416
+npm ci
+cp .env.example .env.local
 ```
-/M1        — Milestone 1 deliverables
-README.md  — you're looking at it
+
+### 2. Environment variables
+
+Public/mobile variables in `.env.local` (safe to bundle):
+
+| Variable | Value |
+|---|---|
+| `EXPO_PUBLIC_SUPABASE_URL` | Local or hosted Supabase API URL |
+| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Matching project's public anon key |
+
+Backend runtime only:
+
+| Variable | Value |
+|---|---|
+| `SUPABASE_URL` | Internal/backend Supabase URL |
+| `SUPABASE_ANON_KEY` | Public key used by the backend shared Auth verifier |
+| `SUPABASE_SERVICE_ROLE_KEY` | Secret service-role key used only in Edge Functions |
+
+The Supabase local/hosted Edge runtime supplies these backend variables. For a
+standalone runtime, configure them in its environment, never in `.env.local`,
+`app.json`, an `EXPO_PUBLIC_*` variable, or source control. No real secrets belong
+in this README. The current starter screen does not yet consume the public variables.
+
+### 3. Start Supabase and prepare data
+
+Docker Desktop must be running. `supabase start` applies the migrations and the demo seed
+(first run downloads the images and takes a few minutes):
+
+```sh
+supabase start
+supabase status
 ```
 
-## Status
+Use status output locally to configure the public URL/anon key; do not share secret
+keys from that output. To reset to a fresh seeded state at any time:
 
-🚧 Early development — Milestone 1 (Proposal & Requirements) in progress.
+```sh
+supabase db reset
+```
+
+The seed creates one demo Pick in `swiping` (id `de000000-0000-4000-8000-000000000001`)
+with 20 placeholder candidates and 3 bot participants who already answered.
+Once Mike’s auth screens are integrated, sign in once in the app (email code; locally the email arrives in Mailpit at
+http://127.0.0.1:54324), then join the demo Pick **as host** so you can tap Rank.
+In Studio's SQL editor (http://127.0.0.1:54323) or `psql`:
+
+```sql
+select private.seed_add_participant(
+  (select id from auth.users where email = 'you@example.com'), true);
+```
+
+Without `true` you join as a participant: swiping works, Rank returns 403 (host only).
+
+### 4. Serve the API (separate terminal)
+
+```sh
+supabase functions serve api
+curl http://127.0.0.1:54321/functions/v1/api/health
+```
+
+Health returns `{"status":"ok"}` without touching the database. `config.toml` sets
+`verify_jwt = false` for `api` so the function verifies JWTs itself and keeps health public; POST routes always
+verify the Bearer access token with Auth. Align hosted function configuration with
+[the API integration contract](docs/api-integration.md) before deployment.
+
+With the local stack running, use a signed-in user's access token:
+
+```sh
+curl -X POST "$EXPO_PUBLIC_SUPABASE_URL/functions/v1/api/picks/$PICK_ID/swipes" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"placeId":"placeholder-place-01","value":2}'
+curl -X POST "$EXPO_PUBLIC_SUPABASE_URL/functions/v1/api/picks/$PICK_ID/rank" \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+Set shell variables explicitly for these examples (`.env.local` is loaded by Expo,
+not automatically by your shell). Use a candidate actually seeded in that Pick.
+Ranking is host-only per Alan's state machine. Responses expose ranks, never scores.
+
+### 5. Start Expo (separate terminal)
+
+```sh
+npx expo start
+```
+
+Scan the QR on your phone. A phone cannot reach your computer using `127.0.0.1`:
+set the **mobile** Supabase URL to your computer's reachable LAN address and allow
+local traffic through your firewall. Keep backend runtime URLs as supplied by Supabase.
+Restart Expo after changing public variables. The current screen lists Pick states;
+sign-in/swiping/results depend on Mike's work.
+
+### 6. Validate
+
+```sh
+npm run lint
+npm run typecheck
+npm test -- --runInBand
+npx expo export --platform android
+deno check --frozen --config supabase/functions/api/deno.json supabase/functions/api/index.ts
+deno test --frozen --config supabase/functions/api/deno.json supabase/functions/api/app_test.ts
+supabase db reset
+supabase test db
+```
+
+`npm test` is the existing Jest script; `--runInBand` limits worker usage. Android
+export validates bundling; it does not build/install a native APK. CI runs install,
+lint, typecheck, Jest, export and Deno checks on every PR and push to main.
+Supabase setup commands above were checked against the [CLI reference](https://supabase.com/docs/reference/cli/introduction);
+Expo commands follow the [Expo CLI reference](https://docs.expo.dev/more/expo-cli/).
+
+## Repo structure
+
+```text
+app/                             Expo Router screens
+src/{components,hooks,lib}/       Reusable app code (currently placeholders)
+supabase/functions/api/           Hono Edge Function and server adapters
+supabase/functions/_shared/       Pure domain, heartbeat, provider modules
+supabase/seed/places.json         Placeholder places for MockProvider
+tests/                           Jest tests
+docs/                            Design and integration contract
+.github/workflows/ci.yml          Validation pipeline
+M1/                              Proposal and slides
+```

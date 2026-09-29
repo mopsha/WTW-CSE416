@@ -1,0 +1,8 @@
+{
+  "imports": {
+    "hono": "npm:hono@4.12.8",
+    "hono/cors": "npm:hono@4.12.8/cors",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.99.2"
+  },
+  "compilerOptions": { "strict": true }
+}

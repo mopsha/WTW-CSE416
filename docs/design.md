@@ -170,6 +170,51 @@ Float noise is ignored (differences under 1e-9 count as equal), so an exact 10-p
 
 **Open question for the team:** the weights (0.70 / 0.20 / 0.10, −15) are a starting hypothesis. M5 user sessions should tell us whether one "No" is penalized enough.
 
+## Architecture (Josh)
+
+```mermaid
+flowchart TD
+    App[Expo React Native App] --> Auth[Supabase Auth]
+    App -->|reads through RLS| DB[(Supabase Postgres + RLS)]
+    App -->|Bearer token| API[Hono Edge Function api]
+    API -->|service-role atomic writes via RPCs| DB
+    API --> Domain[Pure TypeScript ranking and state logic]
+    API -.->|discovery integration planned| Provider[PlaceProvider]
+    Provider --> Mock[MockProvider - placeholder JSON now]
+    Provider -.-> Google[Google Places - planned]
+    DB -.-> Realtime[Supabase Realtime - planned subscriptions]
+    Realtime -.-> App
+    Cron[pg_cron - planned] -.->|separate server authentication required| API
+```
+
+Implemented: starter app, ranking/state/geometry, Hono heartbeat handlers, Razin's
+shared getUser, server client, error envelope, schema/RLS, the transactional heartbeat
+RPCs, the seeded demo Pick, mock provider and CI configuration. Mock places are explicitly
+unapproved placeholders. The provider is independently usable; candidate discovery is
+not yet a heartbeat route. Realtime subscriptions, Google Places, caching/rate limits
+and cron scheduling are planned. Cron must use a separate authenticated server entry point; it must not
+impersonate a user or bypass host authorization on the heartbeat routes.
+
+All application writes go through `api`; mobile reads use RLS. Ranking reuses Alan's
+functions, stores scores server-side, and returns only ordered place IDs/ranks and
+a winner/finalist decision. Persistence and state transitions require the atomic
+operations in [api-integration.md](api-integration.md), owned jointly with Razin.
+
+## Stack + why (Josh)
+
+| Technology | Why |
+|---|---|
+| Expo / React Native | One mobile codebase supports iOS and Android with quick device iteration. |
+| TypeScript | Shared types connect the app, API and pure decision engine. |
+| Supabase Auth | Managed identity verifies users without a custom password system. |
+| Supabase Postgres + RLS | Relational constraints and row policies protect shared Pick data. |
+| Supabase Realtime | Planned subscriptions keep group progress synchronized. |
+| Supabase Edge Functions | A server runtime keeps credentials and privileged operations off phones. |
+| Hono | A small router gives the single API explicit routes and error handling. |
+| Our TypeScript API | One write boundary enforces authorization, state and ranking rules. |
+| PlaceProvider / Google Places abstraction | Stable normalized candidates let mock data become live discovery later. |
+| Jest | Repeatable tests exercise shared logic without a phone or database. |
+| GitHub Actions | Every PR checks code, tests and Android bundling before review. |
 ## Security & privacy (Razin)
 
 Code: `supabase/migrations/0001_init.sql`, `0002_heartbeat_rpcs.sql`; tests in `supabase/tests/rls_test.sql` (`supabase db reset && supabase test db`).
