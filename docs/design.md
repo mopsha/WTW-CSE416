@@ -169,3 +169,72 @@ Float noise is ignored (differences under 1e-9 count as equal), so an exact 10-p
 **Input mapping:** `preferences.value` is 0 = No, 1 = Maybe, 2 = Yes; `answerFromDb` converts it before scoring.
 
 **Open question for the team:** the weights (0.70 / 0.20 / 0.10, −15) are a starting hypothesis. M5 user sessions should tell us whether one "No" is penalized enough.
+
+## Security & privacy (Razin)
+
+Code: `supabase/migrations/0001_init.sql`, `0002_heartbeat_rpcs.sql`; tests in `supabase/tests/rls_test.sql` (`supabase db reset && supabase test db`).
+
+**One writer.** Only the `api` Edge Function writes to Postgres, using the service role on the server. The app gets **no** INSERT / UPDATE / DELETE: no table grants and no write policies. Even a bug in the app, or a user with a modified client, cannot change a Pick, a swipe or a result directly.
+
+**Reads are filtered by RLS on every table.** The app reads as `authenticated` (never `anon`):
+
+| Table | A signed-in user can SELECT |
+|---|---|
+| `picks`, `pick_participants`, `pick_candidates`, `ranking_results` | rows of Picks they participate in |
+| `preferences` | **only their own** answers (nobody sees how others swiped) |
+| `profiles` | their own, and people they share a Pick with |
+| `places` | places that are candidates in one of their Picks |
+
+Membership checks use `private.*` helpers (security definer, empty `search_path`) in a schema the Data API does not expose.
+
+**Explicit grants.** The hosted project does not auto-expose new tables, and the migration does not rely on defaults either: it revokes everything from `anon` and `authenticated`, then grants `SELECT` to `authenticated` table by table and `ALL` to `service_role`. New tables must add their own RLS policy **and** grant, or the app cannot see them.
+
+**Scores stay on the server.** `ranking_results.score` has no client grant (column-level `SELECT` on `pick_id, place_id, rank, finalist, created_at` only). `select=*` from the app fails with `permission denied`, so a careless query errors instead of leaking. The API also never returns scores. `ranking_results` is intentionally **not** in the Realtime publication, because Realtime would ship whole rows.
+
+**Server-only RPCs.** `heartbeat_*` functions are executable only by `service_role`; they re-check membership, host, state and version inside one locked transaction, so forged user ids or stale requests are rejected (PT403 / PT409).
+
+**Authentication.** Email one-time code (6 digits, 1-hour expiry); no passwords are stored. The API verifies every mutation with `getUser(req)` (`supabase/functions/_shared/auth/getUser.ts`), which asks Supabase Auth to validate the token rather than decoding it, so signed-out or deleted users are rejected. A `profiles` row is created automatically on first sign-in.
+
+**Data we keep.** `profiles` holds a display name and avatar URL only; email lives in Supabase Auth and is never exposed to other users. Preferences are private to their author. Place data is a snapshot per Pick so history does not change later.
+
+**Secrets.** No keys or passwords are committed. The service-role key exists only as an Edge Function secret; the app ships only the public anon/publishable key, which is useless without a user session because `anon` has no table grants.
+
+**Not covered yet:** rate limiting on the API, account deletion flow, join-code brute force protection (M3 with `pick_join_codes`).
+
+## API list v0 (Razin)
+
+Base URL: `<SUPABASE_URL>/functions/v1/api`. Every route except `/health` needs `Authorization: Bearer <user access token>`. Errors are `{ "error": { "code", "message" } }` with 400 / 401 / 403 / 404 / 409 / 500 / 503. Details of the implemented routes: `docs/api-integration.md` (Josh).
+
+**Writes (through the API only)**
+
+| Method & path | Who | What | Status |
+|---|---|---|---|
+| `GET /health` | anyone | liveness | implemented |
+| `POST /picks/:id/swipes` | participant, Pick `swiping` | `{ placeId, value: 0\|1\|2 }` upserts my answer | implemented |
+| `POST /picks/:id/rank` | host, Pick `swiping` | close swiping, rank, store results; returns top 3 + decision (no scores) | implemented |
+| `POST /picks` | signed-in user | create a Pick (category, center, radius, deadline, close threshold) | planned |
+| `POST /picks/:id/candidates` | host, `draft` | fetch and freeze the candidate pool | planned |
+| `POST /picks/:id/start` | host, `draft` | `draft → swiping` | planned |
+| `POST /picks/join` | signed-in user | join by 6-character code | planned |
+| `POST /picks/:id/finish` | participant | mark my swiping finished (drives close threshold) | planned |
+| `POST /picks/:id/votes` | participant, `final_vote` | `{ placeId }` for a finalist | planned |
+| `POST /picks/:id/cancel` | host | any unfinished state → `canceled` | planned |
+| `PATCH /me` | signed-in user | update display name / avatar | planned |
+
+**Database RPCs used by the API** (service role only, `0002_heartbeat_rpcs.sql`)
+
+| Function | Returns / effect |
+|---|---|
+| `heartbeat_load_pick(p_pick_id, p_user_id)` | `PickSnapshot` json (id, hostId, state, center, participantIds, candidates, preferences, version) or null |
+| `heartbeat_upsert_swipe(p_pick_id, p_user_id, p_place_id, p_value)` | upserts one preference, advances version |
+| `heartbeat_save_ranking(p_pick_id, p_user_id, p_version, p_ranking)` | `swiping → ranking → completed \| final_vote`, replaces `ranking_results`, sets winner metadata |
+
+**Reads (app → Supabase directly, filtered by RLS)**
+
+| Query | Used for |
+|---|---|
+| `pick_participants?select=picks(id,state,category,deadline_at)&user_id=eq.<me>` | my Picks |
+| `pick_candidates?select=place_id,snapshot&pick_id=eq.<id>` | swipe cards |
+| `preferences?select=place_id,value&pick_id=eq.<id>&user_id=eq.<me>` | resume swiping |
+| `ranking_results?select=place_id,rank,finalist&pick_id=eq.<id>` | results (never `score`) |
+| `picks?select=state,host_id,winner_place_id,decided_by&id=eq.<id>` | outcome / host check |
