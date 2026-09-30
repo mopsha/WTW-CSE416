@@ -1,6 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Image, StyleSheet, Text, View, type ImageStyle, type StyleProp } from 'react-native';
+import {
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type ImageStyle,
+  type StyleProp,
+} from 'react-native';
 
 import { useEnrichedPlace } from '@/lib/googlePlaces';
 import { formatPriceLevel, milesFromCampus } from '@/lib/places';
@@ -48,7 +56,7 @@ export function Chips({ place, light = true }: { place: Candidate; light?: boole
 }
 
 /** Full-bleed photo card with the name and chips over a dark gradient. */
-export function PlaceCard({ place: base }: { place: Candidate }) {
+export function PlaceCard({ place: base, onInfo }: { place: Candidate; onInfo?: () => void }) {
   const place = useEnrichedPlace(base);
   return (
     <View style={styles.card}>
@@ -59,9 +67,22 @@ export function PlaceCard({ place: base }: { place: Candidate }) {
         style={StyleSheet.absoluteFill}
       />
       <View style={styles.info}>
-        <Text style={styles.name} numberOfLines={2}>
-          {place.name}
-        </Text>
+        <Pressable
+          onPress={onInfo}
+          disabled={!onInfo}
+          accessibilityRole={onInfo ? 'button' : undefined}
+          accessibilityHint={onInfo ? 'Shows photos, hours and more' : undefined}
+          style={onInfo ? styles.nameRow : undefined}
+        >
+          <Text style={[styles.name, onInfo && { flex: 1 }]} numberOfLines={2}>
+            {place.name}
+          </Text>
+          {onInfo ? (
+            <View style={styles.infoBtn}>
+              <Ionicons name="arrow-up" size={20} color="#0E0B12" />
+            </View>
+          ) : null}
+        </Pressable>
         {place.address ? (
           <Text style={styles.address} numberOfLines={1}>
             {place.address}
@@ -82,6 +103,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
   },
   photo: { backgroundColor: colors.cardHi },
+  nameRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
+  infoBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginBottom: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
   info: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: 22, gap: 6 },
   name: {
     fontFamily: fonts.black,

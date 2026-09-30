@@ -19,6 +19,7 @@ import { Button } from '@/components/Button';
 import { ErrorBanner } from '@/components/ErrorBanner';
 import { GradientButton } from '@/components/GradientButton';
 import { PlaceCard } from '@/components/PlaceCard';
+import { PlaceDetailsSheet } from '@/components/PlaceDetailsSheet';
 import { SwipeCard, type SwipeCardHandle } from '@/components/SwipeCard';
 import { colors, flame, fonts } from '@/components/theme';
 import { useSession } from '@/hooks/useAuth';
@@ -79,6 +80,7 @@ export default function SwipeScreen() {
   const [index, setIndex] = useState(0);
   const [attempt, setAttempt] = useState(0);
   const card = useRef<SwipeCardHandle>(null);
+  const [details, setDetails] = useState<Candidate | null>(null);
   // 0 → 1 as the top card is dragged away: the card behind grows and brightens (Tinder-style).
   const drag = useSharedValue(0);
   const nextStyle = useAnimatedStyle(() => ({
@@ -288,6 +290,7 @@ export default function SwipeScreen() {
               place={current}
               onAnswer={answer}
               drag={drag}
+              onInfo={() => setDetails(current)}
             />
           </View>
           <ActionBar
@@ -345,6 +348,16 @@ export default function SwipeScreen() {
       )}
 
       {toast ? <ActivityToast key={toast.id} toast={toast} /> : null}
+
+      <PlaceDetailsSheet
+        place={details}
+        onClose={() => setDetails(null)}
+        onAnswer={(v) => {
+          setDetails(null);
+          // Let the sheet slide away, then throw the card like a swipe.
+          setTimeout(() => card.current?.fling(v), 350);
+        }}
+      />
     </SafeAreaView>
   );
 }

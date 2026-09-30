@@ -10,16 +10,27 @@ import type { Candidate } from './types';
 const KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_KEY ?? '';
 export const GOOGLE_ENABLED = KEY.length > 0;
 
+export interface GooglePhoto {
+  url: string;
+  /** The photographer credit Google requires next to its photos. */
+  credit: string | null;
+}
+
 export interface GoogleInfo {
+  /** Google's place id, for the on-demand details lookup. */
+  id: string | null;
   photoUrl: string | null;
   /** The photographer credit Google requires next to its photos. */
   attribution: string | null;
+  /** Up to 5 photos for the details gallery (media URLs; nothing is stored). */
+  gallery: GooglePhoto[];
   rating: number | null;
   ratingCount: number | null;
 }
 
 interface SearchResponse {
   places?: {
+    id?: string;
     rating?: number;
     userRatingCount?: number;
     photos?: { name: string; authorAttributions?: { displayName?: string }[] }[];
@@ -28,6 +39,9 @@ interface SearchResponse {
 
 const inflight = new Map<string, Promise<GoogleInfo | null>>();
 
+const media = (name: string) =>
+  `https://places.googleapis.com/v1/${name}/media?maxWidthPx=900&key=${encodeURIComponent(KEY)}`;
+
 async function fetchInfo(place: Candidate): Promise<GoogleInfo | null> {
   const textQuery = [place.name, place.address, 'NY'].filter(Boolean).join(', ');
   const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
@@ -35,7 +49,7 @@ async function fetchInfo(place: Candidate): Promise<GoogleInfo | null> {
     headers: {
       'Content-Type': 'application/json',
       'X-Goog-Api-Key': KEY,
-      'X-Goog-FieldMask': 'places.rating,places.userRatingCount,places.photos',
+      'X-Goog-FieldMask': 'places.id,places.rating,places.userRatingCount,places.photos',
     },
     body: JSON.stringify({
       textQuery,
@@ -51,10 +65,13 @@ async function fetchInfo(place: Candidate): Promise<GoogleInfo | null> {
   if (!hit) return null;
   const photo = hit.photos?.[0];
   return {
-    photoUrl: photo
-      ? `https://places.googleapis.com/v1/${photo.name}/media?maxWidthPx=900&key=${encodeURIComponent(KEY)}`
-      : null,
+    id: hit.id ?? null,
+    photoUrl: photo ? media(photo.name) : null,
     attribution: photo?.authorAttributions?.[0]?.displayName ?? null,
+    gallery: (hit.photos ?? []).slice(0, 5).map((p) => ({
+      url: media(p.name),
+      credit: p.authorAttributions?.[0]?.displayName ?? null,
+    })),
     rating: hit.rating ?? null,
     ratingCount: hit.userRatingCount ?? null,
   };
@@ -85,10 +102,8 @@ export function prefetchGoogle(places: readonly Candidate[]) {
   for (const p of places) void lookupGoogle(p);
 }
 
-export type EnrichedPlace = Candidate & { photoCredit: string | null };
-
-/** The place with Google's photo and rating when available; otherwise unchanged. */
-export function useEnrichedPlace(place: Candidate): EnrichedPlace {
+/** Google info for a place (cached), for screens that need more than the enriched card. */
+export function useGoogleInfo(place: Candidate): GoogleInfo | null {
   const [info, setInfo] = useState<GoogleInfo | null>(() => resolved.get(place.placeId) ?? null);
   useEffect(() => {
     let active = true;
@@ -97,6 +112,14 @@ export function useEnrichedPlace(place: Candidate): EnrichedPlace {
       active = false;
     };
   }, [place]);
+  return info;
+}
+
+export type EnrichedPlace = Candidate & { photoCredit: string | null };
+
+/** The place with Google's photo and rating when available; otherwise unchanged. */
+export function useEnrichedPlace(place: Candidate): EnrichedPlace {
+  const info = useGoogleInfo(place);
   return {
     ...place,
     photoUrl: info?.photoUrl ?? place.photoUrl,
@@ -107,4 +130,55 @@ export function useEnrichedPlace(place: Candidate): EnrichedPlace {
         : 'Google'
       : null,
   };
+}
+
+export interface GoogleDetails {
+  openNow: boolean | null;
+  /** e.g. "Monday: 11:00 AM – 9:30 PM". */
+  hours: string[];
+  summary: string | null;
+  phone: string | null;
+  website: string | null;
+  type: string | null;
+}
+
+interface DetailsResponse {
+  currentOpeningHours?: { openNow?: boolean };
+  regularOpeningHours?: { weekdayDescriptions?: string[] };
+  editorialSummary?: { text?: string };
+  nationalPhoneNumber?: string;
+  websiteUri?: string;
+  primaryTypeDisplayName?: { text?: string };
+}
+
+const detailsCache = new Map<string, Promise<GoogleDetails | null>>();
+
+/** Hours, description, phone and website: fetched only when the details sheet opens. */
+export function lookupDetails(googleId: string): Promise<GoogleDetails | null> {
+  if (!GOOGLE_ENABLED) return Promise.resolve(null);
+  let p = detailsCache.get(googleId);
+  if (!p) {
+    p = fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(googleId)}`, {
+      headers: {
+        'X-Goog-Api-Key': KEY,
+        'X-Goog-FieldMask':
+          'currentOpeningHours.openNow,regularOpeningHours.weekdayDescriptions,editorialSummary,nationalPhoneNumber,websiteUri,primaryTypeDisplayName',
+      },
+    })
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const d = (await res.json()) as DetailsResponse;
+        return {
+          openNow: d.currentOpeningHours?.openNow ?? null,
+          hours: d.regularOpeningHours?.weekdayDescriptions ?? [],
+          summary: d.editorialSummary?.text ?? null,
+          phone: d.nationalPhoneNumber ?? null,
+          website: d.websiteUri ?? null,
+          type: d.primaryTypeDisplayName?.text ?? null,
+        };
+      })
+      .catch(() => null);
+    detailsCache.set(googleId, p);
+  }
+  return p;
 }

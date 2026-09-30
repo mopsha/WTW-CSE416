@@ -36,6 +36,8 @@ interface Props {
   onAnswer: (value: PreferenceValue) => void;
   /** 0 → 1 as this card is dragged away; drives the next card growing in behind it. */
   drag?: SharedValue<number>;
+  /** Opens the details sheet (Tinder-style "more info"). */
+  onInfo?: () => void;
   ref?: Ref<SwipeCardHandle>;
 }
 
@@ -44,7 +46,7 @@ interface Props {
  * screen-reader users get the three answers as accessibility actions on the card.
  * Mount with `key={place.placeId}` so every card starts centered.
  */
-export function SwipeCard({ place, onAnswer, drag, ref }: Props) {
+export function SwipeCard({ place, onAnswer, drag, onInfo, ref }: Props) {
   const { width, height } = useWindowDimensions();
   const tx = useSharedValue(0);
   const ty = useSharedValue(0);
@@ -55,6 +57,18 @@ export function SwipeCard({ place, onAnswer, drag, ref }: Props) {
   useEffect(() => {
     drag?.set(0);
   }, [drag]);
+
+  // Report the answer exactly once: when the fly-out animation ends, or from a backup timer
+  // if the animation gets cancelled (e.g. a gesture interrupted by the details sheet).
+  const committed = useSharedValue(false);
+  const commit = (value: PreferenceValue) => {
+    if (committed.get()) return;
+    committed.set(true);
+    onAnswer(value);
+  };
+  const armBackup = (value: PreferenceValue, ms: number) => {
+    setTimeout(() => commit(value), ms + 150);
+  };
 
   // .set()/.get() instead of .value: the React Compiler treats `.value =` as a mutation.
   const flyOut = (
@@ -73,11 +87,12 @@ export function SwipeCard({ place, onAnswer, drag, ref }: Props) {
     const toX =
       answer === 2 ? width * 1.6 : answer === 0 ? -width * 1.6 : fromX + vx * (duration / 1000);
     const toY = answer === 1 ? -height * 1.1 : fromY + vy * (duration / 1000) * 0.6;
+    scheduleOnRN(armBackup, answer, duration);
     drag?.set(withTiming(1, ease));
     tx.set(withTiming(toX, ease));
     ty.set(
-      withTiming(toY, ease, (finished) => {
-        if (finished) scheduleOnRN(onAnswer, answer);
+      withTiming(toY, ease, () => {
+        scheduleOnRN(commit, answer);
       }),
     );
   };
@@ -176,7 +191,7 @@ export function SwipeCard({ place, onAnswer, drag, ref }: Props) {
           if (v !== undefined) onAnswer(v as PreferenceValue);
         }}
       >
-        <PlaceCard place={place} />
+        <PlaceCard place={place} onInfo={onInfo} />
         <Animated.View style={[styles.stamp, styles.stampYes, yesStyle]} pointerEvents="none">
           <Text style={[styles.stampText, { color: colors.yes }]}>YES</Text>
         </Animated.View>

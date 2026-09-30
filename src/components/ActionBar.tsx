@@ -23,24 +23,28 @@ interface Props {
   selected?: PreferenceValue;
   onAnswer: (value: PreferenceValue) => void;
   onBack?: () => void;
+  /** Just the three answer buttons (no undo), e.g. inside the details sheet. */
+  compact?: boolean;
 }
 
 /** Tinder-style round No / Maybe / Yes buttons (with a small undo on the left). */
-export function ActionBar({ placeName, selected, onAnswer, onBack }: Props) {
+export function ActionBar({ placeName, selected, onAnswer, onBack, compact }: Props) {
   return (
     <View style={styles.row}>
-      <Pressable
-        onPress={() => {
-          haptic.tap();
-          onBack?.();
-        }}
-        disabled={!onBack}
-        accessibilityRole="button"
-        accessibilityLabel="Back to the previous card"
-        style={({ pressed }) => [styles.small, !onBack && styles.dim, pressed && styles.pressed]}
-      >
-        <Ionicons name="arrow-undo" size={20} color="#FFD23F" />
-      </Pressable>
+      {compact ? null : (
+        <Pressable
+          onPress={() => {
+            haptic.tap();
+            onBack?.();
+          }}
+          disabled={!onBack}
+          accessibilityRole="button"
+          accessibilityLabel="Back to the previous card"
+          style={({ pressed }) => [styles.small, !onBack && styles.dim, pressed && styles.pressed]}
+        >
+          <Ionicons name="arrow-undo" size={20} color="#FFD23F" />
+        </Pressable>
+      )}
       {BUTTONS.map((b) => {
         const isSelected = selected === b.value;
         return (
@@ -61,7 +65,7 @@ export function ActionBar({ placeName, selected, onAnswer, onBack }: Props) {
           </Pressable>
         );
       })}
-      <View style={styles.spacer} accessible={false} />
+      {compact ? null : <View style={styles.spacer} accessible={false} />}
     </View>
   );
 }
