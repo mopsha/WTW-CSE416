@@ -1,3 +1,4 @@
+import { useImperativeHandle, type Ref } from 'react';
 import { StyleSheet, Text, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -9,33 +10,81 @@ import Animated, {
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
+import { haptic } from '@/lib/haptics';
 import type { Candidate, PreferenceValue } from '@/lib/types';
 
 import { describePlace, PlaceCard } from './PlaceCard';
-import { colors } from './theme';
+import { colors, fonts } from './theme';
 
 const SWIPE_X = 110;
 const SWIPE_Y = 100;
 
+export interface SwipeCardHandle {
+  /** Animate the card off-screen as if swiped, then report the answer. */
+  fling: (value: PreferenceValue) => void;
+}
+
 interface Props {
   place: Candidate;
   onAnswer: (value: PreferenceValue) => void;
+  ref?: Ref<SwipeCardHandle>;
 }
 
 /**
- * Right = Yes, left = No, up = Maybe. The buttons below the card do the same thing;
+ * Right = Yes, left = No, up = Maybe. The buttons below fling the card the same way;
  * screen-reader users get the three answers as accessibility actions on the card.
  * Mount with `key={place.placeId}` so every card starts centered.
  */
-export function SwipeCard({ place, onAnswer }: Props) {
+export function SwipeCard({ place, onAnswer, ref }: Props) {
   const { width, height } = useWindowDimensions();
   const tx = useSharedValue(0);
   const ty = useSharedValue(0);
+  const armed = useSharedValue(0); // which stamp is past the threshold: 0 none, 1 yes, 2 no, 3 maybe
+
+  const flying = useSharedValue(false); // one answer per card, even on a double tap
+
+  const flyOut = (answer: PreferenceValue, fromX: number, fromY: number) => {
+    'worklet';
+    if (flying.get()) return;
+    flying.set(true);
+    // .set()/.get() instead of .value: the React Compiler treats `.value =` as a mutation.
+    tx.set(
+      withTiming(answer === 2 ? width * 1.5 : answer === 0 ? -width * 1.5 : fromX, {
+        duration: 220,
+      }),
+    );
+    ty.set(
+      withTiming(answer === 1 ? -height : fromY, { duration: 220 }, (finished) => {
+        if (finished) scheduleOnRN(onAnswer, answer);
+      }),
+    );
+  };
+
+  useImperativeHandle(ref, () => ({
+    fling: (value) => {
+      if (flying.get()) return;
+      haptic.swipe();
+      flyOut(value, 0, 0);
+    },
+  }));
 
   const pan = Gesture.Pan()
     .onUpdate((e) => {
-      tx.value = e.translationX;
-      ty.value = e.translationY;
+      tx.set(e.translationX);
+      ty.set(e.translationY);
+      const horizontal = Math.abs(e.translationX) >= Math.abs(e.translationY);
+      const now =
+        horizontal && e.translationX > SWIPE_X
+          ? 1
+          : horizontal && e.translationX < -SWIPE_X
+            ? 2
+            : !horizontal && e.translationY < -SWIPE_Y
+              ? 3
+              : 0;
+      if (now !== armed.get()) {
+        armed.set(now);
+        if (now !== 0) scheduleOnRN(haptic.tick);
+      }
     })
     .onEnd((e) => {
       const { translationX: x, translationY: y } = e;
@@ -46,34 +95,29 @@ export function SwipeCard({ place, onAnswer }: Props) {
       else if (!horizontal && y < -SWIPE_Y) value = 1;
 
       if (value === null) {
-        tx.value = withSpring(0);
-        ty.value = withSpring(0);
+        tx.set(withSpring(0));
+        ty.set(withSpring(0));
         return;
       }
-      const answer = value;
-      tx.value = withTiming(answer === 2 ? width * 1.5 : answer === 0 ? -width * 1.5 : x, {
-        duration: 180,
-      });
-      ty.value = withTiming(answer === 1 ? -height : y, { duration: 180 }, (finished) => {
-        if (finished) scheduleOnRN(onAnswer, answer);
-      });
+      scheduleOnRN(haptic.swipe);
+      flyOut(value, x, y);
     });
 
   const cardStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: tx.value },
       { translateY: ty.value },
-      { rotate: `${interpolate(tx.value, [-width, width], [-12, 12])}deg` },
+      { rotate: `${interpolate(tx.value, [-width, width], [-14, 14])}deg` },
     ],
   }));
   const yesStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(tx.value, [0, SWIPE_X], [0, 1], 'clamp'),
+    opacity: interpolate(tx.value, [20, SWIPE_X], [0, 1], 'clamp'),
   }));
   const noStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(tx.value, [-SWIPE_X, 0], [1, 0], 'clamp'),
+    opacity: interpolate(tx.value, [-SWIPE_X, -20], [1, 0], 'clamp'),
   }));
   const maybeStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(ty.value, [-SWIPE_Y, 0], [1, 0], 'clamp'),
+    opacity: interpolate(ty.value, [-SWIPE_Y, -20], [1, 0], 'clamp'),
   }));
 
   return (
@@ -98,7 +142,7 @@ export function SwipeCard({ place, onAnswer }: Props) {
           <Text style={[styles.stampText, { color: colors.yes }]}>YES</Text>
         </Animated.View>
         <Animated.View style={[styles.stamp, styles.stampNo, noStyle]} pointerEvents="none">
-          <Text style={[styles.stampText, { color: colors.no }]}>NO</Text>
+          <Text style={[styles.stampText, { color: colors.no }]}>NOPE</Text>
         </Animated.View>
         <Animated.View style={[styles.stamp, styles.stampMaybe, maybeStyle]} pointerEvents="none">
           <Text style={[styles.stampText, { color: colors.maybe }]}>MAYBE</Text>
@@ -109,18 +153,25 @@ export function SwipeCard({ place, onAnswer }: Props) {
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1 },
+  wrap: {
+    flex: 1,
+    borderRadius: 28,
+    shadowColor: '#000',
+    shadowOpacity: 0.5,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 10,
+  },
   stamp: {
     position: 'absolute',
-    top: 20,
-    paddingHorizontal: 12,
+    top: 44,
+    paddingHorizontal: 14,
     paddingVertical: 4,
-    borderWidth: 3,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255,255,255,0.85)',
+    borderWidth: 4,
+    borderRadius: 12,
   },
-  stampYes: { left: 20, borderColor: colors.yes, transform: [{ rotate: '-12deg' }] },
-  stampNo: { right: 20, borderColor: colors.no, transform: [{ rotate: '12deg' }] },
-  stampMaybe: { alignSelf: 'center', borderColor: colors.maybe },
-  stampText: { fontSize: 28, fontWeight: '800', letterSpacing: 2 },
+  stampYes: { left: 26, borderColor: colors.yes, transform: [{ rotate: '-16deg' }] },
+  stampNo: { right: 26, borderColor: colors.no, transform: [{ rotate: '16deg' }] },
+  stampMaybe: { alignSelf: 'center', top: 120, borderColor: colors.maybe },
+  stampText: { fontFamily: fonts.black, fontSize: 38, letterSpacing: 3 },
 });

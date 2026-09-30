@@ -12,13 +12,7 @@ export const mockQueries: Queries = {
   async getCandidates(pickId) {
     await delay();
     if (!mockPicks.has(pickId)) return [];
-    return MOCK_PLACES.map(({ placeId, name, photoUrl, priceLevel, rating }) => ({
-      placeId,
-      name,
-      photoUrl,
-      priceLevel,
-      rating,
-    }));
+    return MOCK_PLACES.map((p) => ({ ...p }));
   },
   async getMyPreferences(pickId) {
     await delay();

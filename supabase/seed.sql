@@ -75,6 +75,31 @@ select
   jsonb_build_object('source', 'seed.sql', 'address', address)
 from seed_places;
 
+-- Demo branch: cuisine label + an openly licensed Wikimedia Commons photo of that cuisine
+-- (not of the venue) per place. Credits: docs/demo-photo-credits.md.
+create temporary table seed_photos (n integer primary key, cuisine text, photo_url text);
+insert into seed_photos values
+  (1, 'Vietnamese', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/9/99/Ph%E1%BB%9F_b%C3%B2%2C_C%E1%BA%A7u_Gi%E1%BA%A5y%2C_H%C3%A0_N%E1%BB%99i.jpg/960px-Ph%E1%BB%9F_b%C3%B2%2C_C%E1%BA%A7u_Gi%E1%BA%A5y%2C_H%C3%A0_N%E1%BB%99i.jpg'),
+  (2, 'Seafood shack', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/6/60/Lobster_Roll_at_the_Lobster_Claw%2C_Bar_Harbor.jpg/960px-Lobster_Roll_at_the_Lobster_Claw%2C_Bar_Harbor.jpg'),
+  (3, 'Bubble tea', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/4/40/Thai_Iced_Bubble_Tea_-_Sonoma_Pho_-_Stierch_-_2019.jpg/960px-Thai_Iced_Bubble_Tea_-_Sonoma_Pho_-_Stierch_-_2019.jpg'),
+  (4, 'Diner & brunch', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/4/43/NY_breakfast_02.jpg/960px-NY_breakfast_02.jpg'),
+  (5, 'Café & brunch', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d6/Cappuccino_with_latte_art_on_Coffee_Right_in_Brno%2C_Brno-City_District.jpg/960px-Cappuccino_with_latte_art_on_Coffee_Right_in_Brno%2C_Brno-City_District.jpg'),
+  (6, 'German gastropub', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b9/Wiener_Schnitzel_at_restaurant_West_Side_Story.jpg/960px-Wiener_Schnitzel_at_restaurant_West_Side_Story.jpg'),
+  (7, 'Modern Italian', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/6/65/Pork_tagliatelle_pasta_dish_at_restaurant_in_Rome%2C_Italy.jpg/960px-Pork_tagliatelle_pasta_dish_at_restaurant_in_Rome%2C_Italy.jpg'),
+  (8, 'Cheese & sandwiches', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d3/Grilled_cheese_sandwich_with_roasted_tomato_soup.jpg/960px-Grilled_cheese_sandwich_with_roasted_tomato_soup.jpg'),
+  (9, 'Tea room', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/0/03/Devonshire_tea.jpg/960px-Devonshire_tea.jpg'),
+  (10, 'French bistro', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a3/Steak_frites_at_The_Bar_at_MacArthur_Place_in_Sonoma_-_Sarah_Stierch.jpg/960px-Steak_frites_at_The_Bar_at_MacArthur_Place_in_Sonoma_-_Sarah_Stierch.jpg'),
+  (11, 'Classic American', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1b/Roasted_Chicken_Dinner_Plate%2C_Broccoli%2C_Demi_Glace.jpg/960px-Roasted_Chicken_Dinner_Plate%2C_Broccoli%2C_Demi_Glace.jpg'),
+  (12, 'New American', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ae/Risotto_de_gambas%2C_restaurant_Danieli_%28Vienne%2C_Autriche%29.jpg/960px-Risotto_de_gambas%2C_restaurant_Danieli_%28Vienne%2C_Autriche%29.jpg'),
+  (13, 'Italian', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d4/Margherita_Originale.JPG/960px-Margherita_Originale.JPG'),
+  (14, 'Brunch & coffee', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6c/Avocado_toast_with_sesame_seeds.jpg/960px-Avocado_toast_with_sesame_seeds.jpg'),
+  (15, 'Healthy café', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/8/80/A%C3%A7a%C3%AD_na_tigela_-_Acai_bowl.jpg/960px-A%C3%A7a%C3%AD_na_tigela_-_Acai_bowl.jpg'),
+  (16, 'Mexican', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4e/Tacos_on_a_plate.jpg/960px-Tacos_on_a_plate.jpg'),
+  (17, 'Gastropub', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5a/Cheeseburger_with_fries_-_Massachusetts.jpg/960px-Cheeseburger_with_fries_-_Massachusetts.jpg'),
+  (18, 'Italian', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/9/93/Spaghetti_alla_Carbonara.jpg/960px-Spaghetti_alla_Carbonara.jpg'),
+  (19, 'Italian', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/4/47/Pasta%2C_Syburg.jpg/960px-Pasta%2C_Syburg.jpg'),
+  (20, 'Seafood', 'https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d7/Cousins_Maine_Lobster_-_SF_Bay_Area_-_June_2023_-_Sarah_Stierch_03.jpg/960px-Cousins_Maine_Lobster_-_SF_Bay_Area_-_June_2023_-_Sarah_Stierch_03.jpg');
+
 -- ---------------------------------------------------------------------------
 -- Demo Pick, hosted by Ava (bot), already swiping.
 -- ---------------------------------------------------------------------------
@@ -99,16 +124,20 @@ select
   p.id,
   jsonb_build_object(
     'name', p.name,
-    'photoUrl', 'https://picsum.photos/seed/wtw-' || lpad(s.n::text, 2, '0') || '/800/600',
+    'photoUrl', ph.photo_url,
+    'cuisine', ph.cuisine,
+    'address', s.address,
     'priceLevel', s.price_level,
     'rating', null,
     'lat', p.lat,
     'lng', p.lng
   )
 from seed_places s
-join public.places p on p.id = 'seed-place-' || lpad(s.n::text, 2, '0');
+join public.places p on p.id = 'seed-place-' || lpad(s.n::text, 2, '0')
+join seed_photos ph on ph.n = s.n;
 
 drop table seed_places;
+drop table seed_photos;
 
 -- Bots' answers (0 = No, 1 = Maybe, 2 = Yes), index i = place i. Same as Mike's
 -- OTHER_PARTICIPANT_ANSWERS. Bots have "finished" swiping.
