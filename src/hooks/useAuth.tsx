@@ -16,8 +16,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let active = true;
     let unsubscribe = () => {};
-    auth
-      .getSession()
+    // If the backend is unreachable, refreshing a stored session can hang for a long time.
+    // Don't sit on a blank screen: after 4 s treat it as signed out (the listener below
+    // still updates us if the session resolves later).
+    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000));
+    Promise.race([auth.getSession(), timeout])
       .then((session) => active && setState({ session, loading: false }))
       // Misconfigured env (no Supabase URL): fall through to sign-in, which shows the error.
       .catch(() => active && setState({ session: null, loading: false }));
