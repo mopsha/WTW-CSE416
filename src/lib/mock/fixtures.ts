@@ -223,9 +223,13 @@ export const MOCK_PLACES: readonly MockPlace[] = RAW.map(
   }),
 );
 
-/** Three other (pretend) participants' answers, one per place, deterministic so demos repeat. */
+/**
+ * Three other (pretend) participants' answers, one per place (0 No, 1 Maybe, 2 Yes).
+ * DEMO: all three say Yes only to Tiger Lily Café (#15), so it is always the clear winner
+ * however you swipe. Keep in sync with the bot answers in supabase/seed.sql.
+ */
 export const OTHER_PARTICIPANT_ANSWERS: readonly (readonly PreferenceValue[])[] = [
-  [2, 2, 1, 0, 1, 2, 0, 2, 2, 1, 2, 0, 1, 1, 2, 1, 0, 1, 2, 1],
-  [1, 2, 2, 1, 0, 2, 1, 2, 1, 0, 2, 1, 1, 0, 2, 2, 0, 1, 1, 2],
-  [2, 1, 1, 0, 1, 2, 2, 1, 2, 1, 1, 0, 2, 1, 2, 1, 1, 0, 1, 1],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0],
 ];
