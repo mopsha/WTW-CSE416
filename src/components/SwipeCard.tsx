@@ -1,12 +1,14 @@
-import { useImperativeHandle, type Ref } from 'react';
+import { useEffect, useImperativeHandle, type Ref } from 'react';
 import { StyleSheet, Text, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
+  Easing,
   interpolate,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
   withTiming,
+  type SharedValue,
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
@@ -16,8 +18,13 @@ import type { Candidate, PreferenceValue } from '@/lib/types';
 import { describePlace, PlaceCard } from './PlaceCard';
 import { colors, fonts } from './theme';
 
-const SWIPE_X = 110;
+/** Drag distance that commits an answer. */
+const SWIPE_X = 100;
 const SWIPE_Y = 100;
+/** A fast flick commits even when it's short (like Tinder). */
+const FLICK_V = 700;
+const FLICK_MIN = 30;
+const SNAP_BACK = { damping: 16, stiffness: 190, mass: 0.9 };
 
 export interface SwipeCardHandle {
   /** Animate the card off-screen as if swiped, then report the answer. */
@@ -27,6 +34,8 @@ export interface SwipeCardHandle {
 interface Props {
   place: Candidate;
   onAnswer: (value: PreferenceValue) => void;
+  /** 0 → 1 as this card is dragged away; drives the next card growing in behind it. */
+  drag?: SharedValue<number>;
   ref?: Ref<SwipeCardHandle>;
 }
 
@@ -35,26 +44,39 @@ interface Props {
  * screen-reader users get the three answers as accessibility actions on the card.
  * Mount with `key={place.placeId}` so every card starts centered.
  */
-export function SwipeCard({ place, onAnswer, ref }: Props) {
+export function SwipeCard({ place, onAnswer, drag, ref }: Props) {
   const { width, height } = useWindowDimensions();
   const tx = useSharedValue(0);
   const ty = useSharedValue(0);
   const armed = useSharedValue(0); // which stamp is past the threshold: 0 none, 1 yes, 2 no, 3 maybe
-
   const flying = useSharedValue(false); // one answer per card, even on a double tap
 
-  const flyOut = (answer: PreferenceValue, fromX: number, fromY: number) => {
+  // A fresh top card: the card behind it starts small again.
+  useEffect(() => {
+    drag?.set(0);
+  }, [drag]);
+
+  // .set()/.get() instead of .value: the React Compiler treats `.value =` as a mutation.
+  const flyOut = (
+    answer: PreferenceValue,
+    fromX: number,
+    fromY: number,
+    vx: number,
+    vy: number,
+  ) => {
     'worklet';
     if (flying.get()) return;
     flying.set(true);
-    // .set()/.get() instead of .value: the React Compiler treats `.value =` as a mutation.
-    tx.set(
-      withTiming(answer === 2 ? width * 1.5 : answer === 0 ? -width * 1.5 : fromX, {
-        duration: 220,
-      }),
-    );
+    const speed = Math.hypot(vx, vy);
+    const duration = Math.max(160, Math.min(300, 300 - speed / 12));
+    const ease = { duration, easing: Easing.out(Easing.cubic) };
+    const toX =
+      answer === 2 ? width * 1.6 : answer === 0 ? -width * 1.6 : fromX + vx * (duration / 1000);
+    const toY = answer === 1 ? -height * 1.1 : fromY + vy * (duration / 1000) * 0.6;
+    drag?.set(withTiming(1, ease));
+    tx.set(withTiming(toX, ease));
     ty.set(
-      withTiming(answer === 1 ? -height : fromY, { duration: 220 }, (finished) => {
+      withTiming(toY, ease, (finished) => {
         if (finished) scheduleOnRN(onAnswer, answer);
       }),
     );
@@ -64,14 +86,19 @@ export function SwipeCard({ place, onAnswer, ref }: Props) {
     fling: (value) => {
       if (flying.get()) return;
       haptic.swipe();
-      flyOut(value, 0, 0);
+      // Buttons get a little "throw" so they feel like a swipe, not a teleport.
+      flyOut(value, 0, 0, value === 2 ? 900 : value === 0 ? -900 : 0, value === 1 ? -900 : 60);
     },
   }));
 
   const pan = Gesture.Pan()
     .onUpdate((e) => {
+      if (flying.get()) return;
       tx.set(e.translationX);
       ty.set(e.translationY);
+      drag?.set(
+        Math.min(1, Math.max(Math.abs(e.translationX) / SWIPE_X, -e.translationY / SWIPE_Y, 0)),
+      );
       const horizontal = Math.abs(e.translationX) >= Math.abs(e.translationY);
       const now =
         horizontal && e.translationX > SWIPE_X
@@ -87,37 +114,49 @@ export function SwipeCard({ place, onAnswer, ref }: Props) {
       }
     })
     .onEnd((e) => {
-      const { translationX: x, translationY: y } = e;
+      if (flying.get()) return;
+      const { translationX: x, translationY: y, velocityX: vx, velocityY: vy } = e;
       const horizontal = Math.abs(x) >= Math.abs(y);
       let value: PreferenceValue | null = null;
-      if (horizontal && x > SWIPE_X) value = 2;
-      else if (horizontal && x < -SWIPE_X) value = 0;
-      else if (!horizontal && y < -SWIPE_Y) value = 1;
+      if (horizontal && (x > SWIPE_X || (vx > FLICK_V && x > FLICK_MIN))) value = 2;
+      else if (horizontal && (x < -SWIPE_X || (vx < -FLICK_V && x < -FLICK_MIN))) value = 0;
+      else if (!horizontal && (y < -SWIPE_Y || (vy < -FLICK_V && y < -FLICK_MIN))) value = 1;
 
       if (value === null) {
-        tx.set(withSpring(0));
-        ty.set(withSpring(0));
+        tx.set(withSpring(0, SNAP_BACK));
+        ty.set(withSpring(0, SNAP_BACK));
+        drag?.set(withSpring(0, SNAP_BACK));
+        armed.set(0);
         return;
       }
       scheduleOnRN(haptic.swipe);
-      flyOut(value, x, y);
+      flyOut(value, x, y, vx, vy);
     });
 
   const cardStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: tx.value },
       { translateY: ty.value },
-      { rotate: `${interpolate(tx.value, [-width, width], [-14, 14])}deg` },
+      { rotate: `${interpolate(tx.value, [-width, 0, width], [-16, 0, 16])}deg` },
     ],
   }));
   const yesStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(tx.value, [20, SWIPE_X], [0, 1], 'clamp'),
+    opacity: interpolate(tx.value, [15, SWIPE_X * 0.9], [0, 1], 'clamp'),
+    transform: [
+      { rotate: '-16deg' },
+      { scale: interpolate(tx.value, [15, SWIPE_X], [1.3, 1], 'clamp') },
+    ],
   }));
   const noStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(tx.value, [-SWIPE_X, -20], [1, 0], 'clamp'),
+    opacity: interpolate(tx.value, [-SWIPE_X * 0.9, -15], [1, 0], 'clamp'),
+    transform: [
+      { rotate: '16deg' },
+      { scale: interpolate(tx.value, [-SWIPE_X, -15], [1, 1.3], 'clamp') },
+    ],
   }));
   const maybeStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(ty.value, [-SWIPE_Y, -20], [1, 0], 'clamp'),
+    opacity: interpolate(ty.value, [-SWIPE_Y * 0.9, -15], [1, 0], 'clamp'),
+    transform: [{ scale: interpolate(ty.value, [-SWIPE_Y, -15], [1, 1.3], 'clamp') }],
   }));
 
   return (
@@ -170,8 +209,8 @@ const styles = StyleSheet.create({
     borderWidth: 4,
     borderRadius: 12,
   },
-  stampYes: { left: 26, borderColor: colors.yes, transform: [{ rotate: '-16deg' }] },
-  stampNo: { right: 26, borderColor: colors.no, transform: [{ rotate: '16deg' }] },
+  stampYes: { left: 26, borderColor: colors.yes },
+  stampNo: { right: 26, borderColor: colors.no },
   stampMaybe: { alignSelf: 'center', top: 120, borderColor: colors.maybe },
   stampText: { fontFamily: fonts.black, fontSize: 38, letterSpacing: 3 },
 });

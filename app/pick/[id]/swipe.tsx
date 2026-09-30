@@ -3,7 +3,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeInDown, ZoomIn } from 'react-native-reanimated';
+import Animated, {
+  FadeInDown,
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  ZoomIn,
+} from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ActionBar } from '@/components/ActionBar';
@@ -73,6 +79,15 @@ export default function SwipeScreen() {
   const [index, setIndex] = useState(0);
   const [attempt, setAttempt] = useState(0);
   const card = useRef<SwipeCardHandle>(null);
+  // 0 → 1 as the top card is dragged away: the card behind grows and brightens (Tinder-style).
+  const drag = useSharedValue(0);
+  const nextStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(drag.value, [0, 1], [0.6, 1]),
+    transform: [
+      { scale: interpolate(drag.value, [0, 1], [0.93, 1]) },
+      { translateY: interpolate(drag.value, [0, 1], [16, 0]) },
+    ],
+  }));
   const notified = useRef(false);
 
   useEffect(() => {
@@ -259,11 +274,21 @@ export default function SwipeScreen() {
         <>
           <View style={styles.deck}>
             {next ? (
-              <View style={styles.nextCard} pointerEvents="none" accessible={false}>
+              <Animated.View
+                style={[styles.nextCard, nextStyle]}
+                pointerEvents="none"
+                accessible={false}
+              >
                 <PlaceCard place={next} />
-              </View>
+              </Animated.View>
             ) : null}
-            <SwipeCard ref={card} key={current.placeId} place={current} onAnswer={answer} />
+            <SwipeCard
+              ref={card}
+              key={current.placeId}
+              place={current}
+              onAnswer={answer}
+              drag={drag}
+            />
           </View>
           <ActionBar
             placeName={current.name}
@@ -362,8 +387,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    transform: [{ scale: 0.94 }, { translateY: 18 }],
-    opacity: 0.55,
   },
   done: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 18, paddingHorizontal: 10 },
   bigEmoji: { fontSize: 72 },

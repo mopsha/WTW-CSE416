@@ -60,6 +60,9 @@ async function fetchInfo(place: Candidate): Promise<GoogleInfo | null> {
   };
 }
 
+/** Finished lookups, so a card mounts with the right photo instead of flashing the fallback. */
+const resolved = new Map<string, GoogleInfo | null>();
+
 /** One lookup per place per app session (in memory only). */
 export function lookupGoogle(place: Candidate): Promise<GoogleInfo | null> {
   if (!GOOGLE_ENABLED) return Promise.resolve(null);
@@ -67,6 +70,7 @@ export function lookupGoogle(place: Candidate): Promise<GoogleInfo | null> {
   if (!p) {
     p = fetchInfo(place)
       .then((info) => {
+        resolved.set(place.placeId, info);
         if (info?.photoUrl) void Image.prefetch(info.photoUrl).catch(() => false);
         return info;
       })
@@ -85,7 +89,7 @@ export type EnrichedPlace = Candidate & { photoCredit: string | null };
 
 /** The place with Google's photo and rating when available; otherwise unchanged. */
 export function useEnrichedPlace(place: Candidate): EnrichedPlace {
-  const [info, setInfo] = useState<GoogleInfo | null>(null);
+  const [info, setInfo] = useState<GoogleInfo | null>(() => resolved.get(place.placeId) ?? null);
   useEffect(() => {
     let active = true;
     lookupGoogle(place).then((i) => active && setInfo(i));
