@@ -1,6 +1,7 @@
 // A fake `fetch` for our Edge Function. It mirrors Josh's contract (docs/api-integration.md):
 // same routes, status codes, error codes and response shapes, returned as real Response
 // objects, so src/lib/api.ts runs the exact same parsing and error handling in both modes.
+import { validateCreatePick, type CreatePickInput } from '@shared/domain/createPick.ts';
 import { answerFromDb, clearWinner, rankCandidates } from '@shared/domain/ranking.ts';
 
 import { MOCK_FAIL_RATE } from '../config';
@@ -65,6 +66,26 @@ function rank(pick: MockPick) {
   };
 }
 
+/** POST /picks: a new draft Pick hosted by me. The mock deck is always the 20 fixture places. */
+function createPick(body: unknown): Response {
+  if (body === undefined) return fail(400, 'INVALID_JSON', 'Request body must be valid JSON');
+  const problems = validateCreatePick(body);
+  if (problems.length > 0) {
+    return fail(400, 'INVALID_INPUT', problems.map((p) => p.message).join(' '));
+  }
+  const input = body as CreatePickInput;
+  const id = `mock-${Date.now().toString(36)}`;
+  mockPicks.set(id, {
+    summary: { id, state: 'draft', category: input.category, deadlineAt: input.deadlineAt },
+    outcome: { state: 'draft', hostId: MOCK_USER_ID, winnerPlaceId: null, decidedBy: null },
+    myPreferences: new Map(),
+    ranking: [],
+    settings: input,
+    createdAt: Date.now(),
+  });
+  return json(201, { pickId: id, state: 'draft' });
+}
+
 function readBody(init: RequestInit): unknown {
   try {
     return JSON.parse(typeof init.body === 'string' ? init.body : '');
@@ -81,7 +102,8 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   if (method === 'GET' && path === '/health') return json(200, { status: 'ok' });
 
   const match = /^\/picks\/([^/]+)\/(swipes|rank)$/.exec(path);
-  if (method !== 'POST' || !match) return fail(404, 'NOT_FOUND', 'Route not found');
+  const isCreate = path === '/picks';
+  if (method !== 'POST' || (!match && !isCreate)) return fail(404, 'NOT_FOUND', 'Route not found');
 
   const headers = (init.headers ?? {}) as Record<string, string>;
   if (headers.Authorization !== `Bearer ${MOCK_ACCESS_TOKEN}`) {
@@ -90,6 +112,9 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   if (MOCK_FAIL_RATE > 0 && Math.random() < MOCK_FAIL_RATE) {
     return fail(503, 'UNAVAILABLE', 'WTW is having trouble right now (mock failure).');
   }
+
+  if (isCreate) return createPick(readBody(init));
+  if (!match) return fail(404, 'NOT_FOUND', 'Route not found');
 
   const [, rawId = '', action] = match;
   const pick = mockPicks.get(decodeURIComponent(rawId));

@@ -18,6 +18,16 @@ Base URL: `<SUPABASE_URL>/functions/v1/api`.
   `{ kind: "vote", finalists: [{ placeId, rank }] }` (includes ties beyond three).
   Scores and other scoring internals stay server-side.
 
+- `POST /picks` (**proposed by Mike, Alan to confirm/implement**): Bearer user access token; body
+  `{ "category": "food" | "activities", "center": { "lat", "lng" }, "radiusM": 3219, "poolSize": 20,
+  "deadlineAt": "<ISO 8601>" | null, "closeThreshold": 100 }`.
+  Validate with `validateCreatePick` from `_shared/domain/createPick.ts` (same limits as the
+  `picks` table checks; pool size 5–30; deadline 5 min – 7 days ahead) and return
+  400 `INVALID_INPUT` on any problem. Creates a `draft` Pick with the caller as host and first
+  participant, fills `pick_candidates` with up to `poolSize` places from the provider, and
+  returns 201 `{ "pickId": "...", "state": "draft" }`. The app's mock (`src/lib/mock/api.ts`)
+  implements exactly this.
+
 Errors: `{ "error": { "code": "...", "message": "..." } }`.
 400 invalid input, 401 invalid/missing token, 403 forbidden, 404 missing resource,
 409 wrong state/concurrent change, 500 unexpected failure, 503 unconfigured backend.

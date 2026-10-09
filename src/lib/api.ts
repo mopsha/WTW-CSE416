@@ -3,7 +3,9 @@
 import { getAccessToken } from './auth';
 import { API_BASE_URL, USE_MOCK } from './config';
 import { MOCK_API_BASE_URL, mockFetch } from './mock/api';
-import type { PreferenceValue, RankDecision, RankPosition } from './types';
+import type { CreatePickInput } from '@shared/domain/createPick.ts';
+
+import type { PickState, PreferenceValue, RankDecision, RankPosition } from './types';
 
 /** Error codes the app itself produces; server codes pass through as-is. */
 export type ClientErrorCode = 'network_error' | 'not_signed_in' | `http_${number}`;
@@ -50,6 +52,15 @@ export interface RankResponse {
   /** Top three, in order. */
   results: RankPosition[];
   decision: RankDecision;
+}
+
+/**
+ * POST /picks (proposed, see docs/api-integration.md). The caller becomes host and
+ * first participant; the server fills the candidate pool. 201 on success.
+ */
+export interface CreatePickResponse {
+  pickId: string;
+  state: PickState;
 }
 
 export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOptions) {
@@ -102,6 +113,9 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
 
   return {
     health: () => request<StatusResponse>('GET', '/health', { auth: false }),
+    /** Validate with validateCreatePick first; the server rejects bad input with 400 INVALID_INPUT. */
+    createPick: (input: CreatePickInput) =>
+      request<CreatePickResponse>('POST', '/picks', { body: input }),
     submitSwipe: (pickId: string, placeId: string, value: PreferenceValue) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/swipes`, { body: { placeId, value } }),
     /** Host only: closes swiping and ranks. Others get 403 FORBIDDEN. */
