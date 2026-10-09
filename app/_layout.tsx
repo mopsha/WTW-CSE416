@@ -63,6 +63,7 @@ function RootStack() {
         </Stack.Protected>
         <Stack.Protected guard={!!session}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="pick/new" options={{ headerShown: false }} />
           <Stack.Screen name="pick/[id]/swipe" options={{ title: 'Swipe' }} />
           <Stack.Screen name="pick/[id]/results" options={{ title: 'Results' }} />
         </Stack.Protected>

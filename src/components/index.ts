@@ -4,6 +4,7 @@
 export { Avatar, AvatarStack } from './Avatar';
 export { Button, type ButtonProps } from './Button';
 export { Card } from './Card';
+export { Chips, type ChipOption } from './Chips';
 export { EmptyState } from './EmptyState';
 export { ErrorState } from './ErrorState';
 export { ProgressBar } from './ProgressBar';

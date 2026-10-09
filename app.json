@@ -34,7 +34,13 @@
         }
       ],
       "expo-secure-store",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "WTW uses your location to center a Pick on where you are."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
