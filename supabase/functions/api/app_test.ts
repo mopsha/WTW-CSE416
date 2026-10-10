@@ -2,6 +2,8 @@ import { createApp } from './app.ts';
 import { ApiError } from '../_shared/api/errors.ts';
 import type { HeartbeatStore } from '../_shared/api/heartbeat.ts';
 import type { LifecycleStore } from '../_shared/api/lifecycle.ts';
+import type { ClosingStore } from '../_shared/api/closing.ts';
+import type { VotingStore } from '../_shared/api/voting.ts';
 import type { PoolBuilder } from '../_shared/places/pool.ts';
 
 const store: HeartbeatStore = {
@@ -33,6 +35,19 @@ const poolBuilder: PoolBuilder = {
     throw new Error('Unexpected pool build');
   },
 };
+const closingStore: ClosingStore & VotingStore = {
+  loadForClose: async () => null,
+  applyClose: async () => {
+    throw new Error('Unexpected write');
+  },
+  loadForVote: async () => null,
+  castVote: async () => {
+    throw new Error('Unexpected write');
+  },
+  applyVoteClose: async () => {
+    throw new Error('Unexpected write');
+  },
+};
 function equal(actual: unknown, expected: unknown) {
   if (JSON.stringify(actual) !== JSON.stringify(expected))
     throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
@@ -42,6 +57,7 @@ Deno.test('public health and uniform 404', async () => {
     store,
     lifecycleStore,
     poolBuilder,
+    closingStore,
     getUser: async () => {
       throw new Error('Auth must not run');
     },
@@ -56,6 +72,7 @@ Deno.test('authentication failures are JSON 401', async () => {
     store,
     lifecycleStore,
     poolBuilder,
+    closingStore,
     getUser: async () => {
       throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
     },
@@ -65,17 +82,27 @@ Deno.test('authentication failures are JSON 401', async () => {
   equal(await result.json(), { error: { code: 'UNAUTHENTICATED', message: 'Sign in' } });
 });
 Deno.test('invalid JSON and missing Pick', async () => {
-  const app = createApp({ store, lifecycleStore, poolBuilder, getUser: async () => ({ id: 'host' }) });
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async () => ({ id: 'host' }),
+  });
   equal((await app.request('/picks/p/swipes', { method: 'POST', body: '{' })).status, 400);
   equal((await app.request('/picks/p/rank', { method: 'POST' })).status, 404);
   equal((await app.request('/picks/p/refresh', { method: 'POST', body: '{' })).status, 400);
   equal((await app.request('/picks/p', { method: 'GET' })).status, 404);
+  equal((await app.request('/picks/p/close', { method: 'POST' })).status, 404);
+  equal((await app.request('/picks/p/vote', { method: 'POST', body: '{' })).status, 400);
+  equal((await app.request('/picks/p/close-vote', { method: 'POST' })).status, 404);
 });
 Deno.test('preflight does not require authentication', async () => {
   const app = createApp({
     store,
     lifecycleStore,
     poolBuilder,
+    closingStore,
     getUser: async () => {
       throw new Error('Unexpected auth');
     },
@@ -89,7 +116,7 @@ Deno.test('preflight does not require authentication', async () => {
 
 Deno.test('Supabase mount retains health and JSON errors', async () => {
   const app = createApp(
-    { store, lifecycleStore, poolBuilder, getUser: async () => ({ id: 'host' }) },
+    { store, lifecycleStore, poolBuilder, closingStore, getUser: async () => ({ id: 'host' }) },
     '/api',
   );
   equal(await (await app.request('/api/health')).json(), { status: 'ok' });
@@ -102,6 +129,7 @@ Deno.test('POST /picks creates a draft Pick', async () => {
   const app = createApp({
     store,
     poolBuilder,
+    closingStore,
     getUser: async () => ({ id: 'host' }),
     lifecycleStore: { ...lifecycleStore, createPick: async () => ({ id: 'new-pick' }) },
   });
@@ -118,6 +146,7 @@ Deno.test('POST /picks/:id/start rejects a non-host with 403', async () => {
   const app = createApp({
     store,
     poolBuilder,
+    closingStore,
     getUser: async () => ({ id: 'guest' }),
     lifecycleStore: {
       ...lifecycleStore,
@@ -144,4 +173,98 @@ Deno.test('POST /picks/:id/start rejects a non-host with 403', async () => {
   });
   const result = await app.request('/picks/pick/start', { method: 'POST' });
   equal(result.status, 403);
+});
+
+Deno.test('POST /picks/:id/close rejects a non-host with 403', async () => {
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    getUser: async () => ({ id: 'guest' }),
+    closingStore: {
+      ...closingStore,
+      loadForClose: async () => ({
+        id: 'pick',
+        hostId: 'host',
+        state: 'swiping',
+        center: { lat: 0, lng: 0 },
+        closeThreshold: 100,
+        deadlineAt: null,
+        participantIds: ['host', 'guest'],
+        candidates: [],
+        preferences: [],
+        version: '1',
+        winnerPlaceId: null,
+        finalistIds: [],
+      }),
+    },
+  });
+  const result = await app.request('/picks/pick/close', { method: 'POST' });
+  equal(result.status, 403);
+});
+
+Deno.test('POST /picks/:id/vote rejects a non-finalist with 400', async () => {
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    getUser: async () => ({ id: 'host' }),
+    closingStore: {
+      ...closingStore,
+      loadForVote: async () => ({
+        id: 'pick',
+        hostId: 'host',
+        state: 'final_vote',
+        participantIds: ['host', 'guest'],
+        finalists: [{ placeId: 'a', rank: 1 }],
+        ballots: [],
+      }),
+    },
+  });
+  const result = await app.request('/picks/pick/vote', {
+    method: 'POST',
+    body: JSON.stringify({ placeId: 'not-a-finalist' }),
+    headers: { 'Content-Type': 'application/json' },
+  });
+  equal(result.status, 400);
+});
+
+Deno.test('a swipe triggers the auto-close check without failing the swipe', async () => {
+  const closeChecks: string[] = [];
+  const app = createApp({
+    poolBuilder,
+    lifecycleStore,
+    getUser: async () => ({ id: 'host' }),
+    store: {
+      loadPick: async () => ({
+        id: 'pick',
+        hostId: 'host',
+        state: 'swiping',
+        center: { lat: 0, lng: 0 },
+        participantIds: ['host'],
+        candidates: [{ placeId: 'a', lat: 0, lng: 0 }],
+        preferences: [],
+        version: '1',
+      }),
+      upsertSwipe: async () => {},
+      saveRanking: async () => {
+        throw new Error('Unexpected write');
+      },
+    },
+    closingStore: {
+      ...closingStore,
+      loadForClose: async () => {
+        closeChecks.push('checked');
+        return null; // not due; closePick('system', ...) returns null, no throw
+      },
+    },
+  });
+  const result = await app.request('/picks/pick/swipes', {
+    method: 'POST',
+    body: JSON.stringify({ placeId: 'a', value: 2 }),
+    headers: { 'Content-Type': 'application/json' },
+  });
+  equal(result.status, 200);
+  equal(await result.json(), { status: 'ok' });
+  equal(closeChecks, ['checked']);
 });

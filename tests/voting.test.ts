@@ -1,0 +1,112 @@
+import { castVote, closeVote, closeVoteByDeadline, type VoteSnapshot, type VotingStore } from '@shared/api/voting.ts';
+
+const snapshot = (overrides: Partial<VoteSnapshot> = {}): VoteSnapshot => ({
+  id: 'pick',
+  hostId: 'host',
+  state: 'final_vote',
+  participantIds: ['host', 'guest', 'third'],
+  finalists: [
+    { placeId: 'a', rank: 1 },
+    { placeId: 'b', rank: 2 },
+    { placeId: 'c', rank: 3 },
+  ],
+  ballots: [],
+  ...overrides,
+});
+
+function fixture(pick: VoteSnapshot | null = snapshot()) {
+  return {
+    loadForVote: jest.fn().mockResolvedValue(pick),
+    castVote: jest.fn().mockResolvedValue(undefined),
+    applyVoteClose: jest.fn().mockResolvedValue(undefined),
+  } satisfies VotingStore;
+}
+
+describe('castVote', () => {
+  test('rejects a vote for a non-finalist', async () => {
+    const store = fixture();
+    await expect(castVote(store, 'pick', 'host', { placeId: 'z' })).rejects.toMatchObject({
+      status: 400,
+    });
+    expect(store.castVote).not.toHaveBeenCalled();
+  });
+  test('rejects a non-participant', async () => {
+    const store = fixture();
+    await expect(castVote(store, 'pick', 'outsider', { placeId: 'a' })).rejects.toMatchObject({
+      status: 403,
+    });
+  });
+  test('rejects voting outside final_vote', async () => {
+    const store = fixture(snapshot({ state: 'swiping' }));
+    await expect(castVote(store, 'pick', 'host', { placeId: 'a' })).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+  test('records the ballot and settles once everyone has voted', async () => {
+    const store = fixture();
+    store.loadForVote
+      .mockResolvedValueOnce(
+        snapshot({ ballots: [{ userId: 'host', placeId: 'a' }, { userId: 'guest', placeId: 'b' }] }),
+      )
+      .mockResolvedValueOnce(
+        snapshot({
+          ballots: [
+            { userId: 'host', placeId: 'a' },
+            { userId: 'guest', placeId: 'b' },
+            { userId: 'third', placeId: 'b' },
+          ],
+        }),
+      );
+    await castVote(store, 'pick', 'third', { placeId: 'b' });
+    expect(store.castVote).toHaveBeenCalledWith('pick', 'third', 'b');
+    expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'b');
+  });
+  test('does not settle while ballots are still outstanding', async () => {
+    const store = fixture();
+    store.loadForVote
+      .mockResolvedValueOnce(snapshot())
+      .mockResolvedValueOnce(snapshot({ ballots: [{ userId: 'host', placeId: 'a' }] }));
+    await castVote(store, 'pick', 'host', { placeId: 'a' });
+    expect(store.applyVoteClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('closeVote', () => {
+  test('only the host can force a tally', async () => {
+    const store = fixture();
+    await expect(closeVote(store, 'pick', 'guest')).rejects.toMatchObject({ status: 403 });
+    expect(store.applyVoteClose).not.toHaveBeenCalled();
+  });
+  test('tallies whatever ballots exist, most votes winning', async () => {
+    const store = fixture(snapshot({ ballots: [{ userId: 'host', placeId: 'b' }] }));
+    await closeVote(store, 'pick', 'host');
+    expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'b');
+  });
+  test('no ballots at all: the top-ranked finalist wins', async () => {
+    const store = fixture(snapshot({ ballots: [] }));
+    await closeVote(store, 'pick', 'host');
+    expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'a');
+  });
+  test('is idempotent once already completed', async () => {
+    const store = fixture(snapshot({ state: 'completed' }));
+    await expect(closeVote(store, 'pick', 'host')).resolves.toEqual({ status: 'ok' });
+    expect(store.applyVoteClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('closeVoteByDeadline', () => {
+  test('settles a Pick still in final_vote', async () => {
+    const store = fixture(snapshot({ ballots: [{ userId: 'host', placeId: 'c' }] }));
+    await closeVoteByDeadline(store, 'pick');
+    expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'c');
+  });
+  test('does nothing for a missing or already-settled Pick', async () => {
+    const store = fixture(null);
+    await closeVoteByDeadline(store, 'pick');
+    expect(store.applyVoteClose).not.toHaveBeenCalled();
+
+    const settled = fixture(snapshot({ state: 'completed' }));
+    await closeVoteByDeadline(settled, 'pick');
+    expect(settled.applyVoteClose).not.toHaveBeenCalled();
+  });
+});

@@ -2,6 +2,7 @@ import { createApp } from './app.ts';
 import { getUser } from './auth.ts';
 import { createStore } from './store.ts';
 import { createLifecycleStore } from './lifecycleStore.ts';
+import { createClosingStore } from './closingStore.ts';
 import { createPoolBuilder } from '../_shared/places/pool.ts';
 import { MockProvider } from '../_shared/places/MockProvider.ts';
 
@@ -12,7 +13,13 @@ const poolBuilder = createPoolBuilder(new MockProvider());
 
 // Supabase forwards /functions/v1/api/health to the runtime as /api/health.
 const app = createApp(
-  { getUser, store: createStore(), lifecycleStore: createLifecycleStore(), poolBuilder },
+  {
+    getUser,
+    store: createStore(),
+    lifecycleStore: createLifecycleStore(),
+    closingStore: createClosingStore(),
+    poolBuilder,
+  },
   '/api',
 );
 Deno.serve(app.fetch);
