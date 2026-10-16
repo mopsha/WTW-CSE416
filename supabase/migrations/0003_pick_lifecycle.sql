@@ -7,7 +7,7 @@
 -- rules re-checked here even though the TypeScript layer already checked them.
 
 alter table public.picks
-  add column pool_size integer not null default 20 check (pool_size between 10 and 30);
+  add column pool_size integer not null default 20 check (pool_size between 5 and 30);
 comment on column public.picks.pool_size is 'How many candidates start/refresh should pull from the pool builder.';
 
 -- ---------------------------------------------------------------------------

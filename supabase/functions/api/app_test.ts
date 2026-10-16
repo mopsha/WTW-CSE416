@@ -135,11 +135,11 @@ Deno.test('POST /picks creates a draft Pick', async () => {
   });
   const result = await app.request('/picks', {
     method: 'POST',
-    body: JSON.stringify({ category: 'food', center_lat: 1, center_lng: 2, radius_m: 500 }),
+    body: JSON.stringify({ category: 'food', center: { lat: 1, lng: 2 }, radiusM: 500 }),
     headers: { 'Content-Type': 'application/json' },
   });
   equal(result.status, 201);
-  equal(await result.json(), { id: 'new-pick', state: 'draft' });
+  equal(await result.json(), { pickId: 'new-pick', state: 'draft' });
 });
 
 Deno.test('POST /picks/:id/start rejects a non-host with 403', async () => {
