@@ -55,22 +55,30 @@ function poolOf(candidates: Candidate[]): PoolBuilder {
 }
 
 describe('parseCreatePick', () => {
+  const now = new Date('2026-10-16T00:00:00Z').getTime();
   test.each([
     null,
     [],
     {},
-    { category: 'nope', center_lat: 0, center_lng: 0, radius_m: 100 },
-    { category: 'food', center_lat: 91, center_lng: 0, radius_m: 100 },
-    { category: 'food', center_lat: 0, center_lng: 0, radius_m: 0 },
-    { category: 'food', center_lat: 0, center_lng: 0, radius_m: 100, pool_size: 9 },
-    { category: 'food', center_lat: 0, center_lng: 0, radius_m: 100, close_threshold: 0 },
-    { category: 'food', center_lat: 0, center_lng: 0, radius_m: 100, deadline_at: 'not-a-date' },
+    { category: 'nope', center: { lat: 0, lng: 0 }, radiusM: 1000 },
+    { category: 'food', center: { lat: 91, lng: 0 }, radiusM: 1000 },
+    { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 100 },
+    { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000, poolSize: 4 },
+    { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000, closeThreshold: 0 },
+    { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000, deadlineAt: 'not-a-date' },
+    { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000, deadlineAt: new Date(now + 60_000).toISOString() },
+    {
+      category: 'food',
+      center: { lat: 0, lng: 0 },
+      radiusM: 1000,
+      deadlineAt: new Date(now + 8 * 24 * 60 * 60_000).toISOString(),
+    },
   ])('rejects malformed input %j', (body) => {
-    expect(() => parseCreatePick(body)).toThrow();
+    expect(() => parseCreatePick(body, now)).toThrow();
   });
   test('fills in defaults', () => {
     expect(
-      parseCreatePick({ category: 'activities', center_lat: 1, center_lng: 2, radius_m: 500 }),
+      parseCreatePick({ category: 'activities', center: { lat: 1, lng: 2 }, radiusM: 500 }, now),
     ).toEqual({
       category: 'activities',
       center: { lat: 1, lng: 2 },
@@ -82,15 +90,14 @@ describe('parseCreatePick', () => {
   });
 });
 
-test('createPick passes the parsed input straight through', async () => {
+test('createPick passes the parsed input straight through and returns pickId', async () => {
   const store = fixture();
   const result = await createPick(store, 'host', {
     category: 'food',
-    center_lat: 1,
-    center_lng: 2,
-    radius_m: 500,
+    center: { lat: 1, lng: 2 },
+    radiusM: 500,
   });
-  expect(result).toEqual({ id: 'new-pick', state: 'draft' });
+  expect(result).toEqual({ pickId: 'new-pick', state: 'draft' });
   expect(store.createPick).toHaveBeenCalledWith(
     'host',
     expect.objectContaining({ category: 'food', radiusM: 500 }),

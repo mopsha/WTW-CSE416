@@ -9,11 +9,20 @@ import type { LatLng } from '../domain/geo.ts';
 import type { PoolBuilder } from '../places/pool.ts';
 import type { Category } from '../places/types.ts';
 
+// Limits mirror Mike's validateCreatePick (_shared/domain/createPick.ts, PR #11, not yet
+// merged): once that lands, replace this parser with his shared validateCreatePick so the
+// app and API check the same function instead of two copies of the same limits.
 const CATEGORIES: readonly Category[] = ['food', 'activities'];
-export const MIN_POOL_SIZE = 10;
+export const MIN_RADIUS_M = 200;
+export const MAX_RADIUS_M = 50_000;
+export const MIN_POOL_SIZE = 5;
 export const MAX_POOL_SIZE = 30;
 export const DEFAULT_POOL_SIZE = 20;
+export const MIN_CLOSE_THRESHOLD = 1;
+export const MAX_CLOSE_THRESHOLD = 100;
 export const DEFAULT_CLOSE_THRESHOLD = 100;
+export const MIN_DEADLINE_LEAD_MS = 5 * 60_000;
+export const MAX_DEADLINE_LEAD_MS = 7 * 24 * 60 * 60_000;
 export const MIN_PARTICIPANTS_TO_START = 2;
 
 export interface CreatePickInput {
@@ -61,7 +70,12 @@ export interface LifecycleStore {
   cancel(pickId: string, userId: string): Promise<void>;
 }
 
-export function parseCreatePick(body: unknown): CreatePickInput {
+/**
+ * Validate POST /picks's body: { category, center: {lat, lng}, radiusM, poolSize,
+ * deadlineAt, closeThreshold } — Mike's contract (docs/api-integration.md), not the
+ * snake_case placeholder this file started with. `now` is injectable for tests.
+ */
+export function parseCreatePick(body: unknown, now: number = Date.now()): CreatePickInput {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     throw new ApiError(400, 'INVALID_INPUT', 'Expected a Pick object');
   }
@@ -69,28 +83,33 @@ export function parseCreatePick(body: unknown): CreatePickInput {
   if (typeof b.category !== 'string' || !CATEGORIES.includes(b.category as Category)) {
     throw new ApiError(400, 'INVALID_INPUT', 'category must be food or activities');
   }
-  const centerLat = b.center_lat;
-  const centerLng = b.center_lng;
+  const center = b.center as Partial<LatLng> | undefined;
   if (
-    typeof centerLat !== 'number' ||
-    !Number.isFinite(centerLat) ||
-    Math.abs(centerLat) > 90 ||
-    typeof centerLng !== 'number' ||
-    !Number.isFinite(centerLng) ||
-    Math.abs(centerLng) > 180
+    typeof center !== 'object' ||
+    center === null ||
+    typeof center.lat !== 'number' ||
+    !Number.isFinite(center.lat) ||
+    Math.abs(center.lat) > 90 ||
+    typeof center.lng !== 'number' ||
+    !Number.isFinite(center.lng) ||
+    Math.abs(center.lng) > 180
   ) {
-    throw new ApiError(400, 'INVALID_INPUT', 'center_lat/center_lng must be valid coordinates');
+    throw new ApiError(400, 'INVALID_INPUT', 'center.lat/center.lng must be valid coordinates');
   }
-  const radiusM = b.radius_m;
+  const radiusM = b.radiusM;
   if (
     typeof radiusM !== 'number' ||
     !Number.isInteger(radiusM) ||
-    radiusM <= 0 ||
-    radiusM > 50_000
+    radiusM < MIN_RADIUS_M ||
+    radiusM > MAX_RADIUS_M
   ) {
-    throw new ApiError(400, 'INVALID_INPUT', 'radius_m must be between 1 and 50000');
+    throw new ApiError(
+      400,
+      'INVALID_INPUT',
+      `radiusM must be between ${MIN_RADIUS_M} and ${MAX_RADIUS_M}`,
+    );
   }
-  const poolSize = b.pool_size ?? DEFAULT_POOL_SIZE;
+  const poolSize = b.poolSize ?? DEFAULT_POOL_SIZE;
   if (
     typeof poolSize !== 'number' ||
     !Number.isInteger(poolSize) ||
@@ -100,28 +119,39 @@ export function parseCreatePick(body: unknown): CreatePickInput {
     throw new ApiError(
       400,
       'INVALID_INPUT',
-      `pool_size must be between ${MIN_POOL_SIZE} and ${MAX_POOL_SIZE}`,
+      `poolSize must be between ${MIN_POOL_SIZE} and ${MAX_POOL_SIZE}`,
     );
   }
-  const closeThreshold = b.close_threshold ?? DEFAULT_CLOSE_THRESHOLD;
+  const closeThreshold = b.closeThreshold ?? DEFAULT_CLOSE_THRESHOLD;
   if (
     typeof closeThreshold !== 'number' ||
     !Number.isInteger(closeThreshold) ||
-    closeThreshold < 1 ||
-    closeThreshold > 100
+    closeThreshold < MIN_CLOSE_THRESHOLD ||
+    closeThreshold > MAX_CLOSE_THRESHOLD
   ) {
-    throw new ApiError(400, 'INVALID_INPUT', 'close_threshold must be between 1 and 100');
+    throw new ApiError(
+      400,
+      'INVALID_INPUT',
+      `closeThreshold must be between ${MIN_CLOSE_THRESHOLD} and ${MAX_CLOSE_THRESHOLD}`,
+    );
   }
   let deadlineAt: string | null = null;
-  if (b.deadline_at !== undefined && b.deadline_at !== null) {
-    if (typeof b.deadline_at !== 'string' || Number.isNaN(Date.parse(b.deadline_at))) {
-      throw new ApiError(400, 'INVALID_INPUT', 'deadline_at must be an ISO date string');
+  if (b.deadlineAt !== undefined && b.deadlineAt !== null) {
+    const at = typeof b.deadlineAt === 'string' ? Date.parse(b.deadlineAt) : NaN;
+    if (Number.isNaN(at)) {
+      throw new ApiError(400, 'INVALID_INPUT', 'deadlineAt must be a date, or null');
     }
-    deadlineAt = new Date(b.deadline_at).toISOString();
+    if (at - now < MIN_DEADLINE_LEAD_MS) {
+      throw new ApiError(400, 'INVALID_INPUT', 'deadlineAt must give people at least 5 minutes');
+    }
+    if (at - now > MAX_DEADLINE_LEAD_MS) {
+      throw new ApiError(400, 'INVALID_INPUT', 'deadlineAt must be within a week');
+    }
+    deadlineAt = new Date(at).toISOString();
   }
   return {
     category: b.category as Category,
-    center: { lat: centerLat, lng: centerLng },
+    center: { lat: center.lat, lng: center.lng },
     radiusM,
     poolSize,
     closeThreshold,
@@ -145,7 +175,7 @@ export function parseRefreshBody(body: unknown): boolean {
 export async function createPick(store: LifecycleStore, hostId: string, body: unknown) {
   const input = parseCreatePick(body);
   const { id } = await store.createPick(hostId, input);
-  return { id, state: 'draft' as const };
+  return { pickId: id, state: 'draft' as const };
 }
 
 async function loadAsParticipant(store: LifecycleStore, pickId: string, userId: string) {
