@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(24);
+select plan(25);
 
 -- Fixtures: a host, a second participant, and an outsider.
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
@@ -56,6 +56,11 @@ insert into pick_participants (pick_id, user_id) values ((select id from new_pic
 select throws_ok(
   $$select pick_start((select id::text from new_pick), '31111111-1111-4111-8111-111111111111', '[]'::jsonb)$$,
   'PT400', null, 'start rejects an empty candidate list');
+
+select lives_ok(
+  $$select pick_refresh((select id::text from new_pick), '31111111-1111-4111-8111-111111111111',
+      '[{"placeId":"lc-old","snapshot":{"name":"Draft Pool","lat":9,"lng":9}}]'::jsonb)$$,
+  'host can refresh a draft before starting (bug #15 setup)');
 
 select lives_ok(
   $$select pick_start((select id::text from new_pick), '31111111-1111-4111-8111-111111111111',

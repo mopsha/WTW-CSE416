@@ -133,20 +133,26 @@ begin
     raise exception using errcode = 'PT400', message = 'At least one candidate is required to start';
   end if;
 
+  -- Keys are the API's CandidateSnapshot shape ("placeId", camelCase), so the
+  -- record column must be quoted: jsonb_to_recordset matches keys exactly.
   insert into public.places (id, name, category, lat, lng, raw)
-  select c.place_id, coalesce(c.snapshot ->> 'name', c.place_id), v_pick.category,
+  select c."placeId", coalesce(c.snapshot ->> 'name', c."placeId"), v_pick.category,
          (c.snapshot ->> 'lat')::double precision, (c.snapshot ->> 'lng')::double precision, c.snapshot
-  from jsonb_to_recordset(p_candidates) as c(place_id text, snapshot jsonb)
+  from jsonb_to_recordset(p_candidates) as c("placeId" text, snapshot jsonb)
   on conflict (id) do update set
     name = excluded.name, lat = excluded.lat, lng = excluded.lng, raw = excluded.raw, updated_at = now();
 
+  -- A draft may already hold a pool from an earlier refresh; replace it.
+  delete from public.pick_candidates where pick_id = v_id;
+
   insert into public.pick_candidates (pick_id, place_id, snapshot)
-  select v_id, c.place_id, c.snapshot
-  from jsonb_to_recordset(p_candidates) as c(place_id text, snapshot jsonb);
+  select v_id, c."placeId", c.snapshot
+  from jsonb_to_recordset(p_candidates) as c("placeId" text, snapshot jsonb);
 
   update public.picks set state = 'swiping' where id = v_id;
 exception
-  when check_violation or not_null_violation then
+  when check_violation or not_null_violation or unique_violation or cardinality_violation
+    or invalid_text_representation then
     raise exception using errcode = 'PT400', message = 'Invalid candidate data';
 end;
 $$;
@@ -180,19 +186,20 @@ begin
   end if;
 
   insert into public.places (id, name, category, lat, lng, raw)
-  select c.place_id, coalesce(c.snapshot ->> 'name', c.place_id), v_pick.category,
+  select c."placeId", coalesce(c.snapshot ->> 'name', c."placeId"), v_pick.category,
          (c.snapshot ->> 'lat')::double precision, (c.snapshot ->> 'lng')::double precision, c.snapshot
-  from jsonb_to_recordset(p_candidates) as c(place_id text, snapshot jsonb)
+  from jsonb_to_recordset(p_candidates) as c("placeId" text, snapshot jsonb)
   on conflict (id) do update set
     name = excluded.name, lat = excluded.lat, lng = excluded.lng, raw = excluded.raw, updated_at = now();
 
   delete from public.pick_candidates where pick_id = v_id;
 
   insert into public.pick_candidates (pick_id, place_id, snapshot)
-  select v_id, c.place_id, c.snapshot
-  from jsonb_to_recordset(p_candidates) as c(place_id text, snapshot jsonb);
+  select v_id, c."placeId", c.snapshot
+  from jsonb_to_recordset(p_candidates) as c("placeId" text, snapshot jsonb);
 exception
-  when check_violation or not_null_violation then
+  when check_violation or not_null_violation or unique_violation or cardinality_violation
+    or invalid_text_representation then
     raise exception using errcode = 'PT400', message = 'Invalid candidate data';
 end;
 $$;
