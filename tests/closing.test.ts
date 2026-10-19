@@ -1,5 +1,10 @@
 import { ApiError } from '@shared/api/errors.ts';
-import { closePick, type ClosingSnapshot, type ClosingStore } from '@shared/api/closing.ts';
+import {
+  closePick,
+  VOTE_WINDOW_MS,
+  type ClosingSnapshot,
+  type ClosingStore,
+} from '@shared/api/closing.ts';
 
 const snapshot = (overrides: Partial<ClosingSnapshot> = {}): ClosingSnapshot => ({
   id: 'pick',
@@ -47,6 +52,25 @@ test('a host close works even when nothing is due yet', async () => {
     'host',
     expect.objectContaining({ state: 'final_vote' }),
   );
+});
+
+test('entering final_vote sets a fresh vote deadline, independent of the swipe deadline', async () => {
+  const now = new Date('2026-10-19T12:00:00.000Z');
+  // The swipe deadline has already passed (that is why the sweep closed it).
+  const store = fixture(snapshot({ deadlineAt: '2026-10-19T11:59:00.000Z' }));
+  const result = await closePick(store, 'pick', 'system', null, now);
+  expect(result?.state).toBe('final_vote');
+  expect(store.applyClose.mock.calls[0]![4]).toMatchObject({
+    state: 'final_vote',
+    voteDeadlineAt: new Date(now.getTime() + VOTE_WINDOW_MS).toISOString(),
+  });
+});
+
+test('a clear winner records no vote deadline', async () => {
+  const preferences = ['host', 'guest'].map((userId) => ({ userId, placeId: 'a', value: 2 as const }));
+  const store = fixture(snapshot({ candidates: [{ placeId: 'a', lat: 0, lng: 0 }], preferences }));
+  await closePick(store, 'pick', 'host', 'host');
+  expect(store.applyClose.mock.calls[0]![4]).toMatchObject({ state: 'completed', voteDeadlineAt: null });
 });
 
 test('a system close is a no-op until the threshold or deadline is actually due', async () => {

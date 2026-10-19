@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(17);
+select plan(22);
 
 -- Fixtures: a host and two more participants.
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
@@ -82,14 +82,34 @@ select pick_start((select id::text from pick2), '41111111-1111-4111-8111-1111111
 create temporary table payload2 on commit drop as
   select jsonb_build_object(
     'state', 'final_vote', 'winnerPlaceId', null,
+    'voteDeadlineAt', to_jsonb(now() + interval '30 minutes'),
     'rows', jsonb_build_array(
       jsonb_build_object('place_id', 'fv-a', 'rank', 1, 'score', 55.0, 'finalist', true),
       jsonb_build_object('place_id', 'fv-b', 'rank', 2, 'score', 50.0, 'finalist', true)
     )
   ) as p;
-select pick_close_apply(
-  (select id::text from pick2), 'system', null, '1', (select p from payload2));
+create temporary table snap2 on commit drop as
+  select pick_load_for_close((select id::text from pick2)) as s;
+
+select throws_ok(
+  $$select pick_close_apply((select id::text from pick2), 'system', null, (select s ->> 'version' from snap2),
+      (select p - 'voteDeadlineAt' from payload2))$$,
+  'PT400', null, 'entering final_vote without a vote deadline is rejected');
+select throws_ok(
+  $$select pick_close_apply((select id::text from pick2), 'system', null, (select s ->> 'version' from snap2),
+      jsonb_set((select p from payload2), '{voteDeadlineAt}', '"not-a-date"'))$$,
+  'PT400', null, 'a malformed vote deadline is a 400, not a 500');
+select lives_ok(
+  $$select pick_close_apply((select id::text from pick2), 'system', null, (select s ->> 'version' from snap2),
+      (select p from payload2))$$,
+  'a system close enters final_vote with a vote deadline');
 select is((select state::text from picks where id = (select id from pick2)), 'final_vote', 'a system close enters final_vote');
+select ok(
+  (select vote_deadline_at > now() and deadline_at is null from picks where id = (select id from pick2)),
+  'vote_deadline_at is set separately from the swipe deadline');
+select is(
+  (select pick_load_for_vote((select id::text from pick2)) ->> 'voteDeadlineAt') is not null,
+  true, 'load_for_vote returns the vote deadline');
 
 select throws_ok(
   $$select pick_cast_vote((select id::text from pick2), '44444444-4444-4444-8444-444444444444', 'fv-a')$$,

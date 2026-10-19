@@ -117,6 +117,10 @@ the center → place id, via the stored `rank`). RPCs: `pick_load_for_close`, `p
 `pick_load_for_vote`, `pick_cast_vote`, `pick_close_vote_apply`
 (`supabase/migrations/0004_pick_close_and_vote.sql`), plus the new `final_votes` table (one
 changeable ballot per participant, readable only by its own author).
+Entering `final_vote` sets `picks.vote_deadline_at` (now + `VOTE_WINDOW_MS`, 30 min), separate
+from the swipe deadline `deadline_at`, which has usually passed by then. The deadline sweep should
+select `state = 'final_vote' and vote_deadline_at <= now()` and call `closeVoteByDeadline`, which
+rechecks the deadline itself.
 
 ```mermaid
 stateDiagram-v2

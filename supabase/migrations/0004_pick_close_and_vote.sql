@@ -5,6 +5,11 @@
 -- service_role, SQLSTATE PT400 / PT403 / PT404 / PT409, a row lock before
 -- any read-then-write.
 
+-- The swipe deadline (deadline_at) has usually passed by the time a vote starts,
+-- so the vote gets its own deadline, set when the Pick enters final_vote.
+alter table public.picks add column vote_deadline_at timestamptz;
+comment on column public.picks.vote_deadline_at is 'When the final vote closes. Set by pick_close_apply on entering final_vote; null otherwise.';
+
 create table public.final_votes (
   pick_id uuid not null,
   user_id uuid not null,
@@ -91,6 +96,7 @@ declare
   v_pick public.picks%rowtype;
   v_target text := p_ranking ->> 'state';
   v_winner text := p_ranking ->> 'winnerPlaceId';
+  v_vote_deadline timestamptz;
   v_rows jsonb := p_ranking -> 'rows';
   v_candidates integer;
   v_valid boolean;
@@ -133,6 +139,17 @@ begin
     raise exception using errcode = 'PT400', message = 'Ranking does not match the candidate pool';
   end if;
 
+  if v_target = 'final_vote' then
+    begin
+      v_vote_deadline := (p_ranking ->> 'voteDeadlineAt')::timestamptz;
+    exception when invalid_datetime_format or datetime_field_overflow then
+      v_vote_deadline := null;
+    end;
+    if v_vote_deadline is null or v_vote_deadline <= now() then
+      raise exception using errcode = 'PT400', message = 'A final vote needs a future voteDeadlineAt';
+    end if;
+  end if;
+
   update public.picks set state = 'ranking' where id = v_id;
 
   delete from public.ranking_results where pick_id = v_id;
@@ -142,11 +159,13 @@ begin
 
   if v_target = 'completed' then
     update public.picks
-    set state = 'completed', winner_place_id = v_winner, decided_at = now(), decided_by = 'clear_winner'
+    set state = 'completed', winner_place_id = v_winner, decided_at = now(), decided_by = 'clear_winner',
+        vote_deadline_at = null
     where id = v_id;
   else
     update public.picks
-    set state = 'final_vote', winner_place_id = null, decided_at = null, decided_by = null
+    set state = 'final_vote', winner_place_id = null, decided_at = null, decided_by = null,
+        vote_deadline_at = v_vote_deadline
     where id = v_id;
   end if;
 end;
@@ -169,6 +188,7 @@ begin
       'id', p.id,
       'hostId', p.host_id,
       'state', p.state,
+      'voteDeadlineAt', p.vote_deadline_at,
       'participantIds', coalesce((
         select jsonb_agg(pp.user_id order by pp.user_id)
         from public.pick_participants pp where pp.pick_id = p.id

@@ -218,6 +218,7 @@ Deno.test('POST /picks/:id/vote rejects a non-finalist with 400', async () => {
         participantIds: ['host', 'guest'],
         finalists: [{ placeId: 'a', rank: 1 }],
         ballots: [],
+        voteDeadlineAt: null,
       }),
     },
   });

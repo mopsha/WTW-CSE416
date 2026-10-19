@@ -12,6 +12,8 @@ export interface VoteSnapshot {
   participantIds: string[];
   finalists: VoteFinalist[];
   ballots: { userId: string; placeId: string }[];
+  /** picks.vote_deadline_at, set by closePick when the Pick enters final_vote. */
+  voteDeadlineAt: string | null;
 }
 
 /** Database adapter; mutations must recheck authorization/state atomically. */
@@ -77,9 +79,17 @@ export async function closeVote(store: VotingStore, pickId: string, userId: stri
   return { status: 'ok' as const };
 }
 
-/** Called by Josh's deadline sweep once a Pick's vote deadline passes. */
-export async function closeVoteByDeadline(store: VotingStore, pickId: string) {
+/**
+ * Called by Josh's deadline sweep. Rechecks vote_deadline_at itself, so a sweep
+ * that picks up a Pick early (or a stale query) is a no-op, never an early close.
+ */
+export async function closeVoteByDeadline(
+  store: VotingStore,
+  pickId: string,
+  now: Date = new Date(),
+) {
   const pick = await store.loadForVote(pickId);
-  if (!pick || pick.state !== 'final_vote') return;
+  if (!pick || pick.state !== 'final_vote' || !pick.voteDeadlineAt) return;
+  if (now.getTime() < Date.parse(pick.voteDeadlineAt)) return;
   await settleVote(store, pickId, pick);
 }

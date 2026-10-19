@@ -24,6 +24,7 @@ test('uses the SQL argument names for every closing operation', async () => {
     rows: [{ place_id: 'a', rank: 1, score: 100, finalist: false }],
     state: 'completed' as const,
     winnerPlaceId: 'a',
+    voteDeadlineAt: null,
   };
   await store.applyClose('pick', '7', 'host', 'host', ranking);
   expect(mockRpc).toHaveBeenLastCalledWith('pick_close_apply', {

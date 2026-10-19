@@ -22,10 +22,19 @@ export interface ClosingSnapshot {
   finalistIds: string[];
 }
 
+/**
+ * How long the final vote stays open once swiping closes. Stored as
+ * picks.vote_deadline_at, separate from the swipe deadline (picks.deadline_at),
+ * which has usually already passed by the time a vote starts.
+ */
+export const VOTE_WINDOW_MS = 30 * 60_000;
+
 export interface RankingWrite {
   rows: { place_id: string; rank: number; score: number; finalist: boolean }[];
   state: 'completed' | 'final_vote';
   winnerPlaceId: string | null;
+  /** Set only when state is final_vote. */
+  voteDeadlineAt: string | null;
 }
 
 export interface CloseResult {
@@ -69,6 +78,7 @@ export async function closePick(
   pickId: string,
   actor: 'host' | 'system',
   actorUserId: string | null,
+  now: Date = new Date(),
 ): Promise<CloseResult | null> {
   const pick = await store.loadForClose(pickId);
   if (!pick) {
@@ -96,7 +106,7 @@ export async function closePick(
       n: pick.participantIds.length,
       thresholdPct: pick.closeThreshold,
       deadlineAt: pick.deadlineAt ? new Date(pick.deadlineAt) : null,
-      now: new Date(),
+      now,
     });
     if (!due) return null;
   }
@@ -127,6 +137,8 @@ export async function closePick(
       })),
       state: targetState,
       winnerPlaceId: decision.kind === 'winner' ? decision.winner.placeId : null,
+      voteDeadlineAt:
+        targetState === 'final_vote' ? new Date(now.getTime() + VOTE_WINDOW_MS).toISOString() : null,
     });
   } catch (error) {
     if (error instanceof ApiError && error.status === 409) {

@@ -11,8 +11,11 @@ const snapshot = (overrides: Partial<VoteSnapshot> = {}): VoteSnapshot => ({
     { placeId: 'c', rank: 3 },
   ],
   ballots: [],
+  voteDeadlineAt: '2026-10-19T12:30:00.000Z',
   ...overrides,
 });
+const beforeDeadline = new Date('2026-10-19T12:00:00.000Z');
+const afterDeadline = new Date('2026-10-19T12:30:00.000Z');
 
 function fixture(pick: VoteSnapshot | null = snapshot()) {
   return {
@@ -95,18 +98,28 @@ describe('closeVote', () => {
 });
 
 describe('closeVoteByDeadline', () => {
-  test('settles a Pick still in final_vote', async () => {
+  test('settles a Pick in final_vote once its vote deadline has passed', async () => {
     const store = fixture(snapshot({ ballots: [{ userId: 'host', placeId: 'c' }] }));
-    await closeVoteByDeadline(store, 'pick');
+    await closeVoteByDeadline(store, 'pick', afterDeadline);
     expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'c');
+  });
+  test('is a no-op before the vote deadline, even if the swipe deadline is long gone', async () => {
+    const store = fixture(snapshot({ ballots: [{ userId: 'host', placeId: 'c' }] }));
+    await closeVoteByDeadline(store, 'pick', beforeDeadline);
+    expect(store.applyVoteClose).not.toHaveBeenCalled();
+  });
+  test('is a no-op when no vote deadline was recorded', async () => {
+    const store = fixture(snapshot({ voteDeadlineAt: null }));
+    await closeVoteByDeadline(store, 'pick', afterDeadline);
+    expect(store.applyVoteClose).not.toHaveBeenCalled();
   });
   test('does nothing for a missing or already-settled Pick', async () => {
     const store = fixture(null);
-    await closeVoteByDeadline(store, 'pick');
+    await closeVoteByDeadline(store, 'pick', afterDeadline);
     expect(store.applyVoteClose).not.toHaveBeenCalled();
 
     const settled = fixture(snapshot({ state: 'completed' }));
-    await closeVoteByDeadline(settled, 'pick');
+    await closeVoteByDeadline(settled, 'pick', afterDeadline);
     expect(settled.applyVoteClose).not.toHaveBeenCalled();
   });
 });
