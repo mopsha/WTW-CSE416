@@ -20,6 +20,7 @@ export const colors = {
 
 /** The WTW "flame" gradient: primary buttons, progress, the logo. */
 export const flame = ['#FF3D71', '#FF7A45'] as const;
+export const flameSoft = ['#FF3D7133', '#FF7A4533'] as const;
 
 /** Loaded in app/_layout.tsx via @expo-google-fonts/poppins. */
 export const fonts = {
@@ -42,3 +43,10 @@ export const radius = { sm: 12, md: 18, lg: 24, pill: 999 } as const;
 
 /** Minimum touch target: Apple HIG 44 pt (Material 48 dp). Every tappable kit element meets it. */
 export const MIN_TARGET = 44;
+
+/** Demo group: seeded bot participants (see supabase/seed.sql) plus you. */
+export const FRIENDS = [
+  { name: 'Ava', color: '#FF7A45' },
+  { name: 'Ben', color: '#4DA3FF' },
+  { name: 'Cam', color: '#B57BFF' },
+] as const;

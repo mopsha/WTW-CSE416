@@ -5,16 +5,18 @@ import {
   Poppins_800ExtraBold,
   useFonts,
 } from '@expo-google-fonts/poppins';
-import { Stack } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
-import { colors, fonts } from '@/components/theme';
+import { colors } from '@/components/theme';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
+import { configureNotifications, onNotificationTap } from '@/lib/notify';
 
 void SplashScreen.preventAutoHideAsync();
+configureNotifications();
 
 export default function RootLayout() {
   return (
@@ -41,31 +43,38 @@ function RootStack() {
     if (ready) void SplashScreen.hideAsync();
   }, [ready]);
 
-  // Keep the splash up until the stored session is read. Rendering the guarded Stack
-  // earlier treats a signed-in user as signed out for a moment, which redirects deep
-  // links (e.g. a reload on /pick/:id/swipe) back to Home.
+  // Tapping a WTW notification opens the screen it points at (e.g. the results).
+  useEffect(() => onNotificationTap((url) => router.push(url as never)), []);
+
+  // Keep the splash up until the stored session and fonts are loaded. Rendering the
+  // guarded Stack earlier treats a signed-in user as signed out for a moment, which
+  // redirects deep links (e.g. a reload on /pick/:id/swipe) back to Home.
   if (!ready) return null;
 
+  // Every Pick screen draws its own top bar (the demo look), so the native header is off.
   return (
     <>
       <StatusBar style="light" />
       <Stack
         screenOptions={{
-          headerStyle: { backgroundColor: colors.bg },
-          headerTintColor: colors.text,
-          headerTitleStyle: { color: colors.text, fontFamily: fonts.bold },
-          headerShadowVisible: false,
+          headerShown: false,
           contentStyle: { backgroundColor: colors.bg },
+          animation: 'fade_from_bottom',
         }}
       >
         <Stack.Protected guard={!session}>
-          <Stack.Screen name="sign-in" options={{ headerShown: false }} />
+          <Stack.Screen name="sign-in" />
         </Stack.Protected>
         <Stack.Protected guard={!!session}>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="pick/new" options={{ headerShown: false }} />
-          <Stack.Screen name="pick/[id]/swipe" options={{ title: 'Swipe' }} />
-          <Stack.Screen name="pick/[id]/results" options={{ title: 'Results' }} />
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="pick/new" />
+          <Stack.Screen name="pick/[id]/index" options={{ animation: 'fade' }} />
+          <Stack.Screen name="pick/[id]/lobby" />
+          <Stack.Screen name="pick/[id]/swipe" options={{ gestureEnabled: false }} />
+          <Stack.Screen name="pick/[id]/waiting" options={{ animation: 'fade' }} />
+          <Stack.Screen name="pick/[id]/results" options={{ animation: 'fade' }} />
+          <Stack.Screen name="pick/[id]/vote" options={{ animation: 'fade' }} />
+          <Stack.Screen name="pick/[id]/winner" options={{ animation: 'fade' }} />
         </Stack.Protected>
       </Stack>
     </>

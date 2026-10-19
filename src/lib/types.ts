@@ -27,6 +27,11 @@ export interface Candidate {
   priceLevel: number | null;
   /** Provider star rating, 0–5. */
   rating: number | null;
+  /** e.g. "Vietnamese". */
+  cuisine: string | null;
+  address: string | null;
+  lat: number | null;
+  lng: number | null;
 }
 
 export interface MyPreference {
