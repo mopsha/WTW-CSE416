@@ -134,7 +134,11 @@ turns a saved swipe into an error.
 
 **The final vote.** Finalists are the top 3, plus everyone tied with #1 (or the 1–2 that exist).
 Entering `final_vote` sets `picks.vote_deadline_at` = now + 30 min (`VOTE_WINDOW_MS`), separate from
-the swipe deadline, which has usually already passed. The vote closes when everyone has voted, the
+the swipe deadline, which has usually already passed. Two columns, one meaning each: `deadline_at` is
+always the swiping deadline (never rewritten) and `vote_deadline_at` is the voting deadline (null
+outside a vote). The vote deadline is written once, by the close that leaves `swiping`; re-running a
+close cannot move it, because that write only happens from `swiping`. *The 30-minute length is a
+placeholder the team hasn't confirmed; the plan doesn't define it.* The vote closes when everyone has voted, the
 host calls close-vote, or `vote_deadline_at` passes (the sweep selects
 `state = 'final_vote' and vote_deadline_at <= now()` and calls `closeVoteByDeadline`, which rechecks
 the deadline itself). Tally: most votes wins; a tie at the top goes to the better rank (higher score →
