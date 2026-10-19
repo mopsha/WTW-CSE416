@@ -64,3 +64,44 @@ Deno.test('Supabase mount retains health and JSON errors', async () => {
   equal(missing.status, 404);
   equal(await missing.json(), { error: { code: 'NOT_FOUND', message: 'Route not found' } });
 });
+
+Deno.test('GET /picks/:id/progress: counts only, participants only', async () => {
+  const progressStore = {
+    loadProgress: async () => ({
+      state: 'swiping' as const,
+      hostId: 'host',
+      deadlineAt: null,
+      candidateCount: 2,
+      participants: [
+        {
+          userId: 'me',
+          displayName: 'Me',
+          joinedAt: '2026-10-02T00:00:01Z',
+          answered: 1,
+          voted: false,
+        },
+        {
+          userId: 'host',
+          displayName: 'Host',
+          joinedAt: '2026-10-02T00:00:00Z',
+          answered: 2,
+          voted: false,
+        },
+      ],
+    }),
+  };
+  const as = (id: string) => createApp({ store, progressStore, getUser: async () => ({ id }) });
+  const ok = await as('me').request('/picks/p/progress');
+  equal(ok.status, 200);
+  const body = await ok.json();
+  equal(body.doneCount, 1);
+  equal(
+    body.participants.map((p: { userId: string; done: boolean }) => [p.userId, p.done]),
+    [
+      ['host', true],
+      ['me', false],
+    ],
+  );
+  equal(JSON.stringify(body).includes('answered'), false);
+  equal((await as('stranger').request('/picks/p/progress')).status, 403);
+});

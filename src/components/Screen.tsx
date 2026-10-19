@@ -2,6 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import type { ReactNode } from 'react';
 import {
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -79,29 +81,36 @@ export function Screen({
 
   return (
     <SafeAreaView style={styles.safe} edges={edges}>
-      {scroll ? (
-        <ScrollView
-          contentContainerStyle={[styles.content, contentStyle]}
-          keyboardShouldPersistTaps="handled"
-          refreshControl={
-            onRefresh ? (
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                tintColor={colors.primary}
-              />
-            ) : undefined
-          }
-        >
-          {header}
-          {children}
-        </ScrollView>
-      ) : (
-        <View style={[styles.content, styles.fill, contentStyle]}>
-          {header}
-          {children}
-        </View>
-      )}
+      {/* Keeps focused inputs (e.g. Create Pick's place search) above the keyboard on iOS;
+          Android resizes the window by itself. */}
+      <KeyboardAvoidingView
+        style={styles.fill}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        {scroll ? (
+          <ScrollView
+            contentContainerStyle={[styles.content, contentStyle]}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={
+              onRefresh ? (
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={onRefresh}
+                  tintColor={colors.primary}
+                />
+              ) : undefined
+            }
+          >
+            {header}
+            {children}
+          </ScrollView>
+        ) : (
+          <View style={[styles.content, styles.fill, contentStyle]}>
+            {header}
+            {children}
+          </View>
+        )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

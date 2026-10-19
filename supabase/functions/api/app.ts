@@ -2,11 +2,13 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { ApiError, errorResponse } from '../_shared/api/errors.ts';
 import { rank, swipe, type HeartbeatStore } from '../_shared/api/heartbeat.ts';
+import { getProgress, type ProgressStore } from '../_shared/api/progress.ts';
 
 export function createApp(
   deps: {
     getUser(req: Request): Promise<{ id: string }>;
     store: HeartbeatStore;
+    progressStore?: ProgressStore;
   },
   basePath = '',
 ) {
@@ -38,6 +40,12 @@ export function createApp(
   app.post('/picks/:id/rank', async (c) => {
     const user = await deps.getUser(c.req.raw);
     return c.json(await rank(deps.store, c.req.param('id'), user.id));
+  });
+  // Live progress (counts only). The app polls this when Realtime is unavailable.
+  app.get('/picks/:id/progress', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.progressStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Progress is not available');
+    return c.json(await getProgress(deps.progressStore, c.req.param('id'), user.id));
   });
   return app;
 }

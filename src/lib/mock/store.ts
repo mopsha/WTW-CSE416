@@ -359,14 +359,17 @@ export function outcomeOf(pick: MockPick): PickOutcome {
 }
 
 export function progressOf(pick: MockPick): PickProgress {
-  const participants = pick.participants.map((p) => ({
-    userId: p.userId,
-    displayName: p.name,
-    isHost: p.userId === pick.hostId,
-    isMe: p.userId === MOCK_USER_ID,
-    done: isDone(pick, p),
-    voted: p.vote !== null,
-  }));
+  // Host first, then join order: the same order as the real GET /picks/:id/progress.
+  const participants = pick.participants
+    .map((p) => ({
+      userId: p.userId,
+      displayName: p.name,
+      isHost: p.userId === pick.hostId,
+      isMe: p.userId === MOCK_USER_ID,
+      done: isDone(pick, p),
+      voted: p.vote !== null,
+    }))
+    .sort((a, b) => Number(b.isHost) - Number(a.isHost));
   return {
     state: pick.state,
     deadlineAt: pick.deadlineAt,

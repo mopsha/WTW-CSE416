@@ -28,6 +28,31 @@ Base URL: `<SUPABASE_URL>/functions/v1/api`.
   returns 201 `{ "pickId": "...", "state": "draft" }`. The app's mock (`src/lib/mock/api.ts`)
   implements exactly this.
 
+- `GET /picks/:id/progress` (**Mike, Week 3**): Bearer user access token; participants only
+  (403 `FORBIDDEN` otherwise, 404 `PICK_NOT_FOUND`). Counts only, never answers or ballots:
+  `{ state, deadlineAt, doneCount, votedCount, total, participants: [{ userId, displayName,
+  isHost, isMe, done, voted }] }`. `done` = answered every candidate. Host first, then by join
+  time. The app polls this every 5 s when Realtime is down (`src/hooks/usePickLive.ts`).
+  Implemented in `_shared/api/progress.ts` + `api/progressStore.ts` (service-role reads).
+
+### Live updates (Mike)
+
+The app subscribes to Supabase Realtime `postgres_changes` on `picks` (`id=eq.<pick>`) and
+`pick_participants` (`pick_id=eq.<pick>`), and re-reads `GET /picks/:id/progress` on any event.
+`0005_live_progress.sql` adds both tables to the `supabase_realtime` publication and a trigger on
+`preferences` that sets `pick_participants.finished_at` when someone has answered every candidate
+(and clears it if their answers are wiped by a refresh). Realtime applies the same SELECT RLS as
+normal reads. `preferences`, `final_votes` and `ranking_results` are deliberately **not** published.
+Test: `supabase/tests/live_progress_test.sql`.
+
+### Routes the app calls that live in open PRs
+
+The app's typed client (`src/lib/api.ts`) and its mock (`src/lib/mock/api.ts`) follow these
+exactly: `GET /picks/:id`, `POST /picks/:id/start`, `/refresh` (`{ confirm }`, 409
+`CONFIRM_REQUIRED`), `/cancel` (Alan, PR #12); `POST /picks/:id/close`, `/vote` (`{ placeId }`),
+`/close-vote` (Alan, PR #13). The lobby reads the join code from `pick_join_codes`
+(`code, expires_at`, Razin) and shows a placeholder until that table exists.
+
 Errors: `{ "error": { "code": "...", "message": "..." } }`.
 400 invalid input, 401 invalid/missing token, 403 forbidden, 404 missing resource,
 409 wrong state/concurrent change, 500 unexpected failure, 503 unconfigured backend.

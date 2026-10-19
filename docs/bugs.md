@@ -1,0 +1,31 @@
+# Bug log
+
+Every problem found in run-throughs, reviews and testing. Keep it tidy: one row per bug, an
+owner, a severity and a status. **P1** blocks the MVP path, **P2** is wrong but usable,
+**P3** is polish. All P1s must be fixed before the M3 review (Wed Oct 21).
+
+When you fix one: set Status to `fixed`, fill "Fixed in" with the PR, and name the test that
+would catch it again. Maintainer: Mike.
+
+## Open
+
+| #   | Found                  | Bug                                                                                                                                                                                   | Sev | Owner | Status              | Fixed in | Test                                              |
+| --- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | ----- | ------------------- | -------- | ------------------------------------------------- |
+| 9   | Oct 19, wiring Lobby   | The Lobby has no join code on the real backend until `pick_join_codes` and `POST /join` exist; it shows "Join codes are on their way". Nobody else can join a real Pick yet.          | P1  | Razin | open                |          | Razin's join API tests                            |
+| 10  | Oct 19, wiring screens | Lobby/Start/Close/Vote call `GET /picks/:id`, `/start`, `/close`, `/vote`, which are in PRs #12/#13, not on `main`. The real backend can't run the loop until they merge.             | P1  | Alan  | open (in review)    | #12, #13 | `tests/lifecycle.test.ts`, `tests/voting.test.ts` |
+| 11  | Oct 19, mock run       | In mock mode an Activities Pick shows the 20 food places (one fixture pool).                                                                                                          | P3  | Josh  | open                |          |                                                   |
+| 12  | Oct 19, spec check     | Lobby has no Refresh button: there's no pool before Start. Refresh lives in the host menu while swiping, with the "clears everyone's answers" warning. Confirm this matches the spec. | P3  | Mike  | needs team decision |          |                                                   |
+| 13  | Oct 19, web check      | 0005 and its pgTAP test haven't been run against a real Postgres here (no Supabase CLI/Docker in this setup).                                                                         | P2  | Mike  | open                |          | `supabase test db` → `live_progress_test.sql`     |
+
+## Fixed
+
+| #   | Found                    | Bug → cause → fix                                                                                                                                                                                                                                       | Sev | Owner | Fixed in     | Test                                               |
+| --- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | ----- | ------------ | -------------------------------------------------- |
+| 1   | Oct 19, wiring Waiting   | The waiting room could never show "3 of 5 finished": nothing ever set `pick_participants.finished_at`. → Swipes only write `preferences`. → Trigger on `preferences` keeps `finished_at` in step; `GET /picks/:id/progress` counts answers server-side. | P1  | Mike  | mike/m3-loop | `live_progress_test.sql`, `tests/progress.test.ts` |
+| 2   | Oct 19, Picks list       | Draft and canceled Picks couldn't be opened, so a host who left the Lobby couldn't get back to Start. → The list only opened swiping/results. → Every row opens `/pick/[id]`, which forwards to the current step.                                       | P1  | Mike  | mike/m3-loop | `tests/lib/pickRoute.test.ts`                      |
+| 3   | Oct 19, review of PR #11 | Create Pick went back to the list instead of the Lobby. → Placeholder from Week 2. → Opens the Lobby (replacing the form).                                                                                                                              | P2  | Mike  | mike/m3-loop | manual (mock run)                                  |
+| 4   | Oct 19, swipe check      | Everyone saw the deck in the same order. → Swipe read `pick_candidates` ordered by `place_id`. → Swipe reads `GET /picks/:id` (my shuffled order + my answers).                                                                                         | P2  | Mike  | mike/m3-loop | `tests/lib/mockLoop.test.ts` (resume)              |
+| 5   | Oct 19, mock run         | A Pick that closed while you were swiping/waiting jumped past the reveal, or left you on a dead screen. → Screens didn't watch state. → `usePickRoute` + `redirectFor` move everyone; "just closed" goes to Results first.                              | P1  | Mike  | mike/m3-loop | `tests/lib/pickRoute.test.ts`                      |
+| 6   | Oct 19, web check        | Host confirms (Cancel, Close now, Refresh) did nothing on web. → React Native Web's `Alert` can't show buttons. → `confirmAction` uses `window.confirm` on web.                                                                                         | P2  | Mike  | mike/m3-loop | manual (web)                                       |
+| 7   | Oct 19, tests            | Mock mode crashed on load (`listeners` undefined). → The store seeded fixtures before its listener map was declared. → Declarations moved above the seed.                                                                                               | P1  | Mike  | mike/m3-loop | `tests/lib/mockLoop.test.ts`                       |
+| 8   | Oct 19, mock run         | Participant list said "You (you)". → Mock display name is "You". → Only append "(you)" to a real name.                                                                                                                                                  | P3  | Mike  | mike/m3-loop | manual                                             |
