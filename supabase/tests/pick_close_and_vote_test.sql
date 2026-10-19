@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(23);
+select plan(25);
 
 -- Fixtures: a host and two more participants.
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
@@ -88,6 +88,8 @@ create temporary table payload2 on commit drop as
       jsonb_build_object('place_id', 'fv-b', 'rank', 2, 'score', 50.0, 'finalist', true)
     )
   ) as p;
+-- The swipe deadline has already passed: the case where a sweep closes swiping.
+update picks set deadline_at = now() - interval '1 minute' where id = (select id from pick2);
 create temporary table snap2 on commit drop as
   select pick_load_for_close((select id::text from pick2)) as s;
 
@@ -105,11 +107,24 @@ select lives_ok(
   'a system close enters final_vote with a vote deadline');
 select is((select state::text from picks where id = (select id from pick2)), 'final_vote', 'a system close enters final_vote');
 select ok(
-  (select vote_deadline_at > now() and deadline_at is null from picks where id = (select id from pick2)),
-  'vote_deadline_at is set separately from the swipe deadline');
+  (select vote_deadline_at > now() and vote_deadline_at > deadline_at and deadline_at < now()
+   from picks where id = (select id from pick2)),
+  'the vote deadline is in the future and later than the expired swipe deadline');
 select is(
   (select pick_load_for_vote((select id::text from pick2)) ->> 'voteDeadlineAt') is not null,
   true, 'load_for_vote returns the vote deadline');
+
+-- Re-running the close (even with the current version and a later deadline) must not move it.
+create temporary table vd2 on commit drop as
+  select vote_deadline_at as v from picks where id = (select id from pick2);
+select throws_ok(
+  $$select pick_close_apply((select id::text from pick2), 'system', null,
+      (select pick_load_for_close((select id::text from pick2)) ->> 'version'),
+      jsonb_set((select p from payload2), '{voteDeadlineAt}', to_jsonb(now() + interval '2 hours')))$$,
+  'PT409', null, 're-closing a Pick already in final_vote is rejected');
+select is(
+  (select vote_deadline_at from picks where id = (select id from pick2)), (select v from vd2),
+  'the vote deadline was not extended or reset');
 
 select throws_ok(
   $$select pick_cast_vote((select id::text from pick2), '44444444-4444-4444-8444-444444444444', 'fv-a')$$,
