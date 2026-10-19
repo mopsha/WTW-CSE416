@@ -20,7 +20,33 @@ export function candidateFromSnapshot(placeId: string, snapshot: unknown): Candi
     address: str(s.address),
     lat: num(s.lat),
     lng: num(s.lng),
+    openNow: typeof s.openNow === 'boolean' ? s.openNow : null,
+    closesAt: str(s.closesAt),
   };
+}
+
+/**
+ * GET /picks/:id sends each candidate's frozen snapshot as-is. The pool builder stores the
+ * place id inside it (`placeId`, or the provider's `id`).
+ */
+export function candidateFromApi(snapshot: unknown): Candidate {
+  const s =
+    typeof snapshot === 'object' && snapshot !== null ? (snapshot as Record<string, unknown>) : {};
+  const id = typeof s.placeId === 'string' ? s.placeId : typeof s.id === 'string' ? s.id : '';
+  return candidateFromSnapshot(id, s);
+}
+
+/** "Open now · closes 10 PM" / "Closed now", or null when we don't know the hours. */
+export function openLabel(place: { openNow?: boolean | null; closesAt?: string | null }) {
+  if (place.openNow === true) {
+    if (!place.closesAt) return 'Open now';
+    const t = new Date(place.closesAt);
+    if (Number.isNaN(t.getTime())) return 'Open now';
+    const time = t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return `Open now · closes ${time}`;
+  }
+  if (place.openNow === false) return 'Closed now';
+  return null;
 }
 
 /** 2 -> "$$". */

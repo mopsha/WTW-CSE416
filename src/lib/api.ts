@@ -5,7 +5,15 @@ import { API_BASE_URL, USE_MOCK } from './config';
 import { MOCK_API_BASE_URL, mockFetch } from './mock/api';
 import type { CreatePickInput } from '@shared/domain/createPick.ts';
 
-import type { PickState, PreferenceValue, RankDecision, RankPosition } from './types';
+import { candidateFromApi } from './places';
+import type {
+  PickDetail,
+  PickProgress,
+  PickState,
+  PreferenceValue,
+  RankDecision,
+  RankPosition,
+} from './types';
 
 /** Error codes the app itself produces; server codes pass through as-is. */
 export type ClientErrorCode = 'network_error' | 'not_signed_in' | `http_${number}`;
@@ -62,6 +70,15 @@ export interface CreatePickResponse {
   pickId: string;
   state: PickState;
 }
+
+/** POST /picks/:id/close: what closePick decided. */
+export interface CloseResponse {
+  state: 'completed' | 'final_vote';
+  winnerPlaceId: string | null;
+  finalists: string[];
+}
+
+type RawPickDetail = Omit<PickDetail, 'candidates'> & { candidates: unknown[] };
 
 export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOptions) {
   async function request<T>(
@@ -120,6 +137,35 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
       request<StatusResponse>('POST', `${pickPath(pickId)}/swipes`, { body: { placeId, value } }),
     /** Host only: closes swiping and ranks. Others get 403 FORBIDDEN. */
     rankPick: (pickId: string) => request<RankResponse>('POST', `${pickPath(pickId)}/rank`),
+
+    /** The Pick, my candidates in my own shuffled order, and my answers. */
+    getPick: async (pickId: string): Promise<PickDetail> => {
+      const raw = await request<RawPickDetail>('GET', pickPath(pickId));
+      return { ...raw, candidates: (raw.candidates ?? []).map(candidateFromApi) };
+    },
+    /** Who's in and who's done (never what anyone answered). The Realtime fallback polls this. */
+    getProgress: (pickId: string) => request<PickProgress>('GET', `${pickPath(pickId)}/progress`),
+    /** Host only: draft -> swiping. Needs at least 2 participants. */
+    startPick: (pickId: string) =>
+      request<{ state: PickState; candidateCount: number }>('POST', `${pickPath(pickId)}/start`),
+    /**
+     * Host only: a new pool. After anyone has swiped the server answers 409 CONFIRM_REQUIRED
+     * unless `confirm` is true, because it clears everyone's answers.
+     */
+    refreshPick: (pickId: string, confirm = false) =>
+      request<{ candidateCount: number }>('POST', `${pickPath(pickId)}/refresh`, {
+        body: { confirm },
+      }),
+    cancelPick: (pickId: string) =>
+      request<{ state: PickState }>('POST', `${pickPath(pickId)}/cancel`),
+    /** Host only: close swiping now (rank -> clear winner or final vote). */
+    closePick: (pickId: string) => request<CloseResponse>('POST', `${pickPath(pickId)}/close`),
+    /** One changeable ballot among the finalists, while the Pick is in final_vote. */
+    vote: (pickId: string, placeId: string) =>
+      request<StatusResponse>('POST', `${pickPath(pickId)}/vote`, { body: { placeId } }),
+    /** Host only: tally now, before everyone has voted. */
+    closeVote: (pickId: string) =>
+      request<StatusResponse>('POST', `${pickPath(pickId)}/close-vote`),
   };
 }
 

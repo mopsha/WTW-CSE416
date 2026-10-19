@@ -45,8 +45,8 @@ describe('mock POST /picks', () => {
   test('creates a draft Pick I host, listed first', async () => {
     const { pickId, state } = await mockClient().createPick(input());
     expect(state).toBe('draft');
-    expect(mockPicks.get(pickId)?.outcome.hostId).toBeTruthy();
-    expect(mockPicks.get(pickId)?.settings?.poolSize).toBe(15);
+    expect(mockPicks.get(pickId)?.hostId).toBeTruthy();
+    expect(mockPicks.get(pickId)?.poolSize).toBe(15);
     const [first] = await mockQueries.listMyPicks('me');
     expect(first).toMatchObject({ id: pickId, state: 'draft', category: 'activities' });
   });

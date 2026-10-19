@@ -98,10 +98,10 @@ export default function CreatePickScreen() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      await api.createPick(input);
+      const { pickId } = await api.createPick(input);
       haptic.success();
-      // TODO(Mike, next): open the Lobby for the new Pick instead of going back to Picks.
-      router.back();
+      // Straight to the Lobby, replacing this form so Back goes to Picks.
+      router.replace({ pathname: '/pick/[id]/lobby', params: { id: pickId } });
     } catch (e) {
       setSubmitError(messageOf(e));
     } finally {

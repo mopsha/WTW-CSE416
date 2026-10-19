@@ -32,6 +32,10 @@ export interface Candidate {
   address: string | null;
   lat: number | null;
   lng: number | null;
+  /** From cached opening hours at reveal (Josh's isOpenAt); absent when unknown. */
+  openNow?: boolean | null;
+  /** ISO time it closes today, when known. */
+  closesAt?: string | null;
 }
 
 export interface MyPreference {
@@ -51,7 +55,7 @@ export interface PickOutcome {
   /** Only the host may close swiping and rank (POST /picks/:id/rank returns 403 otherwise). */
   hostId: string;
   winnerPlaceId: string | null;
-  decidedBy: 'clear_winner' | 'vote' | null;
+  decidedBy: DecidedBy | null;
 }
 
 /** A place's position in the ranking. The API never sends scores. */
@@ -65,3 +69,49 @@ export type RankDecision =
   | { kind: 'winner'; winner: RankPosition }
   /** Top three, plus anyone tied with #1 beyond that. */
   | { kind: 'vote'; finalists: RankPosition[] };
+
+/** How a Pick was decided. `tie_break` is set when a tied final vote fell to the tie-break chain. */
+export type DecidedBy = 'clear_winner' | 'vote' | 'tie_break';
+
+/** GET /picks/:id (Alan's lifecycle route): the Pick, MY candidate order and MY answers. */
+export interface PickDetail {
+  id: string;
+  state: PickState;
+  category: 'food' | 'activities';
+  center: { lat: number; lng: number };
+  radiusM: number;
+  poolSize: number;
+  deadlineAt: string | null;
+  closeThreshold: number;
+  isHost: boolean;
+  participantCount: number;
+  /** Already in this caller's per-person shuffle order. */
+  candidates: Candidate[];
+  /** placeId -> my answer. Only ever mine. */
+  myAnswers: Record<string, PreferenceValue>;
+  winnerPlaceId: string | null;
+  decidedAt: string | null;
+  decidedBy: DecidedBy | null;
+}
+
+/** One person in GET /picks/:id/progress. Says whether they're done, never what they answered. */
+export interface ParticipantProgress {
+  userId: string;
+  displayName: string;
+  isHost: boolean;
+  isMe: boolean;
+  /** Answered every candidate. */
+  done: boolean;
+  /** Has a ballot in the final vote (not which one). */
+  voted: boolean;
+}
+
+/** GET /picks/:id/progress: counts only, safe to show everyone in the Pick. */
+export interface PickProgress {
+  state: PickState;
+  deadlineAt: string | null;
+  participants: ParticipantProgress[];
+  doneCount: number;
+  votedCount: number;
+  total: number;
+}

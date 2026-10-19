@@ -1,18 +1,30 @@
-// A fake `fetch` for our Edge Function. It mirrors Josh's contract (docs/api-integration.md):
+// A fake `fetch` for our Edge Function. It mirrors the API contract (docs/api-integration.md):
 // same routes, status codes, error codes and response shapes, returned as real Response
 // objects, so src/lib/api.ts runs the exact same parsing and error handling in both modes.
 import { validateCreatePick, type CreatePickInput } from '@shared/domain/createPick.ts';
-import { answerFromDb, clearWinner, rankCandidates } from '@shared/domain/ranking.ts';
 
 import { MOCK_FAIL_RATE } from '../config';
 import type { PreferenceValue } from '../types';
 import { MOCK_ACCESS_TOKEN, MOCK_USER_ID } from './auth';
-import { DEMO_CENTER, MOCK_PLACES, OTHER_PARTICIPANT_ANSWERS } from './fixtures';
-import { mockPicks, type MockPick } from './store';
+import { MOCK_PLACES } from './fixtures';
+import {
+  createMockPick,
+  decide,
+  emit,
+  finalistsOf,
+  maybeAutoClose,
+  maybeSettleVote,
+  mockPicks,
+  progressOf,
+  scheduleBots,
+  settleVote,
+  touch,
+  type MockPick,
+} from './store';
 
 export const MOCK_API_BASE_URL = 'https://mock.wtw.local/functions/v1/api';
 
-const LATENCY_MS = 350;
+const LATENCY_MS = process.env.NODE_ENV === 'test' ? 0 : 300;
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -23,70 +35,8 @@ function isPreferenceValue(v: unknown): v is PreferenceValue {
   return v === 0 || v === 1 || v === 2;
 }
 
-/** Runs Alan's real ranking engine over my answers plus the fixture participants. */
-function rank(pick: MockPick) {
-  const candidates = MOCK_PLACES.map((p) => ({ placeId: p.placeId, lat: p.lat, lng: p.lng }));
-  const mine = [...pick.myPreferences].map(([placeId, v]) => ({
-    placeId,
-    answer: answerFromDb(v),
-  }));
-  const others = OTHER_PARTICIPANT_ANSWERS.flatMap((row) =>
-    row.map((v, i) => ({ placeId: candidates[i]?.placeId ?? '', answer: answerFromDb(v) })),
-  );
-  const n = OTHER_PARTICIPANT_ANSWERS.length + 1;
-  const ranked = rankCandidates(candidates, [...mine, ...others], n, DEMO_CENTER);
-  const decision = clearWinner(ranked);
-  const finalists = new Set(
-    decision.kind === 'vote' ? decision.finalists.map((f) => f.placeId) : [],
-  );
-
-  // Like the real API: store rank + finalist; the score never leaves the "server".
-  pick.ranking = ranked.map((r) => ({
-    placeId: r.placeId,
-    rank: r.rank,
-    finalist: finalists.has(r.placeId),
-  }));
-  pick.outcome =
-    decision.kind === 'winner'
-      ? {
-          ...pick.outcome,
-          state: 'completed',
-          winnerPlaceId: decision.winner.placeId,
-          decidedBy: 'clear_winner',
-        }
-      : { ...pick.outcome, state: 'final_vote', winnerPlaceId: null, decidedBy: null };
-
-  const visible = ({ placeId, rank }: { placeId: string; rank: number }) => ({ placeId, rank });
-  return {
-    results: ranked.slice(0, 3).map(visible),
-    decision:
-      decision.kind === 'winner'
-        ? { kind: 'winner', winner: visible(decision.winner) }
-        : { kind: 'vote', finalists: decision.finalists.map(visible) },
-  };
-}
-
-/** POST /picks: a new draft Pick hosted by me. The mock deck is always the 20 fixture places. */
-function createPick(body: unknown): Response {
-  if (body === undefined) return fail(400, 'INVALID_JSON', 'Request body must be valid JSON');
-  const problems = validateCreatePick(body);
-  if (problems.length > 0) {
-    return fail(400, 'INVALID_INPUT', problems.map((p) => p.message).join(' '));
-  }
-  const input = body as CreatePickInput;
-  const id = `mock-${Date.now().toString(36)}`;
-  mockPicks.set(id, {
-    summary: { id, state: 'draft', category: input.category, deadlineAt: input.deadlineAt },
-    outcome: { state: 'draft', hostId: MOCK_USER_ID, winnerPlaceId: null, decidedBy: null },
-    myPreferences: new Map(),
-    ranking: [],
-    settings: input,
-    createdAt: Date.now(),
-  });
-  return json(201, { pickId: id, state: 'draft' });
-}
-
 function readBody(init: RequestInit): unknown {
+  if (init.body === undefined || init.body === null) return null;
   try {
     return JSON.parse(typeof init.body === 'string' ? init.body : '');
   } catch {
@@ -94,16 +44,162 @@ function readBody(init: RequestInit): unknown {
   }
 }
 
+/** POST /picks: a new draft Pick hosted by me. The mock pool is the fixture places. */
+function createPick(body: unknown): Response {
+  if (body === undefined || body === null) {
+    return fail(400, 'INVALID_JSON', 'Request body must be valid JSON');
+  }
+  const problems = validateCreatePick(body);
+  if (problems.length > 0) {
+    return fail(400, 'INVALID_INPUT', problems.map((p) => p.message).join(' '));
+  }
+  const pick = createMockPick(body as CreatePickInput);
+  scheduleBots(pick);
+  return json(201, { pickId: pick.id, state: 'draft' });
+}
+
+function getPick(pick: MockPick) {
+  const mine = pick.participants.find((p) => p.userId === MOCK_USER_ID);
+  return {
+    id: pick.id,
+    state: pick.state,
+    category: pick.category,
+    center: pick.center,
+    radiusM: pick.radiusM,
+    poolSize: pick.poolSize,
+    deadlineAt: pick.deadlineAt,
+    closeThreshold: pick.closeThreshold,
+    isHost: pick.hostId === MOCK_USER_ID,
+    participantCount: pick.participants.length,
+    candidates: pick.candidates.map((c) => ({ ...c })),
+    myAnswers: Object.fromEntries(mine?.answers ?? []),
+    winnerPlaceId: pick.winnerPlaceId,
+    decidedAt: pick.decidedAt,
+    decidedBy: pick.decidedBy,
+  };
+}
+
+type Handler = (pick: MockPick, body: unknown) => Response;
+
+const hostOnly =
+  (fn: Handler): Handler =>
+  (pick, body) =>
+    pick.hostId === MOCK_USER_ID
+      ? fn(pick, body)
+      : fail(403, 'FORBIDDEN', 'Only the host can do this');
+
+const wrongState = (what: string) => fail(409, 'INVALID_PICK_STATE', what);
+
+const ROUTES: Record<string, Handler> = {
+  'GET ': (pick) => json(200, getPick(pick)),
+  'GET progress': (pick) => json(200, progressOf(pick)),
+
+  'POST start': hostOnly((pick) => {
+    if (pick.state !== 'draft') return wrongState('Pick must be draft to start');
+    if (pick.participants.length < 2) {
+      return fail(409, 'NOT_ENOUGH_PARTICIPANTS', 'A Pick needs at least 2 participants to start');
+    }
+    pick.candidates = MOCK_PLACES.slice(0, pick.poolSize);
+    pick.state = 'swiping';
+    emit(pick.id);
+    scheduleBots(pick);
+    return json(200, { state: 'swiping', candidateCount: pick.candidates.length });
+  }),
+
+  'POST refresh': hostOnly((pick, body) => {
+    if (pick.state !== 'draft' && pick.state !== 'swiping') {
+      return wrongState('Pick must be draft or swiping to refresh');
+    }
+    const confirm =
+      typeof body === 'object' && body !== null && 'confirm' in body && body.confirm === true;
+    const hasAnswers = pick.participants.some((p) => p.answers.size > 0);
+    if (hasAnswers && !confirm) {
+      return fail(
+        409,
+        'CONFIRM_REQUIRED',
+        "Refreshing now clears everyone's answers; pass confirm:true",
+      );
+    }
+    // A "new" pool: the same places, rotated, so the deck visibly changes.
+    const shift = Math.floor(MOCK_PLACES.length / 3);
+    const rotated = [...MOCK_PLACES.slice(shift), ...MOCK_PLACES.slice(0, shift)];
+    if (pick.state === 'swiping') pick.candidates = rotated.slice(0, pick.poolSize);
+    pick.participants.forEach((p) => p.answers.clear());
+    emit(pick.id);
+    return json(200, { candidateCount: pick.state === 'swiping' ? pick.candidates.length : 0 });
+  }),
+
+  'POST cancel': hostOnly((pick) => {
+    if (pick.state === 'completed' || pick.state === 'canceled') {
+      return wrongState('This Pick can no longer be canceled');
+    }
+    pick.state = 'canceled';
+    emit(pick.id);
+    return json(200, { state: 'canceled' });
+  }),
+
+  'POST swipes': (pick, body) => {
+    if (pick.state !== 'swiping') return wrongState('Pick must be swiping');
+    if (body === undefined) return fail(400, 'INVALID_JSON', 'Request body must be valid JSON');
+    const { placeId, value } = (typeof body === 'object' && body !== null ? body : {}) as Record<
+      string,
+      unknown
+    >;
+    if (typeof placeId !== 'string' || !placeId.trim() || !isPreferenceValue(value)) {
+      return fail(400, 'INVALID_INPUT', 'Expected placeId and value 0, 1, or 2');
+    }
+    if (!pick.candidates.some((c) => c.placeId === placeId)) {
+      return fail(400, 'INVALID_CANDIDATE', 'Place is not a candidate in this Pick');
+    }
+    pick.participants.find((p) => p.userId === MOCK_USER_ID)?.answers.set(placeId, value);
+    emit(pick.id);
+    maybeAutoClose(pick);
+    return json(200, { status: 'ok' });
+  },
+
+  'POST close': hostOnly((pick) => {
+    if (pick.state === 'swiping') decide(pick);
+    else if (pick.state !== 'final_vote' && pick.state !== 'completed') {
+      return wrongState(`Pick is ${pick.state}`);
+    }
+    return json(200, {
+      state: pick.state,
+      winnerPlaceId: pick.winnerPlaceId,
+      finalists: finalistsOf(pick).map((f) => f.placeId),
+    });
+  }),
+
+  'POST vote': (pick, body) => {
+    if (pick.state !== 'final_vote') return wrongState('Voting is not open for this Pick');
+    const placeId =
+      typeof body === 'object' && body !== null && 'placeId' in body ? body.placeId : null;
+    if (typeof placeId !== 'string' || !placeId.trim()) {
+      return fail(400, 'INVALID_INPUT', 'Expected a placeId');
+    }
+    if (!finalistsOf(pick).some((f) => f.placeId === placeId)) {
+      return fail(400, 'INVALID_CANDIDATE', 'You can only vote for a finalist');
+    }
+    const mine = pick.participants.find((p) => p.userId === MOCK_USER_ID);
+    if (mine) mine.vote = placeId;
+    emit(pick.id);
+    maybeSettleVote(pick);
+    return json(200, { status: 'ok' });
+  },
+
+  'POST close-vote': hostOnly((pick) => {
+    if (pick.state === 'completed') return json(200, { status: 'ok' });
+    if (pick.state !== 'final_vote') return wrongState('Voting is not open for this Pick');
+    settleVote(pick);
+    return json(200, { status: 'ok' });
+  }),
+};
+
 export async function mockFetch(url: string, init: RequestInit): Promise<Response> {
-  await new Promise((r) => setTimeout(r, LATENCY_MS));
+  if (LATENCY_MS) await new Promise((r) => setTimeout(r, LATENCY_MS));
   const method = init.method ?? 'GET';
   const path = url.startsWith(MOCK_API_BASE_URL) ? url.slice(MOCK_API_BASE_URL.length) : url;
 
   if (method === 'GET' && path === '/health') return json(200, { status: 'ok' });
-
-  const match = /^\/picks\/([^/]+)\/(swipes|rank)$/.exec(path);
-  const isCreate = path === '/picks';
-  if (method !== 'POST' || (!match && !isCreate)) return fail(404, 'NOT_FOUND', 'Route not found');
 
   const headers = (init.headers ?? {}) as Record<string, string>;
   if (headers.Authorization !== `Bearer ${MOCK_ACCESS_TOKEN}`) {
@@ -113,35 +209,17 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     return fail(503, 'UNAVAILABLE', 'WTW is having trouble right now (mock failure).');
   }
 
-  if (isCreate) return createPick(readBody(init));
-  if (!match) return fail(404, 'NOT_FOUND', 'Route not found');
+  if (method === 'POST' && path === '/picks') return createPick(readBody(init));
 
-  const [, rawId = '', action] = match;
-  const pick = mockPicks.get(decodeURIComponent(rawId));
+  const match = /^\/picks\/([^/]+)(?:\/([a-z-]+))?$/.exec(path);
+  const handler = match ? ROUTES[`${method} ${match[2] ?? ''}`] : undefined;
+  if (!match || !handler) return fail(404, 'NOT_FOUND', 'Route not found');
+
+  const pick = mockPicks.get(decodeURIComponent(match[1] ?? ''));
   if (!pick) return fail(404, 'PICK_NOT_FOUND', 'Pick not found');
-  if (pick.outcome.state !== 'swiping') {
-    return fail(409, 'INVALID_PICK_STATE', 'Pick must be swiping');
+  if (!pick.participants.some((p) => p.userId === MOCK_USER_ID)) {
+    return fail(403, 'FORBIDDEN', 'You must be a participant in this Pick');
   }
-
-  if (action === 'swipes') {
-    const body = readBody(init);
-    if (body === undefined) return fail(400, 'INVALID_JSON', 'Request body must be valid JSON');
-    const { placeId, value } = (typeof body === 'object' && body !== null ? body : {}) as Record<
-      string,
-      unknown
-    >;
-    if (typeof placeId !== 'string' || !placeId.trim() || !isPreferenceValue(value)) {
-      return fail(400, 'INVALID_INPUT', 'Expected placeId and value 0, 1, or 2');
-    }
-    if (!MOCK_PLACES.some((p) => p.placeId === placeId)) {
-      return fail(400, 'INVALID_CANDIDATE', 'Place is not a candidate in this Pick');
-    }
-    pick.myPreferences.set(placeId, value);
-    return json(200, { status: 'ok' });
-  }
-
-  if (pick.outcome.hostId !== MOCK_USER_ID) {
-    return fail(403, 'FORBIDDEN', 'Only the host can close swiping and rank');
-  }
-  return json(200, rank(pick));
+  touch(pick);
+  return handler(pick, readBody(init));
 }

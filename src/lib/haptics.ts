@@ -12,4 +12,5 @@ export const haptic = {
   swipe: () => safe(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)),
   tick: () => safe(() => Haptics.selectionAsync()),
   success: () => safe(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)),
+  error: () => safe(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)),
 };

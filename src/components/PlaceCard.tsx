@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 
 import { useEnrichedPlace } from '@/lib/googlePlaces';
-import { formatPriceLevel, milesFromCampus } from '@/lib/places';
+import { formatPriceLevel, milesFromCampus, openLabel } from '@/lib/places';
 import type { Candidate } from '@/lib/types';
 
 import { colors, fonts } from './theme';
@@ -43,6 +43,9 @@ export function Chips({ place, light = true }: { place: Candidate; light?: boole
   if (place.cuisine) chips.push({ icon: 'restaurant', text: place.cuisine });
   if (price) chips.push({ icon: 'cash-outline', text: price });
   if (miles) chips.push({ icon: 'location-sharp', text: miles });
+  // Only known at reveal (finalists/winner get fresh hours), so the deck rarely shows it.
+  const open = openLabel(place);
+  if (open) chips.push({ icon: place.openNow ? 'time' : 'moon', text: open });
   return (
     <View style={styles.chips}>
       {chips.map((c) => (
