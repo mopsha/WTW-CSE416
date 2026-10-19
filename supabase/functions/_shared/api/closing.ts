@@ -67,11 +67,19 @@ function existingResult(pick: ClosingSnapshot): CloseResult {
   };
 }
 
+/** A close attempt lost a version race while the Pick was still swiping. */
+const CONFLICT = Symbol('conflict');
+/** Concurrent final swipes each bump picks.version; a few reloads always catch up. */
+export const MAX_CLOSE_ATTEMPTS = 3;
+
 /**
  * swiping -> ranking -> completed | final_vote. Reused by the host-triggered
- * POST /picks/:id/close, the auto-close check after every swipe, and (once
- * wired) Josh's deadline sweep. Idempotent: a second call after the Pick has
- * already closed just reports the decision that already happened.
+ * POST /picks/:id/close, the auto-close check after every swipe, and Josh's
+ * deadline sweep. Idempotent: a call after the Pick has already closed just
+ * reports the decision that already happened. A version conflict while still
+ * swiping (another swipe landed between load and apply) is retried with fresh
+ * answers; if it keeps losing, a system close gives up quietly (the next swipe
+ * or the sweep tries again) and a host close gets a 409.
  */
 export async function closePick(
   store: ClosingStore,
@@ -80,10 +88,30 @@ export async function closePick(
   actorUserId: string | null,
   now: Date = new Date(),
 ): Promise<CloseResult | null> {
+  for (let attempt = 0; attempt < MAX_CLOSE_ATTEMPTS; attempt++) {
+    const result = await attemptClose(store, pickId, actor, actorUserId, now);
+    if (result !== CONFLICT) return result;
+  }
+  if (actor === 'system') return null;
+  throw new ApiError(409, 'PICK_CONFLICT', 'Answers are still coming in; try closing again');
+}
+
+async function attemptClose(
+  store: ClosingStore,
+  pickId: string,
+  actor: 'host' | 'system',
+  actorUserId: string | null,
+  now: Date,
+): Promise<CloseResult | null | typeof CONFLICT> {
   const pick = await store.loadForClose(pickId);
   if (!pick) {
     if (actor === 'system') return null;
     throw new ApiError(404, 'PICK_NOT_FOUND', 'Pick not found');
+  }
+  // Authorize before anything else: pick_load_for_close has no access check, so
+  // returning an already-closed result first would hand any caller the winner.
+  if (actor === 'host' && actorUserId !== pick.hostId) {
+    throw new ApiError(403, 'FORBIDDEN', 'Only the host can close this Pick');
   }
   if (pick.state !== 'swiping') {
     if (pick.state === 'completed' || pick.state === 'final_vote') return existingResult(pick);
@@ -92,9 +120,6 @@ export async function closePick(
   }
 
   if (actor === 'host') {
-    if (actorUserId !== pick.hostId) {
-      throw new ApiError(403, 'FORBIDDEN', 'Only the host can close this Pick');
-    }
     if (!canTransition('swiping', 'ranking', 'host')) throw new Error('Invalid close transition');
   } else {
     if (!canTransition('swiping', 'ranking', 'system')) throw new Error('Invalid close transition');
@@ -142,10 +167,11 @@ export async function closePick(
     });
   } catch (error) {
     if (error instanceof ApiError && error.status === 409) {
-      // Lost a race with another close call (host click vs. the threshold
-      // check, or a retried deadline sweep); report what it settled into.
+      // Lost a race: another close won (report what it settled into), or a
+      // swipe bumped the version while still swiping (retry with fresh data).
       const settled = await store.loadForClose(pickId);
       if (settled && settled.state !== 'swiping') return existingResult(settled);
+      if (settled) return CONFLICT;
     }
     throw error;
   }

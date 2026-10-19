@@ -59,10 +59,11 @@ test('uses the SQL argument names for every voting operation', async () => {
     p_place_id: 'a',
   });
 
-  await store.applyVoteClose('pick', 'a');
+  await store.applyVoteClose('pick', 'a', 'tie_break');
   expect(mockRpc).toHaveBeenLastCalledWith('pick_close_vote_apply', {
     p_pick_id: 'pick',
     p_winner_place_id: 'a',
+    p_decided_by: 'tie_break',
   });
 });
 

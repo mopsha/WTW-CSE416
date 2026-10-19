@@ -1,6 +1,7 @@
 import { ApiError } from '@shared/api/errors.ts';
 import {
   closePick,
+  MAX_CLOSE_ATTEMPTS,
   VOTE_WINDOW_MS,
   type ClosingSnapshot,
   type ClosingStore,
@@ -122,6 +123,42 @@ test('a lost race (stale version conflict) also resolves idempotently', async ()
   store.applyClose.mockRejectedValue(new ApiError(409, 'PICK_CONFLICT', 'stale'));
   const result = await closePick(store, 'pick', 'host', 'host');
   expect(result).toEqual({ state: 'completed', winnerPlaceId: 'a', finalists: [] });
+});
+
+test('a non-host cannot read an already-closed result through /close (no RLS on this path)', async () => {
+  const store = fixture(snapshot({ state: 'completed', winnerPlaceId: 'a' }));
+  await expect(closePick(store, 'pick', 'host', 'stranger')).rejects.toMatchObject({ status: 403 });
+});
+
+describe('version races while still swiping (bug #16)', () => {
+  const allDone = ['host', 'guest'].flatMap((userId) => [
+    { userId, placeId: 'a', value: 2 as const },
+    { userId, placeId: 'b', value: 0 as const },
+    { userId, placeId: 'c', value: 0 as const },
+    { userId, placeId: 'd', value: 0 as const },
+  ]);
+  const stale = () => new ApiError(409, 'PICK_CONFLICT', 'stale');
+
+  test('a lost race retries with fresh data and closes', async () => {
+    const store = fixture(snapshot({ preferences: allDone }));
+    store.applyClose.mockRejectedValueOnce(stale()).mockResolvedValueOnce(undefined);
+    const result = await closePick(store, 'pick', 'system', null);
+    expect(result?.state).toBe('completed');
+    expect(store.applyClose).toHaveBeenCalledTimes(2);
+  });
+
+  test('a system close that keeps losing gives up quietly instead of throwing', async () => {
+    const store = fixture(snapshot({ preferences: allDone }));
+    store.applyClose.mockRejectedValue(stale());
+    expect(await closePick(store, 'pick', 'system', null)).toBeNull();
+    expect(store.applyClose).toHaveBeenCalledTimes(MAX_CLOSE_ATTEMPTS);
+  });
+
+  test('a host close that keeps losing gets a 409', async () => {
+    const store = fixture();
+    store.applyClose.mockRejectedValue(stale());
+    await expect(closePick(store, 'pick', 'host', 'host')).rejects.toMatchObject({ status: 409 });
+  });
 });
 
 test('rejects closing a canceled Pick as a host call', async () => {

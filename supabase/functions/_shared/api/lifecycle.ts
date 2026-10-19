@@ -57,7 +57,7 @@ export interface LifecyclePick {
   myAnswers: Record<string, 0 | 1 | 2>;
   winnerPlaceId: string | null;
   decidedAt: string | null;
-  decidedBy: 'clear_winner' | 'vote' | null;
+  decidedBy: 'clear_winner' | 'vote' | 'tie_break' | null;
   version: string;
 }
 

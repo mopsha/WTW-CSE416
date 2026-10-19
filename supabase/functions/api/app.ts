@@ -59,8 +59,13 @@ export function createApp(
     }
     const pickId = c.req.param('id');
     const result = await swipe(deps.store, pickId, user.id, body);
-    // Close is a no-op (returns null) until close_threshold/deadline is due.
-    await closePick(deps.closingStore, pickId, 'system', null);
+    // The swipe is already saved, so a failed auto-close must not turn it into
+    // an error; the next swipe, the host, or the deadline sweep closes it instead.
+    try {
+      await closePick(deps.closingStore, pickId, 'system', null);
+    } catch (error) {
+      console.error('auto-close after swipe failed', error instanceof Error ? error.name : 'unknown');
+    }
     return c.json(result);
   });
   app.post('/picks/:id/rank', async (c) => {

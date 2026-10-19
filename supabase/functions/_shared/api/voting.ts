@@ -21,7 +21,23 @@ export interface VotingStore {
   loadForVote(pickId: string): Promise<VoteSnapshot | null>;
   castVote(pickId: string, userId: string, placeId: string): Promise<void>;
   /** Silently a no-op if the vote already settled (host/everyone-voted/deadline raced). */
-  applyVoteClose(pickId: string, winnerPlaceId: string): Promise<void>;
+  applyVoteClose(pickId: string, winnerPlaceId: string, decidedBy: VoteDecidedBy): Promise<void>;
+}
+
+/** 'tie_break' when the top vote count was shared and rank order picked the winner. */
+export type VoteDecidedBy = 'vote' | 'tie_break';
+
+/** Pure tally: the winner (voteWinner's tie chain) and whether a tie decided it. */
+export function tallyVotes(
+  finalists: readonly VoteFinalist[],
+  ballots: readonly { placeId: string }[],
+): { winnerPlaceId: string; decidedBy: VoteDecidedBy } {
+  const votes = ballots.map((b) => b.placeId);
+  const winner = voteWinner(finalists, votes);
+  const count = (placeId: string) => votes.filter((v) => v === placeId).length;
+  const top = count(winner.placeId);
+  const tied = finalists.some((f) => f.placeId !== winner.placeId && count(f.placeId) === top);
+  return { winnerPlaceId: winner.placeId, decidedBy: tied ? 'tie_break' : 'vote' };
 }
 
 export function parseVote(body: unknown): string {
@@ -36,11 +52,8 @@ export function parseVote(body: unknown): string {
 }
 
 async function settleVote(store: VotingStore, pickId: string, snapshot: VoteSnapshot) {
-  const winner = voteWinner(
-    snapshot.finalists,
-    snapshot.ballots.map((b) => b.placeId),
-  );
-  await store.applyVoteClose(pickId, winner.placeId);
+  const { winnerPlaceId, decidedBy } = tallyVotes(snapshot.finalists, snapshot.ballots);
+  await store.applyVoteClose(pickId, winnerPlaceId, decidedBy);
 }
 
 export async function castVote(store: VotingStore, pickId: string, userId: string, body: unknown) {

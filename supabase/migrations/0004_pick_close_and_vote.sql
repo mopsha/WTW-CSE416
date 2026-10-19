@@ -246,7 +246,12 @@ $$;
 -- already settled, so whichever caller lost the race (the host, the last
 -- voter, or a deadline sweep) does not see a spurious error.
 -- ---------------------------------------------------------------------------
-create function public.pick_close_vote_apply(p_pick_id text, p_winner_place_id text)
+-- A tied tally settled by rank order is recorded as 'tie_break' (the app explains it).
+alter table public.picks drop constraint picks_decided_by_check;
+alter table public.picks add constraint picks_decided_by_check
+  check (decided_by in ('clear_winner', 'vote', 'tie_break'));
+
+create function public.pick_close_vote_apply(p_pick_id text, p_winner_place_id text, p_decided_by text)
 returns void
 language plpgsql
 set search_path = ''
@@ -255,6 +260,9 @@ declare
   v_id uuid := private.try_uuid(p_pick_id);
   v_state public.pick_state;
 begin
+  if p_decided_by is null or p_decided_by not in ('vote', 'tie_break') then
+    raise exception using errcode = 'PT400', message = 'decided_by must be vote or tie_break';
+  end if;
   select state into v_state from public.picks where id = v_id for update;
   if not found or v_state <> 'final_vote' then
     return;
@@ -265,7 +273,8 @@ begin
     raise exception using errcode = 'PT400', message = 'Winner must be a finalist';
   end if;
   update public.picks
-  set state = 'completed', winner_place_id = p_winner_place_id, decided_at = now(), decided_by = 'vote'
+  set state = 'completed', winner_place_id = p_winner_place_id, decided_at = now(),
+      decided_by = p_decided_by
   where id = v_id;
 end;
 $$;
@@ -275,9 +284,9 @@ revoke all on function public.pick_load_for_close(text) from public, anon, authe
 revoke all on function public.pick_close_apply(text, text, uuid, text, jsonb) from public, anon, authenticated;
 revoke all on function public.pick_load_for_vote(text) from public, anon, authenticated;
 revoke all on function public.pick_cast_vote(text, uuid, text) from public, anon, authenticated;
-revoke all on function public.pick_close_vote_apply(text, text) from public, anon, authenticated;
+revoke all on function public.pick_close_vote_apply(text, text, text) from public, anon, authenticated;
 grant execute on function public.pick_load_for_close(text) to service_role;
 grant execute on function public.pick_close_apply(text, text, uuid, text, jsonb) to service_role;
 grant execute on function public.pick_load_for_vote(text) to service_role;
 grant execute on function public.pick_cast_vote(text, uuid, text) to service_role;
-grant execute on function public.pick_close_vote_apply(text, text) to service_role;
+grant execute on function public.pick_close_vote_apply(text, text, text) to service_role;

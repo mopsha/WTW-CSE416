@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(22);
+select plan(23);
 
 -- Fixtures: a host and two more participants.
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
@@ -76,8 +76,8 @@ insert into pick_participants (pick_id, user_id) values
   ((select id from pick2), '42222222-2222-4222-8222-222222222222'),
   ((select id from pick2), '43333333-3333-4333-8333-333333333333');
 select pick_start((select id::text from pick2), '41111111-1111-4111-8111-111111111111',
-  '[{"placeId":"fv-a","snapshot":{"lat":0,"lng":0}},
-    {"placeId":"fv-b","snapshot":{"lat":0,"lng":0}}]'::jsonb);
+  '[{"placeId":"fv-a","snapshot":{"name":"Finalist A","lat":0,"lng":0}},
+    {"placeId":"fv-b","snapshot":{"name":"Finalist B","lat":0,"lng":0}}]'::jsonb);
 
 create temporary table payload2 on commit drop as
   select jsonb_build_object(
@@ -128,16 +128,19 @@ select is(
   'fv-b', 'the changed ballot overwrites the first one');
 
 select throws_ok(
-  $$select pick_close_vote_apply((select id::text from pick2), 'not-a-finalist')$$,
+  $$select pick_close_vote_apply((select id::text from pick2), 'not-a-finalist', 'vote')$$,
   'PT400', null, 'close_vote_apply rejects a non-finalist winner');
+select throws_ok(
+  $$select pick_close_vote_apply((select id::text from pick2), 'fv-b', 'banana')$$,
+  'PT400', null, 'close_vote_apply rejects an unknown decided_by');
 select lives_ok(
-  $$select pick_close_vote_apply((select id::text from pick2), 'fv-b')$$,
+  $$select pick_close_vote_apply((select id::text from pick2), 'fv-b', 'tie_break')$$,
   'closing the vote settles the Pick');
 select is(
   (select row(state::text, winner_place_id, decided_by)::text from picks where id = (select id from pick2)),
-  '(completed,fv-b,vote)', 'close_vote_apply persists the vote winner');
+  '(completed,fv-b,tie_break)', 'close_vote_apply persists the winner and tie_break (bug #17)');
 select lives_ok(
-  $$select pick_close_vote_apply((select id::text from pick2), 'fv-a')$$,
+  $$select pick_close_vote_apply((select id::text from pick2), 'fv-a', 'vote')$$,
   'closing an already-settled vote is a silent no-op');
 select is(
   (select winner_place_id from picks where id = (select id from pick2)),
