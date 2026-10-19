@@ -253,6 +253,13 @@ lint, typecheck, Jest, export and Deno checks on every PR and push to main.
 Supabase setup commands above were checked against the [CLI reference](https://supabase.com/docs/reference/cli/introduction);
 Expo commands follow the [Expo CLI reference](https://docs.expo.dev/more/expo-cli/).
 
+CI also has a separate local database/API job: Supabase start/reset, the existing
+pgTAP tests, and authenticated HTTP integration tests. With the local API served,
+run `node tests/api/wait.mjs` followed by `npm run test:api`. See the
+[local integration test instructions](docs/api-integration.md#local-httpdatabase-tests-phase-2)
+for prerequisites, fixture cleanup and deferred routes. These tests need no hosted
+credentials or Google key.
+
 ## Repo structure
 
 ```text

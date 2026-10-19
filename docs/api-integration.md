@@ -68,3 +68,63 @@ and rollback on failed persistence with real Postgres.
 the bearer token with Supabase Auth; no second auth system.
 Alan's ranking/state/geo modules are reused unchanged. Mike's auth screens, seeded Pick
 reader, swipe UI, API client and ranked result screen are in Mike's app (PR #2).
+
+## Local HTTP/database tests (Phase 2)
+
+Requirements: Node 22.13+ (22 LTS), Supabase CLI on PATH, and Docker with its daemon
+running. Deno 2 is needed for the separate existing Edge unit/type checks. No hosted
+project link, Google key, or GitHub/Supabase hosted secret is needed. The committed
+`supabase/config.toml` already initializes this project; do not run `supabase init`.
+
+From the repository root:
+
+```sh
+supabase start
+supabase db reset --local
+supabase test db
+```
+
+Reset destroys the local development database and reapplies migrations and seed.
+The existing SQL suite runs its 39 assertions in a rolled-back transaction. It is
+reused unchanged. In another terminal, start `supabase functions serve api`, then:
+
+```sh
+node tests/api/wait.mjs
+npm run test:api
+```
+
+The integration runner reads `supabase status -o json` privately in memory and
+rejects any API URL other than loopback on the configured port 54321. Never paste
+status output into logs: it includes credentials. Tests create three disposable,
+confirmed local Auth users and obtain genuine sessions through password sign-in;
+this bypasses email delivery only for test fixtures and does not change application
+OTP/auth configuration. Service-role access sets up isolated fixtures and checks
+persistence; application actions use user bearer tokens through the served API.
+
+Seven sequential HTTP scenarios cover health/auth rejection, outsider/non-host
+isolation, swipe persistence/upsert and token-derived identity, invalid candidates,
+clear-winner ranking, post-close conflicts, and final-vote ranking persistence.
+Runtime-unique IDs avoid collisions; candidate data and expected outcomes are
+deterministic. Fixtures are deleted in `finally`, including partial setup failures.
+After interruption, reset locally before retrying. Stop the serving terminal and
+run `supabase stop --no-backup` when finished. Do not run alongside a local reset.
+
+Tests live under `tests/api/*.mjs`, use Node's built-in test runner/fetch, and add no
+dependencies. Jest's existing TypeScript unit-test selection is unchanged. Responses
+containing Auth credentials are never included in assertions or logs; failed HTTP
+operations report only their label and status. Each request and the overall suite
+have time limits; API readiness is bounded to approximately 100 seconds.
+
+CI retains the existing validation job and adds one independent integration job:
+Docker check → local Supabase start → reset → existing pgTAP → serve/readiness →
+HTTP integration tests. Steps and the job have timeouts; failures propagate normally.
+Cleanup runs even after failures. CLI startup/reset/function output is kept in private
+temporary files, never uploaded or printed, then removed; failure diagnostics expose
+container names/status only. The job uses Supabase setup-cli's current stable release
+(`latest`); it needs no npm install because the HTTP tests use only Node built-ins.
+CLI installation follows [Supabase setup-cli](https://github.com/supabase/setup-cli).
+
+Current checkout still lacks lifecycle/create/start/join/vote/close routes. Their HTTP
+tests are deferred until Alan's/Razin's work lands; no test-only routes or weakened
+RLS policies were introduced. SQL version-conflict coverage already exists; these
+HTTP tests verify deterministic post-close conflicts, not a nondeterministic race.

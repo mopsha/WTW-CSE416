@@ -26,3 +26,69 @@ jobs:
           deno-version: v2.x
       - run: deno check --config supabase/functions/api/deno.json supabase/functions/api/index.ts
       - run: deno test --config supabase/functions/api/deno.json supabase/functions/api/app_test.ts
+  integration:
+    name: Local database and API
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PLACES_PROVIDER: mock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Check Docker
+        run: timeout 30 docker info > /dev/null
+      - name: Start local Supabase
+        timeout-minutes: 11
+        shell: bash
+        run: |
+          umask 077
+          if ! timeout 600 supabase start > "$RUNNER_TEMP/supabase-start.log" 2>&1; then
+            echo '::error::Local Supabase startup failed or exceeded 10 minutes'
+            exit 1
+          fi
+      - name: Reset local database and apply migrations and seed
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          umask 077
+          if ! timeout 180 supabase db reset --local > "$RUNNER_TEMP/supabase-reset.log" 2>&1; then
+            echo '::error::Local database migration/reset failed or timed out'
+            exit 1
+          fi
+      - name: Run existing pgTAP and RLS tests
+        timeout-minutes: 3
+        run: timeout 120 supabase test db
+      - name: Serve API and wait for readiness
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          umask 077
+          supabase functions serve api > "$RUNNER_TEMP/supabase-api.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/supabase-api.pid"
+          timeout 110 node tests/api/wait.mjs
+      - name: Test authenticated HTTP and database persistence
+        timeout-minutes: 4
+        run: timeout 180 npm run test:api
+      - name: Report service status on failure
+        if: failure()
+        run: docker ps -a --format 'table {{.Names}}\t{{.Status}}'
+      - name: Stop local services and remove private logs
+        if: always()
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/supabase-api.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/supabase-api.pid")" 2>/dev/null || true
+          fi
+          result=0
+          timeout 120 supabase stop --no-backup > /dev/null 2>&1 || result=$?
+          rm -f "$RUNNER_TEMP/supabase-start.log" "$RUNNER_TEMP/supabase-reset.log" "$RUNNER_TEMP/supabase-api.log" "$RUNNER_TEMP/supabase-api.pid"
+          if [ "$result" -ne 0 ]; then
+            echo '::error::Local Supabase cleanup failed or timed out'
+            exit "$result"
+          fi
