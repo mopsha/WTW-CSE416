@@ -61,9 +61,33 @@ test('entering final_vote sets a fresh vote deadline, independent of the swipe d
   const store = fixture(snapshot({ deadlineAt: '2026-10-19T11:59:00.000Z' }));
   const result = await closePick(store, 'pick', 'system', null, now);
   expect(result?.state).toBe('final_vote');
-  expect(store.applyClose.mock.calls[0]![4]).toMatchObject({
+  const written = store.applyClose.mock.calls[0]![4];
+  expect(written).toMatchObject({
     state: 'final_vote',
     voteDeadlineAt: new Date(now.getTime() + VOTE_WINDOW_MS).toISOString(),
+  });
+  expect(Date.parse(written.voteDeadlineAt!)).toBeGreaterThan(now.getTime());
+  expect(Date.parse(written.voteDeadlineAt!)).toBeGreaterThan(Date.parse('2026-10-19T11:59:00.000Z'));
+});
+
+describe('re-running closePick never moves an existing vote deadline', () => {
+  test.each(['host', 'system'] as const)('a %s call on a Pick already in final_vote writes nothing', async (actor) => {
+    const store = fixture(snapshot({ state: 'final_vote', finalistIds: ['a', 'b'] }));
+    const later = new Date('2026-10-19T13:00:00.000Z');
+    const result = await closePick(store, 'pick', actor, actor === 'host' ? 'host' : null, later);
+    expect(result).toEqual({ state: 'final_vote', winnerPlaceId: null, finalists: ['a', 'b'] });
+    expect(store.applyClose).not.toHaveBeenCalled();
+  });
+
+  test('losing a race to a close that already entered final_vote does not write a second deadline', async () => {
+    const store = fixture();
+    store.loadForClose
+      .mockResolvedValueOnce(snapshot())
+      .mockResolvedValueOnce(snapshot({ state: 'final_vote', finalistIds: ['a', 'b'] }));
+    store.applyClose.mockRejectedValueOnce(new ApiError(409, 'PICK_CONFLICT', 'stale'));
+    const result = await closePick(store, 'pick', 'host', 'host');
+    expect(result?.state).toBe('final_vote');
+    expect(store.applyClose).toHaveBeenCalledTimes(1);
   });
 });
 
