@@ -85,7 +85,7 @@ erDiagram
 | `picks` | One decision session: host, category, center + radius, deadline, close threshold, state, and the stored winner (`winner_place_id`, `decided_at`, `decided_by`). |
 | `pick_participants` | Who is in a Pick and whether they finished swiping. |
 | `pick_join_codes` | 6-character join codes / QR / `wtw://join/CODE` links. |
-| `places`, `place_cache` | Normalized provider places; cached provider data (30-day TTL, subject to Google's terms). |
+| `places`, `place_cache` | Normalized places; cache table remains proposed. Google content has field-specific storage restrictions, not a blanket 30-day TTL; see [Phase 1 policy](places-phase1.md). |
 | `pick_candidates` | The fixed, shared pool for one Pick (snapshot, so history does not change when a place does). |
 | `preferences` | Each participant's private Yes/Maybe/No per candidate. |
 | `ranking_results` | Output of the ranking engine for a Pick. |
@@ -236,7 +236,7 @@ flowchart TD
     API --> Domain[Pure TypeScript ranking and state logic]
     API -.->|discovery integration planned| Provider[PlaceProvider]
     Provider --> Mock[MockProvider - placeholder JSON now]
-    Provider -.-> Google[Google Places - planned]
+    Provider --> Google[Google Places adapter - integration pending]
     DB -.-> Realtime[Supabase Realtime - planned subscriptions]
     Realtime -.-> App
     Cron[pg_cron - planned] -.->|separate server authentication required| API
@@ -246,8 +246,11 @@ Implemented: starter app, ranking/state/geometry, Hono heartbeat handlers, Razin
 shared getUser, server client, error envelope, schema/RLS, the transactional heartbeat
 RPCs, the seeded demo Pick, mock provider and CI configuration. Mock places are explicitly
 unapproved placeholders. The provider is independently usable; candidate discovery is
-not yet a heartbeat route. Realtime subscriptions, Google Places, caching/rate limits
-and cron scheduling are planned. Cron must use a separate authenticated server entry point; it must not
+not yet a heartbeat route. The Phase 1 Google adapter, bounded provider fallback,
+opening-hours utilities, runtime mode selector and policy-restricted cache contracts
+are implemented; lifecycle wiring and durable cache schema remain pending. See
+[Places Phase 1](places-phase1.md) for policy limits and exact integration points.
+Realtime subscriptions, rate limits and cron scheduling are planned. Cron must use a separate authenticated server entry point; it must not
 impersonate a user or bypass host authorization on the heartbeat routes.
 
 All application writes go through `api`; mobile reads use RLS. Ranking reuses Alan's

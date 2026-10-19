@@ -1,5 +1,10 @@
 # Heartbeat integration contract (Josh)
 
+Phase 1 Places services are available separately; existing HTTP response shapes
+remain unchanged. See [Places integration instructions](places-phase1.md) for
+Alan's pool interface, hours response enrichment, provider configuration and the
+Google snapshot-retention blocker before enabling real provider persistence.
+
 Status: API and database contracts are implemented. The RPCs are in
 `supabase/migrations/0002_heartbeat_rpcs.sql` (Razin); schema/RLS, SQL seed,
 Supabase config and shared authentication are present. Real database and hosted
