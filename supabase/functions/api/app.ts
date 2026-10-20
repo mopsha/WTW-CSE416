@@ -2,11 +2,32 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { ApiError, errorResponse } from '../_shared/api/errors.ts';
 import { rank, swipe, type HeartbeatStore } from '../_shared/api/heartbeat.ts';
+import {
+  cancelPick,
+  createPick,
+  getPick,
+  refreshPick,
+  startPick,
+  type LifecycleStore,
+} from '../_shared/api/lifecycle.ts';
+import type { PoolBuilder } from '../_shared/places/pool.ts';
+
+async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
+  const raw = await c.req.text();
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new ApiError(400, 'INVALID_JSON', 'Request body must be valid JSON');
+  }
+}
 
 export function createApp(
   deps: {
     getUser(req: Request): Promise<{ id: string }>;
     store: HeartbeatStore;
+    lifecycleStore: LifecycleStore;
+    poolBuilder: PoolBuilder;
   },
   basePath = '',
 ) {
@@ -38,6 +59,32 @@ export function createApp(
   app.post('/picks/:id/rank', async (c) => {
     const user = await deps.getUser(c.req.raw);
     return c.json(await rank(deps.store, c.req.param('id'), user.id));
+  });
+  app.post('/picks', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const body = await readJsonBody(c);
+    return c.json(await createPick(deps.lifecycleStore, user.id, body), 201);
+  });
+  app.get('/picks/:id', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    return c.json(await getPick(deps.lifecycleStore, c.req.param('id'), user.id));
+  });
+  app.post('/picks/:id/start', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    return c.json(
+      await startPick(deps.lifecycleStore, deps.poolBuilder, c.req.param('id'), user.id),
+    );
+  });
+  app.post('/picks/:id/refresh', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const body = await readJsonBody(c);
+    return c.json(
+      await refreshPick(deps.lifecycleStore, deps.poolBuilder, c.req.param('id'), user.id, body),
+    );
+  });
+  app.post('/picks/:id/cancel', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    return c.json(await cancelPick(deps.lifecycleStore, c.req.param('id'), user.id));
   });
   return app;
 }

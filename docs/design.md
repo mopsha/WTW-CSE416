@@ -99,6 +99,14 @@ Code: `supabase/functions/_shared/domain/pickState.ts` (`canTransition(from, to,
 The API is the only writer of `picks.state` and rejects every action that does not belong to the current state
 (for example a swipe after ranking, or a vote for a non-finalist).
 
+**Lifecycle routes (Week 2):** `POST /picks` (create), `POST /picks/:id/start`, `POST /picks/:id/refresh`
+(free before anyone swipes; `{confirm:true}` and clears every answer once swiping has started),
+`POST /picks/:id/cancel`, `GET /picks/:id` (candidates in a per-caller deterministic shuffle,
+`_shared/domain/shuffle.ts`). `start`/`refresh` pull candidates through `PoolBuilder`
+(`_shared/places/pool.ts`), currently backed by `MockProvider` until Josh's Google Places
+`buildPool` (Week 2) drops in behind the same interface. RPCs: `pick_create`, `pick_load`,
+`pick_start`, `pick_refresh`, `pick_cancel` (`supabase/migrations/0003_pick_lifecycle.sql`).
+
 ```mermaid
 stateDiagram-v2
     [*] --> draft : host creates Pick
