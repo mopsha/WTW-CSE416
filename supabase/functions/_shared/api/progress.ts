@@ -9,6 +9,8 @@ export interface ProgressSnapshot {
   state: PickState;
   hostId: string;
   deadlineAt: string | null;
+  /** picks.vote_deadline_at (0004): when the final vote closes; null outside final_vote. */
+  voteDeadlineAt: string | null;
   candidateCount: number;
   participants: {
     userId: string;
@@ -36,6 +38,7 @@ export interface ParticipantProgress {
 
 export interface PickProgress {
   state: PickState;
+  /** The deadline that matters now: swiping's in swiping, the vote's in final_vote. */
   deadlineAt: string | null;
   participants: ParticipantProgress[];
   doneCount: number;
@@ -62,7 +65,8 @@ export function toProgress(snapshot: ProgressSnapshot, userId: string): PickProg
     }));
   return {
     state: snapshot.state,
-    deadlineAt: snapshot.deadlineAt,
+    // The swipe deadline has usually passed by the time a vote starts; count down the vote's.
+    deadlineAt: snapshot.state === 'final_vote' ? snapshot.voteDeadlineAt : snapshot.deadlineAt,
     participants,
     doneCount: participants.filter((p) => p.done).length,
     votedCount: participants.filter((p) => p.voted).length,

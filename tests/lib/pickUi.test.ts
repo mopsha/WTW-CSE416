@@ -1,3 +1,4 @@
+import { pickDetailFromApi } from '@/lib/api';
 import { isFailedStatus } from '@/lib/live';
 import { candidateFromApi, openLabel } from '@/lib/places';
 import {
@@ -86,5 +87,42 @@ describe('candidateFromApi (GET /picks/:id snapshots)', () => {
   });
   test('a malformed snapshot never crashes the deck', () => {
     expect(candidateFromApi(null)).toMatchObject({ placeId: '', name: 'Unnamed place' });
+  });
+});
+
+describe('pickDetailFromApi', () => {
+  const raw = {
+    id: 'p',
+    state: 'completed' as const,
+    category: 'food' as const,
+    center: { lat: 0, lng: 0 },
+    radiusM: 1000,
+    poolSize: 2,
+    deadlineAt: null,
+    closeThreshold: 100,
+    isHost: true,
+    participantCount: 2,
+    candidates: [
+      { placeId: 'a', name: 'A' },
+      { placeId: 'b', name: 'B' },
+    ],
+    myAnswers: {},
+    winnerPlaceId: 'a',
+    decidedAt: null,
+    decidedBy: 'clear_winner' as const,
+  };
+
+  test("merges the server's opening hours onto each place", () => {
+    const pick = pickDetailFromApi({
+      ...raw,
+      candidateHours: [{ placeId: 'a', openNow: true, closesAt: '2026-10-21T02:00:00Z' }],
+    });
+    expect(pick.candidates[0]).toMatchObject({ placeId: 'a', openNow: true });
+    expect(pick.candidates[1]).toMatchObject({ placeId: 'b', openNow: null });
+    expect(pick).not.toHaveProperty('candidateHours');
+  });
+
+  test('works without hours (before the hours route is deployed)', () => {
+    expect(pickDetailFromApi(raw).candidates.map((c) => c.placeId)).toEqual(['a', 'b']);
   });
 });

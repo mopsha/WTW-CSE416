@@ -24,6 +24,7 @@ import { useAction } from '@/hooks/useAction';
 import { useCountdown } from '@/hooks/useCountdown';
 import { usePickLive } from '@/hooks/usePickLive';
 import { usePickRoute } from '@/hooks/usePickRoute';
+import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 import { api } from '@/lib/api';
 import { confirmAction } from '@/lib/confirm';
 import { messageOf } from '@/lib/errors';
@@ -43,6 +44,11 @@ export default function LobbyScreen() {
   const [code, setCode] = useState<JoinCode | null | undefined>(undefined);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  // Pull down: re-read who's in and the Pick (code, settings), not just wait for Realtime.
+  const pull = usePullToRefresh(async () => {
+    setAttempt((a) => a + 1);
+    await live.refresh();
+  });
   const action = useAction();
   const countdown = useCountdown(pick?.deadlineAt ?? null);
 
@@ -114,7 +120,7 @@ export default function LobbyScreen() {
         subtitle="Lobby · waiting to start"
         right={<LiveDot mode={live.mode} offline={!!live.error} />}
       />
-      <ScrollView contentContainerStyle={pickStyles.scroll}>
+      <ScrollView contentContainerStyle={pickStyles.scroll} refreshControl={pull}>
         {loadError ? (
           <ErrorBanner message={loadError} onRetry={() => setAttempt((a) => a + 1)} />
         ) : null}

@@ -78,7 +78,32 @@ export interface CloseResponse {
   finalists: string[];
 }
 
-type RawPickDetail = Omit<PickDetail, 'candidates'> & { candidates: unknown[] };
+/** Opening hours the server refreshes at reveal (Josh's `candidateHours` on GET /picks/:id). */
+export interface CandidateHours {
+  placeId: string;
+  openNow: boolean | null;
+  closesAt: string | null;
+}
+
+type RawPickDetail = Omit<PickDetail, 'candidates'> & {
+  candidates: unknown[];
+  /** Only in final_vote / completed, and only once the hours route is deployed. */
+  candidateHours?: CandidateHours[];
+};
+
+/** Normalize GET /picks/:id: candidate snapshots -> Candidate, hours merged onto each place. */
+export function pickDetailFromApi(raw: RawPickDetail): PickDetail {
+  const { candidateHours = [], ...rest } = raw;
+  const hours = new Map(candidateHours.map((h) => [h.placeId, h]));
+  return {
+    ...rest,
+    candidates: (raw.candidates ?? []).map((snapshot) => {
+      const c = candidateFromApi(snapshot);
+      const h = hours.get(c.placeId);
+      return h ? { ...c, openNow: h.openNow, closesAt: h.closesAt } : c;
+    }),
+  };
+}
 
 export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOptions) {
   async function request<T>(
@@ -146,8 +171,7 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
 
     /** The Pick, my candidates in my own shuffled order, and my answers. */
     getPick: async (pickId: string): Promise<PickDetail> => {
-      const raw = await request<RawPickDetail>('GET', pickPath(pickId));
-      return { ...raw, candidates: (raw.candidates ?? []).map(candidateFromApi) };
+      return pickDetailFromApi(await request<RawPickDetail>('GET', pickPath(pickId)));
     },
     /** Who's in and who's done (never what anyone answered). The Realtime fallback polls this. */
     getProgress: (pickId: string) => request<PickProgress>('GET', `${pickPath(pickId)}/progress`),

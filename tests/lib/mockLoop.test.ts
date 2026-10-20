@@ -155,3 +155,14 @@ test('join codes use the no-lookalikes alphabet', async () => {
     code: expect.stringMatching(/^[A-HJ-NP-Z2-9]{6}$/),
   });
 });
+
+test('the final vote has its own deadline, and passing it settles the vote (like the sweep)', async () => {
+  const progress = await api.getProgress('vote-pick');
+  expect(progress.state).toBe('final_vote');
+  expect(Date.parse(progress.deadlineAt ?? '')).toBeGreaterThan(Date.now());
+
+  mockPicks.get('vote-pick')!.voteDeadlineAt = new Date(Date.now() - 1000).toISOString();
+  const after = await api.getPick('vote-pick');
+  expect(after.state).toBe('completed');
+  expect(after.decidedBy).toBe('tie_break'); // no ballots: rank order decides
+});

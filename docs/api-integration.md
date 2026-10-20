@@ -45,13 +45,13 @@ The app subscribes to Supabase Realtime `postgres_changes` on `picks` (`id=eq.<p
 normal reads. `preferences`, `final_votes` and `ranking_results` are deliberately **not** published.
 Test: `supabase/tests/live_progress_test.sql`.
 
-### Routes the app calls that live in open PRs
+### Pick routes the app calls
 
-The app's typed client (`src/lib/api.ts`) and its mock (`src/lib/mock/api.ts`) follow these
-exactly: `GET /picks/:id`, `POST /picks/:id/start`, `/refresh` (`{ confirm }`, 409
-`CONFIRM_REQUIRED`), `/cancel` (Alan, PR #12); `POST /picks/:id/close`, `/vote` (`{ placeId }`),
-`/close-vote` (Alan, PR #13). The lobby reads the join code from `pick_join_codes`
-(`code, expires_at`, Razin; see below).
+The app's typed client (`src/lib/api.ts`) and its mock (`src/lib/mock/api.ts`) follow Alan's
+routes exactly (merged in #12 and #13): `GET /picks/:id`, `POST /picks/:id/start`, `/refresh`
+(`{ confirm }`, 409 `CONFIRM_REQUIRED`), `/cancel`, `/close`, `/vote` (`{ placeId }`),
+`/close-vote`. The Lobby reads the join code from `pick_join_codes` (`code, expires_at`, Razin's
+#17) and shows a placeholder until that table exists.
 
 ### Join by code (Razin)
 

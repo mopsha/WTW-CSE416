@@ -27,6 +27,7 @@ import { useSession } from '@/hooks/useAuth';
 import { useCountdown } from '@/hooks/useCountdown';
 import { usePickLive } from '@/hooks/usePickLive';
 import { usePickRoute } from '@/hooks/usePickRoute';
+import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 import { useProgressToasts } from '@/hooks/useProgressToasts';
 import { finalistsOf, useReveal } from '@/hooks/useReveal';
 import { api } from '@/lib/api';
@@ -39,6 +40,7 @@ export default function VoteScreen() {
   const { id: pickId = '' } = useLocalSearchParams<{ id: string }>();
   const session = useSession();
   const live = usePickLive(pickId);
+  const pull = usePullToRefresh(live.refresh);
   usePickRoute(pickId, 'vote', live.state);
   const { reveal, retry } = useReveal(pickId, session.user.id, live.state);
   const action = useAction();
@@ -109,7 +111,7 @@ export default function VoteScreen() {
           .join(' · ')}
         right={<LiveDot mode={live.mode} offline={!!live.error} />}
       />
-      <ScrollView contentContainerStyle={pickStyles.scroll}>
+      <ScrollView contentContainerStyle={pickStyles.scroll} refreshControl={pull}>
         <Animated.View entering={FadeInUp.duration(400)} style={styles.head}>
           <Text style={pickStyles.eyebrow}>TAP YOUR FAVORITE</Text>
           <Text style={pickStyles.heading} accessibilityRole="header">

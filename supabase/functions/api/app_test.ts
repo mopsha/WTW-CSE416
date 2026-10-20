@@ -125,55 +125,6 @@ Deno.test('Supabase mount retains health and JSON errors', async () => {
   equal(await missing.json(), { error: { code: 'NOT_FOUND', message: 'Route not found' } });
 });
 
-Deno.test('GET /picks/:id/progress: counts only, participants only', async () => {
-  const progressStore = {
-    loadProgress: async () => ({
-      state: 'swiping' as const,
-      hostId: 'host',
-      deadlineAt: null,
-      candidateCount: 2,
-      participants: [
-        {
-          userId: 'me',
-          displayName: 'Me',
-          joinedAt: '2026-10-02T00:00:01Z',
-          answered: 1,
-          voted: false,
-        },
-        {
-          userId: 'host',
-          displayName: 'Host',
-          joinedAt: '2026-10-02T00:00:00Z',
-          answered: 2,
-          voted: false,
-        },
-      ],
-    }),
-  };
-  const as = (id: string) =>
-    createApp({
-      store,
-      progressStore,
-      lifecycleStore,
-      poolBuilder,
-      closingStore,
-      getUser: async () => ({ id }),
-    });
-  const ok = await as('me').request('/picks/p/progress');
-  equal(ok.status, 200);
-  const body = await ok.json();
-  equal(body.doneCount, 1);
-  equal(
-    body.participants.map((p: { userId: string; done: boolean }) => [p.userId, p.done]),
-    [
-      ['host', true],
-      ['me', false],
-    ],
-  );
-  equal(JSON.stringify(body).includes('answered'), false);
-  equal((await as('stranger').request('/picks/p/progress')).status, 403);
-});
-
 Deno.test('POST /picks creates a draft Pick', async () => {
   const app = createApp({
     store,
@@ -432,4 +383,54 @@ Deno.test('POST /picks/join: store errors keep their status; 503 if not configur
     getUser: async () => ({ id: 'guest' }),
   });
   equal((await unconfigured.request('/picks/join', { method: 'POST', body })).status, 503);
+});
+
+Deno.test('GET /picks/:id/progress: counts only, participants only', async () => {
+  const progressStore = {
+    loadProgress: async () => ({
+      state: 'swiping' as const,
+      hostId: 'host',
+      deadlineAt: null,
+      voteDeadlineAt: null,
+      candidateCount: 2,
+      participants: [
+        {
+          userId: 'me',
+          displayName: 'Me',
+          joinedAt: '2026-10-02T00:00:01Z',
+          answered: 1,
+          voted: false,
+        },
+        {
+          userId: 'host',
+          displayName: 'Host',
+          joinedAt: '2026-10-02T00:00:00Z',
+          answered: 2,
+          voted: false,
+        },
+      ],
+    }),
+  };
+  const as = (id: string) =>
+    createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      progressStore,
+      getUser: async () => ({ id }),
+    });
+  const ok = await as('me').request('/picks/p/progress');
+  equal(ok.status, 200);
+  const body = await ok.json();
+  equal(body.doneCount, 1);
+  equal(
+    body.participants.map((p: { userId: string; done: boolean }) => [p.userId, p.done]),
+    [
+      ['host', true],
+      ['me', false],
+    ],
+  );
+  equal(JSON.stringify(body).includes('answered'), false);
+  equal((await as('stranger').request('/picks/p/progress')).status, 403);
 });

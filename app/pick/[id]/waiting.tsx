@@ -26,6 +26,7 @@ import { useAction } from '@/hooks/useAction';
 import { useCountdown } from '@/hooks/useCountdown';
 import { usePickLive } from '@/hooks/usePickLive';
 import { usePickRoute } from '@/hooks/usePickRoute';
+import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 import { useProgressToasts } from '@/hooks/useProgressToasts';
 import { api } from '@/lib/api';
 import { confirmAction } from '@/lib/confirm';
@@ -36,6 +37,7 @@ import { progressLine } from '@/lib/pickUi';
 export default function WaitingScreen() {
   const { id: pickId = '' } = useLocalSearchParams<{ id: string }>();
   const live = usePickLive(pickId);
+  const pull = usePullToRefresh(live.refresh);
   const progress = live.progress;
   const me = progress?.participants.find((p) => p.isMe);
   const isHost = !!me?.isHost;
@@ -99,7 +101,7 @@ export default function WaitingScreen() {
         subtitle={countdown.label}
         right={<LiveDot mode={live.mode} offline={!!live.error} />}
       />
-      <ScrollView contentContainerStyle={pickStyles.scroll}>
+      <ScrollView contentContainerStyle={pickStyles.scroll} refreshControl={pull}>
         {live.error ? (
           <ErrorBanner
             message={`${live.error} We’ll keep checking.`}
