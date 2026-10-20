@@ -260,6 +260,11 @@ run `node tests/api/wait.mjs` followed by `npm run test:api`. See the
 for prerequisites, fixture cleanup and deferred routes. These tests need no hosted
 credentials or Google key.
 
+Successful main CI runs automatically deploy pending migrations and the `api` Edge
+Function to hosted **wtw-dev**. PR runs never deploy. See
+[deployment configuration and recovery](docs/api-integration.md#main-to-wtw-dev-deployment)
+for required GitHub environment settings and separately managed hosted secrets.
+
 ## Repo structure
 
 ```text

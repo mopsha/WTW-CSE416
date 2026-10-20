@@ -221,3 +221,68 @@ or Pick state. Swiping/draft reads do not fetch hours. The client retains persis
 candidates if the optional metadata request fails. Google candidate creation and
 full display hydration remain blocked on the separate persistence design; this
 read path does not enable Google lifecycle discovery or authorize Google snapshots.
+
+## Main to wtw-dev deployment
+
+The existing CI workflow deploys the backend only on a push to `refs/heads/main`,
+after **both** `validate` and `integration` succeed. Pull requests never execute the
+deployment job. It checks out the exact validated commit and uses the same
+`supabase/setup-cli@v1` / `latest` CLI setup as local integration CI.
+
+Configure the GitHub environment **wtw-dev** manually before enabling deployments:
+
+| Name | GitHub environment setting | Purpose |
+| --- | --- | --- |
+| `SUPABASE_ACCESS_TOKEN` | Secret | Supabase CLI authorization with access to link/deploy wtw-dev |
+| `SUPABASE_DB_PASSWORD` | Secret | wtw-dev database password |
+| `SUPABASE_PROJECT_REF` | Variable | Actual hosted wtw-dev project reference |
+
+Restrict that environment's deployment branches to main. Required-reviewer rules,
+if enabled, introduce a manual approval gate; omit that gate for fully automatic
+main deployments. Never use the local `config.toml` project ID as the hosted ref.
+Confirm hosted migration history matches the repository before the first run.
+These values are not configured by the workflow.
+
+Deployments share a `wtw-dev-backend-deploy` concurrency group with
+`cancel-in-progress: false`. Inside that lock, the job checks the current remote
+main SHA and skips superseded revisions, including old reruns. This favors the
+latest main revision over deploying every intermediate merge. A main update during
+an active deployment does not interrupt it; the newer successful run deploys next.
+If the newer revision fails CI, it is not deployed. The guard prevents a slow older
+queued run from overwriting a newer deployed revision during normal forward main
+history; avoid force-pushing main.
+
+Commands execute in this order:
+
+```sh
+supabase link --project-ref "$SUPABASE_PROJECT_REF"
+supabase db push --linked --yes
+supabase functions deploy api --project-ref "$SUPABASE_PROJECT_REF"
+```
+
+Migrations precede the function because its code may require new schema/RPCs.
+Only pending migrations are applied: no hosted reset, seed, automatic history
+repair, or general project-config push runs. The function deployment reads the
+existing `[functions.api] verify_jwt = false` configuration; application user-auth
+and internal cron-secret checks remain responsible for route authorization.
+
+Each failure stops subsequent deployment steps and fails the job. CLI output is
+redirected to a restricted temporary log, never printed or uploaded, and removed
+in an always-run cleanup step. Logs report only which stage failed. No shell tracing
+or CLI debug mode is used; credentials are supplied through environment variables.
+The deployment job has a 15-minute timeout.
+
+If migrations succeed but function deployment fails, the database changes remain;
+there is no cross-service transaction or automatic rollback. Keep migrations
+backward compatible with the previous function. Fix the cause and rerun the failed
+job if that commit is still main; otherwise deploy a corrective main commit after
+CI passes. Recorded migrations are skipped on retry. For schema defects use a new
+forward-fix migration; never edit applied migrations or reset hosted data. An
+administrator must inspect hosted migration/function status when diagnosing a
+failure; a green local test is not proof that a hosted deployment worked.
+
+`CRON_SECRET` belongs in hosted Edge Function secrets. Vault entries
+`wtw_cron_secret` and `wtw_sweep_url` are configured separately by the hosted project
+administrator, as described above. CD does not create, rotate, or overwrite them.
+Provider configuration is also outside this deployment workflow. Successful CD
+establishes command completion, not end-to-end cron delivery or live provider health.
