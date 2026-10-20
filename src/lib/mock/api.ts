@@ -2,6 +2,7 @@
 // same routes, status codes, error codes and response shapes, returned as real Response
 // objects, so src/lib/api.ts runs the exact same parsing and error handling in both modes.
 import { validateCreatePick, type CreatePickInput } from '@shared/domain/createPick.ts';
+import { parseJoinCode } from '@shared/domain/joinCode.ts';
 
 import { MOCK_FAIL_RATE } from '../config';
 import type { PreferenceValue } from '../types';
@@ -12,6 +13,7 @@ import {
   decide,
   emit,
   finalistsOf,
+  joinMockPick,
   maybeAutoClose,
   maybeSettleVote,
   mockPicks,
@@ -56,6 +58,22 @@ function createPick(body: unknown): Response {
   const pick = createMockPick(body as CreatePickInput);
   scheduleBots(pick);
   return json(201, { pickId: pick.id, state: 'draft' });
+}
+
+/** POST /picks/join: same validation and errors as the API (try MOCK_INVITE_CODE). */
+function joinPick(body: unknown): Response {
+  if (body === undefined) return fail(400, 'INVALID_JSON', 'Request body must be valid JSON');
+  const raw = (body as { code?: unknown } | null)?.code;
+  const code = typeof raw === 'string' && raw.length <= 64 ? parseJoinCode(raw) : null;
+  if (!code) return fail(400, 'INVALID_INPUT', 'Expected a 6-character join code');
+  const result = joinMockPick(code);
+  if (result === 'not_found') {
+    return fail(404, 'JOIN_CODE_NOT_FOUND', 'That code is not valid or has expired');
+  }
+  if (result === 'closed') {
+    return fail(409, 'PICK_CLOSED', 'This Pick is no longer accepting people');
+  }
+  return json(200, result);
 }
 
 function getPick(pick: MockPick) {
@@ -210,6 +228,7 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   }
 
   if (method === 'POST' && path === '/picks') return createPick(readBody(init));
+  if (method === 'POST' && path === '/picks/join') return joinPick(readBody(init));
 
   const match = /^\/picks\/([^/]+)(?:\/([a-z-]+))?$/.exec(path);
   const handler = match ? ROUTES[`${method} ${match[2] ?? ''}`] : undefined;
