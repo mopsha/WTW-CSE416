@@ -7,7 +7,9 @@ const delay = () => new Promise((r) => setTimeout(r, 200));
 export const mockQueries: Queries = {
   async listMyPicks() {
     await delay();
-    return [...mockPicks.values()].map((p) => ({ ...p.summary, state: p.outcome.state }));
+    return [...mockPicks.values()]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((p) => ({ ...p.summary, state: p.outcome.state }));
   },
   async getCandidates(pickId) {
     await delay();

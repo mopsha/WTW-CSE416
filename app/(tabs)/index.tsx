@@ -10,6 +10,7 @@ import {
   EmptyState,
   ErrorState,
   fonts,
+  IconButton,
   radius,
   Screen,
   space,
@@ -87,6 +88,13 @@ export default function PicksScreen() {
       edges={['top', 'left', 'right']}
       onRefresh={refresh}
       refreshing={refreshing}
+      right={
+        <IconButton
+          icon="add"
+          accessibilityLabel="Create a Pick"
+          onPress={() => router.push('/pick/new')}
+        />
+      }
     >
       {USE_MOCK ? (
         <View style={styles.mock}>
@@ -119,7 +127,8 @@ export default function PicksScreen() {
         <EmptyState
           emoji="🍽️"
           title="No Picks yet"
-          body="When a friend invites you to a Pick, it shows up here."
+          body="Start one and invite friends, or wait for an invite."
+          action={{ label: 'Create a Pick', icon: 'add', onPress: () => router.push('/pick/new') }}
         />
       ) : null}
 
