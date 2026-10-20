@@ -107,6 +107,21 @@ The API is the only writer of `picks.state` and rejects every action that does n
 `buildPool` (Week 2) drops in behind the same interface. RPCs: `pick_create`, `pick_load`,
 `pick_start`, `pick_refresh`, `pick_cancel` (`supabase/migrations/0003_pick_lifecycle.sql`).
 
+**Closing and voting (Week 3):** `closePick` (`_shared/api/closing.ts`) runs the swiping → ranking
+step (reusing `rankCandidates`/`clearWinner`) for a host-triggered `POST /picks/:id/close`, for the
+auto-close check after every swipe once `close_threshold` is met, and — once Josh's deadline sweep
+calls it — for a passed deadline; it is idempotent (a race just reports the already-decided result).
+`castVote`/`closeVote`/`closeVoteByDeadline` (`_shared/api/voting.ts`) back `POST /picks/:id/vote`
+and `POST /picks/:id/close-vote`, tallying with `voteWinner` (most votes → higher score → closer to
+the center → place id, via the stored `rank`). RPCs: `pick_load_for_close`, `pick_close_apply`,
+`pick_load_for_vote`, `pick_cast_vote`, `pick_close_vote_apply`
+(`supabase/migrations/0004_pick_close_and_vote.sql`), plus the new `final_votes` table (one
+changeable ballot per participant, readable only by its own author).
+Entering `final_vote` sets `picks.vote_deadline_at` (now + `VOTE_WINDOW_MS`, 30 min), separate
+from the swipe deadline `deadline_at`, which has usually passed by then. The deadline sweep should
+select `state = 'final_vote' and vote_deadline_at <= now()` and call `closeVoteByDeadline`, which
+rechecks the deadline itself.
+
 ```mermaid
 stateDiagram-v2
     [*] --> draft : host creates Pick

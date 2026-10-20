@@ -10,6 +10,8 @@ import {
   startPick,
   type LifecycleStore,
 } from '../_shared/api/lifecycle.ts';
+import { closePick, type ClosingStore } from '../_shared/api/closing.ts';
+import { castVote, closeVote, type VotingStore } from '../_shared/api/voting.ts';
 import type { PoolBuilder } from '../_shared/places/pool.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
@@ -28,6 +30,7 @@ export function createApp(
     store: HeartbeatStore;
     lifecycleStore: LifecycleStore;
     poolBuilder: PoolBuilder;
+    closingStore: ClosingStore & VotingStore;
   },
   basePath = '',
 ) {
@@ -54,7 +57,16 @@ export function createApp(
     } catch {
       throw new ApiError(400, 'INVALID_JSON', 'Request body must be valid JSON');
     }
-    return c.json(await swipe(deps.store, c.req.param('id'), user.id, body));
+    const pickId = c.req.param('id');
+    const result = await swipe(deps.store, pickId, user.id, body);
+    // The swipe is already saved, so a failed auto-close must not turn it into
+    // an error; the next swipe, the host, or the deadline sweep closes it instead.
+    try {
+      await closePick(deps.closingStore, pickId, 'system', null);
+    } catch (error) {
+      console.error('auto-close after swipe failed', error instanceof Error ? error.name : 'unknown');
+    }
+    return c.json(result);
   });
   app.post('/picks/:id/rank', async (c) => {
     const user = await deps.getUser(c.req.raw);
@@ -85,6 +97,19 @@ export function createApp(
   app.post('/picks/:id/cancel', async (c) => {
     const user = await deps.getUser(c.req.raw);
     return c.json(await cancelPick(deps.lifecycleStore, c.req.param('id'), user.id));
+  });
+  app.post('/picks/:id/close', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    return c.json(await closePick(deps.closingStore, c.req.param('id'), 'host', user.id));
+  });
+  app.post('/picks/:id/vote', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const body = await readJsonBody(c);
+    return c.json(await castVote(deps.closingStore, c.req.param('id'), user.id, body));
+  });
+  app.post('/picks/:id/close-vote', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    return c.json(await closeVote(deps.closingStore, c.req.param('id'), user.id));
   });
   return app;
 }
