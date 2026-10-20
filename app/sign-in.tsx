@@ -65,6 +65,19 @@ export default function SignInScreen() {
     }
   }
 
+  /** Go straight to the code boxes without sending an email. */
+  function enterCode() {
+    setError(null);
+    setNotice(null);
+    if (!EMAIL_RE.test(trimmedEmail)) {
+      setError('Enter your email first, then your code.');
+      return;
+    }
+    setStep('code');
+    setCode('');
+    setTimeout(() => codeInput.current?.focus(), 50);
+  }
+
   async function verify(value = code) {
     if (value.length !== 6 || busy) return;
     setError(null);
@@ -147,6 +160,14 @@ export default function SignInScreen() {
                   loading={busy}
                 />
                 <Text style={styles.fine}>No passwords. We email you a 6-digit code.</Text>
+                {/* For a code you got another way (e.g. from the host on wtw-dev, where the
+                    email can't carry the code yet), or when sending just hit a limit. */}
+                <Button
+                  label="I already have a code"
+                  variant="link"
+                  accessibilityHint="Skips sending an email and goes to the code boxes"
+                  onPress={enterCode}
+                />
               </View>
             ) : (
               <View style={styles.form}>
