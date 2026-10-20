@@ -29,7 +29,75 @@ Errors: `{ "error": { "code": "...", "message": "..." } }`.
 Gateway errors before the function executes are controlled by Supabase.
 To let the handler own authentication/error formatting and public health, `supabase/config.toml`
 sets `[functions.api] verify_jwt = false`.
-Every mutation route explicitly verifies the caller through Supabase Auth.
+User mutation routes explicitly verify the caller through Supabase Auth.
+The internal deadline sweep uses its own server-side secret, described below.
+
+## Automatic deadline sweep (Josh, Week 3)
+
+`POST /internal/sweep` (deployed path `/functions/v1/api/internal/sweep`) requires
+`x-cron-secret` matching the Edge Function environment variable `CRON_SECRET`.
+Missing/incorrect headers return 401; an unset/empty server secret returns 503.
+It does not use user authentication. Keep `CRON_SECRET` server-only: never use an
+`EXPO_PUBLIC_` variable or send it from the mobile app. Existing `verify_jwt = false`
+lets this handler verify the secret itself; user routes retain their Auth checks.
+
+Each invocation captures one cutoff time and queries IDs in pages of 100:
+
+- `state = 'swiping' AND deadline_at <= cutoff` calls the existing
+  `closePick(store, id, 'system', null)`.
+- `state = 'final_vote' AND vote_deadline_at <= cutoff` calls the existing
+  `closeVoteByDeadline(store, id)`.
+
+Null/future deadlines are excluded. Alan's canonical functions recheck eligibility
+and handle repeated calls/state races; the sweep does not rank, tally, choose winners,
+or set deadlines. `deadline_at` is the swipe deadline; `vote_deadline_at` is the
+separate final-vote deadline established when swiping closes.
+Pagination uses the last ID rather than offsets so closing earlier rows does not
+skip later rows. One Pick failure does not stop other Picks; a failed phase query
+does not stop the other phase. Remaining eligible Picks are retried next minute.
+
+Responses contain only `status` and per-phase `attempted`, `processed`, `failed`,
+and `queryFailed` counts/flags. `processed` includes canonical safe no-ops and is
+not a count of state changes. Success is HTTP 200 / `status: "ok"`; any per-Pick or
+query failure returns HTTP 503 / `status: "partial_failure"` after attempting the
+remaining work. IDs, ballots, credentials, and database error details are omitted.
+
+### Cron and wtw-dev configuration
+
+Migration `0005_deadline_sweep.sql` enables `pg_cron`, `pg_net`, and Supabase Vault,
+adds partial deadline indexes, and schedules `wtw-deadline-sweep` every minute
+(`* * * * *`). Its private, invoker-rights helper is revoked from app/service roles
+and runs as the database owner that installs the migration. It reads Vault values
+at execution time and uses `net.http_post`; no URL or secret is embedded in the
+migration or cron command. This follows the
+[Supabase scheduling/Vault pattern](https://supabase.com/docs/guides/functions/schedule-functions).
+
+Required deployment setup, performed separately by a wtw-dev administrator:
+
+1. Apply migrations through `0005` and deploy the updated `api` function, retaining
+   `verify_jwt = false` and its existing server-side Supabase configuration.
+2. Generate a strong random secret and set it as the Edge Function `CRON_SECRET`.
+3. In Supabase Vault, create `wtw_cron_secret` with the same secret and
+   `wtw_sweep_url` with the **actual** wtw-dev HTTPS endpoint, ending in
+   `/functions/v1/api/internal/sweep`. Use the project Dashboard's Vault controls;
+   do not commit values or paste credentials into logs.
+4. Verify authenticated execution and inspect `cron.job_run_details` plus
+   `net._http_response` for HTTP status/body. A successful cron SQL run only means
+   the asynchronous request was queued, not that the sweep succeeded.
+
+Until both Vault values are nonempty, the scheduled helper returns null and sends
+no HTTP request, including in fresh local databases/CI. The endpoint URL must use
+HTTPS and the exact deployed path. No service-role key is sent by cron. No GitHub
+secret or CD change is required. Rotation requires updating both the Edge secret
+and Vault value; mismatches fail closed. To pause, an administrator can run
+`select cron.alter_job(job_id := (select jobid from cron.job where jobname =
+'wtw-deadline-sweep'), active := false);`.
+
+Focused Jest coverage: `npx jest --runInBand tests/sweep.test.ts tests/sweepStore.test.ts`.
+Hono route tests extend the existing `api/app_test.ts`; run with Deno 2 using
+`deno test --config supabase/functions/api/deno.json supabase/functions/api/app_test.ts`.
+Mocks test orchestration and query arguments, not deployed HTTP, SQL locking,
+Vault permissions, or real cron delivery; verify those in a configured Supabase environment.
 
 ## Database adapter (Razin + Josh)
 

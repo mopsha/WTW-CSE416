@@ -13,6 +13,7 @@ import {
 import { closePick, type ClosingStore } from '../_shared/api/closing.ts';
 import { castVote, closeVote, type VotingStore } from '../_shared/api/voting.ts';
 import type { PoolBuilder } from '../_shared/places/pool.ts';
+import { authorizeSweep, sweepDeadlines, type SweepStore } from '../_shared/api/sweep.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
   const raw = await c.req.text();
@@ -31,6 +32,8 @@ export function createApp(
     lifecycleStore: LifecycleStore;
     poolBuilder: PoolBuilder;
     closingStore: ClosingStore & VotingStore;
+    sweepStore?: SweepStore;
+    cronSecret?: string;
   },
   basePath = '',
 ) {
@@ -49,6 +52,14 @@ export function createApp(
   });
   app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404));
   app.get('/health', (c) => c.json({ status: 'ok' }));
+  app.post('/internal/sweep', async (c) => {
+    authorizeSweep(c.req.header('x-cron-secret'), deps.cronSecret);
+    if (!deps.sweepStore) {
+      throw new ApiError(503, 'SERVER_NOT_CONFIGURED', 'Deadline automation is not configured');
+    }
+    const result = await sweepDeadlines(deps.sweepStore, deps.closingStore);
+    return c.json(result, result.status === 'ok' ? 200 : 503);
+  });
   app.post('/picks/:id/swipes', async (c) => {
     const user = await deps.getUser(c.req.raw);
     let body: unknown;
