@@ -82,7 +82,7 @@ test('local heartbeat integration', { timeout: 120_000 }, async (t) => {
         'health',
       );
       assert.equal(health.status, 'ok');
-      for (const route of ['swipes', 'rank']) {
+      for (const route of ['swipes', 'rank', 'close']) {
         requireStatus(
           await api(`/picks/${randomUUID()}/${route}`, undefined, { placeId: 'none', value: 2 }),
           401,
@@ -124,6 +124,8 @@ test('local heartbeat integration', { timeout: 120_000 }, async (t) => {
       );
       requireStatus(await api(`/picks/${winnerPick}/rank`, outsider.token), 403, 'outsider rank');
       requireStatus(await api(`/picks/${winnerPick}/rank`, member.token), 403, 'participant rank');
+      requireStatus(await api(`/picks/${votePick}/close`, outsider.token), 403, 'outsider close');
+      requireStatus(await api(`/picks/${votePick}/close`, member.token), 403, 'participant close');
       assert.equal((await read(`preferences?pick_id=eq.${winnerPick}`)).length, 0);
       const visible = requireStatus(
         await request(config, `/rest/v1/picks?id=eq.${winnerPick}&select=id`, {
@@ -133,6 +135,18 @@ test('local heartbeat integration', { timeout: 120_000 }, async (t) => {
         'outsider read',
       );
       assert.equal(visible.length, 0);
+    });
+    await t.test('invalid candidate rejected and missing Pick reports 404', async () => {
+      requireStatus(
+        await api(`/picks/${winnerPick}/swipes`, host.token, {
+          placeId: 'foreign-place',
+          value: 2,
+        }),
+        400,
+        'foreign candidate',
+      );
+      requireStatus(await api(`/picks/${randomUUID()}/rank`, host.token), 404, 'missing Pick');
+      assert.equal((await read(`preferences?pick_id=eq.${winnerPick}`)).length, 0);
     });
     await t.test(
       'authenticated swipes persist, upsert and derive identity from token',
@@ -185,33 +199,16 @@ test('local heartbeat integration', { timeout: 120_000 }, async (t) => {
         assert.ok(own.every((row) => row.user_id === member.id));
       },
     );
-    await t.test('invalid candidate rejected and missing Pick reports 404', async () => {
-      requireStatus(
-        await api(`/picks/${winnerPick}/swipes`, host.token, {
-          placeId: 'foreign-place',
-          value: 2,
-        }),
-        400,
-        'foreign candidate',
-      );
-      requireStatus(await api(`/picks/${randomUUID()}/rank`, host.token), 404, 'missing Pick');
+    await t.test('final swipe automatically completes the Pick and persists exact ranking', async () => {
+      // Verify persistence before any /close or /rank call could conceal a failed auto-close.
       assert.equal((await read(`preferences?pick_id=eq.${winnerPick}`)).length, 4);
-    });
-    await t.test('host rank returns clear winner and commits matching database state', async () => {
-      const ranked = requireStatus(await api(`/picks/${winnerPick}/rank`, host.token), 200, 'rank');
-      assert.deepEqual(ranked.results, [
-        { placeId: a, rank: 1 },
-        { placeId: b, rank: 2 },
-      ]);
-      assert.deepEqual(ranked.decision, { kind: 'winner', winner: { placeId: a, rank: 1 } });
-      assert.ok(!JSON.stringify(ranked).includes('score'));
       const [stored] = await read(
         `picks?id=eq.${winnerPick}&select=state,winner_place_id,decided_by,decided_at`,
       );
       assert.equal(stored.state, 'completed');
       assert.equal(stored.winner_place_id, a);
       assert.equal(stored.decided_by, 'clear_winner');
-      assert.ok(stored.decided_at);
+      assert.ok(Number.isFinite(Date.parse(stored.decided_at)));
       const rows = await read(
         `ranking_results?pick_id=eq.${winnerPick}&select=place_id,rank&order=rank`,
       );
@@ -219,49 +216,66 @@ test('local heartbeat integration', { timeout: 120_000 }, async (t) => {
         { place_id: a, rank: 1 },
         { place_id: b, rank: 2 },
       ]);
+      const result = requireStatus(
+        await api(`/picks/${winnerPick}/close`, host.token),
+        200,
+        'read already-closed decision',
+      );
+      assert.deepEqual(result, { state: 'completed', winnerPlaceId: a, finalists: [] });
+      assert.ok(!JSON.stringify(result).includes('score'));
     });
-    await t.test('rank retry and post-close swipe conflict without changing outcome', async () => {
+    await t.test('post-close rank and swipe conflict without changing outcome', async () => {
+      const pickPath = `picks?id=eq.${winnerPick}&select=state,winner_place_id,decided_by,decided_at,vote_deadline_at,version`;
+      const rankingPath = `ranking_results?pick_id=eq.${winnerPick}&order=rank`;
+      const preferencesPath = `preferences?pick_id=eq.${winnerPick}&order=user_id,place_id`;
+      const before = {
+        pick: await read(pickPath),
+        ranking: await read(rankingPath),
+        preferences: await read(preferencesPath),
+      };
       requireStatus(await api(`/picks/${winnerPick}/rank`, host.token), 409, 'rank retry');
       requireStatus(
         await api(`/picks/${winnerPick}/swipes`, member.token, { placeId: a, value: 0 }),
         409,
         'late swipe',
       );
-      assert.equal(
-        (await read(`picks?id=eq.${winnerPick}&select=winner_place_id`))[0].winner_place_id,
-        a,
-      );
-      assert.equal(
-        (
-          await read(
-            `preferences?pick_id=eq.${winnerPick}&user_id=eq.${member.id}&place_id=eq.${a}&select=value`,
-          )
-        )[0].value,
-        2,
-      );
+      assert.deepEqual(await read(pickPath), before.pick);
+      assert.deepEqual(await read(rankingPath), before.ranking);
+      assert.deepEqual(await read(preferencesPath), before.preferences);
     });
-    await t.test('tied ranking enters final_vote and persists finalists', async () => {
+    await t.test('canonical close persists finalists and a stable future vote deadline', async () => {
       const result = requireStatus(
-        await api(`/picks/${votePick}/rank`, host.token),
+        await api(`/picks/${votePick}/close`, host.token),
         200,
-        'tied rank',
+        'tied close',
       );
-      assert.deepEqual(result.decision, {
-        kind: 'vote',
-        finalists: [
-          { placeId: a, rank: 1 },
-          { placeId: b, rank: 2 },
-        ],
+      assert.deepEqual(result, {
+        state: 'final_vote',
+        winnerPlaceId: null,
+        finalists: [a, b],
       });
-      const [stored] = await read(
-        `picks?id=eq.${votePick}&select=state,winner_place_id,decided_at`,
-      );
+      assert.ok(!JSON.stringify(result).includes('score'));
+      const pickPath = `picks?id=eq.${votePick}&select=state,winner_place_id,decided_at,vote_deadline_at,version`;
+      const [stored] = await read(pickPath);
       assert.equal(stored.state, 'final_vote');
       assert.equal(stored.winner_place_id, null);
       assert.equal(stored.decided_at, null);
-      const rows = await read(`ranking_results?pick_id=eq.${votePick}&select=finalist`);
-      assert.equal(rows.length, 2);
-      assert.ok(rows.every((row) => row.finalist));
+      assert.ok(Date.parse(stored.vote_deadline_at) > Date.now(), 'vote deadline must be in the future');
+      const rankingPath = `ranking_results?pick_id=eq.${votePick}&select=place_id,rank,finalist&order=rank`;
+      const rows = await read(rankingPath);
+      assert.deepEqual(rows, [
+        { place_id: a, rank: 1, finalist: true },
+        { place_id: b, rank: 2, finalist: true },
+      ]);
+      const repeated = requireStatus(
+        await api(`/picks/${votePick}/close`, host.token),
+        200,
+        'repeated close',
+      );
+      assert.deepEqual(repeated, result);
+      // Includes the original deadline and version: a retry must not extend or rewrite either.
+      assert.deepEqual(await read(pickPath), [stored]);
+      assert.deepEqual(await read(rankingPath), rows);
     });
   } finally {
     // Clean only resources created by this run, including partial setup failures.
