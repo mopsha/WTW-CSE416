@@ -1,14 +1,16 @@
-# Heartbeat integration contract (Josh)
+# Backend integration and deployment contract (Josh)
 
 Phase 1 Places services are available separately; existing HTTP response shapes
 remain unchanged. See [Places integration instructions](places-phase1.md) for
 Alan's pool interface, hours response enrichment, provider configuration and the
 Google snapshot-retention blocker before enabling real provider persistence.
 
-Status: API and database contracts are implemented. The RPCs are in
-`supabase/migrations/0002_heartbeat_rpcs.sql` (Razin); schema/RLS, SQL seed,
-Supabase config and shared authentication are present. Real database and hosted
-verification must pass before calling the integration end-to-end verified.
+Status: **IMPLEMENTED** lifecycle/closing, sweep, read-time hours and CD workflow.
+**CI VERIFIED:** PR validation and local database/API jobs pass, including the hours
+integration; the deploy job correctly skips on PRs. **HOSTED VERIFIED:** hosted CD,
+cron delivery and real backend Google requests are not yet verified. **BLOCKED/PLANNED:**
+Google lifecycle persistence/wiring and Realtime. Heartbeat RPCs are in `0002`,
+lifecycle in `0003`, canonical closing/voting in `0004`, and cron scheduling in `0005`.
 
 ## HTTP contract
 
@@ -169,9 +171,9 @@ this bypasses email delivery only for test fixtures and does not change applicat
 OTP/auth configuration. Service-role access sets up isolated fixtures and checks
 persistence; application actions use user bearer tokens through the served API.
 
-Seven sequential HTTP scenarios cover health/auth rejection, outsider/non-host
+Sequential HTTP scenarios cover health/auth rejection, outsider/non-host
 isolation, swipe persistence/upsert and token-derived identity, invalid candidates,
-clear-winner ranking, post-close conflicts, and final-vote ranking persistence.
+canonical auto-close, post-close conflicts, and canonical final-vote deadline persistence.
 Runtime-unique IDs avoid collisions; candidate data and expected outcomes are
 deterministic. Fixtures are deleted in `finally`, including partial setup failures.
 After interruption, reset locally before retrying. Stop the serving terminal and
@@ -192,10 +194,12 @@ container names/status only. The job uses Supabase setup-cli's current stable re
 (`latest`); it needs no npm install because the HTTP tests use only Node built-ins.
 CLI installation follows [Supabase setup-cli](https://github.com/supabase/setup-cli).
 
-Current checkout still lacks lifecycle/create/start/join/vote/close routes. Their HTTP
-tests are deferred until Alan's/Razin's work lands; no test-only routes or weakened
-RLS policies were introduced. SQL version-conflict coverage already exists; these
-HTTP tests verify deterministic post-close conflicts, not a nondeterministic race.
+Lifecycle create/start/refresh/cancel/read and canonical close/vote routes are
+present. The HTTP integration harness now verifies persisted auto-close after the
+final swipe, post-close conflicts without mutation, and canonical tied `/close`
+with a future vote deadline unchanged on retry. It is not exhaustive coverage of
+every lifecycle route or a real cron delivery test. Join remains outside this
+implemented route set. Unit/route tests supplement the database/API harness.
 
 ## Read-time opening hours
 
@@ -224,7 +228,10 @@ read path does not enable Google lifecycle discovery or authorize Google snapsho
 
 ## Main to wtw-dev deployment
 
-The existing CI workflow deploys the backend only on a push to `refs/heads/main`,
+**IMPLEMENTED; not hosted-tested.** PR CI passes and the deployment job correctly
+skips on pull requests. A successful hosted main deployment is still outstanding.
+
+The implemented CI workflow is configured to deploy the backend only on a push to `refs/heads/main`,
 after **both** `validate` and `integration` succeed. Pull requests never execute the
 deployment job. It checks out the exact validated commit and uses the same
 `supabase/setup-cli@v1` / `latest` CLI setup as local integration CI.

@@ -1,13 +1,25 @@
 # Places Phase 1 — Josh
 
-Implemented on `josh/sweep-ci`; no deployment, hosted migration, or live Google call
-has been performed. This is an offline-tested service layer. Main still has only
-heartbeat routes. No UI, auth, ranking, closing, voting, or join logic was changed.
+## Current Week 4 status
+
+- **IMPLEMENTED:** Google provider, timeout/fallback, cache contracts, runtime
+  selector, hours helper and authenticated read-time hours integration.
+- **CI VERIFIED:** PR validation and local database/API jobs pass, including the
+  opening-hours changes. The main-only deployment job correctly skips on PRs.
+- **HOSTED VERIFIED:** No real backend Google request, hosted CD execution, or
+  cron delivery has been verified. An existing Google project/key and API enablement
+  do not prove a request through this backend works.
+- **BLOCKED/PLANNED:** Google lifecycle discovery, safe Google snapshot/ranking
+  persistence, full display hydration, and durable Places cache integration.
+
+Alan's lifecycle/closing implementation is present. The actual API entry point
+still directly constructs MockProvider; it does not import `api/places.ts`'s
+configured builder. Google env variables alone cannot change lifecycle discovery.
+See the [real-versus-mock table](design.md#real-versus-mock).
 
 ## Contracts and integration
 
-Inspected `origin/alan/lifecycle` (`1d31941`) and `origin/alan/close-vote`
-(`cdc7ccf`) without merging. Both use:
+Current shared contracts:
 
 - `PlaceProvider.search({ center, radiusM, category? }): Promise<Candidate[]>`.
   The optional second `{ signal }` argument is backward compatible.
@@ -27,41 +39,46 @@ A request for 30 candidates can legitimately return fewer: Google's Nearby Searc
 limit is 20 and this implementation does not fabricate or silently mix extra mock
 candidates into a successful Google response.
 
-### After Alan's PR merges
+### Current lifecycle boundary and remaining work
 
-1. Resolve the expected add/add conflict in `_shared/places/pool.ts`, keeping this
-   implementation and Alan's structural interfaces. Run his pool/lifecycle tests
-   and reconcile the deliberate no-candidates error behavior.
-2. `api/places.ts` exports `placesPoolBuilder`. Replace Alan's module-level
-   `createPoolBuilder(new MockProvider())` dependency in `api/index.ts` with it.
-   Start with mock mode. The existing main entry point does not import this module;
-   adding it now would have no discovery route to serve.
-3. **Before enabling Google in lifecycle**, use `candidateSnapshot` at the
-   `_shared/api/lifecycle.ts` buildCandidates boundary. It copies owned data and
-   rejects Google/request-only content. Alan's current `pick_start`/`pick_refresh`
-   RPCs write the entire candidate to `places.raw` and `pick_candidates.snapshot`.
-   Those must not receive Google payloads as-is. Agree an ID-only provider reference,
-   permitted coordinate handling/expiry, display-time hydration, and history design
-   with Alan/Razin. This conflicts with today's NOT NULL name/snapshot contract.
-   Do not erase existing snapshots or change ranking inputs during hours refresh.
-4. At the HTTP response orchestration layer, create a bound
-   `createHoursRefresher({ provider, mode, cache?, now? })`, supplying a provider
-   matching each candidate's stored provenance. Deduplicate finalist/winner IDs.
-   GoogleProvider implements `fetchHours`; mock hours can be supplied from owned
-   fixtures (current MockProvider fixtures contain no hours, so return unknown).
-5. After `rank()` resolves, enrich `results`, `decision.winner`, or
-   `decision.finalists` using `enrichResults`. For Alan's `/close`, use its
-   `winnerPlaceId` and finalist IDs and attach metadata separately. For GET Pick /
-   persisted winner reads, refresh again at read time. Authorize membership before
-   provider calls. Mike's current results screen reads Supabase directly, so agree
-   an authenticated results-metadata read path and client adoption; changing only
-   the immediate close response is insufficient. Never send internal scores.
+`api/places.ts` exports a configured `placesPoolBuilder`, but `api/index.ts` uses
+`createPoolBuilder(new MockProvider())`. The active start/refresh routes therefore
+bypass configured Google selection, fallback and injected cache. `MockProvider`
+uses `supabase/seed/places.json`'s unapproved placeholders; `supabase/seed.sql`'s SBU
+demo pool is a different source inserted directly into the database.
 
-`refreshOpenHours` returns metadata without writing Picks, snapshots or rankings.
-Failures are isolated per ID, return `openNow: null`, `closesAt: null`, and do not
-replace older cache data. The response preserves fetchedAt/status for diagnostics.
-Missing hours never imply closed. Keep provider provenance internally and identify
-mock/demo results clearly when a consumer UI is added.
+Do not simply replace the entry-point dependency. Lifecycle `buildCandidates`
+currently wraps every full candidate as `{placeId, snapshot}`. The start/refresh
+RPCs persist that snapshot in both `places.raw` and `pick_candidates.snapshot`.
+`candidateSnapshot` in `pool.ts` rejects Google/request-only content but is not
+called at this persistence boundary. Wiring it would block unsafe writes; it would
+not by itself make Google candidates usable.
+
+Closing reads frozen candidate coordinates and the Pick center to compute the
+canonical distance tie-break. ID-only references plus display hydration do not
+supply that stable input. A precomputed distance could preserve algorithmic behavior
+with a coordinated input-contract change, but permission to retain a Google-derived
+value has not been established. Calling it application metadata does not establish
+an exemption. Coordinate the persistence/read contract with Alan/Razin and the
+client data contract with Mike; keep ranking decisions and lifecycle transitions
+canonical. Do not invent coordinates, relax safeguards, or edit applied migrations.
+
+### Implemented opening-hours read path
+
+The existing authenticated `GET /picks/:id` enriches completed/final-vote reads with
+`candidateHours`, after membership checks. `api/hours.ts` binds
+`createCandidateHours`, which calls `refreshOpenHours` by stored provenance.
+`src/lib/queries.ts` retains snapshot identity/display data and attaches optional
+`openNow`/`closesAt` from this endpoint. No second close/results decision engine is
+introduced, and no screen-layout change is included.
+
+Explicit Google provenance fetches hours on demand; nothing is persisted. Fresh
+explicitly mock-tagged hours use the existing freshness/validation rules. Untagged
+legacy/demo data, missing or stale fixture hours, and provider failures yield
+unknown hours. Current fixtures have no authoritative hours source. Provider-mode
+changes never relabel an existing Pick or send its mock IDs to Google. Failures
+preserve candidate identity, ranks, winners and state. This read integration is
+CI verified; it does not resolve Google candidate creation or full display hydration.
 
 ## Google request and normalization
 
@@ -85,12 +102,12 @@ provider results. Fallback data never populates the Google cache key.
 
 ## Storage policy and database migration decision
 
-Official sources checked October 19, 2026:
+Previously recorded policy references (October 19, 2026; not newly verified by this documentation update):
 
 - [Places policies](https://developers.google.com/maps/documentation/places/web-service/policies):
   place IDs are exempt from content-caching restrictions; attribution is required.
 - [Service-specific terms, section 14](https://cloud.google.com/maps-platform/terms/maps-service-terms):
-  the published non-EEA terms allow latitude/longitude caching up to 30 days.
+  the prior review recorded a non-EEA latitude/longitude caching allowance of up to 30 days; applicability to this project remains unverified.
   This is **not** a general 30-day permission for names, ratings, photos or hours.
 - [Nearby Search](https://developers.google.com/maps/documentation/places/web-service/nearby-search),
   [Place resource](https://developers.google.com/maps/documentation/places/web-service/reference/rest/v1/places),
@@ -100,7 +117,7 @@ The billing jurisdiction and any project-specific agreement remain unknown. Revi
 the applicable agreement before hosted use; EEA terms may differ. This implementation
 chooses the conservative policy: **no Google content cache other than IDs**. Names,
 addresses, coordinates, ratings, photo references, types, timezone and hours are
-request-scoped. It does not use even the available 30-day coordinate allowance.
+request-scoped. This request-only rule is our conservative design choice, not a claim that every field has the same external prohibition. Any coordinate or derived-distance retention proposal needs verification against the applicable current agreement.
 
 `PlaceCache` stores either owned mock candidates or Google place IDs plus our query
 identity/provider/fetch timestamp. The implementation strips extra Google fields at
@@ -119,17 +136,17 @@ on demand and are neither read from nor written to durable hours storage. Thus t
 seven-day requirement does not override provider restrictions. `HoursCache` is an
 injected contract, not a deployed Supabase table.
 
-No migration was created. Main has `0001`/`0002`; Alan owns unmerged `0003`/`0004`.
-The unresolved Google snapshot/history contract prevents finalizing a useful
-`place_cache` schema safely. The tested repository contracts are the Phase 1 seam.
-After that agreement, allocate a new migration jointly; do not renumber applied
-migrations. Proposed adapter constraints:
+No durable Places-cache migration or adapter exists. Lifecycle/voting migrations
+`0003`/`0004` and deadline-sweep migration `0005` are present; they do not resolve
+Google snapshot retention. Agree the permitted fields, stable ranking inputs,
+expiry and history behavior before adding a new migration. Never renumber or edit
+applied migrations. Proposed adapter constraints:
 
 - Explicit provider/key/query/fetched-at columns, Google IDs only; no raw Google JSON.
 - Mock payloads stored separately from Google IDs; validate provenance on write.
 - Unique provider/key index and fetched-at index for cleanup.
 - RLS enabled, no anon/authenticated reads or writes; explicit service-role grants.
-- No dependency on unmerged schema until migration order is agreed.
+- Coordinate schema/RPC changes with their owners and preserve existing mock data.
 - SQL tests for denied client access, allowed service access, and payload restrictions.
 
 ## Opening-hours semantics
@@ -150,7 +167,12 @@ for one minute after fetch, including its next closing instant when supplied;
 otherwise metadata is a regular-schedule calculation. Dated/truncated periods are
 not normalized into recurring weekly schedules.
 
-## Manual setup, switching and rollback (not executed)
+## Future hosted setup, switching and rollback (blocked prerequisites)
+
+These steps apply only after the configured builder and safe persistence contract
+are integrated. Today, changing `PLACES_PROVIDER` does not change lifecycle discovery.
+API keys and secret values must never be committed, logged, or placed in frontend
+configuration. This document records names and procedures only.
 
 1. Confirm the Google billing project/jurisdiction, enable Places API (New), set
    API restrictions, quotas and budget monitoring. Confirm pricing for the mask.
@@ -168,26 +190,21 @@ not normalized into recurring weekly schedules.
    Roll back by setting `PLACES_PROVIDER=mock`, then test a new Pick again. Do not
    rewrite existing Pick pools. No public endpoint can change the mode.
 
-No credentials are required by tests/CI. Deno checks, when available, should include
-both `api/index.ts` and the not-yet-wired `api/places.ts` entry point. Run Jest,
-lint/typecheck, Deno HTTP tests, then local database integration after the schema
-work is agreed. Hosted credentials and migration permissions remain unverified.
+Provider unit tests use synthetic responses and require no Google credentials.
+CI validates the API entry point and runs local database/API integration; the
+configured Places builder is exercised through its unit tests, not live Google.
+Hosted CD credentials are separate from provider runtime secrets; see
+[deployment configuration](api-integration.md#main-to-wtw-dev-deployment).
 
-## Verification in this workspace
+## Verification and remaining acceptance work
 
-- Restored existing lockfile dependencies with `npm ci --ignore-scripts`; no packages
-  or lockfile versions were added/changed. The initial sandboxed install failed;
-  retry with network access and a writable temporary npm cache succeeded.
-- `npm run lint`: passed.
-- `npm run typecheck`: passed.
-- `npm test -- --runInBand`: 17 suites passed, 169 tests passed, zero failures.
-- `CI=1 ./node_modules/.bin/expo export --platform android`: passed (bundle only,
-  not a device/native build).
-- `git diff --check`: passed.
-- Deno/Supabase CLI absent: Deno checks and database integration were not run.
-- No live Google/Supabase calls, secrets changes, branch changes, commits or deployment.
+PR validation and local database/API checks are green; PR deployment is correctly
+skipped. Opening-hours integration is CI verified. No live Google request, hosted
+CD execution or cron delivery is claimed. Remaining acceptance work includes:
 
-The audit's missing-package errors are resolved after restoring dependencies. An
-initial new test-only TypeScript cast error was fixed; final checks above passed.
-Local Node is 23.11.0, which produced dependency engine warnings; CI uses Node 22.
-Use the documented supported Node version for CI/hosted reproducibility.
+- Resolve permitted candidate persistence and deterministic ranking inputs.
+- Wire configured discovery and verify mock/Google switching in the real lifecycle.
+- Verify live Google backend requests and failure/recovery without logging credentials.
+- Confirm the intended mock fixture coverage and reconcile `NoCandidatesError`
+  mapping at the lifecycle boundary (it currently falls through as a generic error).
+- Verify hosted deployment, migration compatibility and cron configuration/delivery.
