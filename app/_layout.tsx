@@ -14,6 +14,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { colors } from '@/components/theme';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { configureNotifications, onNotificationTap } from '@/lib/notify';
+import { takePendingJoin } from '@/lib/pendingJoin';
 
 void SplashScreen.preventAutoHideAsync();
 configureNotifications();
@@ -46,6 +47,13 @@ function RootStack() {
   // Tapping a WTW notification opens the screen it points at (e.g. the results).
   useEffect(() => onNotificationTap((url) => router.push(url as never)), []);
 
+  // A join link that arrived signed out: once signed in, finish joining.
+  useEffect(() => {
+    if (!ready || !session) return;
+    const code = takePendingJoin();
+    if (code) router.push({ pathname: '/join/[code]', params: { code } });
+  }, [ready, session]);
+
   // Keep the splash up until the stored session and fonts are loaded. Rendering the
   // guarded Stack earlier treats a signed-in user as signed out for a moment, which
   // redirects deep links (e.g. a reload on /pick/:id/swipe) back to Home.
@@ -76,6 +84,9 @@ function RootStack() {
           <Stack.Screen name="pick/[id]/vote" options={{ animation: 'fade' }} />
           <Stack.Screen name="pick/[id]/winner" options={{ animation: 'fade' }} />
         </Stack.Protected>
+        {/* Join links open signed in or out; the screen sends you to sign-in if needed.
+            Listed last so it is never the guard's fallback screen. */}
+        <Stack.Screen name="join/[code]" options={{ animation: 'fade' }} />
       </Stack>
     </>
   );
