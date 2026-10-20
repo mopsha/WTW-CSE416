@@ -4,6 +4,7 @@ import { createStore } from './store.ts';
 import { createLifecycleStore } from './lifecycleStore.ts';
 import { createClosingStore } from './closingStore.ts';
 import { createSweepStore } from './sweepStore.ts';
+import { refreshCandidateHours } from './hours.ts';
 import { createPoolBuilder } from '../_shared/places/pool.ts';
 import { MockProvider } from '../_shared/places/MockProvider.ts';
 
@@ -22,6 +23,7 @@ const app = createApp(
     sweepStore: createSweepStore(),
     cronSecret: Deno.env.get('CRON_SECRET'),
     poolBuilder,
+    refreshHours: refreshCandidateHours,
   },
   '/api',
 );

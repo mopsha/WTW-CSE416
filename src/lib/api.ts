@@ -101,6 +101,10 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
   const pickPath = (pickId: string) => `/picks/${encodeURIComponent(pickId)}`;
 
   return {
+    getPickHours: (pickId: string) =>
+      request<{
+        candidateHours?: { placeId: string; openNow: boolean | null; closesAt: string | null }[];
+      }>('GET', pickPath(pickId)),
     health: () => request<StatusResponse>('GET', '/health', { auth: false }),
     submitSwipe: (pickId: string, placeId: string, value: PreferenceValue) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/swipes`, { body: { placeId, value } }),

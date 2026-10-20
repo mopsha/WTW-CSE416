@@ -221,3 +221,39 @@ describe('getPick', () => {
     await expect(getPick(store, 'pick', 'host')).rejects.toMatchObject({ status: 404 });
   });
 });
+
+describe('read-time candidate hours', () => {
+  test.each(['completed', 'final_vote'] as const)(
+    'enriches %s only after membership validation without writes',
+    async (state) => {
+      const p = pick({ state, candidates: [{ placeId: 'a', snapshot: candidate('a') }] });
+      const store = fixture(p);
+      const refresh = jest
+        .fn()
+        .mockResolvedValue([{ placeId: 'a', openNow: true, closesAt: null }]);
+      await expect(getPick(store, 'pick', 'outsider', refresh)).rejects.toMatchObject({
+        status: 403,
+      });
+      expect(refresh).not.toHaveBeenCalled();
+      const before = structuredClone(p);
+      const result = await getPick(store, 'pick', 'guest', refresh);
+      expect(refresh).toHaveBeenCalledWith(p.candidates);
+      expect(result.candidateHours).toEqual([{ placeId: 'a', openNow: true, closesAt: null }]);
+      expect(p).toEqual(before);
+      expect(store.start).not.toHaveBeenCalled();
+      expect(store.refresh).not.toHaveBeenCalled();
+      expect(store.cancel).not.toHaveBeenCalled();
+    },
+  );
+  test('does not fetch while swiping and preserves completed data if enrichment fails', async () => {
+    const refresh = jest.fn().mockRejectedValue(new Error('unavailable'));
+    await getPick(fixture(pick({ state: 'swiping' })), 'pick', 'guest', refresh);
+    expect(refresh).not.toHaveBeenCalled();
+    const store = fixture(pick({ state: 'completed', winnerPlaceId: 'a' }));
+    expect(await getPick(store, 'pick', 'guest', refresh)).toMatchObject({
+      state: 'completed',
+      winnerPlaceId: 'a',
+      candidateHours: [],
+    });
+  });
+});

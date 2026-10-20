@@ -376,3 +376,65 @@ Deno.test('a swipe triggers the auto-close check without failing the swipe', asy
   equal(await result.json(), { status: 'ok' });
   equal(closeChecks, ['checked']);
 });
+
+Deno.test(
+  'GET Pick attaches authorized reveal hours without changing candidate snapshots',
+  async () => {
+    let refreshes = 0;
+    const snapshot = { placeId: 'a', name: 'Original', lat: 0, lng: 0 };
+    const app = createApp({
+      store,
+      poolBuilder,
+      closingStore,
+      getUser: async (req) => ({ id: req.headers.get('x-test-user') ?? 'guest' }),
+      lifecycleStore: {
+        ...lifecycleStore,
+        load: async () => ({
+          id: 'pick',
+          hostId: 'host',
+          state: 'completed',
+          category: 'food',
+          center: { lat: 0, lng: 0 },
+          radiusM: 500,
+          poolSize: 20,
+          deadlineAt: null,
+          closeThreshold: 100,
+          participantIds: ['host', 'guest'],
+          candidates: [{ placeId: 'a', snapshot }],
+          hasAnswers: true,
+          myAnswers: {},
+          winnerPlaceId: 'a',
+          decidedAt: null,
+          decidedBy: 'clear_winner',
+          version: '1',
+        }),
+      },
+      refreshHours: async () => {
+        refreshes++;
+        return [
+          {
+            placeId: 'a',
+            openNow: null,
+            closesAt: null,
+            provider: 'mock',
+            fetchedAt: null,
+            status: 'unavailable',
+          },
+        ];
+      },
+    });
+    equal(
+      (await app.request('/picks/pick', { headers: { 'x-test-user': 'outsider' } })).status,
+      403,
+    );
+    equal(refreshes, 0);
+    const response = await app.request('/picks/pick');
+    equal(response.status, 200);
+    equal(response.headers.get('cache-control'), 'private, no-store');
+    const body = await response.json();
+    equal(body.candidates, [snapshot]);
+    equal(body.winnerPlaceId, 'a');
+    equal(body.candidateHours[0].openNow, null);
+    equal(refreshes, 1);
+  },
+);

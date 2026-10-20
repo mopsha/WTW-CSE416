@@ -1,6 +1,7 @@
 // Read-only queries. Clients only READ from Supabase; RLS limits rows to Picks I'm in
 // and to my own preferences. Every write goes through src/lib/api.ts.
 import { USE_MOCK } from './config';
+import { api } from './api';
 import { mockQueries } from './mock/queries';
 import { candidateFromSnapshot } from './places';
 import { getSupabase } from './supabase';
@@ -62,7 +63,20 @@ const supabaseQueries: Queries = {
         .eq('pick_id', pickId)
         .order('place_id'),
     ) as { place_id: string; snapshot: unknown }[];
-    return rows.map((r) => candidateFromSnapshot(r.place_id, r.snapshot));
+    const candidates = rows.map((r) => candidateFromSnapshot(r.place_id, r.snapshot));
+    // The existing authenticated Pick reader refreshes hours only at reveal/results.
+    // Optional metadata failures must not hide the persisted pool or outcome.
+    try {
+      const { candidateHours = [] } = await api.getPickHours(pickId);
+      const byId = new Map(candidateHours.map((h) => [h.placeId, h]));
+      return candidates.map((c) => ({
+        ...c,
+        openNow: byId.get(c.placeId)?.openNow ?? null,
+        closesAt: byId.get(c.placeId)?.closesAt ?? null,
+      }));
+    } catch {
+      return candidates.map((c) => ({ ...c, openNow: null, closesAt: null }));
+    }
   },
 
   async getMyPreferences(pickId, userId) {

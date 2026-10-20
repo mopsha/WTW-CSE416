@@ -196,3 +196,28 @@ Current checkout still lacks lifecycle/create/start/join/vote/close routes. Thei
 tests are deferred until Alan's/Razin's work lands; no test-only routes or weakened
 RLS policies were introduced. SQL version-conflict coverage already exists; these
 HTTP tests verify deterministic post-close conflicts, not a nondeterministic race.
+
+## Read-time opening hours
+
+The existing authenticated `GET /picks/:id` adds `candidateHours` metadata for
+`completed` and `final_vote` Picks. Membership is checked before provider access;
+responses use `Cache-Control: private, no-store`. The existing frontend
+`queries.getCandidates()` still reads the persisted candidate identity/display
+snapshot, then obtains this metadata through GET Pick. It preserves candidate
+order and fields, adding optional `openNow` and `closesAt`. Existing mock-app reads
+remain unchanged. No screen layout or lifecycle decision changes are included.
+
+The read uses `refreshOpenHours` through a provenance-aware adapter. Explicitly
+Google-tagged candidates fetch current hours using the server-only
+`GOOGLE_PLACES_API_KEY`; no Google hours are cached or written to the database.
+Fresh explicitly mock-tagged snapshot hours are validated with the helper's
+seven-day freshness rule. Stale, missing, untagged legacy/demo hours, provider
+errors, and timeouts produce unknown hours, never an invented open/closed status.
+The current fixtures have no authoritative hours source. Discovery mode changes
+never relabel an existing candidate or send a mock ID to Google.
+
+Hours failures do not replace candidates or alter winner, ranking, votes, snapshots,
+or Pick state. Swiping/draft reads do not fetch hours. The client retains persisted
+candidates if the optional metadata request fails. Google candidate creation and
+full display hydration remain blocked on the separate persistence design; this
+read path does not enable Google lifecycle discovery or authorize Google snapshots.

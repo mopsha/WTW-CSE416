@@ -34,6 +34,7 @@ export function createApp(
     closingStore: ClosingStore & VotingStore;
     sweepStore?: SweepStore;
     cronSecret?: string;
+    refreshHours?: Parameters<typeof getPick>[3];
   },
   basePath = '',
 ) {
@@ -89,8 +90,9 @@ export function createApp(
     return c.json(await createPick(deps.lifecycleStore, user.id, body), 201);
   });
   app.get('/picks/:id', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
     const user = await deps.getUser(c.req.raw);
-    return c.json(await getPick(deps.lifecycleStore, c.req.param('id'), user.id));
+    return c.json(await getPick(deps.lifecycleStore, c.req.param('id'), user.id, deps.refreshHours));
   });
   app.post('/picks/:id/start', async (c) => {
     const user = await deps.getUser(c.req.raw);
