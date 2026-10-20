@@ -71,6 +71,7 @@ Deno.test('GET /picks/:id/progress: counts only, participants only', async () =>
       state: 'swiping' as const,
       hostId: 'host',
       deadlineAt: null,
+      voteDeadlineAt: null,
       candidateCount: 2,
       participants: [
         {

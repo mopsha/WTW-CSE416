@@ -5,6 +5,7 @@ const snapshot = (over: Partial<ProgressSnapshot> = {}): ProgressSnapshot => ({
   state: 'swiping',
   hostId: 'host',
   deadlineAt: null,
+  voteDeadlineAt: null,
   candidateCount: 3,
   participants: [
     {
@@ -70,4 +71,14 @@ test('participants only: strangers get 403, unknown Picks 404', async () => {
   const missing = await getProgress(store, 'nope', 'a').catch((e: unknown) => e);
   expect(missing).toBeInstanceOf(ApiError);
   expect(missing).toMatchObject({ status: 404, code: 'PICK_NOT_FOUND' });
+});
+
+test('during the final vote, the deadline is the vote deadline (not the long-passed swipe one)', () => {
+  const s = snapshot({
+    state: 'final_vote',
+    deadlineAt: '2026-10-20T10:00:00Z',
+    voteDeadlineAt: '2026-10-20T10:40:00Z',
+  });
+  expect(toProgress(s, 'a').deadlineAt).toBe('2026-10-20T10:40:00Z');
+  expect(toProgress({ ...s, state: 'swiping' }, 'a').deadlineAt).toBe('2026-10-20T10:00:00Z');
 });

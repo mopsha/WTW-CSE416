@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(8);
+select plan(10);
 
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
 values ('00000000-0000-0000-0000-000000000000', '33333333-3333-4333-8333-333333333333',
@@ -76,6 +76,17 @@ select ok(
               where pubname = 'supabase_realtime' and schemaname = 'public'
                 and tablename in ('preferences', 'ranking_results', 'final_votes')),
   'answers, scores and ballots are not in the Realtime publication');
+
+-- 0005 publishes pick_participants, so UPDATEs need a replica identity (bug #18): without
+-- one, the finished_at trigger (everyone's last swipe) fails with 55000.
+select is(
+  (select relreplident::text from pg_class where oid = 'public.pick_participants'::regclass),
+  'i', 'pick_participants uses its unique index as replica identity');
+select lives_ok(
+  $$update pick_participants set finished_at = now()
+    where pick_id = 'de000000-0000-4000-8000-000000000001'
+      and user_id = '33333333-3333-4333-8333-333333333333'$$,
+  'pick_participants can be updated while it is in the Realtime publication');
 
 set local role authenticated;
 set local request.jwt.claims to '{"sub":"33333333-3333-4333-8333-333333333333","role":"authenticated"}';

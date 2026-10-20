@@ -44,6 +44,8 @@ export interface MockPick {
   radiusM: number;
   poolSize: number;
   deadlineAt: string | null;
+  /** When the final vote closes (Alan's picks.vote_deadline_at); null outside final_vote. */
+  voteDeadlineAt: string | null;
   closeThreshold: number;
   /** Empty until the host starts the Pick. */
   candidates: MockPlace[];
@@ -85,6 +87,9 @@ function later(ms: number, fn: () => void) {
   }, ms);
   timers.add(t);
 }
+
+/** Same as the API's VOTE_WINDOW_MS (closing.ts): the final vote stays open 30 minutes. */
+export const VOTE_WINDOW_MS = 30 * 60_000;
 
 const FRIEND_IDS = ['mock-ava', 'mock-ben', 'mock-cam'] as const;
 
@@ -129,6 +134,7 @@ function base(id: string, over: Partial<MockPick>): MockPick {
     radiusM: 3219,
     poolSize: MOCK_PLACES.length,
     deadlineAt: null,
+    voteDeadlineAt: null,
     closeThreshold: 100,
     candidates: [...MOCK_PLACES],
     participants: [me(), friend(0), friend(1), friend(2)],
@@ -159,7 +165,12 @@ function initial(): Map<string, MockPick> {
   picks.push(base('friend-pick', { category: 'activities', hostId: FRIEND_IDS[0], createdAt: -2 }));
 
   // Already in the final vote: shows the ballot (three finalists, two of them tied at #1).
-  const vote = base('vote-pick', { state: 'final_vote', hostId: FRIEND_IDS[1], createdAt: -3 });
+  const vote = base('vote-pick', {
+    state: 'final_vote',
+    hostId: FRIEND_IDS[1],
+    voteDeadlineAt: new Date(Date.now() + VOTE_WINDOW_MS).toISOString(),
+    createdAt: -3,
+  });
   vote.participants.forEach((p) => finished(p, vote));
   vote.ranked = rankCandidates(
     vote.candidates.map((c) => ({ placeId: c.placeId, lat: c.lat, lng: c.lng })),
@@ -255,6 +266,7 @@ export function decide(pick: MockPick, now = new Date()) {
     pick.decidedAt = now.toISOString();
   } else {
     pick.state = 'final_vote';
+    pick.voteDeadlineAt = new Date(now.getTime() + VOTE_WINDOW_MS).toISOString();
   }
   emit(pick.id);
   if (pick.state === 'final_vote') scheduleBots(pick);
@@ -372,7 +384,8 @@ export function progressOf(pick: MockPick): PickProgress {
     .sort((a, b) => Number(b.isHost) - Number(a.isHost));
   return {
     state: pick.state,
-    deadlineAt: pick.deadlineAt,
+    // Like the real route: in the final vote, count down the vote's own deadline.
+    deadlineAt: pick.state === 'final_vote' ? pick.voteDeadlineAt : pick.deadlineAt,
     participants,
     doneCount: participants.filter((p) => p.done).length,
     votedCount: participants.filter((p) => p.voted).length,
@@ -381,7 +394,10 @@ export function progressOf(pick: MockPick): PickProgress {
 }
 
 /** Lazily applies the deadline (the real deadline sweep runs every minute) and wakes the bots. */
-export function touch(pick: MockPick) {
-  maybeAutoClose(pick);
+export function touch(pick: MockPick, now = new Date()) {
+  maybeAutoClose(pick, now);
+  if (pick.state === 'final_vote' && pick.voteDeadlineAt && now >= new Date(pick.voteDeadlineAt)) {
+    settleVote(pick, now);
+  }
   scheduleBots(pick);
 }

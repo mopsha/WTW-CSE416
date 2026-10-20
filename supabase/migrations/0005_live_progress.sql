@@ -56,6 +56,13 @@ create trigger preferences_sync_finished
   after insert or delete on public.preferences
   for each row execute function private.sync_participant_finished();
 
+-- A table in a publication that publishes UPDATE/DELETE needs a replica identity, or Postgres
+-- rejects every UPDATE on it (55000), including the finished_at update above. picks has a
+-- primary key; pick_participants doesn't, so use its unique (pick_id, user_id) index (both
+-- columns are not null). Found by Razin on `supabase db reset` (docs/bugs.md #18).
+alter table public.pick_participants
+  replica identity using index pick_participants_pick_user_key;
+
 -- Realtime: add the two tables only if the publication exists (it does on Supabase and in
 -- `supabase start`) and they aren't members yet, so a re-run or a teammate's migration that
 -- adds them too doesn't fail.

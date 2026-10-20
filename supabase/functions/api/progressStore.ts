@@ -22,7 +22,8 @@ export function createProgressStore(): ProgressStore {
 
       const pick = await db
         .from('picks')
-        .select('state, host_id, deadline_at')
+        // '*' so vote_deadline_at is read once 0004 is deployed, without failing before it.
+        .select('*')
         .eq('id', pickId)
         .maybeSingle();
       if (pick.error) fail('picks');
@@ -58,12 +59,18 @@ export function createProgressStore(): ProgressStore {
         joined_at: string;
         profiles: { display_name: string | null } | { display_name: string | null }[] | null;
       }[];
-      const row = pick.data as { state: PickState; host_id: string; deadline_at: string | null };
+      const row = pick.data as {
+        state: PickState;
+        host_id: string;
+        deadline_at: string | null;
+        vote_deadline_at?: string | null;
+      };
 
       return {
         state: row.state,
         hostId: row.host_id,
         deadlineAt: row.deadline_at,
+        voteDeadlineAt: row.vote_deadline_at ?? null,
         candidateCount: candidates.count ?? 0,
         participants: rows.map((p) => {
           const profile = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
