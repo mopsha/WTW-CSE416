@@ -25,6 +25,7 @@ import { Button } from '@/components/Button';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorBanner } from '@/components/ErrorBanner';
 import { GradientButton } from '@/components/GradientButton';
+import { JoinCodeCard } from '@/components/JoinCodeCard';
 import { PlacePhoto } from '@/components/PlaceCard';
 import { colors, flame, fonts, MIN_TARGET } from '@/components/theme';
 import { useSession } from '@/hooks/useAuth';
@@ -32,7 +33,7 @@ import { USE_MOCK } from '@/lib/config';
 import { messageOf } from '@/lib/errors';
 import { haptic } from '@/lib/haptics';
 import { MOCK_PLACES } from '@/lib/mock/fixtures';
-import { resetMockData } from '@/lib/mock/store';
+import { MOCK_INVITE_CODE, resetMockData } from '@/lib/mock/store';
 import { pickEmoji, pickTitle, STATE_LABEL } from '@/lib/pickUi';
 import { queries } from '@/lib/queries';
 import type { PickState, PickSummary } from '@/lib/types';
@@ -230,9 +231,14 @@ export default function PicksScreen() {
           </Text>
         </View>
 
+        <JoinCodeCard />
+
         {USE_MOCK ? (
           <View style={styles.mock}>
-            <Text style={styles.mockText}>Demo mode: data is local and resets on reload.</Text>
+            <Text style={styles.mockText}>
+              Demo mode: data is local and resets on reload. Try joining with code{' '}
+              {MOCK_INVITE_CODE}.
+            </Text>
             <Button label="Reset demo" variant="secondary" icon="refresh" onPress={resetDemo} />
           </View>
         ) : null}
