@@ -122,17 +122,18 @@ export function clearWinner(ranked: readonly RankedCandidate[]): Decision {
   return { kind: 'vote', finalists };
 }
 
+/** The only fields voteWinner needs: a stored rank already encodes the score/distance/id tie order. */
+export type VoteFinalist = Pick<RankedCandidate, 'placeId' | 'rank'>;
+
 /**
  * Winner of the final vote. Spec tie-break: most votes → higher score → closer → place id.
  * After the vote count that is exactly rankCandidates' order, so ties go to the better rank.
  * No ballots at all (deadline passed) means #1 wins.
- * @param finalists decision.finalists from clearWinner
+ * @param finalists decision.finalists from clearWinner, or the equivalent {placeId, rank}
+ *   rows read back from ranking_results once a Pick has already closed
  * @param votes     the placeId of every ballot cast
  */
-export function voteWinner(
-  finalists: readonly RankedCandidate[],
-  votes: readonly string[],
-): RankedCandidate {
+export function voteWinner<T extends VoteFinalist>(finalists: readonly T[], votes: readonly string[]): T {
   const tally = new Map(finalists.map((c) => [c.placeId, 0]));
   for (const placeId of votes) {
     const count = tally.get(placeId);
