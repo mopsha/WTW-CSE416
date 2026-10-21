@@ -154,6 +154,10 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
   const pickPath = (pickId: string) => `/picks/${encodeURIComponent(pickId)}`;
 
   return {
+    getPickHours: (pickId: string) =>
+      request<{
+        candidateHours?: { placeId: string; openNow: boolean | null; closesAt: string | null }[];
+      }>('GET', pickPath(pickId)),
     health: () => request<StatusResponse>('GET', '/health', { auth: false }),
     /** Validate with validateCreatePick first; the server rejects bad input with 400 INVALID_INPUT. */
     createPick: (input: CreatePickInput) =>

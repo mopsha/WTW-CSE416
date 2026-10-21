@@ -7,6 +7,7 @@ import { canTransition, type PickState } from '../domain/pickState.ts';
 import { shuffleForUser } from '../domain/shuffle.ts';
 import type { LatLng } from '../domain/geo.ts';
 import type { PoolBuilder } from '../places/pool.ts';
+import type { HoursMetadata } from '../places/refreshOpenHours.ts';
 import type { Category } from '../places/types.ts';
 
 // Limits mirror Mike's validateCreatePick (_shared/domain/createPick.ts, PR #11, not yet
@@ -260,8 +261,16 @@ export async function cancelPick(store: LifecycleStore, pickId: string, userId: 
   return { state: 'canceled' as const };
 }
 
-export async function getPick(store: LifecycleStore, pickId: string, userId: string) {
+export async function getPick(
+  store: LifecycleStore, pickId: string, userId: string,
+  refreshHours?: (candidates: CandidateSnapshot[]) => Promise<HoursMetadata[]>,
+) {
   const pick = await loadAsParticipant(store, pickId, userId);
+  // Membership is checked before any provider access. Metadata never changes snapshots.
+  let candidateHours: HoursMetadata[] = [];
+  if (refreshHours && (pick.state === 'completed' || pick.state === 'final_vote')) {
+    try { candidateHours = await refreshHours(pick.candidates); } catch { /* Optional metadata only. */ }
+  }
   const order = shuffleForUser(
     pick.candidates.map((c) => c.placeId),
     pick.id,
@@ -280,6 +289,7 @@ export async function getPick(store: LifecycleStore, pickId: string, userId: str
     isHost: pick.hostId === userId,
     participantCount: pick.participantIds.length,
     candidates: order.map((placeId) => byId.get(placeId)),
+    ...(refreshHours ? { candidateHours } : {}),
     myAnswers: pick.myAnswers,
     winnerPlaceId: pick.winnerPlaceId,
     decidedAt: pick.decidedAt,

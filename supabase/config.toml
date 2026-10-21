@@ -426,7 +426,8 @@ enabled = true
 # and column/key alignment. Set to "null" to emit raw, unformatted SQL.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":180,\"commaStyle\":\"trailing\"}"
 
-# The "api" function authenticates every mutation itself with getUser(req)
+# The "api" function authenticates user mutations itself with getUser(req)
+# and /internal/sweep with the server-only x-cron-secret.
 # (supabase/functions/_shared/auth/getUser.ts) and serves a public /health, so the
 # gateway must not reject requests first. See docs/api-integration.md.
 # api verifies tokens itself and keeps /health public:
