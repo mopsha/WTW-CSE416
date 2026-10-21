@@ -13,6 +13,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { colors } from '@/components/theme';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
+import { ProfileProvider } from '@/hooks/useProfile';
 import { configureNotifications, onNotificationTap } from '@/lib/notify';
 import { takePendingJoin } from '@/lib/pendingJoin';
 
@@ -23,7 +24,9 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
       <AuthProvider>
-        <RootStack />
+        <ProfileProvider>
+          <RootStack />
+        </ProfileProvider>
       </AuthProvider>
     </GestureHandlerRootView>
   );

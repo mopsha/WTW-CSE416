@@ -13,6 +13,8 @@ import type {
 } from './types';
 
 export interface Queries {
+  /** My own profile (RLS: I can always read my row). displayName is null until I pick one. */
+  getMyProfile(userId: string): Promise<MyProfile>;
   listMyPicks(userId: string): Promise<PickSummary[]>;
   getMyPreferences(pickId: string, userId: string): Promise<MyPreference[]>;
   /** Rank + finalist only. Never selects `score`. */
@@ -22,6 +24,10 @@ export interface Queries {
   getMyVote(pickId: string, userId: string): Promise<string | null>;
   /** The Pick's share code (Razin's pick_join_codes), or null if there isn't one yet. */
   getJoinCode(pickId: string): Promise<JoinCode | null>;
+}
+
+export interface MyProfile {
+  displayName: string | null;
 }
 
 export interface JoinCode {
@@ -47,6 +53,17 @@ interface PickRow {
 }
 
 const supabaseQueries: Queries = {
+  async getMyProfile(userId) {
+    const { data, error } = await getSupabase()
+      .from('profiles')
+      .select('display_name')
+      .eq('id', userId)
+      .maybeSingle();
+    if (error) throw new QueryError(error.message);
+    const name = (data as { display_name: string | null } | null)?.display_name?.trim();
+    return { displayName: name || null };
+  },
+
   async listMyPicks(userId) {
     const rows = check(
       await getSupabase()
