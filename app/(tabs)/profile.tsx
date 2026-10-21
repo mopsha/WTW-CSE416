@@ -2,13 +2,16 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { Avatar, Button, Card, colors, Screen, space, type } from '@/components';
 import { useSession } from '@/hooks/useAuth';
+import { useProfile } from '@/hooks/useProfile';
 import { auth } from '@/lib/auth';
 
 // Minimal profile so sign-out has a home. Razin's profile screen replaces the body.
 export default function ProfileScreen() {
   const session = useSession();
+  const { displayName } = useProfile();
   const email = session.user.email ?? 'you';
-  const name = email.split('@')[0] ?? email;
+  // My profiles.display_name; the email's local part until one is set.
+  const name = displayName || email.split('@')[0] || email;
 
   return (
     <Screen title="Profile" edges={['top', 'left', 'right']}>

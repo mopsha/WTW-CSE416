@@ -99,6 +99,12 @@ export function setMockBots(enabled: boolean) {
   botsEnabled = enabled;
 }
 
+/**
+ * My profile (public.profiles in mock form). No name, like a new account, so screens fall
+ * back to the email-derived name. Survives resetMockData().
+ */
+export const mockProfile: { displayName: string | null } = { displayName: null };
+
 const me = (): MockParticipant => ({
   userId: MOCK_USER_ID,
   name: 'You',
@@ -390,7 +396,7 @@ export function progressOf(pick: MockPick): PickProgress {
   const participants = pick.participants
     .map((p) => ({
       userId: p.userId,
-      displayName: p.name,
+      displayName: p.userId === MOCK_USER_ID ? (mockProfile.displayName ?? p.name) : p.name,
       isHost: p.userId === pick.hostId,
       isMe: p.userId === MOCK_USER_ID,
       done: isDone(pick, p),
