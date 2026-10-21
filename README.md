@@ -115,6 +115,11 @@ Displayed to users as a **WTW Match Score** — an explainable, transparent scor
 
 ## Local development (Week 1)
 
+Josh's [Places Phase 1 services](docs/places-phase1.md) provide offline-tested Google
+normalization, fallback, opening-hours logic and cache contracts. They are not yet
+wired into lifecycle routes; Google-backed snapshot persistence and hosted setup
+remain pending. Backend `PLACES_PROVIDER` is separate from the app mock flag below.
+
 Current checkout includes Alan's ranking/state/geometry logic, Josh's API and mock
 provider, and Razin's shared auth, Supabase configuration, schema/RLS, transactional
 RPCs and SQL seed, and Mike's app: email-code sign-in, Home, Swipe and Results screens
@@ -247,6 +252,18 @@ export validates bundling; it does not build/install a native APK. CI runs insta
 lint, typecheck, Jest, export and Deno checks on every PR and push to main.
 Supabase setup commands above were checked against the [CLI reference](https://supabase.com/docs/reference/cli/introduction);
 Expo commands follow the [Expo CLI reference](https://docs.expo.dev/more/expo-cli/).
+
+CI also has a separate local database/API job: Supabase start/reset, the existing
+pgTAP tests, and authenticated HTTP integration tests. With the local API served,
+run `node tests/api/wait.mjs` followed by `npm run test:api`. See the
+[local integration test instructions](docs/api-integration.md#local-httpdatabase-tests-phase-2)
+for prerequisites, fixture cleanup and deferred routes. These tests need no hosted
+credentials or Google key.
+
+Successful main CI runs automatically deploy pending migrations and the `api` Edge
+Function to hosted **wtw-dev**. PR runs never deploy. See
+[deployment configuration and recovery](docs/api-integration.md#main-to-wtw-dev-deployment)
+for required GitHub environment settings and separately managed hosted secrets.
 
 ## Repo structure
 

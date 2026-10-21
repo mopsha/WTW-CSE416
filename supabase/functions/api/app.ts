@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { ApiError, errorResponse } from '../_shared/api/errors.ts';
-import { rank, swipe, type HeartbeatStore } from '../_shared/api/heartbeat.ts';
+import { swipe, type HeartbeatStore } from '../_shared/api/heartbeat.ts';
 import { getProgress, type ProgressStore } from '../_shared/api/progress.ts';
 import {
   cancelPick,
@@ -14,6 +14,8 @@ import {
 import { closePick, type ClosingStore } from '../_shared/api/closing.ts';
 import { castVote, closeVote, type VotingStore } from '../_shared/api/voting.ts';
 import type { PoolBuilder } from '../_shared/places/pool.ts';
+import { joinPick, type JoinStore } from '../_shared/api/join.ts';
+import { authorizeSweep, sweepDeadlines, type SweepStore } from '../_shared/api/sweep.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
   const raw = await c.req.text();
@@ -33,6 +35,10 @@ export function createApp(
     lifecycleStore: LifecycleStore;
     poolBuilder: PoolBuilder;
     closingStore: ClosingStore & VotingStore;
+    joinStore?: JoinStore;
+    sweepStore?: SweepStore;
+    cronSecret?: string;
+    refreshHours?: Parameters<typeof getPick>[3];
   },
   basePath = '',
 ) {
@@ -51,6 +57,14 @@ export function createApp(
   });
   app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404));
   app.get('/health', (c) => c.json({ status: 'ok' }));
+  app.post('/internal/sweep', async (c) => {
+    authorizeSweep(c.req.header('x-cron-secret'), deps.cronSecret);
+    if (!deps.sweepStore) {
+      throw new ApiError(503, 'SERVER_NOT_CONFIGURED', 'Deadline automation is not configured');
+    }
+    const result = await sweepDeadlines(deps.sweepStore, deps.closingStore);
+    return c.json(result, result.status === 'ok' ? 200 : 503);
+  });
   app.post('/picks/:id/swipes', async (c) => {
     const user = await deps.getUser(c.req.raw);
     let body: unknown;
@@ -66,13 +80,18 @@ export function createApp(
     try {
       await closePick(deps.closingStore, pickId, 'system', null);
     } catch (error) {
-      console.error('auto-close after swipe failed', error instanceof Error ? error.name : 'unknown');
+      console.error(
+        'auto-close after swipe failed',
+        error instanceof Error ? error.name : 'unknown',
+      );
     }
     return c.json(result);
   });
+  // Legacy alias of /close: routes through the canonical closer so the final vote
+  // always gets vote_deadline_at and the deadline sweep can finish it.
   app.post('/picks/:id/rank', async (c) => {
     const user = await deps.getUser(c.req.raw);
-    return c.json(await rank(deps.store, c.req.param('id'), user.id));
+    return c.json(await closePick(deps.closingStore, c.req.param('id'), 'host', user.id));
   });
   // Live progress (counts only). The app polls this when Realtime is unavailable.
   app.get('/picks/:id/progress', async (c) => {
@@ -86,8 +105,11 @@ export function createApp(
     return c.json(await createPick(deps.lifecycleStore, user.id, body), 201);
   });
   app.get('/picks/:id', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
     const user = await deps.getUser(c.req.raw);
-    return c.json(await getPick(deps.lifecycleStore, c.req.param('id'), user.id));
+    return c.json(
+      await getPick(deps.lifecycleStore, c.req.param('id'), user.id, deps.refreshHours),
+    );
   });
   app.post('/picks/:id/start', async (c) => {
     const user = await deps.getUser(c.req.raw);
@@ -118,6 +140,14 @@ export function createApp(
   app.post('/picks/:id/close-vote', async (c) => {
     const user = await deps.getUser(c.req.raw);
     return c.json(await closeVote(deps.closingStore, c.req.param('id'), user.id));
+  });
+  // Join by code (Lobby code / QR / wtw://join/CODE). Static path, so it never
+  // matches /picks/:id routes.
+  app.post('/picks/join', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const body = await readJsonBody(c);
+    if (!deps.joinStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Joining is not available');
+    return c.json(await joinPick(deps.joinStore, user.id, body));
   });
   return app;
 }

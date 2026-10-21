@@ -1,0 +1,41 @@
+{
+  "places": [
+    {
+      "id": "synthetic-cafe",
+      "displayName": { "text": "Synthetic Cafe" },
+      "formattedAddress": "1 Fictional Street",
+      "location": { "latitude": 40.9126, "longitude": -73.1234 },
+      "types": ["cafe", "food"],
+      "rating": 4.5,
+      "priceLevel": "PRICE_LEVEL_MODERATE",
+      "businessStatus": "OPERATIONAL",
+      "timeZone": { "id": "America/New_York" },
+      "regularOpeningHours": {
+        "periods": [{ "open": { "day": 1, "hour": 9 }, "close": { "day": 1, "hour": 17 } }]
+      },
+      "photos": [
+        {
+          "name": "places/synthetic-cafe/photos/synthetic-photo",
+          "authorAttributions": [
+            { "displayName": "Fixture Author", "uri": "https://example.invalid/author" }
+          ]
+        }
+      ],
+      "attributions": [
+        { "provider": "Fixture Provider", "providerUri": "https://example.invalid/provider" }
+      ],
+      "googleMapsUri": "https://example.invalid/place"
+    },
+    {
+      "id": "synthetic-park",
+      "displayName": { "text": "Synthetic Park" },
+      "location": { "latitude": 40.913, "longitude": -73.1234 },
+      "types": ["park"]
+    },
+    {
+      "id": "malformed-no-name",
+      "location": { "latitude": 40.9126, "longitude": -73.1234 },
+      "types": ["cafe"]
+    }
+  ]
+}

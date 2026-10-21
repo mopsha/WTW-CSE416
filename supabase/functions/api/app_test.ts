@@ -52,6 +52,113 @@ function equal(actual: unknown, expected: unknown) {
   if (JSON.stringify(actual) !== JSON.stringify(expected))
     throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
 }
+Deno.test(
+  'internal sweep rejects missing/wrong secrets before querying or user authentication',
+  async () => {
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      cronSecret: 'test-only-secret',
+      getUser: async () => {
+        throw new Error('User auth must not run');
+      },
+      sweepStore: {
+        expiredPage: async () => {
+          throw new Error('Query must not run');
+        },
+      },
+    });
+    const rejectedHeaders: Record<string, string>[] = [
+      {},
+      { 'x-cron-secret': 'wrong' },
+      { Authorization: 'Bearer user-token' },
+    ];
+    for (const headers of rejectedHeaders) {
+      equal((await app.request('/internal/sweep', { method: 'POST', headers })).status, 401);
+    }
+  },
+);
+
+Deno.test('internal sweep with the correct secret executes at the Supabase mount', async () => {
+  const phases: string[] = [];
+  const app = createApp(
+    {
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      cronSecret: 'test-only-secret',
+      getUser: async () => {
+        throw new Error('User auth must not run');
+      },
+      sweepStore: {
+        expiredPage: async (phase) => {
+          phases.push(phase);
+          return [];
+        },
+      },
+    },
+    '/api',
+  );
+  const response = await app.request('/api/internal/sweep', {
+    method: 'POST',
+    headers: { 'x-cron-secret': 'test-only-secret' },
+  });
+  equal(response.status, 200);
+  equal((await response.json()).status, 'ok');
+  equal(phases, ['swiping', 'final_vote']);
+});
+
+Deno.test('internal sweep fails closed without server configuration', async () => {
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async () => {
+      throw new Error('User auth must not run');
+    },
+  });
+  equal(
+    (
+      await app.request('/internal/sweep', {
+        method: 'POST',
+        headers: { 'x-cron-secret': 'anything' },
+      })
+    ).status,
+    503,
+  );
+});
+
+Deno.test('internal sweep reports partial failure without returning query details', async () => {
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    cronSecret: 'test-only-secret',
+    getUser: async () => {
+      throw new Error('User auth must not run');
+    },
+    sweepStore: {
+      expiredPage: async () => {
+        throw new Error('private database details');
+      },
+    },
+  });
+  const response = await app.request('/internal/sweep', {
+    method: 'POST',
+    headers: { 'x-cron-secret': 'test-only-secret' },
+  });
+  equal(response.status, 503);
+  const body = await response.json();
+  equal(body.status, 'partial_failure');
+  equal(body.swiping.queryFailed, true);
+  equal(body.final_vote.queryFailed, true);
+  equal(JSON.stringify(body).includes('private'), false);
+});
 Deno.test('public health and uniform 404', async () => {
   const app = createApp({
     store,
@@ -319,3 +426,179 @@ Deno.test('GET /picks/:id/progress: counts only, participants only', async () =>
   equal(JSON.stringify(body).includes('answered'), false);
   equal((await as('stranger').request('/picks/p/progress')).status, 403);
 });
+
+Deno.test('POST /picks/join: 401 without a token', async () => {
+  const joined: string[] = [];
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    joinStore: {
+      joinByCode: async (code) => {
+        joined.push(code);
+        return 'pick';
+      },
+    },
+    getUser: async (req) => {
+      if (!req.headers.get('Authorization')) throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+      return { id: 'guest' };
+    },
+  });
+  const result = await app.request('/picks/join', {
+    method: 'POST',
+    body: JSON.stringify({ code: 'K7P2QX' }),
+    headers: { 'Content-Type': 'application/json' },
+  });
+  equal(result.status, 401);
+  equal(await result.json(), { error: { code: 'UNAUTHENTICATED', message: 'Sign in' } });
+  equal(joined, []);
+});
+
+Deno.test('POST /picks/join: 400 for bad input, before touching the database', async () => {
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    joinStore: {
+      joinByCode: async () => {
+        throw new Error('Unexpected join');
+      },
+    },
+    getUser: async () => ({ id: 'guest' }),
+  });
+  const post = (body: string) =>
+    app.request('/picks/join', {
+      method: 'POST',
+      body,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  for (const body of [
+    '{',
+    '',
+    '[]',
+    '{}',
+    JSON.stringify({ code: 123456 }),
+    JSON.stringify({ code: 'K7P2Q' }),
+    JSON.stringify({ code: 'K7P2QXX' }),
+    JSON.stringify({ code: 'O0I1AB' }),
+    JSON.stringify({ code: 'K7P2Q!' }),
+  ]) {
+    const result = await post(body);
+    equal(result.status, 400);
+  }
+});
+
+Deno.test('POST /picks/join: joins with a normalized code and returns the Pick id', async () => {
+  const calls: [string, string][] = [];
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    joinStore: {
+      joinByCode: async (code, userId) => {
+        calls.push([code, userId]);
+        return 'pick-1';
+      },
+    },
+    getUser: async () => ({ id: 'guest' }),
+  });
+  const result = await app.request('/picks/join', {
+    method: 'POST',
+    body: JSON.stringify({ code: ' k7p 2qx ' }),
+    headers: { 'Content-Type': 'application/json' },
+  });
+  equal(result.status, 200);
+  equal(await result.json(), { pickId: 'pick-1' });
+  equal(calls, [['K7P2QX', 'guest']]);
+});
+
+Deno.test('POST /picks/join: store errors keep their status; 503 if not configured', async () => {
+  const withStore = (status: 404 | 409) =>
+    createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      joinStore: {
+        joinByCode: async () => {
+          throw new ApiError(status, 'X', 'x');
+        },
+      },
+      getUser: async () => ({ id: 'guest' }),
+    });
+  const body = JSON.stringify({ code: 'K7P2QX' });
+  equal((await withStore(404).request('/picks/join', { method: 'POST', body })).status, 404);
+  equal((await withStore(409).request('/picks/join', { method: 'POST', body })).status, 409);
+  const unconfigured = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async () => ({ id: 'guest' }),
+  });
+  equal((await unconfigured.request('/picks/join', { method: 'POST', body })).status, 503);
+});
+Deno.test(
+  'GET Pick attaches authorized reveal hours without changing candidate snapshots',
+  async () => {
+    let refreshes = 0;
+    const snapshot = { placeId: 'a', name: 'Original', lat: 0, lng: 0 };
+    const app = createApp({
+      store,
+      poolBuilder,
+      closingStore,
+      getUser: async (req) => ({ id: req.headers.get('x-test-user') ?? 'guest' }),
+      lifecycleStore: {
+        ...lifecycleStore,
+        load: async () => ({
+          id: 'pick',
+          hostId: 'host',
+          state: 'completed',
+          category: 'food',
+          center: { lat: 0, lng: 0 },
+          radiusM: 500,
+          poolSize: 20,
+          deadlineAt: null,
+          closeThreshold: 100,
+          participantIds: ['host', 'guest'],
+          candidates: [{ placeId: 'a', snapshot }],
+          hasAnswers: true,
+          myAnswers: {},
+          winnerPlaceId: 'a',
+          decidedAt: null,
+          decidedBy: 'clear_winner',
+          version: '1',
+        }),
+      },
+      refreshHours: async () => {
+        refreshes++;
+        return [
+          {
+            placeId: 'a',
+            openNow: null,
+            closesAt: null,
+            provider: 'mock',
+            fetchedAt: null,
+            status: 'unavailable',
+          },
+        ];
+      },
+    });
+    equal(
+      (await app.request('/picks/pick', { headers: { 'x-test-user': 'outsider' } })).status,
+      403,
+    );
+    equal(refreshes, 0);
+    const response = await app.request('/picks/pick');
+    equal(response.status, 200);
+    equal(response.headers.get('cache-control'), 'private, no-store');
+    const body = await response.json();
+    equal(body.candidates, [snapshot]);
+    equal(body.winnerPlaceId, 'a');
+    equal(body.candidateHours[0].openNow, null);
+    equal(refreshes, 1);
+  },
+);

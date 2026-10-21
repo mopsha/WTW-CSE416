@@ -4,6 +4,9 @@ import { createProgressStore } from './progressStore.ts';
 import { createStore } from './store.ts';
 import { createLifecycleStore } from './lifecycleStore.ts';
 import { createClosingStore } from './closingStore.ts';
+import { createJoinStore } from './joinStore.ts';
+import { createSweepStore } from './sweepStore.ts';
+import { refreshCandidateHours } from './hours.ts';
 import { createPoolBuilder } from '../_shared/places/pool.ts';
 import { MockProvider } from '../_shared/places/MockProvider.ts';
 
@@ -20,7 +23,11 @@ const app = createApp(
     progressStore: createProgressStore(),
     lifecycleStore: createLifecycleStore(),
     closingStore: createClosingStore(),
+    sweepStore: createSweepStore(),
+    cronSecret: Deno.env.get('CRON_SECRET'),
     poolBuilder,
+    joinStore: createJoinStore(),
+    refreshHours: refreshCandidateHours,
   },
   '/api',
 );

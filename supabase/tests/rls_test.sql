@@ -45,7 +45,9 @@ select is((select count(*)::int from profiles), 4, 'participant sees own + co-pa
 select is((select count(*)::int from places), 20, 'participant sees candidate places');
 select is((select count(*)::int from preferences), 1, 'participant sees only own preferences');
 select is((select count(*)::int from preferences where user_id <> auth.uid()), 0, 'bots'' answers are hidden');
-select is((select count(*)::int from ranking_results), 1, 'participant sees ranking rows');
+-- The demo Pick is still swiping, so its (fixture) ranking row stays hidden (0006).
+-- Rows becoming visible after close: join_and_security_test.sql.
+select is((select count(*)::int from ranking_results), 0, 'participant sees no ranking rows while swiping');
 select lives_ok($$select pick_id, place_id, rank, finalist from ranking_results$$, 'safe ranking columns are readable');
 select throws_ok($$select * from ranking_results$$, '42501', null, 'select * on ranking_results is denied');
 select throws_ok($$select score from ranking_results$$, '42501', null, 'score is not readable');

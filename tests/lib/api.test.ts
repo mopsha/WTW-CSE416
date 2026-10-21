@@ -122,3 +122,15 @@ describe('createApiClient', () => {
     expect([err.code, err.status]).toEqual(['FORBIDDEN', 403]);
   });
 });
+
+test('Pick hours use the existing authenticated GET Pick route', async () => {
+  const fetch = jest.fn().mockResolvedValue(jsonResponse(200, { candidateHours: [] }));
+  expect(await client(fetch).getPickHours('pick')).toEqual({ candidateHours: [] });
+  expect(fetch).toHaveBeenCalledWith(
+    `${BASE}/picks/pick`,
+    expect.objectContaining({
+      method: 'GET',
+      headers: expect.objectContaining({ Authorization: 'Bearer user-jwt' }),
+    }),
+  );
+});
