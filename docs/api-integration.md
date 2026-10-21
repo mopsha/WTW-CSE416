@@ -47,11 +47,32 @@ Test: `supabase/tests/live_progress_test.sql`.
 
 ### Pick routes the app calls
 
-The app's typed client (`src/lib/api.ts`) and its mock (`src/lib/mock/api.ts`) follow Alan's
-routes exactly (merged in #12 and #13): `GET /picks/:id`, `POST /picks/:id/start`, `/refresh`
-(`{ confirm }`, 409 `CONFIRM_REQUIRED`), `/cancel`, `/close`, `/vote` (`{ placeId }`),
-`/close-vote`. The Lobby reads the join code from `pick_join_codes` (`code, expires_at`, Razin's
-#17) and shows a placeholder until that table exists.
+The app's typed client (`src/lib/api.ts`) and its mock (`src/lib/mock/api.ts`) follow these
+exactly: `GET /picks/:id`, `POST /picks/:id/start`, `/refresh` (`{ confirm }`, 409
+`CONFIRM_REQUIRED`), `/cancel` (Alan, PR #12); `POST /picks/:id/close`, `/vote` (`{ placeId }`),
+`/close-vote` (Alan, PR #13). The lobby reads the join code from `pick_join_codes`
+(`code, expires_at`, Razin; see below).
+
+### Join by code (Razin)
+
+- `POST /picks/join`: Bearer user access token; body `{ "code": "K7P2QX" }`. Case and spaces
+  are ignored; anything that isn't 6 characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` is
+  400 `INVALID_INPUT` (checked before the database). Returns 200 `{ "pickId": "..." }`.
+  404 `JOIN_CODE_NOT_FOUND` for an unknown or expired code; 409 `PICK_CLOSED` once the Pick is
+  past `swiping` (`ranking`, `final_vote`, `completed`, `canceled`). Someone already in the Pick
+  gets 200 with the same `pickId` and no second row, in any state.
+  Code: `_shared/api/join.ts` (validation), `_shared/domain/joinCode.ts` (code rules, shared
+  with the app), `api/joinStore.ts` (adapter). Client: `api.joinPick(code)`; the mock accepts
+  `WTW234` for a friend's draft Pick.
+- RPC `pick_join(p_code text, p_user_id uuid) returns uuid` (`0006_join_codes.sql`), service role
+  only. Locks the Pick row; the participant insert advances `picks.version` (0002 trigger).
+  PT404 unknown/expired code, PT409 Pick not joinable, PT403 caller has no profile.
+- Codes: `pick_join_codes (code pk, pick_id, expires_at not null, created_at)`. A trigger on
+  `picks` issues one for every new Pick (7-day expiry); 0006 backfilled draft/swiping Picks.
+  Participants read them through RLS (`queries.getJoinCode`: newest `expires_at` first).
+- App: the Lobby's QR/share link is `wtw://join/CODE` → `app/join/[code].tsx` (outside the auth
+  guard: signed out, it signs in first and then joins); the Picks tab has "Join with code".
+  Both open `/pick/[id]`, which forwards a draft Pick to the Lobby.
 
 Errors: `{ "error": { "code": "...", "message": "..." } }`.
 400 invalid input, 401 invalid/missing token, 403 forbidden, 404 missing resource,

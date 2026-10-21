@@ -319,3 +319,118 @@ Deno.test('GET /picks/:id/progress: counts only, participants only', async () =>
   equal(JSON.stringify(body).includes('answered'), false);
   equal((await as('stranger').request('/picks/p/progress')).status, 403);
 });
+
+Deno.test('POST /picks/join: 401 without a token', async () => {
+  const joined: string[] = [];
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    joinStore: {
+      joinByCode: async (code) => {
+        joined.push(code);
+        return 'pick';
+      },
+    },
+    getUser: async (req) => {
+      if (!req.headers.get('Authorization')) throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+      return { id: 'guest' };
+    },
+  });
+  const result = await app.request('/picks/join', {
+    method: 'POST',
+    body: JSON.stringify({ code: 'K7P2QX' }),
+    headers: { 'Content-Type': 'application/json' },
+  });
+  equal(result.status, 401);
+  equal(await result.json(), { error: { code: 'UNAUTHENTICATED', message: 'Sign in' } });
+  equal(joined, []);
+});
+
+Deno.test('POST /picks/join: 400 for bad input, before touching the database', async () => {
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    joinStore: {
+      joinByCode: async () => {
+        throw new Error('Unexpected join');
+      },
+    },
+    getUser: async () => ({ id: 'guest' }),
+  });
+  const post = (body: string) =>
+    app.request('/picks/join', {
+      method: 'POST',
+      body,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  for (const body of [
+    '{',
+    '',
+    '[]',
+    '{}',
+    JSON.stringify({ code: 123456 }),
+    JSON.stringify({ code: 'K7P2Q' }),
+    JSON.stringify({ code: 'K7P2QXX' }),
+    JSON.stringify({ code: 'O0I1AB' }),
+    JSON.stringify({ code: 'K7P2Q!' }),
+  ]) {
+    const result = await post(body);
+    equal(result.status, 400);
+  }
+});
+
+Deno.test('POST /picks/join: joins with a normalized code and returns the Pick id', async () => {
+  const calls: [string, string][] = [];
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    joinStore: {
+      joinByCode: async (code, userId) => {
+        calls.push([code, userId]);
+        return 'pick-1';
+      },
+    },
+    getUser: async () => ({ id: 'guest' }),
+  });
+  const result = await app.request('/picks/join', {
+    method: 'POST',
+    body: JSON.stringify({ code: ' k7p 2qx ' }),
+    headers: { 'Content-Type': 'application/json' },
+  });
+  equal(result.status, 200);
+  equal(await result.json(), { pickId: 'pick-1' });
+  equal(calls, [['K7P2QX', 'guest']]);
+});
+
+Deno.test('POST /picks/join: store errors keep their status; 503 if not configured', async () => {
+  const withStore = (status: 404 | 409) =>
+    createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      joinStore: {
+        joinByCode: async () => {
+          throw new ApiError(status, 'X', 'x');
+        },
+      },
+      getUser: async () => ({ id: 'guest' }),
+    });
+  const body = JSON.stringify({ code: 'K7P2QX' });
+  equal((await withStore(404).request('/picks/join', { method: 'POST', body })).status, 404);
+  equal((await withStore(409).request('/picks/join', { method: 'POST', body })).status, 409);
+  const unconfigured = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async () => ({ id: 'guest' }),
+  });
+  equal((await unconfigured.request('/picks/join', { method: 'POST', body })).status, 503);
+});

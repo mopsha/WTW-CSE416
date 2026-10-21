@@ -271,7 +271,7 @@ Status as of M3 (Oct 21). "Screen done" means the app side is built and runs end
 | FR-05 | Create a Pick for selected friends or a saved group. | Create Pick → Lobby | `POST /picks` (PR #12) | `picks`, `pick_participants` | Alan, Mike (screens) | **Done** by join code; friends/groups M4 |
 | FR-06 | Select Food or Activities and optionally refine location, radius, price, and open status. | Create Pick (map pin, search, radius, pool, deadline, close rule) | `POST /picks` | `picks` | Josh, Mike (screen) | **Done**; price/open filters M4 |
 | FR-07 | Retrieve and normalize a bounded nearby candidate pool. | Lobby Start; host "Get new places" | `POST /picks/:id/start`, `/refresh` (PR #12) | `places`, `place_cache`, `pick_candidates` | Josh, Alan | API in review |
-| FR-08 | Join an authorized Pick through the app or invitation link. | Lobby shows code + QR + Share (`wtw://join/CODE`) | `POST /join` (Razin) | `pick_join_codes`, `pick_participants` | Razin, Mike (lobby) | Lobby done; join screen and route: Razin |
+| FR-08 | Join an authorized Pick through the app or invitation link. | Lobby shows code + QR + Share (`wtw://join/CODE`) | `POST /picks/join` (Razin) | `pick_join_codes`, `pick_participants` | Razin, Mike (lobby) | **Done**: code, QR/link (`app/join/[code].tsx`), Picks-tab "Join with code" |
 | FR-09 | Record exactly one Yes, Maybe, or No response per candidate and revise it before closure. | Swipe (buttons, gesture, Back, Change my answers) | `POST /picks/:id/swipes` | `preferences` | Alan, Mike (screen) | **Done** |
 | FR-10 | Persist responses and restore progress after refresh or reconnection. | Swipe resumes at my first unanswered card, in my order | `GET /picks/:id` (PR #12) | `preferences` | Mike | **Done** |
 | FR-11 | Hide individual responses until aggregation is complete. | Waiting and Vote show counts and checks only | `GET /picks/:id/progress` (counts only); Realtime on `picks`, `pick_participants` only | `pick_participants.finished_at` | Mike, Razin (RLS) | **Done** |
@@ -330,34 +330,36 @@ operations in [api-integration.md](api-integration.md), owned jointly with Razin
 | GitHub Actions | Every PR checks code, tests and Android bundling before review. |
 ## Security & privacy (Razin)
 
-Code: `supabase/migrations/0001_init.sql`, `0002_heartbeat_rpcs.sql`; tests in `supabase/tests/rls_test.sql` (`supabase db reset && supabase test db`).
+Code: `supabase/migrations/0001_init.sql` (RLS, grants), `0002`–`0004` (server-only RPCs), `0006_join_codes.sql` (join codes, `pick_join`, `ranking_results` timing). Tests: `supabase/tests/rls_test.sql`, `join_and_security_test.sql` (`supabase db reset && supabase test db`), and the `POST /picks/join` cases in `supabase/functions/api/app_test.ts`.
 
-**One writer.** Only the `api` Edge Function writes to Postgres, using the service role on the server. The app gets **no** INSERT / UPDATE / DELETE: no table grants and no write policies. Even a bug in the app, or a user with a modified client, cannot change a Pick, a swipe or a result directly.
+**Roles.** `anon` is the app before sign-in. `authenticated` is a signed-in user; RLS decides which rows they see, so the table splits it into a *participant* of a Pick and a *stranger* (signed in, not in that Pick, even if they know its id). `service_role` is the `api` Edge Function only; its key is a server secret and it bypasses RLS, so every API write rechecks the caller (from their verified token), the Pick's state and its version inside one locked transaction.
 
-**Reads are filtered by RLS on every table.** The app reads as `authenticated` (never `anon`):
+| Role | Table | Read | Write | How enforced |
+|---|---|---|---|---|
+| `anon` | every table | ✗ | ✗ | No grants at all (`revoke all`); default privileges revoked so new tables don't leak. |
+| `anon` | `pick_join`, every RPC | — | ✗ execute | `revoke execute … from public, anon, authenticated`. |
+| participant | `picks` | ✓ own Picks | ✗ | RLS `private.is_pick_participant(id)`; `select` grant only. |
+| participant | `pick_participants` | ✓ everyone in my Picks | ✗ (join via API) | RLS `is_pick_participant(pick_id)`; no insert grant. |
+| participant | `pick_candidates`, `places` | ✓ my Picks' pool | ✗ | RLS `is_pick_participant` / `private.can_see_place`. |
+| participant | `profiles` | ✓ me + people I share a Pick with | ✗ (`PATCH /me` planned) | RLS `id = auth.uid() or private.shares_pick_with(id)`. Email stays in Supabase Auth. |
+| participant | `preferences` | ✓ **only my own** answers | ✗ (swipe via API) | RLS `user_id = auth.uid()`; nobody sees how others swiped. Not in Realtime. |
+| participant | `ranking_results` | ✓ rank + finalist, **only after the Pick leaves `swiping`**; never `score` | ✗ | RLS `is_pick_participant and private.pick_has_closed` (0006); column grant excludes `score`, so `select *` fails with 42501. Not in Realtime. |
+| participant | `final_votes` | ✓ only my own ballot | ✗ (vote via API) | RLS `user_id = auth.uid()`. Not in Realtime. |
+| participant | `pick_join_codes` | ✓ my Picks' codes (to share) | ✗ | RLS `is_pick_participant(pick_id)`; `select` grant only. |
+| stranger | all of the above | ✗ 0 rows (even with the Pick id) | ✗ | The same RLS policies; tested table by table in `join_and_security_test.sql`. |
+| `authenticated` | `pick_join` and every `heartbeat_*` / `pick_*` RPC | — | ✗ execute | Executable only by `service_role`; calling one directly fails with 42501. |
+| `service_role` (API) | every table | ✓ | ✓ via RPCs | Bypasses RLS, so the RPCs recheck membership/host, state and version under `SELECT … FOR UPDATE`; PT400/403/404/409 map to HTTP 400/403/404/409. |
+| `service_role` (API) | `pick_join_codes` | ✓ | ✓ via trigger + `pick_join` | Codes are issued by a trigger on every new Pick; `pick_join` is the only way into a Pick. |
 
-| Table | A signed-in user can SELECT |
-|---|---|
-| `picks`, `pick_participants`, `pick_candidates`, `ranking_results` | rows of Picks they participate in |
-| `preferences` | **only their own** answers (nobody sees how others swiped) |
-| `profiles` | their own, and people they share a Pick with |
-| `places` | places that are candidates in one of their Picks |
+**Joining (0006).** Every Pick gets a 6-character code from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no 0/O/1/I), drawn with `gen_random_bytes`, unique for all time and valid for **7 days**. `POST /picks/join { code }` (signed in; case and spaces ignored) calls `pick_join`, which: rejects an unknown or expired code (404); lets an existing participant straight back in, in any state, without a second row; otherwise accepts newcomers **only while the Pick is `draft` or `swiping`** (409 for `ranking`, `final_vote`, `completed`, `canceled`, because someone who never swiped must not vote); and locks the Pick row, so the join advances `picks.version` like any other ranking input. A code only ever reveals the one Pick it was shared for.
 
-Membership checks use `private.*` helpers (security definer, empty `search_path`) in a schema the Data API does not expose.
+**Authentication.** Email one-time code (6 digits, 1-hour expiry); no passwords are stored. The API verifies user mutations with `getUser(req)` (`supabase/functions/_shared/auth/getUser.ts`), which asks Supabase Auth to validate the token rather than decoding it, so signed-out or deleted users are rejected. A `profiles` row is created automatically on first sign-in.
 
-**Explicit grants.** The hosted project does not auto-expose new tables, and the migration does not rely on defaults either: it revokes everything from `anon` and `authenticated`, then grants `SELECT` to `authenticated` table by table and `ALL` to `service_role`. New tables must add their own RLS policy **and** grant, or the app cannot see them.
-
-**Scores stay on the server.** `ranking_results.score` has no client grant (column-level `SELECT` on `pick_id, place_id, rank, finalist, created_at` only). `select=*` from the app fails with `permission denied`, so a careless query errors instead of leaking. The API also never returns scores. `ranking_results` is intentionally **not** in the Realtime publication, because Realtime would ship whole rows.
-
-**Server-only RPCs.** `heartbeat_*` functions are executable only by `service_role`; they re-check membership, host, state and version inside one locked transaction, so forged user ids or stale requests are rejected (PT403 / PT409).
-
-**Authentication.** Email one-time code (6 digits, 1-hour expiry); no passwords are stored. The API verifies every mutation with `getUser(req)` (`supabase/functions/_shared/auth/getUser.ts`), which asks Supabase Auth to validate the token rather than decoding it, so signed-out or deleted users are rejected. A `profiles` row is created automatically on first sign-in.
-
-**Data we keep.** `profiles` holds a display name and avatar URL only; email lives in Supabase Auth and is never exposed to other users. Preferences are private to their author. Place data is a snapshot per Pick so history does not change later.
+**Data we keep.** `profiles` holds a display name and avatar URL only. Preferences and ballots are private to their author; the API never returns scores. Place data is a snapshot per Pick so history does not change later. Realtime publishes only `picks` and `pick_participants` (0005), never answers, ballots or results.
 
 **Secrets.** No keys or passwords are committed. The service-role key exists only as an Edge Function secret; the app ships only the public anon/publishable key, which is useless without a user session because `anon` has no table grants.
 
-**Not covered yet:** rate limiting on the API, account deletion flow, join-code brute force protection (M3 with `pick_join_codes`).
+**Not covered yet:** rate limiting on the API, including join attempts (a 6-character code has ~1.07 billion values, so guessing is slow but not throttled); account deletion flow.
 
 ## API list v0 (Razin)
 
@@ -370,13 +372,13 @@ Base URL: `<SUPABASE_URL>/functions/v1/api`. Every route except `/health` needs 
 | `GET /health` | anyone | liveness | implemented |
 | `POST /picks/:id/swipes` | participant, Pick `swiping` | `{ placeId, value: 0\|1\|2 }` upserts my answer | implemented |
 | `POST /picks/:id/rank` | host, Pick `swiping` | close swiping, rank, store results; returns top 3 + decision (no scores) | implemented |
-| `POST /picks` | signed-in user | create a Pick (category, center, radius, deadline, close threshold) | planned |
+| `POST /picks` | signed-in user | create a Pick (category, center, radius, deadline, close threshold) | implemented |
 | `POST /picks/:id/candidates` | host, `draft` | fetch and freeze the candidate pool | planned |
-| `POST /picks/:id/start` | host, `draft` | `draft → swiping` | planned |
-| `POST /picks/join` | signed-in user | join by 6-character code | planned |
+| `POST /picks/:id/start` | host, `draft` | `draft → swiping` | implemented |
+| `POST /picks/join` | signed-in user | `{ code }` → `{ pickId }`; joins a `draft`/`swiping` Pick (404 bad/expired code, 409 closed) | implemented |
 | `POST /picks/:id/finish` | participant | mark my swiping finished (drives close threshold) | planned |
 | `POST /picks/:id/votes` | participant, `final_vote` | `{ placeId }` for a finalist | planned |
-| `POST /picks/:id/cancel` | host | any unfinished state → `canceled` | planned |
+| `POST /picks/:id/cancel` | host | any unfinished state → `canceled` | implemented |
 | `PATCH /me` | signed-in user | update display name / avatar | planned |
 
 **Database RPCs used by the API** (service role only, `0002_heartbeat_rpcs.sql`)
@@ -386,6 +388,7 @@ Base URL: `<SUPABASE_URL>/functions/v1/api`. Every route except `/health` needs 
 | `heartbeat_load_pick(p_pick_id, p_user_id)` | `PickSnapshot` json (id, hostId, state, center, participantIds, candidates, preferences, version) or null |
 | `heartbeat_upsert_swipe(p_pick_id, p_user_id, p_place_id, p_value)` | upserts one preference, advances version |
 | `heartbeat_save_ranking(p_pick_id, p_user_id, p_version, p_ranking)` | `swiping → ranking → completed \| final_vote`, replaces `ranking_results`, sets winner metadata |
+| `pick_join(p_code, p_user_id)` (`0006_join_codes.sql`) | Pick id; adds the caller as a participant (see Joining above) |
 
 **Reads (app → Supabase directly, filtered by RLS)**
 
@@ -396,3 +399,4 @@ Base URL: `<SUPABASE_URL>/functions/v1/api`. Every route except `/health` needs 
 | `preferences?select=place_id,value&pick_id=eq.<id>&user_id=eq.<me>` | resume swiping |
 | `ranking_results?select=place_id,rank,finalist&pick_id=eq.<id>` | results (never `score`) |
 | `picks?select=state,host_id,winner_place_id,decided_by&id=eq.<id>` | outcome / host check |
+| `pick_join_codes?select=code,expires_at&pick_id=eq.<id>&order=expires_at.desc&limit=1` | Lobby code / QR |

@@ -124,6 +124,9 @@ export function makeJoinCode(random: () => number = Math.random): string {
   return code;
 }
 
+/** In mock mode, this code joins a friend's draft Pick (same rules as pick_join in 0006). */
+export const MOCK_INVITE_CODE = 'WTW234';
+
 function base(id: string, over: Partial<MockPick>): MockPick {
   return {
     id,
@@ -194,6 +197,18 @@ function initial(): Map<string, MockPick> {
     finalist: finalists.includes(r.placeId),
   }));
   picks.push(vote);
+
+  // A friend's draft Pick I'm not in yet: join it with MOCK_INVITE_CODE ("Join with code").
+  picks.push(
+    base('invite-pick', {
+      state: 'draft',
+      hostId: FRIEND_IDS[0],
+      candidates: [],
+      participants: [friend(0), friend(1)],
+      joinCode: MOCK_INVITE_CODE,
+      createdAt: -5,
+    }),
+  );
 
   // History: decided last week.
   const done = base('done-pick', { state: 'completed', createdAt: -4 });
@@ -391,6 +406,17 @@ export function progressOf(pick: MockPick): PickProgress {
     votedCount: participants.filter((p) => p.voted).length,
     total: participants.length,
   };
+}
+
+/** POST /picks/join rules: draft/swiping only; joining twice is a no-op. */
+export function joinMockPick(code: string): { pickId: string } | 'not_found' | 'closed' {
+  const pick = [...mockPicks.values()].find((p) => p.joinCode === code);
+  if (!pick) return 'not_found';
+  if (pick.participants.some((p) => p.userId === MOCK_USER_ID)) return { pickId: pick.id };
+  if (pick.state !== 'draft' && pick.state !== 'swiping') return 'closed';
+  pick.participants.push(me());
+  emit(pick.id);
+  return { pickId: pick.id };
 }
 
 /** Lazily applies the deadline (the real deadline sweep runs every minute) and wakes the bots. */

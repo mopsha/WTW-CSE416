@@ -4,6 +4,7 @@ import { createProgressStore } from './progressStore.ts';
 import { createStore } from './store.ts';
 import { createLifecycleStore } from './lifecycleStore.ts';
 import { createClosingStore } from './closingStore.ts';
+import { createJoinStore } from './joinStore.ts';
 import { createPoolBuilder } from '../_shared/places/pool.ts';
 import { MockProvider } from '../_shared/places/MockProvider.ts';
 
@@ -21,6 +22,7 @@ const app = createApp(
     lifecycleStore: createLifecycleStore(),
     closingStore: createClosingStore(),
     poolBuilder,
+    joinStore: createJoinStore(),
   },
   '/api',
 );

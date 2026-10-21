@@ -158,6 +158,12 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     /** Validate with validateCreatePick first; the server rejects bad input with 400 INVALID_INPUT. */
     createPick: (input: CreatePickInput) =>
       request<CreatePickResponse>('POST', '/picks', { body: input }),
+    /**
+     * Join by code (any case, spaces ignored). 404 JOIN_CODE_NOT_FOUND for an unknown or expired
+     * code, 409 PICK_CLOSED once the Pick is past swiping. Already in it: same { pickId }.
+     */
+    joinPick: (code: string) =>
+      request<{ pickId: string }>('POST', '/picks/join', { body: { code } }),
     submitSwipe: (pickId: string, placeId: string, value: PreferenceValue) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/swipes`, { body: { placeId, value } }),
     /** Host only: closes swiping and ranks. Others get 403 FORBIDDEN. */

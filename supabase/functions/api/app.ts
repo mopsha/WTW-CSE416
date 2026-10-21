@@ -14,6 +14,7 @@ import {
 import { closePick, type ClosingStore } from '../_shared/api/closing.ts';
 import { castVote, closeVote, type VotingStore } from '../_shared/api/voting.ts';
 import type { PoolBuilder } from '../_shared/places/pool.ts';
+import { joinPick, type JoinStore } from '../_shared/api/join.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
   const raw = await c.req.text();
@@ -33,6 +34,7 @@ export function createApp(
     lifecycleStore: LifecycleStore;
     poolBuilder: PoolBuilder;
     closingStore: ClosingStore & VotingStore;
+    joinStore?: JoinStore;
   },
   basePath = '',
 ) {
@@ -118,6 +120,14 @@ export function createApp(
   app.post('/picks/:id/close-vote', async (c) => {
     const user = await deps.getUser(c.req.raw);
     return c.json(await closeVote(deps.closingStore, c.req.param('id'), user.id));
+  });
+  // Join by code (Lobby code / QR / wtw://join/CODE). Static path, so it never
+  // matches /picks/:id routes.
+  app.post('/picks/join', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const body = await readJsonBody(c);
+    if (!deps.joinStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Joining is not available');
+    return c.json(await joinPick(deps.joinStore, user.id, body));
   });
   return app;
 }
