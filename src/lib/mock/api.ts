@@ -3,6 +3,7 @@
 // objects, so src/lib/api.ts runs the exact same parsing and error handling in both modes.
 import { validateCreatePick, type CreatePickInput } from '@shared/domain/createPick.ts';
 import { parseJoinCode } from '@shared/domain/joinCode.ts';
+import { validateDisplayName } from '@shared/api/profile.ts';
 
 import { MOCK_FAIL_RATE } from '../config';
 import type { PreferenceValue } from '../types';
@@ -17,6 +18,7 @@ import {
   maybeAutoClose,
   maybeSettleVote,
   mockPicks,
+  mockProfile,
   progressOf,
   scheduleBots,
   settleVote,
@@ -74,6 +76,19 @@ function joinPick(body: unknown): Response {
     return fail(409, 'PICK_CLOSED', 'This Pick is no longer accepting people');
   }
   return json(200, result);
+}
+
+/** POST /me: same validation as the API (shared validateDisplayName). */
+function updateMe(body: unknown): Response {
+  if (body === undefined) return fail(400, 'INVALID_JSON', 'Request body must be valid JSON');
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return fail(400, 'INVALID_INPUT', 'Expected a profile object');
+  }
+  const result = validateDisplayName((body as { displayName?: unknown }).displayName);
+  if ('error' in result) return fail(400, 'INVALID_INPUT', result.error);
+  mockProfile.displayName = result.name;
+  for (const id of mockPicks.keys()) emit(id);
+  return json(200, { displayName: result.name });
 }
 
 function getPick(pick: MockPick) {
@@ -229,6 +244,7 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
 
   if (method === 'POST' && path === '/picks') return createPick(readBody(init));
   if (method === 'POST' && path === '/picks/join') return joinPick(readBody(init));
+  if (method === 'POST' && path === '/me') return updateMe(readBody(init));
 
   const match = /^\/picks\/([^/]+)(?:\/([a-z-]+))?$/.exec(path);
   const handler = match ? ROUTES[`${method} ${match[2] ?? ''}`] : undefined;

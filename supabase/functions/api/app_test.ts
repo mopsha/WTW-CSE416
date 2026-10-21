@@ -602,3 +602,90 @@ Deno.test(
     equal(refreshes, 1);
   },
 );
+
+Deno.test('POST /me: 401 without a token, before touching the database', async () => {
+  const writes: string[] = [];
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    profileStore: {
+      setDisplayName: async (_userId, name) => {
+        writes.push(name);
+      },
+    },
+    getUser: async () => {
+      throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+    },
+  });
+  const result = await app.request('/me', {
+    method: 'POST',
+    body: JSON.stringify({ displayName: 'Ava' }),
+  });
+  equal(result.status, 401);
+  equal(writes, []);
+});
+
+Deno.test('POST /me: 400 for bad names, before touching the database', async () => {
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    profileStore: {
+      setDisplayName: async () => {
+        throw new Error('Unexpected write');
+      },
+    },
+    getUser: async () => ({ id: 'me' }),
+  });
+  for (const body of [
+    '{',
+    '',
+    '[]',
+    '{}',
+    JSON.stringify({ displayName: 42 }),
+    JSON.stringify({ displayName: '   ' }),
+    JSON.stringify({ displayName: 'a'.repeat(51) }),
+    JSON.stringify({ displayName: 'two\nlines' }),
+  ]) {
+    equal((await app.request('/me', { method: 'POST', body })).status, 400);
+  }
+});
+
+Deno.test('POST /me: saves the trimmed name for the verified caller only', async () => {
+  const calls: [string, string][] = [];
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    profileStore: {
+      setDisplayName: async (userId, name) => {
+        calls.push([userId, name]);
+      },
+    },
+    getUser: async () => ({ id: 'me' }),
+  });
+  const result = await app.request('/me', {
+    method: 'POST',
+    // A userId in the body is ignored: the row is always the token's user.
+    body: JSON.stringify({ displayName: '  Ava 🔥  ', userId: 'someone-else' }),
+  });
+  equal(result.status, 200);
+  equal(await result.json(), { displayName: 'Ava 🔥' });
+  equal(calls, [['me', 'Ava 🔥']]);
+});
+
+Deno.test('POST /me: 503 when profiles are not configured', async () => {
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async () => ({ id: 'me' }),
+  });
+  const body = JSON.stringify({ displayName: 'Ava' });
+  equal((await app.request('/me', { method: 'POST', body })).status, 503);
+});

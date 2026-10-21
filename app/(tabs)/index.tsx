@@ -29,6 +29,7 @@ import { JoinCodeCard } from '@/components/JoinCodeCard';
 import { PlacePhoto } from '@/components/PlaceCard';
 import { colors, flame, fonts, MIN_TARGET } from '@/components/theme';
 import { useSession } from '@/hooks/useAuth';
+import { useProfile } from '@/hooks/useProfile';
 import { USE_MOCK } from '@/lib/config';
 import { messageOf } from '@/lib/errors';
 import { haptic } from '@/lib/haptics';
@@ -67,7 +68,10 @@ function open(p: PickSummary) {
   router.push({ pathname: '/pick/[id]', params: { id: p.id } });
 }
 
-function firstName(email: string | null) {
+function firstName(displayName: string | null, email: string | null) {
+  // My chosen name's first word; before I've picked one, a guess from the email.
+  const chosen = displayName?.trim().split(/\s+/)[0];
+  if (chosen) return chosen;
   const local = (email ?? '').split('@')[0] ?? '';
   const word = local.split(/[^a-zA-Z]/)[0] ?? '';
   return word.length >= 2 ? word[0]!.toUpperCase() + word.slice(1) : 'there';
@@ -152,6 +156,7 @@ function PickRow({ pick }: { pick: PickSummary }) {
 
 export default function PicksScreen() {
   const session = useSession();
+  const { displayName } = useProfile();
   const [picks, setPicks] = useState<PickSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -225,7 +230,7 @@ export default function PicksScreen() {
         </View>
 
         <View style={{ gap: 4 }}>
-          <Text style={styles.hello}>Hey {firstName(session.user.email)} 👋</Text>
+          <Text style={styles.hello}>Hey {firstName(displayName, session.user.email)} 👋</Text>
           <Text style={styles.h1} accessibilityRole="header">
             What&apos;s the word tonight?
           </Text>

@@ -13,6 +13,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { colors } from '@/components/theme';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
+import { ProfileProvider, useProfile } from '@/hooks/useProfile';
 import { configureNotifications, onNotificationTap } from '@/lib/notify';
 import { takePendingJoin } from '@/lib/pendingJoin';
 
@@ -23,7 +24,9 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
       <AuthProvider>
-        <RootStack />
+        <ProfileProvider>
+          <RootStack />
+        </ProfileProvider>
       </AuthProvider>
     </GestureHandlerRootView>
   );
@@ -31,6 +34,7 @@ export default function RootLayout() {
 
 function RootStack() {
   const { session, loading } = useAuth();
+  const profile = useProfile();
   const [fontsLoaded, fontError] = useFonts({
     Poppins_500Medium,
     Poppins_600SemiBold,
@@ -38,7 +42,10 @@ function RootStack() {
     Poppins_800ExtraBold,
   });
   // A font failure falls back to the system font rather than blocking the app.
-  const ready = !loading && (fontsLoaded || !!fontError);
+  const ready = !loading && !profile.loading && (fontsLoaded || !!fontError);
+  // First sign-in: ask "what should we call you?" before anything else. If the profile
+  // couldn't be read, don't block the app on it; the Profile tab can still set a name.
+  const needsName = !!session && !profile.displayName && !profile.failed;
 
   useEffect(() => {
     if (ready) void SplashScreen.hideAsync();
@@ -47,12 +54,12 @@ function RootStack() {
   // Tapping a WTW notification opens the screen it points at (e.g. the results).
   useEffect(() => onNotificationTap((url) => router.push(url as never)), []);
 
-  // A join link that arrived signed out: once signed in, finish joining.
+  // A join link that arrived signed out: once signed in (and named), finish joining.
   useEffect(() => {
-    if (!ready || !session) return;
+    if (!ready || !session || needsName) return;
     const code = takePendingJoin();
     if (code) router.push({ pathname: '/join/[code]', params: { code } });
-  }, [ready, session]);
+  }, [ready, session, needsName]);
 
   // Keep the splash up until the stored session and fonts are loaded. Rendering the
   // guarded Stack earlier treats a signed-in user as signed out for a moment, which
@@ -73,7 +80,10 @@ function RootStack() {
         <Stack.Protected guard={!session}>
           <Stack.Screen name="sign-in" />
         </Stack.Protected>
-        <Stack.Protected guard={!!session}>
+        <Stack.Protected guard={needsName}>
+          <Stack.Screen name="welcome" />
+        </Stack.Protected>
+        <Stack.Protected guard={!!session && !needsName}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="pick/new" />
           <Stack.Screen name="pick/[id]/index" options={{ animation: 'fade' }} />
