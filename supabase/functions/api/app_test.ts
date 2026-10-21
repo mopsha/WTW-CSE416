@@ -5,6 +5,7 @@ import type { LifecycleStore } from '../_shared/api/lifecycle.ts';
 import type { ClosingStore } from '../_shared/api/closing.ts';
 import type { VotingStore } from '../_shared/api/voting.ts';
 import type { PoolBuilder } from '../_shared/places/pool.ts';
+import type { FriendsStore } from '../_shared/api/friends.ts';
 
 const store: HeartbeatStore = {
   loadPick: async () => null,
@@ -602,3 +603,151 @@ Deno.test(
     equal(refreshes, 1);
   },
 );
+
+const ANN = '71111111-1111-4111-8111-111111111111';
+const BO = '72222222-2222-4222-8222-222222222222';
+
+function friendsApp(friendsStore?: FriendsStore) {
+  return createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    friendsStore,
+    getUser: async (req) => {
+      if (!req.headers.get('Authorization')) throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+      return { id: ANN };
+    },
+  });
+}
+const auth = { Authorization: 'Bearer t', 'Content-Type': 'application/json' };
+const untouched: FriendsStore = {
+  list: async () => {
+    throw new Error('Unexpected list');
+  },
+  request: async () => {
+    throw new Error('Unexpected request');
+  },
+  accept: async () => {
+    throw new Error('Unexpected accept');
+  },
+  remove: async () => {
+    throw new Error('Unexpected remove');
+  },
+};
+
+Deno.test('friends: 401 without a token, before touching the database', async () => {
+  const app = friendsApp(untouched);
+  equal((await app.request('/friends')).status, 401);
+  const post = { method: 'POST', body: JSON.stringify({ email: 'bo@example.com' }) };
+  equal((await app.request('/friends/requests', post)).status, 401);
+  equal((await app.request(`/friends/${BO}/accept`, { method: 'POST' })).status, 401);
+  equal((await app.request(`/friends/${BO}/remove`, { method: 'POST' })).status, 401);
+});
+
+Deno.test('friends: 400 for bad input, before touching the database', async () => {
+  const app = friendsApp(untouched);
+  for (const body of ['{', '[]', '{}', '{"email":"not-an-email"}', '{"email":42}']) {
+    const res = await app.request('/friends/requests', { method: 'POST', headers: auth, body });
+    equal(res.status, 400);
+  }
+  equal(
+    (await app.request('/friends/not-a-uuid/accept', { method: 'POST', headers: auth })).status,
+    400,
+  );
+  equal(
+    (await app.request('/friends/not-a-uuid/remove', { method: 'POST', headers: auth })).status,
+    400,
+  );
+});
+
+Deno.test('friends: list is grouped and never cached', async () => {
+  const app = friendsApp({
+    ...untouched,
+    list: async (userId) => {
+      equal(userId, ANN);
+      return [
+        {
+          userId: BO,
+          displayName: 'Bo',
+          status: 'accepted',
+          direction: 'out',
+          createdAt: '2026-10-01T00:00:00Z',
+          acceptedAt: '2026-10-02T00:00:00Z',
+        },
+        {
+          userId: 'cy',
+          displayName: null,
+          status: 'pending',
+          direction: 'in',
+          createdAt: '2026-10-03T00:00:00Z',
+          acceptedAt: null,
+        },
+      ];
+    },
+  });
+  const res = await app.request('/friends', { headers: auth });
+  equal(res.status, 200);
+  equal(res.headers.get('cache-control'), 'private, no-store');
+  equal(await res.json(), {
+    friends: [{ userId: BO, displayName: 'Bo', since: '2026-10-02T00:00:00Z' }],
+    incoming: [{ userId: 'cy', displayName: null, since: '2026-10-03T00:00:00Z' }],
+    outgoing: [],
+  });
+});
+
+Deno.test(
+  'friends: request, accept and remove pass the caller and a normalized input',
+  async () => {
+    const calls: string[] = [];
+    const app = friendsApp({
+      ...untouched,
+      request: async (userId, email) => {
+        calls.push(`request ${userId} ${email}`);
+        return { userId: BO, displayName: 'Bo', status: 'pending' };
+      },
+      accept: async (userId, friendId) => {
+        calls.push(`accept ${userId} ${friendId}`);
+      },
+      remove: async (userId, friendId) => {
+        calls.push(`remove ${userId} ${friendId}`);
+      },
+    });
+    const sent = await app.request('/friends/requests', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ email: '  Bo@Example.com ' }),
+    });
+    equal(sent.status, 200);
+    equal(await sent.json(), { userId: BO, displayName: 'Bo', status: 'pending' });
+    const accepted = await app.request(`/friends/${BO.toUpperCase()}/accept`, {
+      method: 'POST',
+      headers: auth,
+    });
+    equal(await accepted.json(), { status: 'accepted' });
+    const removed = await app.request(`/friends/${BO}/remove`, { method: 'POST', headers: auth });
+    equal(await removed.json(), { status: 'ok' });
+    equal(calls, [`request ${ANN} bo@example.com`, `accept ${ANN} ${BO}`, `remove ${ANN} ${BO}`]);
+  },
+);
+
+Deno.test('friends: store errors keep their status; 503 if not configured', async () => {
+  const app = friendsApp({
+    ...untouched,
+    request: async () => {
+      throw new ApiError(404, 'USER_NOT_FOUND', 'No WTW account uses that email');
+    },
+    accept: async () => {
+      throw new ApiError(404, 'REQUEST_NOT_FOUND', 'That friend request is gone');
+    },
+  });
+  const body = JSON.stringify({ email: 'nobody@example.com' });
+  const res = await app.request('/friends/requests', { method: 'POST', headers: auth, body });
+  equal(res.status, 404);
+  equal((await res.json()).error.code, 'USER_NOT_FOUND');
+  equal(
+    (await app.request(`/friends/${BO}/accept`, { method: 'POST', headers: auth })).status,
+    404,
+  );
+  equal((await friendsApp().request('/friends', { headers: auth })).status, 503);
+});
