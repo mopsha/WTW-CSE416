@@ -149,6 +149,24 @@ test('a lost race (stale version conflict) also resolves idempotently', async ()
   expect(result).toEqual({ state: 'completed', winnerPlaceId: 'a', finalists: [] });
 });
 
+test('the host leaving does not stall a Pick: 3 of 4 done meets a 75% threshold', async () => {
+  const others = ['u2', 'u3', 'u4'];
+  const preferences = others.flatMap((userId) => [
+    { userId, placeId: 'a', value: 2 as const },
+    { userId, placeId: 'b', value: 0 as const },
+  ]);
+  const store = fixture(
+    snapshot({
+      participantIds: ['host', ...others],
+      closeThreshold: 75,
+      candidates: ['a', 'b'].map((placeId) => ({ placeId, lat: 0, lng: 0 })),
+      preferences,
+    }),
+  );
+  const result = await closePick(store, 'pick', 'system', null);
+  expect(result).toEqual({ state: 'completed', winnerPlaceId: 'a', finalists: [] });
+});
+
 test('a non-host cannot read an already-closed result through /close (no RLS on this path)', async () => {
   const store = fixture(snapshot({ state: 'completed', winnerPlaceId: 'a' }));
   await expect(closePick(store, 'pick', 'host', 'stranger')).rejects.toMatchObject({ status: 403 });

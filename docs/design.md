@@ -44,6 +44,8 @@ erDiagram
         timestamptz deadline_at
         timestamptz vote_deadline_at
         int close_threshold "percent, default 100"
+        int pool_size "5-30, default 20"
+        timestamptz vote_deadline_at "set on entering final_vote"
         text winner_place_id FK "nullable"
         timestamptz decided_at
         text decided_by "clear_winner|vote|tie_break"
@@ -100,27 +102,63 @@ Code: `supabase/functions/_shared/domain/pickState.ts` (`canTransition(from, to,
 The API is the only writer of `picks.state` and rejects every action that does not belong to the current state
 (for example a swipe after ranking, or a vote for a non-finalist).
 
-**Lifecycle routes (Week 2):** `POST /picks` (create), `POST /picks/:id/start`, `POST /picks/:id/refresh`
-(free before anyone swipes; `{confirm:true}` and clears every answer once swiping has started),
-`POST /picks/:id/cancel`, `GET /picks/:id` (candidates in a per-caller deterministic shuffle,
-`_shared/domain/shuffle.ts`). `start`/`refresh` pull candidates through `PoolBuilder`
-(`_shared/places/pool.ts`), currently backed by `MockProvider`. The configured Google
-builder exists, but safe persistence/ranking integration remains blocked. RPCs: `pick_create`, `pick_load`,
-`pick_start`, `pick_refresh`, `pick_cancel` (`supabase/migrations/0003_pick_lifecycle.sql`).
+Code: `_shared/api/lifecycle.ts` (create/start/refresh/cancel/read), `closing.ts` (`closePick`),
+`voting.ts` (`castVote`, `closeVote`, `closeVoteByDeadline`, `tallyVotes`); SQL in
+`supabase/migrations/0003_pick_lifecycle.sql` and `0004_pick_close_and_vote.sql`. Every rule below is
+checked twice: in TypeScript, and again inside the RPC under a row lock (the API uses the service role,
+which bypasses RLS). Tests: `tests/lifecycle.test.ts`, `closing.test.ts`, `voting.test.ts`, the pgTAP
+files in `supabase/tests/`, and the full loop over HTTP in `tests/api/loop.test.mjs`.
 
-**Closing and voting (Week 3):** `closePick` (`_shared/api/closing.ts`) runs the swiping → ranking
-step (reusing `rankCandidates`/`clearWinner`) for a host-triggered `POST /picks/:id/close`, for the
-auto-close check after every swipe once `close_threshold` is met, and through Josh's implemented
-deadline sweep for a passed deadline; it is idempotent (a race just reports the already-decided result).
-`castVote`/`closeVote`/`closeVoteByDeadline` (`_shared/api/voting.ts`) back `POST /picks/:id/vote`
-and `POST /picks/:id/close-vote`, tallying with `voteWinner` (most votes → higher score → closer to
-the center → place id, via the stored `rank`). RPCs: `pick_load_for_close`, `pick_close_apply`,
-`pick_load_for_vote`, `pick_cast_vote`, `pick_close_vote_apply`
-(`supabase/migrations/0004_pick_close_and_vote.sql`), plus the new `final_votes` table (one
-changeable ballot per participant, readable only by its own author).
-Entering `final_vote` sets `picks.vote_deadline_at` (now + `VOTE_WINDOW_MS`, 30 min), separate
-from the swipe deadline `deadline_at`, which has usually passed by then. The implemented deadline sweep selects `state = 'final_vote' and vote_deadline_at <= now()` and calls `closeVoteByDeadline`, which
-rechecks the deadline itself.
+**Routes (M3, as coded).** Every route needs a signed-in caller.
+
+| Route | Who | Allowed in | Effect |
+|---|---|---|---|
+| `POST /picks` | anyone | — | Creates a `draft`; the caller is host and first participant. Body `{ category, center: {lat, lng}, radiusM, poolSize, deadlineAt, closeThreshold }` (pool size 5–30, deadline 5 min–7 days ahead or `null`); 201 `{ pickId, state }`. |
+| `POST /picks/join` | anyone | `draft`, `swiping` (or already in) | `{ code }` → `{ pickId }`; see Security & privacy. |
+| `GET /picks/:id` | participant | any | The Pick, its candidates in the caller's own deterministic shuffle (`shuffle.ts`), and only the caller's answers. |
+| `POST /picks/:id/start` | host | `draft`, ≥ 2 participants | Builds the pool (`PoolBuilder`, `MockProvider` for now; the Google builder exists but isn't wired to Picks yet), freezes it as `pick_candidates`, → `swiping`. |
+| `POST /picks/:id/refresh` | host | `draft`, `swiping` | Replaces the pool. Free while nobody has answered; after that it needs `{confirm:true}` and clears every answer. |
+| `POST /picks/:id/cancel` | host | any unfinished state | → `canceled`. |
+| `POST /picks/:id/swipes` | participant | `swiping` | Saves one answer, then runs the auto-close check. |
+| `POST /picks/:id/close` | host | `swiping` | Ranks and decides now, whatever the threshold. Calling it again returns the same result. |
+| `POST /picks/:id/vote` | participant | `final_vote` | `{ placeId }` for a finalist; one ballot per person, changeable until the vote closes. |
+| `POST /picks/:id/close-vote` | host | `final_vote` | Tallies now with whatever ballots exist. |
+| `POST /internal/sweep` | cron (`x-cron-secret`) | `swiping`, `final_vote` | Closes Picks whose `deadline_at` / `vote_deadline_at` passed via `closePick` / `closeVoteByDeadline` (Josh, `0007_deadline_sweep.sql`). |
+
+**Closing swiping (three ways, one function).** `closePick` handles all three: the host's Close,
+the check after every swipe, and the deadline sweep. A participant is *done* when they have answered
+every candidate. The system closes when `done × 100 ≥ close_threshold × participants`
+(integer math), or when `deadline_at` has passed. Closing ranks the pool, stores
+`ranking_results`, and goes straight to `completed` (clear winner) or `final_vote`. It is idempotent:
+if the Pick already closed, it reports that result. If another swipe lands between reading and
+writing (a version conflict), it retries with the fresh answers, up to 3 times. A system close that
+keeps losing gives up quietly, and the next swipe or the sweep closes it. A failed auto-close never
+turns a saved swipe into an error.
+
+**The final vote.** Finalists are the top 3, plus everyone tied with #1 (or the 1–2 that exist).
+Entering `final_vote` sets `picks.vote_deadline_at` = now + 30 min (`VOTE_WINDOW_MS`), separate from
+the swipe deadline, which has usually already passed. Two columns, one meaning each: `deadline_at` is
+always the swiping deadline (never rewritten) and `vote_deadline_at` is the voting deadline (null
+outside a vote). The vote deadline is written once, by the close that leaves `swiping`; re-running a
+close cannot move it, because that write only happens from `swiping`. *The 30-minute length is a
+placeholder the team hasn't confirmed; the plan doesn't define it.* The vote closes when everyone has voted, the
+host calls close-vote, or `vote_deadline_at` passes (the sweep selects
+`state = 'final_vote' and vote_deadline_at <= now()` and calls `closeVoteByDeadline`, which rechecks
+the deadline itself). Tally: most votes wins; a tie at the top goes to the better rank (higher score →
+closer to the center → place id) and is recorded as `decided_by = 'tie_break'`, otherwise `'vote'`.
+No ballots at all means every finalist is tied at zero, so #1 wins by `tie_break`.
+
+**Edge cases (locked by tests).**
+
+| Case | Behavior |
+|---|---|
+| Someone never answers | Their missing answers count as Maybe; they are not "done", so a 100% threshold waits for the host or the deadline. |
+| The host leaves | Nothing needs the host after start: the threshold (e.g. 3 of 4 at 75%) or the deadline closes it. |
+| Only 2 candidates | A clear winner if ahead by ≥ 10, otherwise a vote between the two. |
+| Everyone says No | Every place scores 15, all tie at #1, so all are finalists and the group votes. |
+| Refresh after swipes | Needs confirmation; deleting the old pool cascades to every answer. |
+| Two people finish at once | Both auto-close checks race; one wins, the other retries or reports the result. |
+| A stranger calls Close on a finished Pick | 403 (the host check runs before the already-closed shortcut). |
 
 ```mermaid
 stateDiagram-v2
@@ -149,7 +187,7 @@ stateDiagram-v2
 | completed / canceled → anything | ❌ | ❌ | ❌ |
 
 "System" means our API acting on its own authority: the `pg_cron` deadline sweep, the close-threshold check after a swipe, and the ranking step itself.
-Participants never change the state; they only swipe and vote. Refreshing the candidate pool stays in `swiping` (after swiping has started it asks for confirmation and resets everyone's answers).
+Participants never change the state; they only swipe and vote. Refreshing the candidate pool never changes the state (`draft` stays `draft`, `swiping` stays `swiping`).
 
 ## Scoring (Alan)
 
@@ -185,7 +223,7 @@ Other reference points (all locked by tests): all Yes = 100, all No = 15, nobody
 Otherwise the group votes among the top 3 (or the 1–2 that exist). If #1 is tied, it is never a clear winner; everyone tied for #1 is a finalist, even if that makes more than 3.
 Float noise is ignored (differences under 1e-9 count as equal), so an exact 10-point gap always counts.
 
-**Final-vote tie-break:** most votes → higher score → closer to the center → place id (`voteWinner`; no ballots by the deadline means #1 wins).
+**Final-vote tie-break:** most votes → higher score → closer to the center → place id (`voteWinner`; no ballots by the deadline means #1 wins). When the top vote count was shared, the Pick records `decided_by = 'tie_break'` so the app can say so.
 
 **What users see:** rank only (1st / 2nd / 3rd, or "Clear winner!"). Scores are stored in `ranking_results.score` for tests and debugging and are never sent to the app.
 
