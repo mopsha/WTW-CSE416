@@ -1,12 +1,9 @@
 // Read-only queries. Clients only READ from Supabase; RLS limits rows to Picks I'm in
 // and to my own preferences. Every write goes through src/lib/api.ts.
 import { USE_MOCK } from './config';
-import { api } from './api';
 import { mockQueries } from './mock/queries';
-import { candidateFromSnapshot } from './places';
 import { getSupabase } from './supabase';
 import type {
-  Candidate,
   MyPreference,
   PickOutcome,
   PickState,
@@ -17,8 +14,6 @@ import type {
 
 export interface Queries {
   listMyPicks(userId: string): Promise<PickSummary[]>;
-  /** The Pick's candidate pool in a stable order (the order cards are shown in). */
-  getCandidates(pickId: string): Promise<Candidate[]>;
   getMyPreferences(pickId: string, userId: string): Promise<MyPreference[]>;
   /** Rank + finalist only. Never selects `score`. */
   getRankingResults(pickId: string): Promise<RankedPlace[]>;
@@ -62,30 +57,6 @@ const supabaseQueries: Queries = {
     return rows
       .flatMap((r) => (Array.isArray(r.picks) ? r.picks : r.picks ? [r.picks] : []))
       .map((p) => ({ id: p.id, state: p.state, category: p.category, deadlineAt: p.deadline_at }));
-  },
-
-  async getCandidates(pickId) {
-    const rows = check(
-      await getSupabase()
-        .from('pick_candidates')
-        .select('place_id, snapshot')
-        .eq('pick_id', pickId)
-        .order('place_id'),
-    ) as { place_id: string; snapshot: unknown }[];
-    const candidates = rows.map((r) => candidateFromSnapshot(r.place_id, r.snapshot));
-    // The existing authenticated Pick reader refreshes hours only at reveal/results.
-    // Optional metadata failures must not hide the persisted pool or outcome.
-    try {
-      const { candidateHours = [] } = await api.getPickHours(pickId);
-      const byId = new Map(candidateHours.map((h) => [h.placeId, h]));
-      return candidates.map((c) => ({
-        ...c,
-        openNow: byId.get(c.placeId)?.openNow ?? null,
-        closesAt: byId.get(c.placeId)?.closesAt ?? null,
-      }));
-    } catch {
-      return candidates.map((c) => ({ ...c, openNow: null, closesAt: null }));
-    }
   },
 
   async getMyPreferences(pickId, userId) {
