@@ -202,52 +202,87 @@ Float noise is ignored (differences under 1e-9 count as equal), so an exact 10-p
 | Guests | Guests could take part. | **An account is required** to join a Pick. |
 | Score | Users see a WTW Match Score. | **Users see rank only** (1st / 2nd / 3rd, or "Clear winner!"). Scores stay server-side; see [Scoring](#scoring-alan). |
 
+## Updated for M3: what changed (Mike)
+
+- **The whole loop has screens**: Create → Lobby (code + QR + Share) → Swipe → Waiting → Results → Vote → Winner, plus a canceled / offline / not-found view. Every screen follows the Pick's state by itself (see [UI flow](#ui-flow-mike)).
+- **Live progress without leaking answers**: the app subscribes to Supabase Realtime on `picks` and `pick_participants` only. `pick_participants.finished_at` is kept current by a trigger (`0005_live_progress.sql`), so the socket carries "who's done", never answers. If the channel fails, the app polls `GET /picks/:id/progress` every 5 s. `preferences`, `final_votes` and `ranking_results` are **not** in the publication.
+- **Per-person deck**: Swipe reads `GET /picks/:id` (Alan), which returns the candidates in my own shuffled order plus my answers, instead of reading `pick_candidates` in place-id order.
+- **Rank stays rank-only**: Results shows 1st / 2nd / 3rd and "Clear winner!"; the vote shows finalists by rank; the API and reads never carry scores.
+- **Look**: the live-demo styling (dark, flame gradient, Poppins, Tinder-style deck, confetti reveal) is now the app's look; shared pieces live in `src/components` (`PickParts`, `ResultCards`, `HostMenu`).
+- **Mock mode plays the whole loop**: Ava, Ben and Cam join, swipe and vote on timers, using the shared ranking and vote rules, so the demo runs without a network (`EXPO_PUBLIC_USE_MOCK=1`).
+
 ## UI flow (Mike)
 
-The four M2 screens, in order. Every screen also runs without a backend in mock mode
-(`EXPO_PUBLIC_USE_MOCK=1`, local fixture of 20 places; sign-in code `123456`).
+Every Pick screen calls `usePickLive` (state + progress) and `usePickRoute` (which screen belongs to the state). Opening a Pick from anywhere goes to `/pick/[id]`, which forwards to the current step, so a late arrival lands in the right place.
 
-1. **Sign in**: enter email, then the 6-digit code from the email (`signInWithOtp`, then `verifyOtp` with type `email`). Wrong or expired codes show an error; "Resend code" unlocks after 60 s.
+```mermaid
+flowchart LR
+  SignIn[Sign in] --> Picks
+  Picks -->|+| Create[Create Pick]
+  Create --> Lobby
+  Picks --> Entry["/pick/[id]"]
+  Entry -->|draft| Lobby
+  Entry -->|swiping| Swipe
+  Entry -->|final_vote| Vote
+  Entry -->|completed| Winner
+  Entry -->|canceled| Canceled
+  Lobby -->|host starts| Swipe
+  Swipe -->|all answered| Waiting
+  Waiting -->|change answers| Swipe
+  Waiting -->|closed: host, threshold or deadline| Results
+  Swipe -->|closed while swiping| Results
+  Results -->|clear winner| Winner
+  Results -->|too close| Vote
+  Vote -->|everyone voted, host or deadline| Winner
+```
 
-   ![Sign in](img/sign-in.png)
+| Pick state | Screen(s) | What it shows |
+|---|---|---|
+| `draft` | Lobby | Who's in (live), join code + QR + Share, settings (radius, pool, deadline, close rule). Host: Start (needs 2 people), Cancel. |
+| `swiping` | Swipe, then Waiting | Swipe: my shuffled deck, resume at first unanswered, Back to change, details sheet, "X of N friends done", deadline countdown; host menu (Close now, Get new places with a reset warning, Cancel). Waiting: "3 of 5 finished swiping", avatars with checks (never answers), countdown, host Close now / Cancel, Change my answers. |
+| `ranking` | Results | "Counting everyone's swipes…" |
+| `final_vote` | Results → Vote | Results: "Too close to call", finalists by rank. Vote: tap a finalist (radio group), change until it closes, "2 of 4 voted"; host Close the vote. Late arrivals go straight to Vote. |
+| `completed` | Results → Winner | Results: "Clear winner!" or "Decided!", 1st/2nd/3rd (rank only). Winner: the place, how it was decided (clear winner / vote / tie-break), Directions (Apple Maps on iOS, Google Maps elsewhere), "Saved to your history". |
+| `canceled` | `/pick/[id]` | "This Pick was canceled", Start a new Pick. |
+| any, offline | same screen | Last good data stays, a banner says we're retrying (polling every 5 s), Try again. Before anything loaded: "You're offline" with Try again. |
 
-2. **Home**: the Picks I'm a participant in. Tapping a Pick opens Swipe (while swiping) or Results (after ranking).
+**Accessibility.** Every tappable is ≥ 44 pt (`MIN_TARGET`). Yes / Maybe / No buttons are labelled with the place ("Yes to Kung Fu Tea"); the vote list is a radio group whose items say rank, name and "your vote"; progress counts are a polite live region; avatars announce "Ava, done". Text follows the system font scale (no fixed-height text boxes), long names wrap to two lines instead of being cut, and inputs on Create Pick stay above the keyboard (`KeyboardAvoidingView` in `Screen`).
 
-   ![Home](img/home.png)
+Screens (mock mode, 375 × 812 viewport):
 
-3. **Swipe**: one card at a time (photo, name, price level, rating) with Yes / Maybe / No buttons or a swipe (right = Yes, left = No, up = Maybe). Shows progress ("7 / 20"), resumes at my first unanswered card, saves each answer optimistically and offers Retry if a save fails. Once every answer is saved, the **host** sees "Rank" (which closes swiping for everyone); other participants see "Waiting for the host".
+| Picks | Lobby | Swipe | Waiting |
+|---|---|---|---|
+| ![Picks](img/m3-picks.jpg) | ![Lobby](img/m3-lobby.jpg) | ![Swipe](img/m3-swipe.jpg) | ![Waiting](img/m3-waiting.jpg) |
 
-   ![Swipe](img/swipe.png)
-
-4. **Results**: the host’s Rank calls `POST /picks/:id/rank`; everyone else sees "Waiting for the host" until then, and reads the stored result afterwards. Shows rank only: 1st / 2nd / 3rd with name and photo, or "Clear winner!" with one place. No scores anywhere.
-
-   ![Results](img/results.png)
+| Results | Vote | Winner |
+|---|---|---|
+| ![Results](img/m3-results.jpg) | ![Vote](img/m3-vote.jpg) | ![Winner](img/m3-winner.jpg) |
 
 ## Requirement → component map (Mike)
 
-M2 implements FR-01 (sign-in part), FR-09, FR-10, FR-11 and FR-13. Everything else is planned for M3 or later.
-Owners follow the README ownership table; owners, please correct your rows.
+Status as of M3 (Oct 21). "Screen done" means the app side is built and runs end to end in mock mode; the matching API route's PR is listed where it isn't merged yet.
 
-| FR | Requirement | Screen | API route | Table(s) | Owner | Milestone |
+| FR | Requirement | Screen | API route | Table(s) | Owner | Status |
 |---|---|---|---|---|---|---|
-| FR-01 | Create an account, sign in, sign out, and maintain a profile. | Sign in; sign out on Home. Profile: planned | None (Supabase Auth `signInWithOtp` / `verifyOtp`) | `profiles` | Razin (auth), Mike (screens) | M2 (sign-in); profile M3+ |
-| FR-02 | Complete and later edit a short preference profile. | planned | planned | `profiles` | Razin | M3+ |
-| FR-03 | Send, accept, remove, and block friend relationships. | planned | planned | `friendships` | Razin | M3+ |
-| FR-04 | Create, name, and manage a reusable group. | planned | planned | `groups`, `group_members` | Razin | M3+ |
-| FR-05 | Create a Pick for selected friends or a saved group. | planned | planned | `picks`, `pick_participants` | Alan | M3+ |
-| FR-06 | Select Food or Activities and optionally refine location, radius, price, and open status. | planned | planned | `picks` | Josh | M3+ |
-| FR-07 | Retrieve and normalize a bounded nearby candidate pool. | planned | planned | `places`, `place_cache`, `pick_candidates` | Josh | M3+ |
-| FR-08 | Join an authorized Pick through the app or invitation link. | planned | planned | `pick_join_codes`, `pick_participants` | Razin | M3+ |
-| FR-09 | Record exactly one Yes, Maybe, or No response per candidate and revise it before closure. | Swipe (buttons, gesture, Back to revise) | `POST /picks/:id/swipes` | `preferences`, `pick_candidates` | Alan (responses), Mike (screen) | M2 |
-| FR-10 | Persist responses and restore progress after refresh or reconnection. | Swipe (resumes at first unanswered card) | `POST /picks/:id/swipes`; own answers read through RLS | `preferences` | Mike | M2 |
-| FR-11 | Hide individual responses until aggregation is complete. | Swipe, Results (no one else's answers shown) | None (RLS: participants read only their own `preferences`) | `preferences` | Razin (RLS) | M2 |
-| FR-12 | Close responses after all participants finish or according to a documented timeout rule. | planned | planned | `picks`, `pick_participants` | Alan | M3+ |
-| FR-13 | Calculate deterministic group scores and return the top three candidates. | Results (rank only) | `POST /picks/:id/rank` | `ranking_results`, `picks` | Alan | M2 |
-| FR-14 | Provide a plain-language explanation for each top result. **Revised: rank + plain-language reason, no number** (conflicts with the rank-only decision). | planned | planned | `ranking_results` | Alan | M3+ |
-| FR-15 | Vote once among the three finalists. | planned | planned | `final_votes` | Mike | M3+ |
-| FR-16 | Resolve ties, declare one winner, and save the outcome. | planned | planned | `picks`, `final_votes` | Alan | M3+ |
-| FR-17 | Browse a bounded individual Discover feed and save interests. | planned | planned | `places`, `saved_places` | Josh | M3+ |
-| FR-18 | View completed Pick history for groups they belong to. | planned | planned | `picks`, `groups`, `group_members` | Razin | M3+ |
+| FR-01 | Create an account, sign in, sign out, and maintain a profile. | Sign in; Profile tab (sign out) | None (Supabase Auth) | `profiles` | Razin (auth), Mike (screens) | Sign-in done; profile editing: Razin |
+| FR-02 | Complete and later edit a short preference profile. | planned | planned | `profiles` | Razin | M4 |
+| FR-03 | Send, accept, remove, and block friend relationships. | Friends tab (placeholder) | planned | `friendships` | Razin | M4 |
+| FR-04 | Create, name, and manage a reusable group. | planned | planned | `groups`, `group_members` | Razin | M4 |
+| FR-05 | Create a Pick for selected friends or a saved group. | Create Pick → Lobby | `POST /picks` (PR #12) | `picks`, `pick_participants` | Alan, Mike (screens) | **Done** by join code; friends/groups M4 |
+| FR-06 | Select Food or Activities and optionally refine location, radius, price, and open status. | Create Pick (map pin, search, radius, pool, deadline, close rule) | `POST /picks` | `picks` | Josh, Mike (screen) | **Done**; price/open filters M4 |
+| FR-07 | Retrieve and normalize a bounded nearby candidate pool. | Lobby Start; host "Get new places" | `POST /picks/:id/start`, `/refresh` (PR #12) | `places`, `place_cache`, `pick_candidates` | Josh, Alan | API in review |
+| FR-08 | Join an authorized Pick through the app or invitation link. | Lobby shows code + QR + Share (`wtw://join/CODE`) | `POST /join` (Razin) | `pick_join_codes`, `pick_participants` | Razin, Mike (lobby) | Lobby done; join screen and route: Razin |
+| FR-09 | Record exactly one Yes, Maybe, or No response per candidate and revise it before closure. | Swipe (buttons, gesture, Back, Change my answers) | `POST /picks/:id/swipes` | `preferences` | Alan, Mike (screen) | **Done** |
+| FR-10 | Persist responses and restore progress after refresh or reconnection. | Swipe resumes at my first unanswered card, in my order | `GET /picks/:id` (PR #12) | `preferences` | Mike | **Done** |
+| FR-11 | Hide individual responses until aggregation is complete. | Waiting and Vote show counts and checks only | `GET /picks/:id/progress` (counts only); Realtime on `picks`, `pick_participants` only | `pick_participants.finished_at` | Mike, Razin (RLS) | **Done** |
+| FR-12 | Close responses after all participants finish or according to a documented timeout rule. | Waiting (countdown, host Close now); everyone moves to Results by themselves | `POST /picks/:id/close` (PR #13); deadline sweep (Josh) | `picks` | Alan, Josh | Screens done; API in review |
+| FR-13 | Calculate deterministic group scores and return the top three candidates. | Results (rank only) | close → `ranking_results` | `ranking_results` | Alan | **Done** |
+| FR-14 | Provide a plain-language explanation for each top result (rank + reason, no number). | planned | planned | `ranking_results` | Alan | M4 |
+| FR-15 | Vote once among the three finalists. | Vote (changeable until close; host Close the vote) | `POST /picks/:id/vote`, `/close-vote` (PR #13) | `final_votes` | Mike (screen), Alan | Screen done; API in review |
+| FR-16 | Resolve ties, declare one winner, and save the outcome. | Winner (clear winner / vote / tie-break; Directions; saved) | vote tally (PR #13) | `picks`, `final_votes` | Alan | Screen done; API in review |
+| FR-17 | Browse a bounded individual Discover feed and save interests. | Discover tab (placeholder) | planned | `places`, `saved_places` | Josh | M4 |
+| FR-18 | View completed Pick history for groups they belong to. | Picks tab "History" (decided + canceled) | RLS read of my Picks | `picks` | Razin, Mike | **Done** for my Picks; groups M4 |
+
 ## Architecture (Josh)
 
 ```mermaid

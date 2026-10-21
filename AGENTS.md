@@ -45,3 +45,19 @@ Docs: https://docs.expo.dev/eas/index.md
 - `supabase/functions/_shared/` — pure domain logic (plain TS, explicit `.ts` import extensions, no Deno or React Native imports). Import it from the app as `@shared/...`.
 - `supabase/functions/api/` — the single Supabase Edge Function (Deno). Excluded from the app's ESLint/tsc; `_shared/` is included.
 - `tests/` — Jest (jest-expo). CI runs `npm ci`, `npm run lint`, `npm run typecheck`, `npx jest`, `npx expo export --platform android`.
+- `app/(tabs)/` — the signed-in tab bar: Picks (`index`), Discover, Friends, Profile. Full-screen flows (swipe, results, create, lobby) are Stack screens outside `(tabs)` so they hide the tab bar.
+
+## Component kit
+
+Build new screens from `@/components` (`import { Button, Card, Screen } from '@/components'`) so the app looks like one app. Dark theme only; tokens (`colors`, `space`, `radius`, `type`, `fonts`) live in `src/components/theme.ts`, so never hard-code a hex color or font.
+
+- `Screen` — every screen's frame (safe area, background, padding, optional `title`/`subtitle`/`back`/`right`, pull-to-refresh). Tab screens pass `edges={['top','left','right']}`.
+- `Button` — `primary` (flame gradient, one per screen), `secondary`, `danger`, `link`; `icon`, `loading`, `disabled`. Haptic tap built in.
+- `Card` — rounded surface; pass `onPress` + `accessibilityLabel` to make it tappable.
+- `ProgressBar` — `value`/`total`, gradient fill, announces "7 of 20".
+- `Avatar` / `AvatarStack` — photo or initials with a stable color per name; `done` adds a check.
+- `EmptyState` — emoji, title, body, optional `action` button.
+- `ErrorState` — `banner` (inline) or `full` (whole screen failed), optional `onRetry`. `ErrorBanner` is the old name for the banner.
+- `IconButton` — round 44-pt header icon button.
+
+Every tappable thing is at least `MIN_TARGET` (44 pt) and has an accessibility role and label; keep it that way.

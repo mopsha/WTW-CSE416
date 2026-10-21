@@ -18,6 +18,41 @@ Base URL: `<SUPABASE_URL>/functions/v1/api`.
   `{ kind: "vote", finalists: [{ placeId, rank }] }` (includes ties beyond three).
   Scores and other scoring internals stay server-side.
 
+- `POST /picks` (**proposed by Mike, Alan to confirm/implement**): Bearer user access token; body
+  `{ "category": "food" | "activities", "center": { "lat", "lng" }, "radiusM": 3219, "poolSize": 20,
+  "deadlineAt": "<ISO 8601>" | null, "closeThreshold": 100 }`.
+  Validate with `validateCreatePick` from `_shared/domain/createPick.ts` (same limits as the
+  `picks` table checks; pool size 5–30; deadline 5 min – 7 days ahead) and return
+  400 `INVALID_INPUT` on any problem. Creates a `draft` Pick with the caller as host and first
+  participant, fills `pick_candidates` with up to `poolSize` places from the provider, and
+  returns 201 `{ "pickId": "...", "state": "draft" }`. The app's mock (`src/lib/mock/api.ts`)
+  implements exactly this.
+
+- `GET /picks/:id/progress` (**Mike, Week 3**): Bearer user access token; participants only
+  (403 `FORBIDDEN` otherwise, 404 `PICK_NOT_FOUND`). Counts only, never answers or ballots:
+  `{ state, deadlineAt, doneCount, votedCount, total, participants: [{ userId, displayName,
+  isHost, isMe, done, voted }] }`. `done` = answered every candidate. Host first, then by join
+  time. The app polls this every 5 s when Realtime is down (`src/hooks/usePickLive.ts`).
+  Implemented in `_shared/api/progress.ts` + `api/progressStore.ts` (service-role reads).
+
+### Live updates (Mike)
+
+The app subscribes to Supabase Realtime `postgres_changes` on `picks` (`id=eq.<pick>`) and
+`pick_participants` (`pick_id=eq.<pick>`), and re-reads `GET /picks/:id/progress` on any event.
+`0005_live_progress.sql` adds both tables to the `supabase_realtime` publication and a trigger on
+`preferences` that sets `pick_participants.finished_at` when someone has answered every candidate
+(and clears it if their answers are wiped by a refresh). Realtime applies the same SELECT RLS as
+normal reads. `preferences`, `final_votes` and `ranking_results` are deliberately **not** published.
+Test: `supabase/tests/live_progress_test.sql`.
+
+### Pick routes the app calls
+
+The app's typed client (`src/lib/api.ts`) and its mock (`src/lib/mock/api.ts`) follow Alan's
+routes exactly (merged in #12 and #13): `GET /picks/:id`, `POST /picks/:id/start`, `/refresh`
+(`{ confirm }`, 409 `CONFIRM_REQUIRED`), `/cancel`, `/close`, `/vote` (`{ placeId }`),
+`/close-vote`. The Lobby reads the join code from `pick_join_codes` (`code, expires_at`, Razin's
+#17) and shows a placeholder until that table exists.
+
 Errors: `{ "error": { "code": "...", "message": "..." } }`.
 400 invalid input, 401 invalid/missing token, 403 forbidden, 404 missing resource,
 409 wrong state/concurrent change, 500 unexpected failure, 503 unconfigured backend.

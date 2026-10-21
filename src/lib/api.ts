@@ -3,7 +3,17 @@
 import { getAccessToken } from './auth';
 import { API_BASE_URL, USE_MOCK } from './config';
 import { MOCK_API_BASE_URL, mockFetch } from './mock/api';
-import type { PreferenceValue, RankDecision, RankPosition } from './types';
+import type { CreatePickInput } from '@shared/domain/createPick.ts';
+
+import { candidateFromApi } from './places';
+import type {
+  PickDetail,
+  PickProgress,
+  PickState,
+  PreferenceValue,
+  RankDecision,
+  RankPosition,
+} from './types';
 
 /** Error codes the app itself produces; server codes pass through as-is. */
 export type ClientErrorCode = 'network_error' | 'not_signed_in' | `http_${number}`;
@@ -50,6 +60,49 @@ export interface RankResponse {
   /** Top three, in order. */
   results: RankPosition[];
   decision: RankDecision;
+}
+
+/**
+ * POST /picks (proposed, see docs/api-integration.md). The caller becomes host and
+ * first participant; the server fills the candidate pool. 201 on success.
+ */
+export interface CreatePickResponse {
+  pickId: string;
+  state: PickState;
+}
+
+/** POST /picks/:id/close: what closePick decided. */
+export interface CloseResponse {
+  state: 'completed' | 'final_vote';
+  winnerPlaceId: string | null;
+  finalists: string[];
+}
+
+/** Opening hours the server refreshes at reveal (Josh's `candidateHours` on GET /picks/:id). */
+export interface CandidateHours {
+  placeId: string;
+  openNow: boolean | null;
+  closesAt: string | null;
+}
+
+type RawPickDetail = Omit<PickDetail, 'candidates'> & {
+  candidates: unknown[];
+  /** Only in final_vote / completed, and only once the hours route is deployed. */
+  candidateHours?: CandidateHours[];
+};
+
+/** Normalize GET /picks/:id: candidate snapshots -> Candidate, hours merged onto each place. */
+export function pickDetailFromApi(raw: RawPickDetail): PickDetail {
+  const { candidateHours = [], ...rest } = raw;
+  const hours = new Map(candidateHours.map((h) => [h.placeId, h]));
+  return {
+    ...rest,
+    candidates: (raw.candidates ?? []).map((snapshot) => {
+      const c = candidateFromApi(snapshot);
+      const h = hours.get(c.placeId);
+      return h ? { ...c, openNow: h.openNow, closesAt: h.closesAt } : c;
+    }),
+  };
 }
 
 export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOptions) {
@@ -102,10 +155,41 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
 
   return {
     health: () => request<StatusResponse>('GET', '/health', { auth: false }),
+    /** Validate with validateCreatePick first; the server rejects bad input with 400 INVALID_INPUT. */
+    createPick: (input: CreatePickInput) =>
+      request<CreatePickResponse>('POST', '/picks', { body: input }),
     submitSwipe: (pickId: string, placeId: string, value: PreferenceValue) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/swipes`, { body: { placeId, value } }),
     /** Host only: closes swiping and ranks. Others get 403 FORBIDDEN. */
     rankPick: (pickId: string) => request<RankResponse>('POST', `${pickPath(pickId)}/rank`),
+
+    /** The Pick, my candidates in my own shuffled order, and my answers. */
+    getPick: async (pickId: string): Promise<PickDetail> => {
+      return pickDetailFromApi(await request<RawPickDetail>('GET', pickPath(pickId)));
+    },
+    /** Who's in and who's done (never what anyone answered). The Realtime fallback polls this. */
+    getProgress: (pickId: string) => request<PickProgress>('GET', `${pickPath(pickId)}/progress`),
+    /** Host only: draft -> swiping. Needs at least 2 participants. */
+    startPick: (pickId: string) =>
+      request<{ state: PickState; candidateCount: number }>('POST', `${pickPath(pickId)}/start`),
+    /**
+     * Host only: a new pool. After anyone has swiped the server answers 409 CONFIRM_REQUIRED
+     * unless `confirm` is true, because it clears everyone's answers.
+     */
+    refreshPick: (pickId: string, confirm = false) =>
+      request<{ candidateCount: number }>('POST', `${pickPath(pickId)}/refresh`, {
+        body: { confirm },
+      }),
+    cancelPick: (pickId: string) =>
+      request<{ state: PickState }>('POST', `${pickPath(pickId)}/cancel`),
+    /** Host only: close swiping now (rank -> clear winner or final vote). */
+    closePick: (pickId: string) => request<CloseResponse>('POST', `${pickPath(pickId)}/close`),
+    /** One changeable ballot among the finalists, while the Pick is in final_vote. */
+    vote: (pickId: string, placeId: string) =>
+      request<StatusResponse>('POST', `${pickPath(pickId)}/vote`, { body: { placeId } }),
+    /** Host only: tally now, before everyone has voted. */
+    closeVote: (pickId: string) =>
+      request<StatusResponse>('POST', `${pickPath(pickId)}/close-vote`),
   };
 }
 

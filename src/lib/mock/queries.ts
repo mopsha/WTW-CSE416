@@ -1,37 +1,52 @@
 import type { Queries } from '../queries';
-import { MOCK_PLACES } from './fixtures';
-import { mockPicks } from './store';
+import { MOCK_USER_ID } from './auth';
+import { mockPicks, outcomeOf, summaryOf } from './store';
 
-const delay = () => new Promise((r) => setTimeout(r, 200));
+const delay = () =>
+  process.env.NODE_ENV === 'test' ? Promise.resolve() : new Promise((r) => setTimeout(r, 200));
+
+// RLS in mock form: only Picks I'm in, and only my own answers and ballot.
+const mine = (pickId: string) => {
+  const pick = mockPicks.get(pickId);
+  return pick?.participants.some((p) => p.userId === MOCK_USER_ID) ? pick : undefined;
+};
 
 export const mockQueries: Queries = {
   async listMyPicks() {
     await delay();
-    return [...mockPicks.values()].map((p) => ({ ...p.summary, state: p.outcome.state }));
+    return [...mockPicks.values()]
+      .filter((p) => mine(p.id))
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map(summaryOf);
   },
   async getCandidates(pickId) {
     await delay();
-    if (!mockPicks.has(pickId)) return [];
-    return MOCK_PLACES.map(({ placeId, name, photoUrl, priceLevel, rating }) => ({
-      placeId,
-      name,
-      photoUrl,
-      priceLevel,
-      rating,
-    }));
+    return (mine(pickId)?.candidates ?? []).map((p) => ({ ...p }));
   },
   async getMyPreferences(pickId) {
     await delay();
-    const pick = mockPicks.get(pickId);
-    return pick ? [...pick.myPreferences].map(([placeId, value]) => ({ placeId, value })) : [];
+    const me = mine(pickId)?.participants.find((p) => p.userId === MOCK_USER_ID);
+    return me ? [...me.answers].map(([placeId, value]) => ({ placeId, value })) : [];
   },
   async getRankingResults(pickId) {
     await delay();
-    return [...(mockPicks.get(pickId)?.ranking ?? [])];
+    const pick = mine(pickId);
+    // Like RLS + the API: nothing before the Pick leaves swiping.
+    if (!pick || pick.state === 'draft' || pick.state === 'swiping') return [];
+    return pick.ranking.map((r) => ({ ...r }));
   },
   async getPickOutcome(pickId) {
     await delay();
-    const pick = mockPicks.get(pickId);
-    return pick ? { ...pick.outcome } : null;
+    const pick = mine(pickId);
+    return pick ? outcomeOf(pick) : null;
+  },
+  async getMyVote(pickId) {
+    await delay();
+    return mine(pickId)?.participants.find((p) => p.userId === MOCK_USER_ID)?.vote ?? null;
+  },
+  async getJoinCode(pickId) {
+    await delay();
+    const pick = mine(pickId);
+    return pick ? { code: pick.joinCode, expiresAt: null } : null;
   },
 };

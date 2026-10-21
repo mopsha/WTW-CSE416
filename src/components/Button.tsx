@@ -1,13 +1,24 @@
-import { ActivityIndicator, Pressable, StyleSheet, Text, type ViewStyle } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
-import { colors, MIN_TARGET } from './theme';
+import { haptic } from '@/lib/haptics';
 
-interface Props {
+import { colors, flame, fonts, MIN_TARGET, radius } from './theme';
+
+export interface ButtonProps {
   label: string;
   onPress: () => void;
-  variant?: 'primary' | 'secondary' | 'link';
+  /**
+   * primary: flame gradient (one per screen) · secondary: outlined surface ·
+   * link: text only · danger: destructive actions (Cancel Pick, Sign out)
+   */
+  variant?: 'primary' | 'secondary' | 'link' | 'danger';
+  /** An Ionicons name shown before the label. */
+  icon?: keyof typeof Ionicons.glyphMap;
   disabled?: boolean;
   loading?: boolean;
+  /** Defaults to `label`. */
   accessibilityLabel?: string;
   accessibilityHint?: string;
   style?: ViewStyle;
@@ -17,16 +28,38 @@ export function Button({
   label,
   onPress,
   variant = 'primary',
+  icon,
   disabled = false,
   loading = false,
   accessibilityLabel,
   accessibilityHint,
   style,
-}: Props) {
+}: ButtonProps) {
   const inactive = disabled || loading;
+  const textColor =
+    variant === 'primary'
+      ? colors.primaryText
+      : variant === 'danger'
+        ? colors.no
+        : variant === 'link'
+          ? colors.primary
+          : colors.text;
+
+  const content = loading ? (
+    <ActivityIndicator color={textColor} />
+  ) : (
+    <View style={styles.row}>
+      {icon ? <Ionicons name={icon} size={18} color={textColor} /> : null}
+      <Text style={[styles.label, { color: textColor }]}>{label}</Text>
+    </View>
+  );
+
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => {
+        haptic.tap();
+        onPress();
+      }}
       disabled={inactive}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? label}
@@ -34,37 +67,50 @@ export function Button({
       accessibilityState={{ disabled: inactive, busy: loading }}
       style={({ pressed }) => [
         styles.base,
-        styles[variant],
+        variant === 'primary' && styles.primaryShadow,
+        variant === 'secondary' && styles.secondary,
+        variant === 'danger' && styles.danger,
         inactive && styles.disabled,
         pressed && !inactive && styles.pressed,
         style,
       ]}
     >
-      {loading ? (
-        <ActivityIndicator color={variant === 'primary' ? colors.primaryText : colors.primary} />
+      {variant === 'primary' ? (
+        <LinearGradient
+          colors={flame}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.fill}
+        >
+          {content}
+        </LinearGradient>
       ) : (
-        <Text style={[styles.label, variant === 'primary' ? styles.primaryLabel : styles.altLabel]}>
-          {label}
-        </Text>
+        <View style={styles.fill}>{content}</View>
       )}
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  base: {
-    minHeight: MIN_TARGET,
-    paddingHorizontal: 20,
-    borderRadius: 12,
+  base: { borderRadius: radius.pill },
+  fill: {
+    minHeight: MIN_TARGET + 6,
+    borderRadius: radius.pill,
+    paddingHorizontal: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  primary: { backgroundColor: colors.primary },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  label: { fontFamily: fonts.bold, fontSize: 16, letterSpacing: 0.2 },
+  primaryShadow: {
+    shadowColor: '#FF3D71',
+    shadowOpacity: 0.4,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
   secondary: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
-  link: { backgroundColor: 'transparent' },
-  disabled: { opacity: 0.45 },
-  pressed: { opacity: 0.8 },
-  label: { fontSize: 17, fontWeight: '600' },
-  primaryLabel: { color: colors.primaryText },
-  altLabel: { color: colors.primary },
+  danger: { backgroundColor: colors.dangerBg },
+  disabled: { opacity: 0.4 },
+  pressed: { transform: [{ scale: 0.97 }] },
 });

@@ -22,6 +22,15 @@ export interface Queries {
   /** Rank + finalist only. Never selects `score`. */
   getRankingResults(pickId: string): Promise<RankedPlace[]>;
   getPickOutcome(pickId: string): Promise<PickOutcome | null>;
+  /** My own final-vote ballot (RLS: only mine), or null if I haven't voted. */
+  getMyVote(pickId: string, userId: string): Promise<string | null>;
+  /** The Pick's share code (Razin's pick_join_codes), or null if there isn't one yet. */
+  getJoinCode(pickId: string): Promise<JoinCode | null>;
+}
+
+export interface JoinCode {
+  code: string;
+  expiresAt: string | null;
 }
 
 export class QueryError extends Error {
@@ -107,6 +116,32 @@ const supabaseQueries: Queries = {
       winnerPlaceId: row.winner_place_id,
       decidedBy: row.decided_by,
     };
+  },
+
+  async getMyVote(pickId, userId) {
+    const { data, error } = await getSupabase()
+      .from('final_votes')
+      .select('place_id')
+      .eq('pick_id', pickId)
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (error) throw new QueryError(error.message);
+    return (data as { place_id: string } | null)?.place_id ?? null;
+  },
+
+  async getJoinCode(pickId) {
+    const { data, error } = await getSupabase()
+      .from('pick_join_codes')
+      .select('code, expires_at')
+      .eq('pick_id', pickId)
+      .order('expires_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    // Before Razin's join-code migration lands the table doesn't exist; the lobby shows a
+    // placeholder rather than an error.
+    if (error) return null;
+    const row = data as { code: string; expires_at: string | null } | null;
+    return row ? { code: row.code, expiresAt: row.expires_at } : null;
   },
 };
 

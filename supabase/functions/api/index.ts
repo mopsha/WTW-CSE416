@@ -1,5 +1,6 @@
 import { createApp } from './app.ts';
 import { getUser } from './auth.ts';
+import { createProgressStore } from './progressStore.ts';
 import { createStore } from './store.ts';
 import { createLifecycleStore } from './lifecycleStore.ts';
 import { createClosingStore } from './closingStore.ts';
@@ -16,6 +17,7 @@ const app = createApp(
   {
     getUser,
     store: createStore(),
+    progressStore: createProgressStore(),
     lifecycleStore: createLifecycleStore(),
     closingStore: createClosingStore(),
     poolBuilder,
