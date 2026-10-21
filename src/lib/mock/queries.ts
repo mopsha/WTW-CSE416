@@ -1,6 +1,6 @@
 import type { Queries } from '../queries';
 import { MOCK_USER_ID } from './auth';
-import { mockPicks, outcomeOf, summaryOf } from './store';
+import { mockPicks, mockProfile, outcomeOf, summaryOf } from './store';
 
 const delay = () =>
   process.env.NODE_ENV === 'test' ? Promise.resolve() : new Promise((r) => setTimeout(r, 200));
@@ -12,6 +12,10 @@ const mine = (pickId: string) => {
 };
 
 export const mockQueries: Queries = {
+  async getMyProfile() {
+    await delay();
+    return { displayName: mockProfile.displayName };
+  },
   async listMyPicks() {
     await delay();
     return [...mockPicks.values()]

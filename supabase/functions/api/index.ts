@@ -5,6 +5,7 @@ import { createStore } from './store.ts';
 import { createLifecycleStore } from './lifecycleStore.ts';
 import { createClosingStore } from './closingStore.ts';
 import { createJoinStore } from './joinStore.ts';
+import { createProfileStore } from './profileStore.ts';
 import { createSweepStore } from './sweepStore.ts';
 import { refreshCandidateHours } from './hours.ts';
 import { createPoolBuilder } from '../_shared/places/pool.ts';
@@ -27,6 +28,7 @@ const app = createApp(
     cronSecret: Deno.env.get('CRON_SECRET'),
     poolBuilder,
     joinStore: createJoinStore(),
+    profileStore: createProfileStore(),
     refreshHours: refreshCandidateHours,
   },
   '/api',
