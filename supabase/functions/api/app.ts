@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { ApiError, errorResponse } from '../_shared/api/errors.ts';
-import { rank, swipe, type HeartbeatStore } from '../_shared/api/heartbeat.ts';
+import { swipe, type HeartbeatStore } from '../_shared/api/heartbeat.ts';
 import { getProgress, type ProgressStore } from '../_shared/api/progress.ts';
 import {
   cancelPick,
@@ -80,13 +80,18 @@ export function createApp(
     try {
       await closePick(deps.closingStore, pickId, 'system', null);
     } catch (error) {
-      console.error('auto-close after swipe failed', error instanceof Error ? error.name : 'unknown');
+      console.error(
+        'auto-close after swipe failed',
+        error instanceof Error ? error.name : 'unknown',
+      );
     }
     return c.json(result);
   });
+  // Legacy alias of /close: routes through the canonical closer so the final vote
+  // always gets vote_deadline_at and the deadline sweep can finish it.
   app.post('/picks/:id/rank', async (c) => {
     const user = await deps.getUser(c.req.raw);
-    return c.json(await rank(deps.store, c.req.param('id'), user.id));
+    return c.json(await closePick(deps.closingStore, c.req.param('id'), 'host', user.id));
   });
   // Live progress (counts only). The app polls this when Realtime is unavailable.
   app.get('/picks/:id/progress', async (c) => {
@@ -102,7 +107,9 @@ export function createApp(
   app.get('/picks/:id', async (c) => {
     c.header('Cache-Control', 'private, no-store');
     const user = await deps.getUser(c.req.raw);
-    return c.json(await getPick(deps.lifecycleStore, c.req.param('id'), user.id, deps.refreshHours));
+    return c.json(
+      await getPick(deps.lifecycleStore, c.req.param('id'), user.id, deps.refreshHours),
+    );
   });
   app.post('/picks/:id/start', async (c) => {
     const user = await deps.getUser(c.req.raw);

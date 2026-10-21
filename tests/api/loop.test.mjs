@@ -1,14 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-// local.mjs is Josh's harness from josh/sweep-ci; it resolves once that branch merges.
-// eslint-disable-next-line import/no-unresolved
 import { localConfig, request, requireStatus } from './local.mjs';
 
 // The whole MVP loop over real HTTP -> Auth -> Edge Function -> RPCs -> local Postgres,
 // with 4 users and fixed answers (Week 4, Alan). Uses Josh's harness (local.mjs).
-// "Join by code" is Razin's POST /join, not built yet: participants are inserted with
-// the service role as a stand-in. Swap in POST /join once it lands.
+// Members join with the Pick's real code through Razin's POST /picks/join.
 // The same scenarios were checked against the real TS + SQL on Postgres (PGlite) first.
 test('MVP loop: create -> join -> start -> swipe -> close -> winner / tied vote', { timeout: 180_000 }, async (t) => {
   const config = localConfig();
@@ -63,15 +60,11 @@ test('MVP loop: create -> join -> start -> swipe -> close -> winner / tied vote'
     );
     assert.equal(created.state, 'draft');
     picks.push(created.pickId);
-    // Stand-in for POST /join (Razin).
-    requireStatus(
-      await db('pick_participants', {
-        method: 'POST',
-        body: members.map((m) => ({ pick_id: created.pickId, user_id: m.id })),
-      }),
-      201,
-      'join members',
-    );
+    const [{ code }] = await read(`pick_join_codes?pick_id=eq.${created.pickId}&select=code`);
+    for (const m of members) {
+      const joined = requireStatus(await api('POST', '/picks/join', m.token, { code }), 200, 'join');
+      assert.equal(joined.pickId, created.pickId);
+    }
     requireStatus(await api('POST', `/picks/${created.pickId}/start`, host.token), 200, 'start');
     const view = requireStatus(await api('GET', `/picks/${created.pickId}`, host.token), 200, 'get Pick');
     const ids = view.candidates.map((c) => c.placeId).sort();

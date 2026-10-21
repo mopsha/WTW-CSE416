@@ -20,8 +20,6 @@ export interface PickSummary {
 
 /** What the Swipe and Results screens show for a place. Built from pick_candidates.snapshot. */
 export interface Candidate {
-  openNow?: boolean | null;
-  closesAt?: string | null;
   placeId: string;
   name: string;
   photoUrl: string | null;

@@ -233,7 +233,7 @@ test('local heartbeat integration', { timeout: 120_000 }, async (t) => {
         ranking: await read(rankingPath),
         preferences: await read(preferencesPath),
       };
-      requireStatus(await api(`/picks/${winnerPick}/rank`, host.token), 409, 'rank retry');
+      requireStatus(await api(`/picks/${winnerPick}/rank`, host.token), 200, 'rank retry');
       requireStatus(
         await api(`/picks/${winnerPick}/swipes`, member.token, { placeId: a, value: 0 }),
         409,
