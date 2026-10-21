@@ -3,13 +3,26 @@ import places from '../../supabase/seed/places.json';
 
 const provider = new MockProvider();
 const center = { lat: 40.9126, lng: -73.1234 };
+test('the demo pool is the 20 real SBU food places, each with what a card shows', () => {
+  const food = places.filter((p) => p.category === 'food');
+  expect(food).toHaveLength(20);
+  for (const p of food) {
+    expect(p).toMatchObject({
+      name: expect.any(String),
+      address: expect.any(String),
+      cuisine: expect.any(String),
+      photoUrl: expect.stringMatching(/^https:\/\//),
+    });
+    expect(p.name).not.toMatch(/placeholder/i);
+  }
+});
 test('loads bundled places', async () => {
   expect(await provider.search({ center, radiusM: 10000 })).toEqual(places);
 });
 test('combines radius and category filters', async () => {
   expect(
     (await provider.search({ center, radiusM: 1000, category: 'food' })).map((p) => p.placeId),
-  ).toEqual(['placeholder-cafe']);
+  ).toEqual(['sbu-food-01']);
   expect(
     (await provider.search({ center, radiusM: 1000, category: 'activities' })).map(
       (p) => p.placeId,
@@ -17,7 +30,10 @@ test('combines radius and category filters', async () => {
   ).toEqual(['placeholder-park']);
 });
 test('includes exact radius boundary and allows empty results', async () => {
-  expect(await provider.search({ center, radiusM: 0 })).toHaveLength(1);
+  const first = places[0]!;
+  expect(
+    await provider.search({ center: { lat: first.lat, lng: first.lng }, radiusM: 0 }),
+  ).toHaveLength(1);
   expect(await provider.search({ center: { lat: 0, lng: 0 }, radiusM: 100 })).toEqual([]);
 });
 test('results do not mutate fixture data', async () => {
