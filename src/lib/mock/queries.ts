@@ -19,10 +19,6 @@ export const mockQueries: Queries = {
       .sort((a, b) => b.createdAt - a.createdAt)
       .map(summaryOf);
   },
-  async getCandidates(pickId) {
-    await delay();
-    return (mine(pickId)?.candidates ?? []).map((p) => ({ ...p }));
-  },
   async getMyPreferences(pickId) {
     await delay();
     const me = mine(pickId)?.participants.find((p) => p.userId === MOCK_USER_ID);
