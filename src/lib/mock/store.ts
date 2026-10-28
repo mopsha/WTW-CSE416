@@ -23,6 +23,8 @@ import type {
   PreferenceValue,
   RankedPlace,
 } from '../types';
+import type { PlaceFilters } from '@shared/domain/placeFilters.ts';
+import { mockPool } from './placePool';
 import { MOCK_USER_ID } from './auth';
 import { DEMO_CENTER, MOCK_PLACES, OTHER_PARTICIPANT_ANSWERS, type MockPlace } from './fixtures';
 
@@ -35,7 +37,7 @@ export interface MockParticipant {
   script?: readonly PreferenceValue[];
 }
 
-export interface MockPick {
+export interface MockPick extends PlaceFilters {
   id: string;
   hostId: string;
   state: PickState;
@@ -171,7 +173,14 @@ function initial(): Map<string, MockPick> {
   picks.push(base('demo-pick', { createdAt: -1 }));
 
   // A friend's Pick: I'm a guest, so no host buttons.
-  picks.push(base('friend-pick', { category: 'activities', hostId: FRIEND_IDS[0], createdAt: -2 }));
+  picks.push(
+    base('friend-pick', {
+      category: 'activities',
+      candidates: mockPool({ category: 'activities', center: DEMO_CENTER, radiusM: 5000 }),
+      hostId: FRIEND_IDS[0],
+      createdAt: -2,
+    }),
+  );
 
   // Already in the final vote: shows the ballot (three finalists, two of them tied at #1).
   const vote = base('vote-pick', {
@@ -249,6 +258,8 @@ export function createMockPick(input: CreatePickInput): MockPick {
     category: input.category,
     center: input.center,
     radiusM: input.radiusM,
+    priceMax: input.priceMax,
+    openNow: input.openNow,
     poolSize: input.poolSize,
     deadlineAt: input.deadlineAt,
     closeThreshold: input.closeThreshold,

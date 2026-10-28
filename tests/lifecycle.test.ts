@@ -257,3 +257,18 @@ describe('read-time candidate hours', () => {
     });
   });
 });
+
+test('filtered lifecycle forwards constraints and rejects Google snapshots before any write', async () => {
+  const store = fixture(pick({priceMax: 2, openNow: true}));
+  const pool = poolOf([{...candidate('google'), provider: 'google', retention: 'request'}]);
+  await expect(startPick(store, pool, 'pick', 'host')).rejects.toThrow('cannot be persisted');
+  expect(pool.buildPool).toHaveBeenCalledWith(expect.objectContaining({priceMax: 2, openNow: true}));
+  expect(store.start).not.toHaveBeenCalled();
+  expect(store.refresh).not.toHaveBeenCalled();
+});
+
+test('empty filtered refresh preserves existing answers and candidates', async () => {
+  const store = fixture(pick({state: 'swiping', hasAnswers: true}));
+  await expect(refreshPick(store, poolOf([]), 'pick', 'host', {confirm: true})).rejects.toMatchObject({status: 409, code: 'NO_CANDIDATES'});
+  expect(store.refresh).not.toHaveBeenCalled();
+});

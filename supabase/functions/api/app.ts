@@ -1,3 +1,6 @@
+import { discover, parseDiscover } from '../_shared/api/discover.ts';
+import type { DiscoverPreferences } from '../_shared/domain/discoverScore.ts';
+import { parseCreatePick } from '../_shared/api/lifecycle.ts';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { ApiError, errorResponse } from '../_shared/api/errors.ts';
@@ -38,6 +41,18 @@ export function createApp(
     joinStore?: JoinStore;
     sweepStore?: SweepStore;
     cronSecret?: string;
+    discoverPool?: PoolBuilder;
+    discoverStore?: {
+      preferences(userId: string): Promise<DiscoverPreferences>;
+      saved(userId: string): Promise<{ placeId: string; createdAt: string }[]>;
+      save(userId: string, placeId: string): Promise<void>;
+      remove(userId: string, placeId: string): Promise<void>;
+    };
+    checkLimit?: (
+      scope: 'create' | 'start' | 'refresh',
+      userId: string,
+      pickId?: string,
+    ) => Promise<void>;
     refreshHours?: Parameters<typeof getPick>[3];
   },
   basePath = '',
@@ -48,7 +63,7 @@ export function createApp(
     cors({
       origin: '*',
       allowHeaders: ['Authorization', 'Content-Type', 'apikey', 'x-client-info'],
-      allowMethods: ['GET', 'POST', 'OPTIONS'],
+      allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
     }),
   );
   app.onError((error, c) => {
@@ -99,9 +114,48 @@ export function createApp(
     if (!deps.progressStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Progress is not available');
     return c.json(await getProgress(deps.progressStore, c.req.param('id'), user.id));
   });
+  app.get('/discover', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    c.header('Cache-Control', 'private, no-store');
+    const requests = parseDiscover(new URL(c.req.url).searchParams);
+    if (!deps.discoverStore || !deps.discoverPool)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Discover is unavailable');
+    const result = await discover(
+      deps.discoverPool,
+      requests,
+      await deps.discoverStore.preferences(user.id),
+    );
+    return c.json({
+      ...result,
+      notice: result.fallback
+        ? 'Showing fixture places. Live places may be unavailable or the daily provider limit reached.'
+        : null,
+    });
+  });
+  app.get('/saved', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    c.header('Cache-Control', 'private, no-store');
+    if (!deps.discoverStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Saved places unavailable');
+    return c.json({ places: await deps.discoverStore.saved(user.id) });
+  });
+  for (const method of ['post', 'delete'] as const) {
+    app[method]('/saved/:placeId', async (c) => {
+      const user = await deps.getUser(c.req.raw);
+      const placeId = c.req.param('placeId');
+      if (!placeId.trim() || placeId.length > 256 || /[\u0000-\u001f]/.test(placeId))
+        throw new ApiError(400, 'INVALID_INPUT', 'Invalid place ID');
+      if (!deps.discoverStore)
+        throw new ApiError(503, 'NOT_CONFIGURED', 'Saved places unavailable');
+      if (method === 'post') await deps.discoverStore.save(user.id, placeId);
+      else await deps.discoverStore.remove(user.id, placeId);
+      return c.json({ status: 'ok' });
+    });
+  }
   app.post('/picks', async (c) => {
     const user = await deps.getUser(c.req.raw);
     const body = await readJsonBody(c);
+    parseCreatePick(body);
+    await deps.checkLimit?.('create', user.id);
     return c.json(await createPick(deps.lifecycleStore, user.id, body), 201);
   });
   app.get('/picks/:id', async (c) => {
@@ -114,14 +168,27 @@ export function createApp(
   app.post('/picks/:id/start', async (c) => {
     const user = await deps.getUser(c.req.raw);
     return c.json(
-      await startPick(deps.lifecycleStore, deps.poolBuilder, c.req.param('id'), user.id),
+      await startPick(
+        deps.lifecycleStore,
+        deps.poolBuilder,
+        c.req.param('id'),
+        user.id,
+        () => deps.checkLimit?.('start', user.id, c.req.param('id')) ?? Promise.resolve(),
+      ),
     );
   });
   app.post('/picks/:id/refresh', async (c) => {
     const user = await deps.getUser(c.req.raw);
     const body = await readJsonBody(c);
     return c.json(
-      await refreshPick(deps.lifecycleStore, deps.poolBuilder, c.req.param('id'), user.id, body),
+      await refreshPick(
+        deps.lifecycleStore,
+        deps.poolBuilder,
+        c.req.param('id'),
+        user.id,
+        body,
+        () => deps.checkLimit?.('refresh', user.id, c.req.param('id')) ?? Promise.resolve(),
+      ),
     );
   });
   app.post('/picks/:id/cancel', async (c) => {

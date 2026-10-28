@@ -1,14 +1,15 @@
 // DEMO: real venue photos + ratings from Google Places API (New), looked up at runtime by
 // name + address. Enabled only when EXPO_PUBLIC_GOOGLE_PLACES_KEY is set (in .env.local,
 // never committed). Nothing is stored: Google's terms don't allow caching photo references.
-// Production should call Places from our API (server-side key), not from the app.
+// Release lookups are disabled; live Discover uses the API with its server-only key.
+// EAS profiles explicitly clear the demo public key. See docs/m4-josh-phase1.md.
 import { useEffect, useState } from 'react';
 import { Image } from 'react-native';
 
 import type { Candidate } from './types';
 
-const KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_KEY ?? '';
-export const GOOGLE_ENABLED = KEY.length > 0;
+const KEY = __DEV__ ? (process.env.EXPO_PUBLIC_GOOGLE_PLACES_KEY ?? '') : '';
+export const GOOGLE_ENABLED = __DEV__ && KEY.length > 0;
 
 export interface GooglePhoto {
   url: string;
