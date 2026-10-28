@@ -6,7 +6,8 @@ import { ApiError } from './errors.ts';
 import { canTransition, type PickState } from '../domain/pickState.ts';
 import { shuffleForUser } from '../domain/shuffle.ts';
 import type { LatLng } from '../domain/geo.ts';
-import type { PoolBuilder } from '../places/pool.ts';
+import { candidateSnapshot, NoCandidatesError, type PoolBuilder } from '../places/pool.ts';
+import { validFilters, type PlaceFilters } from '../domain/placeFilters.ts';
 import type { HoursMetadata } from '../places/refreshOpenHours.ts';
 import type { Category } from '../places/types.ts';
 
@@ -26,7 +27,7 @@ export const MIN_DEADLINE_LEAD_MS = 5 * 60_000;
 export const MAX_DEADLINE_LEAD_MS = 7 * 24 * 60 * 60_000;
 export const MIN_PARTICIPANTS_TO_START = 2;
 
-export interface CreatePickInput {
+export interface CreatePickInput extends PlaceFilters {
   category: Category;
   center: LatLng;
   radiusM: number;
@@ -41,7 +42,7 @@ export interface CandidateSnapshot {
   snapshot: object;
 }
 
-export interface LifecyclePick {
+export interface LifecyclePick extends PlaceFilters {
   id: string;
   hostId: string;
   state: PickState;
@@ -150,7 +151,11 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
     }
     deadlineAt = new Date(at).toISOString();
   }
+  if (!validFilters(b as PlaceFilters))
+    throw new ApiError(400, 'INVALID_INPUT', 'Invalid priceMax or openNow');
   return {
+    priceMax: b.priceMax as number | null | undefined,
+    openNow: b.openNow as boolean | undefined,
     category: b.category as Category,
     center: { lat: center.lat, lng: center.lng },
     radiusM,
@@ -192,15 +197,27 @@ function requireHost(pick: LifecyclePick, userId: string) {
   if (pick.hostId !== userId) throw new ApiError(403, 'FORBIDDEN', 'Only the host can do this');
 }
 
-async function buildCandidates(pool: PoolBuilder, pick: LifecyclePick): Promise<CandidateSnapshot[]> {
-  const candidates = await pool.buildPool({
-    center: pick.center,
-    radiusM: pick.radiusM,
-    category: pick.category,
-    poolSize: pick.poolSize,
-  });
+async function buildCandidates(
+  pool: PoolBuilder,
+  pick: LifecyclePick,
+): Promise<CandidateSnapshot[]> {
+  let candidates;
+  try {
+    candidates = await pool.buildPool({
+      center: pick.center,
+      radiusM: pick.radiusM,
+      category: pick.category,
+      poolSize: pick.poolSize,
+      priceMax: pick.priceMax,
+      openNow: pick.openNow,
+    });
+  } catch (error) {
+    if (error instanceof NoCandidatesError)
+      throw new ApiError(409, 'NO_CANDIDATES', 'No places found for this Pick');
+    throw error;
+  }
   if (!candidates.length) throw new ApiError(409, 'NO_CANDIDATES', 'No places found for this Pick');
-  return candidates.map((c) => ({ placeId: c.placeId, snapshot: c }));
+  return candidates.map((c) => ({ placeId: c.placeId, snapshot: candidateSnapshot(c) }));
 }
 
 export async function startPick(
@@ -208,6 +225,7 @@ export async function startPick(
   pool: PoolBuilder,
   pickId: string,
   userId: string,
+  beforeBuild?: () => Promise<void>,
 ) {
   const pick = await loadAsParticipant(store, pickId, userId);
   requireHost(pick, userId);
@@ -221,6 +239,7 @@ export async function startPick(
       `A Pick needs at least ${MIN_PARTICIPANTS_TO_START} participants to start`,
     );
   }
+  await beforeBuild?.();
   const candidates = await buildCandidates(pool, pick);
   await store.start(pickId, userId, candidates);
   return { state: 'swiping' as const, candidateCount: candidates.length };
@@ -232,6 +251,7 @@ export async function refreshPick(
   pickId: string,
   userId: string,
   body: unknown,
+  beforeBuild?: () => Promise<void>,
 ) {
   const confirm = parseRefreshBody(body);
   const pick = await loadAsParticipant(store, pickId, userId);
@@ -246,6 +266,7 @@ export async function refreshPick(
       "Refreshing now clears everyone's answers; pass confirm:true",
     );
   }
+  await beforeBuild?.();
   const candidates = await buildCandidates(pool, pick);
   await store.refresh(pickId, userId, candidates);
   return { candidateCount: candidates.length };
@@ -262,14 +283,20 @@ export async function cancelPick(store: LifecycleStore, pickId: string, userId: 
 }
 
 export async function getPick(
-  store: LifecycleStore, pickId: string, userId: string,
+  store: LifecycleStore,
+  pickId: string,
+  userId: string,
   refreshHours?: (candidates: CandidateSnapshot[]) => Promise<HoursMetadata[]>,
 ) {
   const pick = await loadAsParticipant(store, pickId, userId);
   // Membership is checked before any provider access. Metadata never changes snapshots.
   let candidateHours: HoursMetadata[] = [];
   if (refreshHours && (pick.state === 'completed' || pick.state === 'final_vote')) {
-    try { candidateHours = await refreshHours(pick.candidates); } catch { /* Optional metadata only. */ }
+    try {
+      candidateHours = await refreshHours(pick.candidates);
+    } catch {
+      /* Optional metadata only. */
+    }
   }
   const order = shuffleForUser(
     pick.candidates.map((c) => c.placeId),
@@ -284,6 +311,8 @@ export async function getPick(
     center: pick.center,
     radiusM: pick.radiusM,
     poolSize: pick.poolSize,
+    priceMax: pick.priceMax,
+    openNow: pick.openNow,
     deadlineAt: pick.deadlineAt,
     closeThreshold: pick.closeThreshold,
     isHost: pick.hostId === userId,

@@ -2,6 +2,7 @@
 // The app validates before sending and the API must validate again with the same
 // function, so both sides agree on the limits. Limits mirror the picks table checks.
 
+import { validFilters, type PlaceFilters } from './placeFilters.ts';
 import type { LatLng } from './geo.ts';
 
 export const PICK_CATEGORIES = ['food', 'activities'] as const;
@@ -24,7 +25,7 @@ export const MAX_CLOSE_THRESHOLD = 100;
 export const MIN_DEADLINE_LEAD_MS = 5 * 60_000;
 export const MAX_DEADLINE_LEAD_MS = 7 * 24 * 60 * 60_000;
 
-export interface CreatePickInput {
+export interface CreatePickInput extends PlaceFilters {
   category: PickCategory;
   center: LatLng;
   radiusM: number;
@@ -96,6 +97,8 @@ export function validateCreatePick(input: unknown, now: number = Date.now()): Cr
     add('closeThreshold', 'Close threshold must be between 1% and 100%.');
   }
 
+  if (!validFilters(body as PlaceFilters))
+    add('priceMax', 'Choose a price from 0 to 4 and a valid open-now filter.');
   return problems;
 }
 

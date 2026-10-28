@@ -1,0 +1,10 @@
+{
+  "build": {
+    "development": {
+      "distribution": "internal",
+      "env": { "EXPO_PUBLIC_GOOGLE_PLACES_KEY": "" }
+    },
+    "preview": { "distribution": "internal", "env": { "EXPO_PUBLIC_GOOGLE_PLACES_KEY": "" } },
+    "production": { "env": { "EXPO_PUBLIC_GOOGLE_PLACES_KEY": "" } }
+  }
+}
