@@ -178,6 +178,20 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
       request<StatusResponse>('POST', `/saved/${encodeURIComponent(placeId)}`),
     removeSaved: (placeId: string) =>
       request<StatusResponse>('DELETE', `/saved/${encodeURIComponent(placeId)}`),
+    getHang: () =>
+      request<{
+        posts: import('@shared/api/hang.ts').HangPost[];
+        sharedAvailable: boolean;
+        notice: string;
+      }>('GET', '/hang'),
+    createHang: (input: import('@shared/api/hang.ts').HangInput) =>
+      request<import('@shared/api/hang.ts').HangPost>('POST', '/hang', { body: input }),
+    respondHang: (id: string, status: import('@shared/api/hang.ts').HangStatus) =>
+      request<StatusResponse>('POST', `/hang/${encodeURIComponent(id)}/respond`, {
+        body: { status },
+      }),
+    hangPick: (id: string) =>
+      request<{ pickId: string }>('POST', `/hang/${encodeURIComponent(id)}/pick`),
     health: () => request<StatusResponse>('GET', '/health', { auth: false }),
     /** Validate with validateCreatePick first; the server rejects bad input with 400 INVALID_INPUT. */
     createPick: (input: CreatePickInput) =>

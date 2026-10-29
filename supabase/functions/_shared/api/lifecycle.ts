@@ -2,6 +2,7 @@
 // (owner: Alan). The API is the only writer of picks.state; every transition
 // goes through canTransition.
 
+import { priorityCandidates } from '../domain/candidatePriority.ts';
 import { ApiError } from './errors.ts';
 import { canTransition, type PickState } from '../domain/pickState.ts';
 import { shuffleForUser } from '../domain/shuffle.ts';
@@ -9,12 +10,16 @@ import type { LatLng } from '../domain/geo.ts';
 import { candidateSnapshot, NoCandidatesError, type PoolBuilder } from '../places/pool.ts';
 import { validFilters, type PlaceFilters } from '../domain/placeFilters.ts';
 import type { HoursMetadata } from '../places/refreshOpenHours.ts';
-import type { Category } from '../places/types.ts';
+import type { Candidate } from '../places/types.ts';
+import type { PickCategory } from '../domain/createPick.ts';
+import { planProblem, type PlanOptions, type StoredCustomOption } from '../domain/customPlans.ts';
+import { distanceMeters } from '../domain/geo.ts';
+import { matchesFilters } from '../domain/placeFilters.ts';
 
 // Limits mirror Mike's validateCreatePick (_shared/domain/createPick.ts, PR #11, not yet
 // merged): once that lands, replace this parser with his shared validateCreatePick so the
 // app and API check the same function instead of two copies of the same limits.
-const CATEGORIES: readonly Category[] = ['food', 'activities'];
+const CATEGORIES: readonly PickCategory[] = ['food', 'activities', 'custom'];
 export const MIN_RADIUS_M = 200;
 export const MAX_RADIUS_M = 50_000;
 export const MIN_POOL_SIZE = 5;
@@ -27,8 +32,8 @@ export const MIN_DEADLINE_LEAD_MS = 5 * 60_000;
 export const MAX_DEADLINE_LEAD_MS = 7 * 24 * 60 * 60_000;
 export const MIN_PARTICIPANTS_TO_START = 2;
 
-export interface CreatePickInput extends PlaceFilters {
-  category: Category;
+export interface CreatePickInput extends PlaceFilters, PlanOptions {
+  category: PickCategory;
   center: LatLng;
   radiusM: number;
   poolSize: number;
@@ -45,8 +50,11 @@ export interface CandidateSnapshot {
 export interface LifecyclePick extends PlaceFilters {
   id: string;
   hostId: string;
+  includeSaved?: boolean;
+  customOptions?: StoredCustomOption[];
+  mixCategory?: 'food' | 'activities';
   state: PickState;
-  category: Category;
+  category: PickCategory;
   center: LatLng;
   radiusM: number;
   poolSize: number;
@@ -70,6 +78,7 @@ export interface LifecycleStore {
   start(pickId: string, userId: string, candidates: CandidateSnapshot[]): Promise<void>;
   refresh(pickId: string, userId: string, candidates: CandidateSnapshot[]): Promise<void>;
   cancel(pickId: string, userId: string): Promise<void>;
+  savedCandidates?(hostId: string): Promise<Candidate[]>;
 }
 
 /**
@@ -82,8 +91,8 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
     throw new ApiError(400, 'INVALID_INPUT', 'Expected a Pick object');
   }
   const b = body as Record<string, unknown>;
-  if (typeof b.category !== 'string' || !CATEGORIES.includes(b.category as Category)) {
-    throw new ApiError(400, 'INVALID_INPUT', 'category must be food or activities');
+  if (typeof b.category !== 'string' || !CATEGORIES.includes(b.category as PickCategory)) {
+    throw new ApiError(400, 'INVALID_INPUT', 'category must be food, activities or custom');
   }
   const center = b.center as Partial<LatLng> | undefined;
   if (
@@ -111,19 +120,27 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
       `radiusM must be between ${MIN_RADIUS_M} and ${MAX_RADIUS_M}`,
     );
   }
-  const poolSize = b.poolSize ?? DEFAULT_POOL_SIZE;
+  const planError = planProblem(b);
+  if (planError) throw new ApiError(400, 'INVALID_INPUT', planError);
+  const poolSize =
+    b.poolSize ??
+    (b.category === 'custom' && !b.mixCategory && !b.includeSaved
+      ? (b.customOptions as unknown[]).length
+      : DEFAULT_POOL_SIZE);
   if (
     typeof poolSize !== 'number' ||
     !Number.isInteger(poolSize) ||
-    poolSize < MIN_POOL_SIZE ||
+    poolSize < (b.category === 'custom' ? 2 : MIN_POOL_SIZE) ||
     poolSize > MAX_POOL_SIZE
   ) {
     throw new ApiError(
       400,
       'INVALID_INPUT',
-      `poolSize must be between ${MIN_POOL_SIZE} and ${MAX_POOL_SIZE}`,
+      `poolSize must be between ${b.category === 'custom' ? 2 : MIN_POOL_SIZE} and ${MAX_POOL_SIZE}`,
     );
   }
+  if (Array.isArray(b.customOptions) && poolSize < b.customOptions.length)
+    throw new ApiError(400, 'INVALID_INPUT', 'Pool must fit all typed options');
   const closeThreshold = b.closeThreshold ?? DEFAULT_CLOSE_THRESHOLD;
   if (
     typeof closeThreshold !== 'number' ||
@@ -154,9 +171,16 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
   if (!validFilters(b as PlaceFilters))
     throw new ApiError(400, 'INVALID_INPUT', 'Invalid priceMax or openNow');
   return {
+    ...(b.includeSaved !== undefined ? { includeSaved: b.includeSaved as boolean } : {}),
+    ...(b.customOptions !== undefined
+      ? { customOptions: b.customOptions as PlanOptions['customOptions'] }
+      : {}),
+    ...(b.mixCategory !== undefined
+      ? { mixCategory: b.mixCategory as PlanOptions['mixCategory'] }
+      : {}),
     priceMax: b.priceMax as number | null | undefined,
     openNow: b.openNow as boolean | undefined,
-    category: b.category as Category,
+    category: b.category as PickCategory,
     center: { lat: center.lat, lng: center.lng },
     radiusM,
     poolSize,
@@ -200,21 +224,38 @@ function requireHost(pick: LifecyclePick, userId: string) {
 async function buildCandidates(
   pool: PoolBuilder,
   pick: LifecyclePick,
+  store: LifecycleStore,
 ): Promise<CandidateSnapshot[]> {
-  let candidates;
-  try {
-    candidates = await pool.buildPool({
-      center: pick.center,
-      radiusM: pick.radiusM,
-      category: pick.category,
-      poolSize: pick.poolSize,
-      priceMax: pick.priceMax,
-      openNow: pick.openNow,
-    });
-  } catch (error) {
-    if (error instanceof NoCandidatesError)
-      throw new ApiError(409, 'NO_CANDIDATES', 'No places found for this Pick');
-    throw error;
+  const priority: Candidate[] = [...(pick.customOptions ?? [])];
+  if (pick.includeSaved) {
+    if (!store.savedCandidates)
+      throw new ApiError(503, 'SAVED_PLACES_UNAVAILABLE', 'Saved place resolution is unavailable');
+    const saved = await store.savedCandidates(pick.hostId);
+    priority.push(
+      ...saved.filter(
+        (p) =>
+          (p.provider !== 'custom' || p.locationProvided === true) &&
+          distanceMeters(pick.center, p) <= pick.radiusM &&
+          matchesFilters(p, pick, new Date()),
+      ),
+    );
+  }
+  let candidates = priorityCandidates(priority, [], pick.poolSize);
+  const category = pick.category === 'custom' ? pick.mixCategory : pick.category;
+  if (category && candidates.length < pick.poolSize) {
+    try {
+      const found = await pool.buildPool({
+        center: pick.center,
+        radiusM: pick.radiusM,
+        category,
+        poolSize: priority.length ? 30 : pick.poolSize,
+        priceMax: pick.priceMax,
+        openNow: pick.openNow,
+      });
+      candidates = priorityCandidates(priority, found, pick.poolSize);
+    } catch (error) {
+      if (!(error instanceof NoCandidatesError)) throw error;
+    }
   }
   if (!candidates.length) throw new ApiError(409, 'NO_CANDIDATES', 'No places found for this Pick');
   return candidates.map((c) => ({ placeId: c.placeId, snapshot: candidateSnapshot(c) }));
@@ -240,7 +281,7 @@ export async function startPick(
     );
   }
   await beforeBuild?.();
-  const candidates = await buildCandidates(pool, pick);
+  const candidates = await buildCandidates(pool, pick, store);
   await store.start(pickId, userId, candidates);
   return { state: 'swiping' as const, candidateCount: candidates.length };
 }
@@ -267,7 +308,7 @@ export async function refreshPick(
     );
   }
   await beforeBuild?.();
-  const candidates = await buildCandidates(pool, pick);
+  const candidates = await buildCandidates(pool, pick, store);
   await store.refresh(pickId, userId, candidates);
   return { candidateCount: candidates.length };
 }

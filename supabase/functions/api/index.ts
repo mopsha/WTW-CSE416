@@ -1,3 +1,4 @@
+import { createHangStore } from './hangStore.ts';
 import { createApp } from './app.ts';
 import { getUser } from './auth.ts';
 import { createProgressStore } from './progressStore.ts';
@@ -23,6 +24,7 @@ const poolBuilder = createPoolBuilder(new MockProvider(), { cache: new MemoryPla
 const app = createApp(
   {
     getUser,
+    hangStore: createHangStore(),
     store: createStore(),
     progressStore: createProgressStore(),
     lifecycleStore: createLifecycleStore(),

@@ -6,6 +6,7 @@ export function discoverPlace(
   place: Candidate,
   center: { lat: number; lng: number },
 ): DiscoverPlace {
+  if (place.category === 'custom') throw new Error('Custom options do not belong in Discover');
   const local =
     place.provider === 'mock'
       ? DISCOVER_PLACES.find((p) => p.placeId === place.placeId)

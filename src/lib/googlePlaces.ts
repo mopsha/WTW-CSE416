@@ -83,6 +83,8 @@ const resolved = new Map<string, GoogleInfo | null>();
 
 /** One lookup per place per app session (in memory only). */
 export function lookupGoogle(place: Candidate): Promise<GoogleInfo | null> {
+  if (place.provider === 'custom' || place.placeId.startsWith('custom:'))
+    return Promise.resolve(null);
   if (!GOOGLE_ENABLED) return Promise.resolve(null);
   let p = inflight.get(place.placeId);
   if (!p) {

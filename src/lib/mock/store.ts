@@ -2,6 +2,8 @@
 // It plays the server's part of the whole loop (lobby -> swipe -> close -> vote -> winner) with
 // three pretend friends, Ava, Ben and Cam, who join, swipe and vote on timers, so the live
 // screens move on their own in a demo. Rules come from the shared domain code, not copies.
+import { makeCustomOptions, type StoredCustomOption } from '@shared/domain/customPlans.ts';
+import { customPlaces } from './saved';
 import type { CreatePickInput } from '@shared/domain/createPick.ts';
 import { dueToClose } from '@shared/domain/pickState.ts';
 import {
@@ -41,7 +43,10 @@ export interface MockPick extends PlaceFilters {
   id: string;
   hostId: string;
   state: PickState;
-  category: 'food' | 'activities';
+  category: 'food' | 'activities' | 'custom';
+  includeSaved?: boolean;
+  customOptions?: StoredCustomOption[];
+  mixCategory?: 'food' | 'activities';
   center: { lat: number; lng: number };
   radiusM: number;
   poolSize: number;
@@ -251,9 +256,21 @@ export function resetMockData() {
 export const isDone = (pick: MockPick, p: MockParticipant) =>
   pick.candidates.length > 0 && pick.candidates.every((c) => p.answers.has(c.placeId));
 
+let customIdCounter = 0;
 export function createMockPick(input: CreatePickInput): MockPick {
   const id = `mock-${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`;
+  const options = makeCustomOptions(
+    input.customOptions ?? [],
+    MOCK_USER_ID,
+    input.center,
+    () =>
+      `${Date.now().toString(16).slice(-8).padStart(8, '0')}-0000-4000-8000-${(++customIdCounter).toString(16).padStart(12, '0')}`,
+  );
+  for (const option of options) customPlaces.set(option.placeId, option);
   const pick = base(id, {
+    includeSaved: input.includeSaved,
+    customOptions: options,
+    mixCategory: input.mixCategory,
     state: 'draft',
     category: input.category,
     center: input.center,
