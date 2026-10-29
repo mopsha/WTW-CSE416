@@ -23,20 +23,24 @@ test('uses the SQL argument names for every operation', async () => {
     closeThreshold: 100,
     deadlineAt: null,
   });
-  expect(mockRpc).toHaveBeenLastCalledWith('pick_create', {
+  expect(mockRpc).toHaveBeenLastCalledWith('pick_create_options', {
     p_host_id: 'host',
-    p_category: 'food',
-    p_center_lat: 1,
-    p_center_lng: 2,
-    p_radius_m: 500,
-    p_pool_size: 20,
-    p_deadline_at: null,
-    p_close_threshold: 100,
+    p_input: {
+      category: 'food',
+      center: { lat: 1, lng: 2 },
+      radiusM: 500,
+      poolSize: 20,
+      closeThreshold: 100,
+      deadlineAt: null,
+    },
   });
 
   mockRpc.mockResolvedValue({ data: null, error: null });
   await store.load('pick', 'host');
-  expect(mockRpc).toHaveBeenLastCalledWith('pick_load', { p_pick_id: 'pick', p_user_id: 'host' });
+  expect(mockRpc).toHaveBeenLastCalledWith('pick_load_options', {
+    p_pick_id: 'pick',
+    p_user_id: 'host',
+  });
 
   const candidates = [{ placeId: 'a', snapshot: { lat: 0, lng: 0 } }];
   await store.start('pick', 'host', candidates);

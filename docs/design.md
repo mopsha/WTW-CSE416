@@ -325,110 +325,91 @@ Status as of M3 (Oct 21). "Screen done" means the app side is built and runs end
 
 ```mermaid
 flowchart TD
-    App[Expo React Native frontend] --> Auth[Supabase Auth]
-    App -->|snapshot and outcome reads through RLS| DB[(PostgreSQL and RLS)]
-    App -->|authenticated writes and Pick metadata reads| API[Supabase Hono Edge Function: api]
-    API -->|service-role transactional RPCs| DB
-    API --> Domain[Canonical lifecycle, closing and voting]
-    API -->|start and refresh| Pool[PoolBuilder with direct MockProvider]
-    Pool --> Mock[Owned placeholder fixtures]
-    Configured[Configured provider and cache infrastructure] -.->|lifecycle wiring blocked| Pool
-    Configured --> Google[Google Places adapter]
-    API -->|completed or final_vote reads| Hours[Provenance-aware hours refresher]
-    Hours -->|explicit Google provenance only| Google
-    Cron[pg_cron every minute] --> Net[pg_net]
-    Net -->|POST /internal/sweep with x-cron-secret| API
-    CI[GitHub Actions validation and local DB/API tests] -->|successful main push only| CD[wtw-dev migration then api deployment]
-    CD --> DB
-    CD --> API
-    DB -.-> RT[Realtime: planned, not implemented]
-    RT -.-> App
+    App[Expo React Native: Picks, Discover, Custom Plans, hang compose] --> Auth[Supabase Auth]
+    App -->|RLS reads| DB[(Postgres: Picks, snapshots, saves, usage counters, hang posts)]
+    App -->|authenticated requests| API[Single Hono api Edge Function]
+    API -->|Discover| Discover[Bounded feed: filters and individual preference score]
+    Discover --> Providers[Configured Google or mock PoolBuilder]
+    Providers --> Budget[Atomic UTC-day Google call cap]
+    Budget --> Google[Google Places: request-scoped content]
+    Providers --> Cache[Bounded memory cache: owned content or Google IDs]
+    API -->|create/start/refresh limits| Limits[Atomic user and per-Pick counters]
+    Limits --> DB
+    API --> Lifecycle[Existing canonical create/start/refresh/swipe/close/vote]
+    Saved[Host saved fixtures and authorized custom places] --> Priority[Custom options then saved then provider results; deduplicate]
+    Custom[custom UUID options and creator provenance] --> Priority
+    Mock[Persistable food/activity fixtures] --> Priority
+    Priority --> Lifecycle
+    Lifecycle -->|existing transactional RPCs; same ranking engine| DB
+    Google -.->|group mixing blocked: snapshot retention contract| Priority
+    API --> Hang[Own active hang posts; expiry and restrictive RLS]
+    Hang --> DB
+    Graph[Razin accepted friends, blocks and group helpers: absent] -.-> Hang
+    Invites[Alan atomic exact-participant create and backend notify: absent] -.-> Hang
+    Cron[Existing every-minute pg_cron/pg_net] -->|secret-authenticated internal sweep| API
+    API --> Sweep[Canonical deadline closers]
+    API --> Cleanup[Daily UTC cache-cleanup hook and removed-row log]
+    Durable[place_cache schema and atomic cleanup adapter: absent] -.-> Cleanup
+    Sweep --> Lifecycle
 ```
 
-### Implementation and verification status
+Phase 1 Discover, filters, provider normalization/fallback, saved-ID routes and caps
+are retained. Discover scores after cache retrieval for the caller only and returns
+at most 20 places, without pagination. Google search/hours reserve an atomic daily
+call before HTTP; releases keep the provider key on the backend. Group start/refresh
+still use persistable data, with the Google snapshot guard enforced.
 
-| Status | Current evidence / boundary |
-| --- | --- |
-| **IMPLEMENTED** | Lifecycle create/start/refresh/cancel/read, canonical close/vote paths, deadline sweep, read-time opening-hours integration, provider infrastructure, and main-to-wtw-dev CD workflow. |
-| **CI VERIFIED** | PR `CI / validate` and `CI / Local database and API` pass. Validation includes lint, types, Jest, Android bundle, Deno checks/route tests; integration runs local migrations/seed, pgTAP/RLS and HTTP/database tests. PR deployment correctly skips. Hours integration is covered by CI. |
-| **HOSTED VERIFIED** | No hosted CD, cron delivery, or real backend Google request has been verified for this work. Green CI tests local services/mocks, not hosted wtw-dev behavior. |
-| **BLOCKED/PLANNED** | Google lifecycle persistence/display hydration and durable Places cache await a safe data contract. Realtime subscriptions are planned and not operational. |
+Phase 2 `includeSaved` persists through `POST /picks` and loads only the host's saves
+at start/refresh. Radius and price/open constraints apply before saved candidates
+are placed ahead of external results. First ID wins, then the deck is bounded.
+Google saved hydration remains blocked; no Google retention safeguard was relaxed.
 
-Clients use Supabase Auth and RLS-filtered reads. Application writes go through the
-single `api` Edge Function. Alan's canonical `closePick` handles host/system closure;
-auto-close checks run after swipes, and the deadline sweep delegates to the same
-closers. Ranking decisions, voting, and winner selection remain canonical domain
-logic backed by transactional RPCs.
+`0015_custom_plans.sql` extends Pick categories and place source/creator metadata.
+Custom options are validated (2–20; names 1–60; notes up to 200), assigned server UUIDs,
+and passed as ordinary snapshots to the **same** swipe/rank/final-vote engine.
+Refresh retains their IDs. Six one-tap templates and typed names/notes are available
+in New Pick. Unlocated custom options use a marked neutral ranking point at the
+Pick center; the client hides it and suppresses directions. Optional nearby mixing
+uses the existing provider contract; live Google mixing remains blocked by Phase 1.
+Razin's optional text filter is absent, so shape/length validation is implemented
+without inventing a replacement moderation system.
 
-`pg_cron`/`pg_net` scheduling is implemented in migration `0005`. The internal sweep
-uses `deadline_at` for swiping and `vote_deadline_at` for final votes, authenticated
-by a separate server secret rather than a user token. Hosted Edge secret/Vault
-configuration and delivery verification remain required. See
-[cron configuration](api-integration.md#cron-and-wtw-dev-configuration).
+`0016_hang_posts.sql` adds posts/responses with audience/status checks, one response
+per user/post, expiry and RLS. The minimal Picks-tab card and compose sheet save/list
+own active posts. Accepted-friend/group/block helpers are absent, so shared reads
+and responses fail closed, group composition is unavailable, and shared activity
+is explicitly shown as unavailable. Alan's existing create helper is host-only;
+no exact-responder invite or backend notify helper exists. Creating a Pick from
+down responses is explicitly BLOCKED rather than implemented with extra participants.
+The local device notification helper is not used as a cross-user notification system.
 
-Results/reveal candidate reads retain persisted identities/display snapshots and
-request additional metadata from the existing authenticated `GET /picks/:id`.
-After membership validation, completed/final-vote reads call `refreshOpenHours`.
-Fresh owned mock hours are evaluated; stale/missing hours remain unknown. Explicit
-Google provenance permits request-time hours lookup without persistence. Failures
-never replace candidates or change ranks, winners, votes, or state. The client adds
-optional `openNow`/`closesAt`; this does not add hours labels to the screen layout.
+The existing secret-authenticated deadline sweep is retained. A separate cleanup
+hook takes the UTC day and existing five-minute search TTL cutoff, reports deletion
+counts, and leaves completed deadline work intact on failure. The durable
+`place_cache` table/adapter is absent; production reports the cleanup as blocked.
+No daily row deletion is claimed. See [decisions](decisions.md) for budgets,
+retention, integration contracts and remaining teammate dependencies.
 
-### Real versus mock
-
-| Path | Implemented behavior | Runtime / verification limit |
-| --- | --- | --- |
-| Lifecycle mock | `api/index.ts` directly constructs `createPoolBuilder(new MockProvider())`; start/refresh persist owned candidate snapshots. | Current active lifecycle provider. Bundled placeholders differ from the SBU database demo seed; no hosted lifecycle proof is claimed. |
-| Google provider | Search normalization, request timeouts, hours details, provenance and cache safeguards exist. | Unit/CI tested with synthetic responses; no verified real backend Google request. |
-| Google → mock fallback | Configured pool tries mock on Google failure, timeout or unusable response; fallback does not poison Google cache. | Tested infrastructure, not connected to lifecycle; geographically limited fixtures can also yield no candidates. |
-| `PLACES_PROVIDER` | Configured builder reads `google`/`mock` on each build, defaults to mock, rejects invalid configuration. | Lifecycle bypasses that builder. An env change alone cannot enable Google discovery. |
-| Cache | Bounded in-memory mock cache and Google-ID-only entries; no durable Places cache adapter/table. | Configured cache is not injected into current lifecycle; Google IDs do not substitute for fresh display content. |
-| Whole-app mock | `EXPO_PUBLIC_USE_MOCK` selects frontend simulation. | Separate from server provider selection; not evidence of backend integration. |
-
-Google lifecycle integration is blocked at persistence, not by a missing adapter.
-Start/refresh currently store full candidates in `places.raw` and Pick snapshots;
-closing reads frozen candidate coordinates to calculate distance tie-breaks. Our
-Google candidates are marked request-only. The existing snapshot guard is not yet
-wired into that boundary. ID-only storage plus display hydration would still need
-a permitted stable ranking input. Computing distance locally does not establish
-permission to retain that derived value. Do not weaken the guard or alter Alan's
-ranking to bypass this unresolved contract. See [Places details](places-phase1.md).
-
-The legacy `/rank` route still exists and is used by the current UI when a host
-opens results while the Pick remains swiping. It is not the canonical `/close`
-path; the earlier integration review identified its missing final-vote deadline.
-Coordinate retirement/delegation with Alan and client migration with Mike. Neither
-green sweep tests nor this documentation update resolves that separate path.
-
-### CI/CD and synchronization
-
-The CD job depends on both CI jobs, runs only for pushes to main, checks out the
-validated commit, and serializes wtw-dev deployments without canceling active work.
-A current-main check skips superseded queued commits. It links the hosted project,
-applies pending migrations, then deploys `api`; it never resets/seeds hosted data
-or configures application secrets. Function failure leaves applied migrations in
-place; use compatible migrations and forward-fix recovery. Hosted execution is
-not yet tested. See [deployment setup](api-integration.md#main-to-wtw-dev-deployment).
-
-Realtime is not implemented. The current results screen loads/reloads state through
-reads rather than subscriptions. Future subscription scope and ownership must be
-agreed without exposing private answers or ranking scores.
+Validation is local: Jest/client-domain tests, Deno routes/typecheck, SQL storage/RLS
+checks, lint/types and Android export. No hosted Google request, backend deployment,
+EAS build, friendship integration or notification delivery is claimed here.
 
 ## Stack + why (Josh)
 
-| Technology | Why |
-|---|---|
-| Expo / React Native | One mobile codebase supports iOS and Android with quick device iteration. |
-| TypeScript | Shared types connect the app, API and pure decision engine. |
-| Supabase Auth | Managed identity verifies users without a custom password system. |
-| Supabase Postgres + RLS | Relational constraints and row policies protect shared Pick data. |
-| Supabase Realtime | Planned only; current clients use explicit reads/reloads. |
-| Supabase Edge Functions | A server runtime keeps credentials and privileged operations off phones. |
-| Hono | A small router gives the single API explicit routes and error handling. |
-| Our TypeScript API | One write boundary enforces authorization, state and ranking rules. |
-| PlaceProvider / Google Places abstraction | Stable normalized candidates let mock data become live discovery later. |
-| Jest | Repeatable tests exercise shared logic without a phone or database. |
-| GitHub Actions | PR/main CI validates code, bundle, local database/API; successful main runs are configured to deploy to wtw-dev. Hosted CD is unverified. |
+| Technology | Josh-owned use |
+| --- | --- |
+| Expo SDK 57 / React Native / Expo Router | Existing mobile navigation plus Custom Plan inputs and minimal hang card/compose sheet. |
+| Shared pure TypeScript | Filters, Discover score, typed option validation, stable priority/dedup and dependency-aware hang authorization contracts. |
+| Supabase Auth / Postgres / RLS | Auth-derived owners, saved IDs, custom creator/source provenance, private quota counters and fail-closed hang storage. |
+| Hono Edge Function | One API for Discover, Picks, saves, hang endpoints and secret-authenticated sweep. |
+| Google Places adapter | Existing search/hours normalization, timeouts, request-only content and fixture fallback; backend-only release credentials. |
+| Atomic SQL counters | Google calls per UTC day, Pick creates per user/day, start/refresh attempts per Pick. |
+| PoolBuilder and memory cache | Provider abstraction with five-minute owned-result TTL; Google ID-only entries. Durable cache/cleanup adapter is pending. |
+| Canonical Pick engine and RPCs | Reused unchanged for custom swipe/rank/final vote; no second decision engine. |
+| pg_cron / pg_net | Existing every-minute deadline sweep; daily cache-cleanup hook awaits durable storage. |
+| Jest / Deno / SQL checks | Exercise custom flow, saved priority, expiry/access contracts, endpoint behavior and storage/RLS. |
+| GitHub Actions | Existing PR/main checks and configured main-only backend deployment; this branch was not merged or deployed. |
+
 ## Security & privacy (Razin)
 
 Code: `supabase/migrations/0001_init.sql` (RLS, grants), `0002`–`0004` (server-only RPCs), `0006_join_codes.sql` (join codes, `pick_join`, `ranking_results` timing). Tests: `supabase/tests/rls_test.sql`, `join_and_security_test.sql` (`supabase db reset && supabase test db`), and the `POST /picks/join` cases in `supabase/functions/api/app_test.ts`.

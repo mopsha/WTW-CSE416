@@ -66,7 +66,12 @@ describe('parseCreatePick', () => {
     { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000, poolSize: 4 },
     { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000, closeThreshold: 0 },
     { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000, deadlineAt: 'not-a-date' },
-    { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000, deadlineAt: new Date(now + 60_000).toISOString() },
+    {
+      category: 'food',
+      center: { lat: 0, lng: 0 },
+      radiusM: 1000,
+      deadlineAt: new Date(now + 60_000).toISOString(),
+    },
     {
       category: 'food',
       center: { lat: 0, lng: 0 },
@@ -256,4 +261,77 @@ describe('read-time candidate hours', () => {
       candidateHours: [],
     });
   });
+});
+
+test('filtered lifecycle forwards constraints and rejects Google snapshots before any write', async () => {
+  const store = fixture(pick({ priceMax: 2, openNow: true }));
+  const pool = poolOf([{ ...candidate('google'), provider: 'google', retention: 'request' }]);
+  await expect(startPick(store, pool, 'pick', 'host')).rejects.toThrow('cannot be persisted');
+  expect(pool.buildPool).toHaveBeenCalledWith(
+    expect.objectContaining({ priceMax: 2, openNow: true }),
+  );
+  expect(store.start).not.toHaveBeenCalled();
+  expect(store.refresh).not.toHaveBeenCalled();
+});
+
+test('empty filtered refresh preserves existing answers and candidates', async () => {
+  const store = fixture(pick({ state: 'swiping', hasAnswers: true }));
+  await expect(
+    refreshPick(store, poolOf([]), 'pick', 'host', { confirm: true }),
+  ).rejects.toMatchObject({ status: 409, code: 'NO_CANDIDATES' });
+  expect(store.refresh).not.toHaveBeenCalled();
+});
+
+test('includeSaved loads the host only, filters radius, precedes external candidates and deduplicates', async () => {
+  const store = {
+    ...fixture(pick({ includeSaved: true, poolSize: 5 })),
+    savedCandidates: jest.fn(async () => [
+      { ...candidate('saved'), name: 'Saved metadata' },
+      candidate('saved'),
+      { ...candidate('outside'), lat: 10 },
+    ]),
+  };
+  const pool = poolOf([candidate('saved'), candidate('cache'), candidate('google-fixture')]);
+  await startPick(store, pool, 'pick', 'host');
+  expect(store.savedCandidates).toHaveBeenCalledWith('host');
+  const snapshots = store.start.mock.calls[0]![2];
+  expect(snapshots.map((p: { placeId: string }) => p.placeId)).toEqual([
+    'saved',
+    'cache',
+    'google-fixture',
+  ]);
+  expect(snapshots[0]!.snapshot).toMatchObject({ name: 'Saved metadata' });
+});
+test('without includeSaved, existing pool behavior and no saved lookup are retained', async () => {
+  const savedCandidates = jest.fn();
+  await startPick({ ...fixture(), savedCandidates }, poolOf([candidate('a')]), 'pick', 'host');
+  expect(savedCandidates).not.toHaveBeenCalled();
+});
+test('pure custom start avoids external providers; mixed options keep custom before provider results', async () => {
+  const custom = {
+    ...candidate('custom:00000000-0000-4000-8000-000000000001'),
+    category: 'custom' as const,
+    provider: 'custom' as const,
+    createdBy: 'host',
+    locationProvided: false,
+  };
+  const second = { ...custom, placeId: 'custom:00000000-0000-4000-8000-000000000002' };
+  const store = fixture(pick({ category: 'custom', customOptions: [custom, second], poolSize: 4 }));
+  const pool = poolOf([candidate('nearby')]);
+  await startPick(store, pool, 'pick', 'host');
+  expect(pool.buildPool).not.toHaveBeenCalled();
+  const mixed = fixture(
+    pick({
+      category: 'custom',
+      customOptions: [custom, second],
+      mixCategory: 'activities',
+      poolSize: 4,
+    }),
+  );
+  await startPick(mixed, pool, 'pick', 'host');
+  expect(mixed.start.mock.calls[0]![2].map((p: { placeId: string }) => p.placeId)).toEqual([
+    custom.placeId,
+    second.placeId,
+    'nearby',
+  ]);
 });

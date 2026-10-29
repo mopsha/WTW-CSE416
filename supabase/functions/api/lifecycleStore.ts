@@ -1,3 +1,5 @@
+import fixtures from '../../seed/places.json' with { type: 'json' };
+import type { Candidate } from '../_shared/places/types.ts';
 import { ApiError, type ErrorStatus } from '../_shared/api/errors.ts';
 import type { LifecycleStore, LifecyclePick } from '../_shared/api/lifecycle.ts';
 import { createServiceClient } from './serviceClient.ts';
@@ -36,22 +38,44 @@ export function createLifecycleStore(): LifecycleStore {
     return data;
   }
   return {
+    async savedCandidates(hostId) {
+      const client = createServiceClient();
+      const { data: saved, error } = await client
+        .from('saved_places')
+        .select('place_id')
+        .eq('user_id', hostId)
+        .order('created_at')
+        .order('place_id');
+      if (error) throw new ApiError(503, 'SAVED_PLACES_UNAVAILABLE', 'Saved places unavailable');
+      const ids = (saved ?? []).map((row) => row.place_id as string);
+      const ownFixtures = new Map(
+        fixtures.map((p) => [
+          p.placeId,
+          { ...p, provider: 'mock', retention: 'persistable' } as Candidate,
+        ]),
+      );
+      const customIds = ids.filter((id) => id.startsWith('custom:'));
+      if (customIds.length) {
+        const { data, error: customError } = await client.rpc('saved_custom_candidates', {
+          p_host_id: hostId,
+        });
+        if (customError || !Array.isArray(data))
+          throw new ApiError(503, 'SAVED_PLACES_UNAVAILABLE', 'Saved custom places unavailable');
+        for (const candidate of data as Candidate[]) ownFixtures.set(candidate.placeId, candidate);
+      }
+      // Google saves are ID-only. Do not invent display/coordinates or persist Google content.
+      return ids.flatMap((id) => (ownFixtures.has(id) ? [ownFixtures.get(id)!] : []));
+    },
     async createPick(hostId, input) {
-      return (await rpc('pick_create', {
-        p_host_id: hostId,
-        p_category: input.category,
-        p_center_lat: input.center.lat,
-        p_center_lng: input.center.lng,
-        p_radius_m: input.radiusM,
-        p_pool_size: input.poolSize,
-        p_deadline_at: input.deadlineAt,
-        p_close_threshold: input.closeThreshold,
-      })) as { id: string };
+      return (await rpc('pick_create_options', { p_host_id: hostId, p_input: input })) as {
+        id: string;
+      };
     },
     async load(pickId, userId) {
-      return (await rpc('pick_load', { p_pick_id: pickId, p_user_id: userId })) as
-        | LifecyclePick
-        | null;
+      return (await rpc('pick_load_options', {
+        p_pick_id: pickId,
+        p_user_id: userId,
+      })) as LifecyclePick | null;
     },
     async start(pickId, userId, candidates) {
       await rpc('pick_start', { p_pick_id: pickId, p_user_id: userId, p_candidates: candidates });

@@ -1,3 +1,4 @@
+import type { PlaceFilters } from '@shared/domain/placeFilters.ts';
 import type { PickState } from '@shared/domain/pickState.ts';
 
 export type { PickState };
@@ -36,6 +37,10 @@ export interface Candidate {
   openNow?: boolean | null;
   /** ISO time it closes today, when known. */
   closesAt?: string | null;
+  note?: string | null;
+  provider?: 'mock' | 'google' | 'custom';
+  createdBy?: string;
+  locationProvided?: boolean;
 }
 
 export interface MyPreference {
@@ -74,10 +79,10 @@ export type RankDecision =
 export type DecidedBy = 'clear_winner' | 'vote' | 'tie_break';
 
 /** GET /picks/:id (Alan's lifecycle route): the Pick, MY candidate order and MY answers. */
-export interface PickDetail {
+export interface PickDetail extends PlaceFilters {
   id: string;
   state: PickState;
-  category: 'food' | 'activities';
+  category: 'food' | 'activities' | 'custom';
   center: { lat: number; lng: number };
   radiusM: number;
   poolSize: number;

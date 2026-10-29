@@ -7,7 +7,14 @@ import { parseJoinCode } from '@shared/domain/joinCode.ts';
 import { MOCK_FAIL_RATE } from '../config';
 import type { PreferenceValue } from '../types';
 import { MOCK_ACCESS_TOKEN, MOCK_USER_ID } from './auth';
-import { MOCK_PLACES } from './fixtures';
+import { mockPickPool } from './placePool';
+import { mockHang } from './hang';
+import { savedPlaces } from './saved';
+import { DISCOVER_PLACES } from '../discover';
+import { discover, parseDiscover } from '@shared/api/discover.ts';
+import { errorResponse } from '@shared/api/errors.ts';
+import { createPoolBuilder } from '@shared/places/pool.ts';
+import { MockProvider } from '@shared/places/MockProvider.ts';
 import {
   createMockPick,
   decide,
@@ -25,6 +32,8 @@ import {
 } from './store';
 
 export const MOCK_API_BASE_URL = 'https://mock.wtw.local/functions/v1/api';
+
+const discoverPool = createPoolBuilder(new MockProvider());
 
 const LATENCY_MS = process.env.NODE_ENV === 'test' ? 0 : 300;
 
@@ -84,6 +93,11 @@ function getPick(pick: MockPick) {
     category: pick.category,
     center: pick.center,
     radiusM: pick.radiusM,
+    includeSaved: pick.includeSaved,
+    customOptions: pick.customOptions,
+    mixCategory: pick.mixCategory,
+    priceMax: pick.priceMax,
+    openNow: pick.openNow,
     poolSize: pick.poolSize,
     deadlineAt: pick.deadlineAt,
     closeThreshold: pick.closeThreshold,
@@ -117,7 +131,9 @@ const ROUTES: Record<string, Handler> = {
     if (pick.participants.length < 2) {
       return fail(409, 'NOT_ENOUGH_PARTICIPANTS', 'A Pick needs at least 2 participants to start');
     }
-    pick.candidates = MOCK_PLACES.slice(0, pick.poolSize);
+    const candidates = mockPickPool(pick);
+    if (!candidates.length) return fail(409, 'NO_CANDIDATES', 'No places match these filters');
+    pick.candidates = candidates;
     pick.state = 'swiping';
     emit(pick.id);
     scheduleBots(pick);
@@ -139,8 +155,9 @@ const ROUTES: Record<string, Handler> = {
       );
     }
     // A "new" pool: the same places, rotated, so the deck visibly changes.
-    const shift = Math.floor(MOCK_PLACES.length / 3);
-    const rotated = [...MOCK_PLACES.slice(shift), ...MOCK_PLACES.slice(0, shift)];
+    const pool = mockPickPool(pick, true);
+    if (!pool.length) return fail(409, 'NO_CANDIDATES', 'No places match these filters');
+    const rotated = pool;
     if (pick.state === 'swiping') pick.candidates = rotated.slice(0, pick.poolSize);
     pick.participants.forEach((p) => p.answers.clear());
     emit(pick.id);
@@ -227,6 +244,39 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     return fail(503, 'UNAVAILABLE', 'WTW is having trouble right now (mock failure).');
   }
 
+  const hangResponse = mockHang(method, path, readBody(init));
+  if (hangResponse) return hangResponse;
+  if (method === 'GET' && path.startsWith('/discover?')) {
+    try {
+      const result = await discover(
+        discoverPool,
+        parseDiscover(new URLSearchParams(path.split('?')[1])),
+        {},
+      );
+      return json(200, {
+        ...result,
+        places: result.places.map((p) => ({
+          ...p,
+          ...DISCOVER_PLACES.find((local) => local.placeId === p.placeId),
+        })),
+        notice: 'Showing local fixture places.',
+      });
+    } catch (error) {
+      const response = errorResponse(error);
+      return json(response.status, response.body);
+    }
+  }
+  if (method === 'GET' && path === '/saved')
+    return json(200, {
+      places: [...savedPlaces].map(([placeId, createdAt]) => ({ placeId, createdAt })),
+    });
+  if (path.startsWith('/saved/') && (method === 'POST' || method === 'DELETE')) {
+    const id = decodeURIComponent(path.slice('/saved/'.length));
+    if (!id.trim() || id.length > 256) return fail(400, 'INVALID_INPUT', 'Invalid place ID');
+    if (method === 'POST' && !savedPlaces.has(id)) savedPlaces.set(id, new Date().toISOString());
+    if (method === 'DELETE') savedPlaces.delete(id);
+    return json(200, { status: 'ok' });
+  }
   if (method === 'POST' && path === '/picks') return createPick(readBody(init));
   if (method === 'POST' && path === '/picks/join') return joinPick(readBody(init));
 
