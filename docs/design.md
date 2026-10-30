@@ -303,7 +303,7 @@ Status as of M3 (Oct 21). "Screen done" means the app side is built and runs end
 | FR | Requirement | Screen | API route | Table(s) | Owner | Status |
 |---|---|---|---|---|---|---|
 | FR-01 | Create an account, sign in, sign out, and maintain a profile. | Sign in; Profile tab (sign out) | None (Supabase Auth) | `profiles` | Razin (auth), Mike (screens) | Sign-in done; profile editing: Razin |
-| FR-02 | Complete and later edit a short preference profile. | planned | planned | `profiles` | Razin | M4 |
+| FR-02 | Complete and later edit a short preference profile. | Onboarding (survey + permission explainers); Profile → Edit preferences | `GET /me`, `POST /me/preferences` | `profiles.discover_preferences` (0011) | Mike | **Done** (M4) |
 | FR-03 | Send, accept, remove, and block friend relationships. | Friends tab (placeholder) | planned | `friendships` | Razin | M4 |
 | FR-04 | Create, name, and manage a reusable group. | planned | planned | `groups`, `group_members` | Razin | M4 |
 | FR-05 | Create a Pick for selected friends or a saved group. | Create Pick → Lobby | `POST /picks` (PR #12) | `picks`, `pick_participants` | Alan, Mike (screens) | **Done** by join code; friends/groups M4 |

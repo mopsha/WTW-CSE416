@@ -93,8 +93,8 @@ exactly: `GET /picks/:id`, `POST /picks/:id/start`, `/refresh` (`{ confirm }`, 4
   `api/profileStore.ts` (service-role upsert of `display_name` + `updated_at`, so an account
   without a profile row still gets one). No migration: `profiles` and its 1–50 check are in
   `0001_init.sql`, and clients still only read it through RLS (own row + co-participants).
-- App: `ProfileProvider` (`src/hooks/useProfile.tsx`) reads my row with
-  `queries.getMyProfile`. While `display_name` is null the root layout's guard shows
+- App: `ProfileProvider` (`src/hooks/useProfile.tsx`) reads my profile with `GET /me` (see
+  "Onboarding survey" below). While `display_name` is null the root layout's guard shows
   `app/welcome.tsx` ("What should we call you?", prefilled from the email's local part)
   instead of the tabs; Save calls `api.updateMe(name)` and the guard moves on. If the read fails
   or times out (4 s) the step is skipped rather than blocking the app. The Profile tab shows
@@ -103,6 +103,37 @@ exactly: `GET /picks/:id`, `POST /picks/:id/start`, `/refresh` (`{ confirm }`, 4
   participant without a name is still shown as "Someone".
 - `scripts/wtw-dev-code.mjs` (PR #21) can still set names server-side on wtw-dev, e.g. for
   seeded demo accounts; the app's step only appears for accounts that still have no name.
+
+### Onboarding survey (FR-02, Mike M4, migration 0011)
+
+- `GET /me`: Bearer token. Returns `{ displayName, preferences, onboarded }` for the verified
+  caller only. `preferences` is `{ categories, types, dislikedTypes, priceMax, maxDistanceM }`;
+  stored keys that are missing or invalid read as unset. `onboarded` is
+  `preferences_updated_at is not null`.
+- `POST /me/preferences`: body `{ "preferences": { … } }`. Every key is optional, but each value
+  must be one of the options in `_shared/domain/preferences.ts` (`categories` food|activities,
+  `types` Places Table A types, `dislikedTypes` food types only and never also liked, `priceMax`
+  1–4, `maxDistanceM` one of the offered distances); otherwise 400 `INVALID_INPUT` before the
+  database. All-empty answers are valid (the Skip button). Returns
+  `{ preferences, onboarded: true }`.
+- Storage: `profiles.discover_preferences` (jsonb, the column Josh's 0010 adds for Discover
+  scoring, whose `categories`/`types`/`priceMax` keys this matches) and
+  `profiles.preferences_updated_at`. 0011 adds the jsonb column only `if not exists` and repeats
+  0010's column grant, so clients can read `display_name` but never anyone's survey answers,
+  their own included; the API reads them with the service role. **Merge #26 (0010) first.**
+- App: after the name step the guard shows `app/onboarding.tsx`: the survey, then a location
+  explainer and a notifications explainer, each before its system prompt and each skippable.
+  Saving at the end sets `onboarded`. The Profile tab summarizes the answers and opens
+  `app/preferences.tsx` to edit them. As with the name, a failed `GET /me` skips onboarding
+  rather than blocking the app.
+- Push (client only, waiting on Alan's routes): once notifications are allowed, the app sends its
+  Expo push token to `POST /push-tokens { token, platform }` on every start (errors ignored until
+  the route exists; needs the EAS project id). A tapped notification opens its `url`, or
+  `/pick/<pickId>` for server pushes that carry only `pickId`, including the tap that launched
+  the app.
+- Account deletion (client only, waiting on Razin's `DELETE /me`): Profile tab → "Delete account"
+  → confirm → `DELETE /me` → "Your account was deleted" → signed out. A 404 shows "not available
+  yet". Note: CORS currently allows `GET, POST` only; `DELETE /me` needs `DELETE` added.
 
 Errors: `{ "error": { "code": "...", "message": "..." } }`.
 400 invalid input, 401 invalid/missing token, 403 forbidden, 404 missing resource,
