@@ -268,8 +268,9 @@ for required GitHub environment settings and separately managed hosted secrets.
 ### 7. Phone builds (EAS)
 
 `eas.json` has three profiles. Each reads its `EXPO_PUBLIC_*` values from the EAS
-environment of the same name (`.env.local` is gitignored, so EAS Build never sees it),
-and each blanks `EXPO_PUBLIC_GOOGLE_PLACES_KEY` so no build ships a Google key.
+environment of the same name (`.env.local` is gitignored, so EAS Build never sees it).
+Never add `EXPO_PUBLIC_GOOGLE_PLACES_KEY` to an EAS environment: anything `EXPO_PUBLIC_`
+ships inside the app. (EAS rejects an empty `env` value, so the profiles can't blank it.)
 
 | Profile | What it is | Who installs it |
 |---|---|---|
