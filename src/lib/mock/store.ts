@@ -4,6 +4,7 @@
 // screens move on their own in a demo. Rules come from the shared domain code, not copies.
 import type { CreatePickInput } from '@shared/domain/createPick.ts';
 import { dueToClose } from '@shared/domain/pickState.ts';
+import { EMPTY_PREFERENCES, type Preferences } from '@shared/domain/preferences.ts';
 import {
   answerFromDb,
   clearWinner,
@@ -100,10 +101,25 @@ export function setMockBots(enabled: boolean) {
 }
 
 /**
- * My profile (public.profiles in mock form). Starts without a name, like a new account,
- * so mock mode shows the "what should we call you?" step. Survives resetMockData().
+ * My profile (public.profiles in mock form). Starts without a name or survey, like a new
+ * account, so mock mode shows the name step and onboarding. Survives resetMockData().
  */
-export const mockProfile: { displayName: string | null } = { displayName: null };
+export const mockProfile: {
+  displayName: string | null;
+  preferences: Preferences;
+  onboarded: boolean;
+  pushTokens: string[];
+} = { displayName: null, preferences: EMPTY_PREFERENCES, onboarded: false, pushTokens: [] };
+
+/** Back to a brand-new account (what DELETE /me leaves behind). */
+export function resetMockProfile() {
+  Object.assign(mockProfile, {
+    displayName: null,
+    preferences: EMPTY_PREFERENCES,
+    onboarded: false,
+    pushTokens: [],
+  });
+}
 
 const me = (): MockParticipant => ({
   userId: MOCK_USER_ID,

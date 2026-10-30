@@ -16,7 +16,7 @@ import { castVote, closeVote, type VotingStore } from '../_shared/api/voting.ts'
 import type { PoolBuilder } from '../_shared/places/pool.ts';
 import { joinPick, type JoinStore } from '../_shared/api/join.ts';
 import { authorizeSweep, sweepDeadlines, type SweepStore } from '../_shared/api/sweep.ts';
-import { updateMe, type ProfileStore } from '../_shared/api/profile.ts';
+import { getMe, updateMe, updatePreferences, type ProfileStore } from '../_shared/api/profile.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
   const raw = await c.req.text();
@@ -158,6 +158,20 @@ export function createApp(
     const body = await readJsonBody(c);
     if (!deps.profileStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Profiles are not available');
     return c.json(await updateMe(deps.profileStore, user.id, body));
+  });
+  // My name, survey answers and whether onboarding is done. Preferences are private
+  // (no client column grant), so the app reads them here rather than through RLS.
+  app.get('/me', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.profileStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Profiles are not available');
+    return c.json(await getMe(deps.profileStore, user.id));
+  });
+  // The onboarding survey (FR-02); also "Edit preferences" on the Profile tab.
+  app.post('/me/preferences', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const body = await readJsonBody(c);
+    if (!deps.profileStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Profiles are not available');
+    return c.json(await updatePreferences(deps.profileStore, user.id, body));
   });
   return app;
 }
