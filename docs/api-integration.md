@@ -284,11 +284,9 @@ implemented route set. Unit/route tests supplement the database/API harness.
 
 The existing authenticated `GET /picks/:id` adds `candidateHours` metadata for
 `completed` and `final_vote` Picks. Membership is checked before provider access;
-responses use `Cache-Control: private, no-store`. The existing frontend
-`queries.getCandidates()` still reads the persisted candidate identity/display
-snapshot, then obtains this metadata through GET Pick. It preserves candidate
-order and fields, adding optional `openNow` and `closesAt`. Existing mock-app reads
-remain unchanged. No screen layout or lifecycle decision changes are included.
+responses use `Cache-Control: private, no-store`. The frontend uses `api.getPick()`
+to read candidates and hours together. Its adapter preserves candidate order and
+fields, merging matching `candidateHours` metadata into `openNow` and `closesAt`.
 
 The read uses `refreshOpenHours` through a provenance-aware adapter. Explicitly
 Google-tagged candidates fetch current hours using the server-only
@@ -300,8 +298,8 @@ The current fixtures have no authoritative hours source. Discovery mode changes
 never relabel an existing candidate or send a mock ID to Google.
 
 Hours failures do not replace candidates or alter winner, ranking, votes, snapshots,
-or Pick state. Swiping/draft reads do not fetch hours. The client retains persisted
-candidates if the optional metadata request fails. Google candidate creation and
+or Pick state. Swiping/draft reads do not fetch hours. The Pick response retains
+candidates when optional hours metadata is unavailable. Google candidate creation and
 full display hydration remain blocked on the separate persistence design; this
 read path does not enable Google lifecycle discovery or authorize Google snapshots.
 
