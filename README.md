@@ -265,6 +265,32 @@ Function to hosted **wtw-dev**. PR runs never deploy. See
 [deployment configuration and recovery](docs/api-integration.md#main-to-wtw-dev-deployment)
 for required GitHub environment settings and separately managed hosted secrets.
 
+### 7. Phone builds (EAS)
+
+`eas.json` has three profiles. Each reads its `EXPO_PUBLIC_*` values from the EAS
+environment of the same name (`.env.local` is gitignored, so EAS Build never sees it),
+and each blanks `EXPO_PUBLIC_GOOGLE_PLACES_KEY` so no build ships a Google key.
+
+| Profile | What it is | Who installs it |
+|---|---|---|
+| `development` | Dev client; loads JS from `npx expo start` | Whoever is coding |
+| `preview` | Standalone internal build pointed at wtw-dev | Teammates (Android link, registered iPhones) |
+| `production` | Store build, build number auto-incremented by EAS | TestFlight / App Store |
+
+```sh
+npx eas-cli@latest build --profile preview --platform android   # then share the install link
+npx eas-cli@latest build --profile production --platform ios
+npx eas-cli@latest submit --platform ios --latest                # sends it to TestFlight
+```
+
+Bundle id / Android package: `edu.stonybrook.wtw` (it cannot change once the App Store
+record exists). Android: open the build's link on the phone and allow the install.
+iPhone: preview builds only install on devices registered with
+`npx eas-cli@latest device:create`; everyone else uses TestFlight.
+
+The iOS privacy manifest in `app.json` copies the required-reason API codes from each
+installed library's `PrivacyInfo.xcprivacy`. Recheck it when adding a native library.
+
 ## Repo structure
 
 ```text

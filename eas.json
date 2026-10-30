@@ -1,0 +1,27 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "environment": "development",
+      "env": { "EXPO_PUBLIC_GOOGLE_PLACES_KEY": "" }
+    },
+    "preview": {
+      "distribution": "internal",
+      "environment": "preview",
+      "env": { "EXPO_PUBLIC_GOOGLE_PLACES_KEY": "" }
+    },
+    "production": {
+      "autoIncrement": true,
+      "environment": "production",
+      "env": { "EXPO_PUBLIC_GOOGLE_PLACES_KEY": "" }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
