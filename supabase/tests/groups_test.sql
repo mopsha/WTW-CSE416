@@ -48,14 +48,16 @@ begin
       requester_id uuid not null references public.profiles (id) on delete cascade,
       addressee_id uuid not null references public.profiles (id) on delete cascade,
       status text not null default 'pending' check (status in ('pending', 'accepted')),
+      created_at timestamptz not null default now(),
+      accepted_at timestamptz,
       primary key (requester_id, addressee_id)
     );
   end if;
 end $$;
-insert into public.friendships (requester_id, addressee_id, status) values
-  ('71111111-1111-4111-8111-111111111111', '72222222-2222-4222-8222-222222222222', 'accepted'),
-  ('73333333-3333-4333-8333-333333333333', '71111111-1111-4111-8111-111111111111', 'accepted'),
-  ('71111111-1111-4111-8111-111111111111', '74444444-4444-4444-8444-444444444444', 'pending');
+insert into public.friendships (requester_id, addressee_id, status, accepted_at) values
+  ('71111111-1111-4111-8111-111111111111', '72222222-2222-4222-8222-222222222222', 'accepted', now()),
+  ('73333333-3333-4333-8333-333333333333', '71111111-1111-4111-8111-111111111111', 'accepted', now()),
+  ('71111111-1111-4111-8111-111111111111', '74444444-4444-4444-8444-444444444444', 'pending', null);
 
 -- ---------------------------------------------------------------- create, name rules
 -- Test bookkeeping only; the roles below must be able to read and add to it.
