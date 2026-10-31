@@ -20,6 +20,7 @@ import {
   listNotifications,
   markNotificationRead,
   registerPushToken,
+  unregisterPushToken,
   type NotifyStore,
 } from '../_shared/api/notify.ts';
 
@@ -171,6 +172,11 @@ export function createApp(
     const user = await deps.getUser(c.req.raw);
     const body = await readJsonBody(c);
     return c.json(await registerPushToken(requireNotify(), user.id, body));
+  });
+  app.post('/push-tokens/remove', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const body = await readJsonBody(c);
+    return c.json(await unregisterPushToken(requireNotify(), user.id, body));
   });
   function requireNotify(): NotifyStore {
     if (!deps.notifyStore) {

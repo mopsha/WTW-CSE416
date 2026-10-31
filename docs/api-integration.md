@@ -91,6 +91,8 @@ exactly: `GET /picks/:id`, `POST /picks/:id/start`, `/refresh` (`{ confirm }`, 4
 - `POST /push-tokens` `{ token: "ExponentPushToken[…]", platform: "ios" | "android" }`: the
   device's token now belongs to the caller (a phone that switches accounts moves with it).
   400 for a malformed token. Client: Mike's `api.registerPushToken` (PR #29).
+- `POST /push-tokens/remove` `{ token }`: call on sign-out so the phone stops getting this
+  account's pushes. Only removes the caller's own token; anything else is a silent no-op.
 - `POST /picks/:id/cancel` now takes an optional `{ reason }` (trimmed, ≤ 200 characters, 400
   otherwise), stored in `picks.cancel_reason` and shown in everyone's inbox.
 - Events (`notify()` in `_shared/api/notify.ts`): `pick_started` (everyone but the host),
@@ -104,7 +106,7 @@ exactly: `GET /picks/:id`, `POST /picks/:id/start`, `/refresh` (`{ confirm }`, 4
   `notifications (user_id, pick_id, type)` (except `plan_time_set`). `notify_insert` returns
   only the users who got a new row, and only they are pushed, so retries never double-push.
 - Push text is generic (`PUSH_TEXT`): no place names, answers or cancel reasons on lock screens.
-  Sent through the Expo Push API in batches of 100; tokens Expo reports as
+  Sent through the Expo Push API in batches of 100 with a 5 s timeout per request; tokens Expo reports as
   `DeviceNotRegistered` are deleted. Push receipts are not checked yet.
 - Late joins: unchanged from 0006. Swiping = join and swipe; `final_vote` = only people who
   were already in vote; `completed` = read only for participants.

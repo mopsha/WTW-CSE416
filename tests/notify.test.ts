@@ -8,6 +8,7 @@ import {
   NOTIFICATION_TYPES,
   PUSH_TEXT,
   registerPushToken,
+  unregisterPushToken,
   type NotifyStore,
 } from '@shared/api/notify.ts';
 import { sweepDeadlines, type SweepStore } from '@shared/api/sweep.ts';
@@ -23,6 +24,7 @@ function notifyStore(over: Partial<NotifyStore> = {}) {
     list: jest.fn().mockResolvedValue([]),
     markRead: jest.fn().mockResolvedValue(undefined),
     registerToken: jest.fn().mockResolvedValue(undefined),
+    removeToken: jest.fn().mockResolvedValue(undefined),
     ...over,
   } satisfies NotifyStore;
 }
@@ -121,6 +123,21 @@ describe('routes', () => {
     ]) {
       await expect(registerPushToken(store, 'u', body)).rejects.toMatchObject({ status: 400 });
     }
+  });
+
+  test('push token removal: only a well-formed token, always for the caller', async () => {
+    const store = notifyStore();
+    await unregisterPushToken(store, 'u', { token: TOKEN(1) });
+    expect(store.removeToken).toHaveBeenCalledWith('u', TOKEN(1));
+    await expect(unregisterPushToken(store, 'u', { token: 'x' })).rejects.toMatchObject({
+      status: 400,
+    });
+  });
+
+  test('pushes give up after a timeout instead of hanging the request', async () => {
+    const fetchFn = jest.fn().mockResolvedValue(ok([]));
+    await createNotifier(notifyStore(), fetchFn)(['a'], 'pick_started', 'p1');
+    expect(fetchFn.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
   });
 
   test('inbox counts unread', async () => {

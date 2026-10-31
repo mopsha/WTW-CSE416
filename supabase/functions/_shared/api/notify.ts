@@ -58,6 +58,8 @@ export interface NotifyStore {
   /** Rejects (404) a notification that isn't the caller's. */
   markRead(id: string, userId: string): Promise<void>;
   registerToken(userId: string, token: string, platform: 'ios' | 'android'): Promise<void>;
+  /** Deletes the token only if it is the caller's; otherwise does nothing. */
+  removeToken(userId: string, token: string): Promise<void>;
 }
 
 export type PushFetch = (url: string, init: RequestInit) => Promise<Response>;
@@ -76,6 +78,7 @@ export type Notifier = (
 export const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 /** Expo's limit per request. */
 export const PUSH_BATCH = 100;
+export const PUSH_TIMEOUT_MS = 5_000;
 
 // ponytail: tickets only. Expo's second step (push receipts, ~15 min later) also reports
 // dead tokens; add a receipts check in the sweep if stale tokens pile up.
@@ -93,6 +96,8 @@ export async function sendPush(
         method: 'POST',
         headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify(batch.map((to) => ({ to, sound: 'default', ...message }))),
+        // A slow Expo must not hold up the close/cancel/vote that triggered this push.
+        signal: AbortSignal.timeout(PUSH_TIMEOUT_MS),
       });
       if (!res.ok) continue;
       const tickets = ((await res.json()) as { data?: unknown }).data;
@@ -151,6 +156,16 @@ export function parsePushToken(body: unknown): { token: string; platform: 'ios' 
 export async function registerPushToken(store: NotifyStore, userId: string, body: unknown) {
   const { token, platform } = parsePushToken(body);
   await store.registerToken(userId, token, platform);
+  return { status: 'ok' as const };
+}
+
+/** POST /push-tokens/remove { token }: on sign-out, this phone stops getting my pushes. */
+export async function unregisterPushToken(store: NotifyStore, userId: string, body: unknown) {
+  const token = (body as { token?: unknown } | null)?.token;
+  if (typeof token !== 'string' || !TOKEN_RE.test(token)) {
+    throw new ApiError(400, 'INVALID_INPUT', 'Expected an Expo push token');
+  }
+  await store.removeToken(userId, token);
   return { status: 'ok' as const };
 }
 

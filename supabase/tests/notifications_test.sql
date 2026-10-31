@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(21);
+select plan(23);
 
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
 values
@@ -99,6 +99,13 @@ select is(
 select throws_ok(
   $$select push_token_register('91111111-1111-4111-8111-111111111111', 'not-a-token', 'ios')$$,
   '23514', null, 'malformed tokens are rejected');
+
+select push_token_remove('91111111-1111-4111-8111-111111111111', 'ExponentPushToken[abc]');
+select is((select count(*)::int from push_tokens where token = 'ExponentPushToken[abc]'), 1,
+  'someone else cannot remove a token that is not theirs');
+select push_token_remove('92222222-2222-4222-8222-222222222222', 'ExponentPushToken[abc]');
+select is((select count(*)::int from push_tokens where token = 'ExponentPushToken[abc]'), 0,
+  'the owner removes their token on sign-out');
 
 -- ---------------------------------------------------------------- reminders
 reset role;

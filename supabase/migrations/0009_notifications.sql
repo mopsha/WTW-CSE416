@@ -31,6 +31,8 @@ comment on table public.notifications is
 create index notifications_user_created_idx on public.notifications (user_id, created_at desc);
 create unique index notifications_once_per_pick on public.notifications (user_id, pick_id, type)
   where pick_id is not null and type <> 'plan_time_set';
+-- For "already told?" checks with a non-constant type, and for cascades when a Pick is deleted.
+create index notifications_pick_id_idx on public.notifications (pick_id);
 
 -- One row per device. The token is the key, so a phone that signs in to another account
 -- moves to that account instead of notifying both.
@@ -113,6 +115,16 @@ exception
 end;
 $$;
 
+-- Sign-out: this phone stops getting the account's pushes. Only the caller's own token goes;
+-- someone else's token (or an unknown one) is a silent no-op, so tokens can't be probed.
+create function public.push_token_remove(p_user_id uuid, p_token text)
+returns void
+language sql
+set search_path = ''
+as $$
+  delete from public.push_tokens where token = p_token and user_id = p_user_id;
+$$;
+
 -- Participants who haven't finished swiping a Pick whose deadline falls inside the window
 -- and who haven't been reminded yet. notify_insert's unique index is the real guard.
 create function public.pick_reminder_targets(p_from timestamptz, p_until timestamptz)
@@ -164,6 +176,8 @@ revoke all on function public.notify_insert(uuid[], text, uuid, jsonb) from publ
 revoke all on function public.notification_mark_read(uuid, uuid) from public, anon, authenticated;
 revoke all on function public.push_token_register(uuid, text, text) from public, anon, authenticated;
 revoke all on function public.pick_reminder_targets(timestamptz, timestamptz) from public, anon, authenticated;
+revoke all on function public.push_token_remove(uuid, text) from public, anon, authenticated;
+grant execute on function public.push_token_remove(uuid, text) to service_role;
 revoke all on function public.pick_cancel(text, uuid, text) from public, anon, authenticated;
 grant execute on function public.notify_insert(uuid[], text, uuid, jsonb) to service_role;
 grant execute on function public.notification_mark_read(uuid, uuid) to service_role;

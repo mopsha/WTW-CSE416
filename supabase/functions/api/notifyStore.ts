@@ -76,6 +76,13 @@ export function createNotifyStore(): NotifyStore {
       });
       if (error) fail(error);
     },
+    async removeToken(userId, token) {
+      const { error } = await createServiceClient().rpc('push_token_remove', {
+        p_user_id: userId,
+        p_token: token,
+      });
+      if (error) fail(error);
+    },
     async registerToken(userId, token, platform) {
       const { error } = await createServiceClient().rpc('push_token_register', {
         p_user_id: userId,

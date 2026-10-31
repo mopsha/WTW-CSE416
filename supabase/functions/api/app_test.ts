@@ -620,6 +620,9 @@ function notifyApp(user: string | null) {
     registerToken: async (userId, token, platform) => {
       calls.push(['registerToken', userId, token, platform]);
     },
+    removeToken: async (userId, token) => {
+      calls.push(['removeToken', userId, token]);
+    },
   };
   const app = createApp({
     store,
@@ -655,10 +658,16 @@ Deno.test('notifications: always the verified caller, never a body-supplied user
     body: JSON.stringify({ token: 'ExponentPushToken[abc]', platform: 'ios', userId: 'someone' }),
   });
   equal(token.status, 200);
+  const removed = await app.request('/push-tokens/remove', {
+    method: 'POST',
+    body: JSON.stringify({ token: 'ExponentPushToken[abc]' }),
+  });
+  equal(removed.status, 200);
   equal(calls, [
     ['list', 'me'],
     ['markRead', id, 'me'],
     ['registerToken', 'me', 'ExponentPushToken[abc]', 'ios'],
+    ['removeToken', 'me', 'ExponentPushToken[abc]'],
   ]);
 });
 
