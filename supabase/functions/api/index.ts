@@ -6,6 +6,8 @@ import { createLifecycleStore } from './lifecycleStore.ts';
 import { createClosingStore } from './closingStore.ts';
 import { createJoinStore } from './joinStore.ts';
 import { createSweepStore } from './sweepStore.ts';
+import { createNotifyStore } from './notifyStore.ts';
+import { createNotifier } from '../_shared/api/notify.ts';
 import { refreshCandidateHours } from './hours.ts';
 import { createPoolBuilder } from '../_shared/places/pool.ts';
 import { MockProvider } from '../_shared/places/MockProvider.ts';
@@ -15,15 +17,21 @@ import { MockProvider } from '../_shared/places/MockProvider.ts';
 // no change here.
 const poolBuilder = createPoolBuilder(new MockProvider());
 
+// One notifier for every Pick event; inbox rows + Expo push (no Expo access token needed
+// unless "enhanced push security" is turned on in the Expo project).
+const notifyStore = createNotifyStore();
+const notifier = createNotifier(notifyStore, (url, init) => fetch(url, init));
+
 // Supabase forwards /functions/v1/api/health to the runtime as /api/health.
 const app = createApp(
   {
     getUser,
     store: createStore(),
     progressStore: createProgressStore(),
-    lifecycleStore: createLifecycleStore(),
-    closingStore: createClosingStore(),
+    lifecycleStore: { ...createLifecycleStore(), notifier },
+    closingStore: { ...createClosingStore(), notifier },
     sweepStore: createSweepStore(),
+    notifyStore,
     cronSecret: Deno.env.get('CRON_SECRET'),
     poolBuilder,
     joinStore: createJoinStore(),

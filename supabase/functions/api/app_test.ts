@@ -5,6 +5,7 @@ import type { LifecycleStore } from '../_shared/api/lifecycle.ts';
 import type { ClosingStore } from '../_shared/api/closing.ts';
 import type { VotingStore } from '../_shared/api/voting.ts';
 import type { PoolBuilder } from '../_shared/places/pool.ts';
+import type { NotifyStore } from '../_shared/api/notify.ts';
 
 const store: HeartbeatStore = {
   loadPick: async () => null,
@@ -602,3 +603,78 @@ Deno.test(
     equal(refreshes, 1);
   },
 );
+
+function notifyApp(user: string | null) {
+  const calls: unknown[][] = [];
+  const notifyStore: NotifyStore = {
+    insert: async () => [],
+    tokensFor: async () => [],
+    deleteTokens: async () => {},
+    list: async (userId) => {
+      calls.push(['list', userId]);
+      return [];
+    },
+    markRead: async (id, userId) => {
+      calls.push(['markRead', id, userId]);
+    },
+    registerToken: async (userId, token, platform) => {
+      calls.push(['registerToken', userId, token, platform]);
+    },
+  };
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    notifyStore,
+    getUser: async () => {
+      if (!user) throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+      return { id: user };
+    },
+  });
+  return { app, calls };
+}
+
+Deno.test('notifications: 401 without a token, before any query', async () => {
+  const { app, calls } = notifyApp(null);
+  equal((await app.request('/notifications')).status, 401);
+  equal((await app.request('/push-tokens', { method: 'POST', body: '{"token":"x"}' })).status, 401);
+  equal(calls, []);
+});
+
+Deno.test('notifications: always the verified caller, never a body-supplied user', async () => {
+  const { app, calls } = notifyApp('me');
+  const inbox = await app.request('/notifications');
+  equal(inbox.status, 200);
+  equal(inbox.headers.get('cache-control'), 'private, no-store');
+  equal(await inbox.json(), { notifications: [], unreadCount: 0 });
+  const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
+  equal((await app.request(`/notifications/${id}/read`, { method: 'POST' })).status, 200);
+  const token = await app.request('/push-tokens', {
+    method: 'POST',
+    body: JSON.stringify({ token: 'ExponentPushToken[abc]', platform: 'ios', userId: 'someone' }),
+  });
+  equal(token.status, 200);
+  equal(calls, [
+    ['list', 'me'],
+    ['markRead', id, 'me'],
+    ['registerToken', 'me', 'ExponentPushToken[abc]', 'ios'],
+  ]);
+});
+
+Deno.test('notifications: bad token 400; not configured 503', async () => {
+  const { app } = notifyApp('me');
+  const bad = await app.request('/push-tokens', {
+    method: 'POST',
+    body: JSON.stringify({ token: 'nope', platform: 'ios' }),
+  });
+  equal(bad.status, 400);
+  const bare = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async () => ({ id: 'me' }),
+  });
+  equal((await bare.request('/notifications')).status, 503);
+});
