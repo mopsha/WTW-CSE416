@@ -26,8 +26,8 @@ tracking. Nothing is sent to analytics; there is no analytics SDK.
 | Join codes | `pick_join_codes` | Joining by code/QR | Participants | 7 days, then useless | With the Pick |
 | Notifications | `notifications` (type, Pick, small payload such as a cancel reason) | In-app inbox | **Only you** | Indefinitely (no cleanup job yet) | Yes |
 | Push token | `push_tokens` (Expo token, platform) | Sending push notifications to your phone | Nobody but the server | Until the phone switches account, Expo reports it dead, or the account is deleted | Yes |
-| RSVP | `pick_rsvps` (going / maybe / not going) | Planning after the winner | Participants see **counts**; the API never says who | With the Pick | Yes |
-| "Did you go?" | `pick_outcomes` (went, would go again) | Measuring whether the plan happened | Participants see **counts** | With the Pick | Yes |
+| RSVP | `pick_rsvps` (going / maybe / not going) | Planning after the winner | **Only you** (RLS); the group sees counts | With the Pick | Yes |
+| "Did you go?" | `pick_outcomes` (went, would go again) | Measuring whether the plan happened | **Only you** (RLS); the group sees counts | With the Pick | Yes |
 
 Device location: the app asks for location **only** to center a Pick or Discover near you
 ("when in use"). The exact location is not stored except as the Pick center the host chose.

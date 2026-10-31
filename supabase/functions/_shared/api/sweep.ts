@@ -38,23 +38,6 @@ export async function sweepDeadlines(
     swiping: { attempted: 0, processed: 0, failed: 0, queryFailed: false },
     final_vote: { attempted: 0, processed: 0, failed: 0, queryFailed: false },
   };
-  const { reminderTargets, planTargets } = store;
-  const reminders = await sendDue(
-    closingStore.notifier,
-    reminderTargets &&
-      (async () =>
-        (
-          await reminderTargets.call(
-            store,
-            cutoff,
-            new Date(now.getTime() + REMINDER_LEAD_MS).toISOString(),
-          )
-        ).map((t) => ({ ...t, kind: 'reminder' as const }))),
-  );
-  const planEvents = await sendDue(
-    closingStore.notifier,
-    planTargets && (() => planTargets.call(store, cutoff)),
-  );
   for (const phase of ['swiping', 'final_vote'] as const) {
     const counts = summary[phase];
     let after: string | undefined;
@@ -82,6 +65,24 @@ export async function sweepDeadlines(
       after = picks[picks.length - 1]!.id;
     }
   }
+  // After the closes, so a slow push service can never delay a deadline.
+  const { reminderTargets, planTargets } = store;
+  const reminders = await sendDue(
+    closingStore.notifier,
+    reminderTargets &&
+      (async () =>
+        (
+          await reminderTargets.call(
+            store,
+            cutoff,
+            new Date(now.getTime() + REMINDER_LEAD_MS).toISOString(),
+          )
+        ).map((t) => ({ ...t, kind: 'reminder' as const }))),
+  );
+  const planEvents = await sendDue(
+    closingStore.notifier,
+    planTargets && (() => planTargets.call(store, cutoff)),
+  );
   const failed =
     Object.values(summary).some((counts) => counts.failed || counts.queryFailed) ||
     reminders.queryFailed ||

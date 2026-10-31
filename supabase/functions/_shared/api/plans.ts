@@ -133,7 +133,7 @@ export async function getHistory(store: PlansStore, userId: string, groupId: str
   return { picks: await store.history(userId, groupId) };
 }
 
-/** POST /picks/:id/again: a new draft, same people and settings; the caller hosts. */
+/** POST /picks/:id/again: host only; a new draft with the same people and settings. */
 export async function pickAgain(store: PlansStore, pickId: string, userId: string) {
   const { id, addedUserIds } = await store.again(pickId, userId);
   await store.notifier?.(addedUserIds, 'added_to_pick', id);

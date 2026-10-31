@@ -27,8 +27,9 @@ describe('explainRank (FR-14)', () => {
     }
   });
 
-  test('groups under three get a rank-only reason, so nobody learns the other answer', () => {
-    expect(MIN_GROUP_FOR_COUNTS).toBe(3);
+  test('groups under four get a rank-only reason, so nobody learns the other answer', () => {
+    expect(MIN_GROUP_FOR_COUNTS).toBe(4);
+    expect(explainRank({ rank: 1, yes: 3, maybe: 0, no: 0, n: 3 })).toBe('The group’s top match');
     const a = explainRank({ rank: 1, yes: 2, maybe: 0, no: 0, n: 2 });
     const b = explainRank({ rank: 1, yes: 0, maybe: 0, no: 2, n: 2 });
     expect(a).toBe(b);
@@ -120,7 +121,7 @@ describe('plans API', () => {
     const s = store({
       finalistCounts: jest
         .fn()
-        .mockResolvedValue([{ placeId: 'a', rank: 1, yes: 3, maybe: 0, no: 0, n: 3 }]),
+        .mockResolvedValue([{ placeId: 'a', rank: 1, yes: 4, maybe: 0, no: 0, n: 4 }]),
     });
     expect(await getReasons(s, 'p1', 'u')).toEqual({
       reasons: [{ placeId: 'a', rank: 1, reason: 'Everyone said yes' }],

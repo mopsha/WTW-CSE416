@@ -2,7 +2,7 @@
 // by rank (never scores or anyone's answers), who was there, and how many went. With
 // ?groupId=… it shows that group's Picks (Razin's group screen links here).
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { HistoryItem } from '@shared/api/plans.ts';
@@ -27,17 +27,21 @@ export default function HistoryScreen() {
   const [load, setLoad] = useState<Load>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchHistory = useCallback(
-    () =>
-      api.getHistory(groupId).then(
-        (r) => {
-          setPicks(r.picks);
-          setLoad({ status: 'ready' });
-        },
-        (e: unknown) => setLoad({ status: 'error', message: messageOf(e) }),
-      ),
-    [groupId],
-  );
+  // Only the newest request may update the list (a refresh can race the first load).
+  const latest = useRef(0);
+  const fetchHistory = useCallback(() => {
+    const request = ++latest.current;
+    return api.getHistory(groupId).then(
+      (r) => {
+        if (request !== latest.current) return;
+        setPicks(r.picks);
+        setLoad({ status: 'ready' });
+      },
+      (e: unknown) => {
+        if (request === latest.current) setLoad({ status: 'error', message: messageOf(e) });
+      },
+    );
+  }, [groupId]);
   useEffect(() => void fetchHistory(), [fetchHistory]);
 
   const refresh = () => {
@@ -53,7 +57,8 @@ export default function HistoryScreen() {
       onRefresh={refresh}
       refreshing={refreshing}
     >
-      {load.status === 'error' ? (
+      {/* A failed refresh keeps the list it already has. */}
+      {load.status === 'error' && picks.length === 0 ? (
         <ErrorState message={load.message} onRetry={refresh} />
       ) : load.status === 'ready' && picks.length === 0 ? (
         <EmptyState

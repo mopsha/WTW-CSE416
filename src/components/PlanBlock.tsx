@@ -1,7 +1,7 @@
 // The Winner screen's "after" part (Alan): when we're going, who's in (counts only), "Did you
 // go?", and "Pick again". Everything here is changeable; the server rechecks who may do what.
 import { router } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { PlanSummary, RsvpStatus } from '@shared/api/plans.ts';
@@ -25,17 +25,27 @@ const RSVP_OPTIONS = [
 export function PlanBlock({ pickId, decidedAt }: { pickId: string; decidedAt: string | null }) {
   const [plan, setPlan] = useState<PlanSummary | null>(null);
   const action = useAction();
+  // Only the newest reload may update the block, so quick taps can't show a stale answer.
+  const latest = useRef(0);
 
   const load = useCallback(() => {
-    api.getPlan(pickId).then(setPlan, () => setPlan(null));
+    const request = ++latest.current;
+    api.getPlan(pickId).then(
+      (next) => request === latest.current && setPlan(next),
+      // Keep the last good plan on a failed reload; before the first load the block stays hidden.
+      () => {},
+    );
   }, [pickId]);
   useEffect(load, [load]);
 
-  const act = (name: string, fn: () => Promise<unknown>) =>
+  // One action at a time: a second tap while one is in flight is ignored.
+  const act = (name: string, fn: () => Promise<unknown>) => {
+    if (action.busy) return;
     void action.run(name, fn).then((ok) => ok && load());
+  };
 
   const again = () =>
-    void action.run('again', async () => {
+    act('again', async () => {
       const { pickId: next } = await api.pickAgain(pickId);
       router.replace(`/pick/${next}`);
     });
@@ -105,23 +115,27 @@ export function PlanBlock({ pickId, decidedAt }: { pickId: string; decidedAt: st
           <Button
             label="Yes"
             variant="secondary"
+            loading={action.busy === 'again-yes'}
             onPress={() => act('again-yes', () => api.recordOutcome(pickId, true, true))}
           />
           <Button
             label="No"
             variant="secondary"
+            loading={action.busy === 'again-no'}
             onPress={() => act('again-no', () => api.recordOutcome(pickId, true, false))}
           />
         </View>
       ) : null}
       {summary ? <Text style={styles.went}>{summary}</Text> : null}
 
-      <Button
-        label="Pick again with the same group"
-        variant="secondary"
-        loading={action.busy === 'again'}
-        onPress={again}
-      />
+      {plan.isHost ? (
+        <Button
+          label="Pick again with the same group"
+          variant="secondary"
+          loading={action.busy === 'again'}
+          onPress={again}
+        />
+      ) : null}
     </View>
   );
 }

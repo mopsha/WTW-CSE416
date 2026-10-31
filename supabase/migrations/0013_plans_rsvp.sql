@@ -13,7 +13,17 @@
 -- ---------------------------------------------------------------------------
 -- Tables
 -- ---------------------------------------------------------------------------
-alter table public.picks add column plan_at timestamptz;
+alter table public.picks
+  add column plan_at timestamptz,
+  -- Each change re-notifies everyone, so the host gets a few, not unlimited.
+  add column plan_time_changes integer not null default 0,
+  -- "Pick again" source, so one Pick can't be copied into a pile of open drafts.
+  add column again_of uuid references public.picks (id) on delete set null;
+
+-- The sweep looks for plan reminders and "Did you go?" every minute.
+create index picks_plan_at_idx on public.picks (plan_at) where state = 'completed' and plan_at is not null;
+create index picks_decided_at_idx on public.picks (decided_at) where state = 'completed';
+create index picks_again_of_idx on public.picks (again_of) where again_of is not null;
 
 create table public.pick_rsvps (
   pick_id uuid not null references public.picks (id) on delete cascade,
@@ -37,12 +47,13 @@ comment on table public.pick_outcomes is '"Did you go?" answers: the success met
 alter table public.pick_rsvps enable row level security;
 alter table public.pick_outcomes enable row level security;
 
-create policy "pick_rsvps: participants" on public.pick_rsvps
+-- Own rows only: the group sees counts (pick_plan_load), never who said what.
+create policy "pick_rsvps: only my own" on public.pick_rsvps
   for select to authenticated
-  using (private.is_pick_participant(pick_id));
-create policy "pick_outcomes: participants" on public.pick_outcomes
+  using (user_id = (select auth.uid()));
+create policy "pick_outcomes: only my own" on public.pick_outcomes
   for select to authenticated
-  using (private.is_pick_participant(pick_id));
+  using (user_id = (select auth.uid()));
 
 revoke all on table public.pick_rsvps, public.pick_outcomes from anon, authenticated;
 grant select on table public.pick_rsvps, public.pick_outcomes to authenticated;
@@ -76,7 +87,8 @@ grant execute on function private.lock_pick_as_participant(text, uuid) to servic
 -- ---------------------------------------------------------------------------
 -- Plan time, RSVP, outcome
 -- ---------------------------------------------------------------------------
--- Host only, completed Picks only. Returns everyone else in the Pick (for notify).
+-- Host only, completed Picks only, at most 5 changes. Returns everyone else in the Pick to
+-- notify; the same time again (a retry or double tap) changes nothing and notifies nobody.
 create function public.pick_set_plan_time(p_pick_id text, p_user_id uuid, p_plan_at timestamptz)
 returns uuid[]
 language plpgsql
@@ -91,7 +103,14 @@ begin
   if v_pick.state <> 'completed' then
     raise exception using errcode = 'PT409', message = 'The Pick has no winner yet';
   end if;
-  update public.picks set plan_at = p_plan_at where id = v_pick.id;
+  if v_pick.plan_at is not distinct from p_plan_at then
+    return '{}'::uuid[];
+  end if;
+  if v_pick.plan_time_changes >= 5 then
+    raise exception using errcode = 'PT409', message = 'The time has been changed too many times';
+  end if;
+  update public.picks set plan_at = p_plan_at, plan_time_changes = plan_time_changes + 1
+  where id = v_pick.id;
   -- A moved time is a new plan: the reminder and "did you go?" may go out again.
   delete from public.notifications
     where pick_id = v_pick.id and type in ('plan_reminder', 'did_you_go');
@@ -116,7 +135,7 @@ begin
   insert into public.pick_rsvps (pick_id, user_id, status) values (v_pick.id, p_user_id, p_status)
   on conflict (pick_id, user_id) do update set status = excluded.status, updated_at = now();
 exception
-  when check_violation then
+  when check_violation or not_null_violation then
     raise exception using errcode = 'PT400', message = 'Invalid RSVP';
 end;
 $$;
@@ -136,6 +155,9 @@ begin
   values (v_pick.id, p_user_id, p_went, p_again)
   on conflict (pick_id, user_id) do update
     set went = excluded.went, again = excluded.again, answered_at = now();
+exception
+  when not_null_violation then
+    raise exception using errcode = 'PT400', message = 'Invalid outcome';
 end;
 $$;
 
@@ -246,8 +268,10 @@ begin
 end;
 $$;
 
--- A new draft with the same people and settings; the caller hosts it. Works from any Pick the
--- caller was in that is over (completed or canceled). Returns the new id and who was added.
+-- A new draft with the same people and settings, hosted by the same host. Only the host of a
+-- Pick that is over (completed or canceled) may do it, and only while no earlier copy of it is
+-- still a draft, so nobody can be pulled into a pile of Picks. Returns the new id and who was
+-- added. The group is kept only if the host is still in it.
 create function public.pick_again(p_pick_id text, p_user_id uuid)
 returns jsonb
 language plpgsql
@@ -257,12 +281,21 @@ declare
   v_old public.picks%rowtype := private.lock_pick_as_participant(p_pick_id, p_user_id);
   v_new uuid;
   v_added uuid[];
+  v_group uuid := (to_jsonb(v_old) ->> 'group_id')::uuid;
+  v_member boolean := false;
 begin
+  if v_old.host_id <> p_user_id then
+    raise exception using errcode = 'PT403', message = 'Only the host can pick again';
+  end if;
   if v_old.state not in ('completed', 'canceled') then
     raise exception using errcode = 'PT409', message = 'This Pick is still going';
   end if;
+  if exists (select 1 from public.picks where again_of = v_old.id and state = 'draft') then
+    raise exception using errcode = 'PT409', message = 'There is already a new draft for this Pick';
+  end if;
   v_new := (public.pick_create(p_user_id, v_old.category, v_old.center_lat, v_old.center_lng,
     v_old.radius_m, v_old.pool_size, null, v_old.close_threshold) ->> 'id')::uuid;
+  update public.picks set again_of = v_old.id where id = v_new;
 
   with added as (
     insert into public.pick_participants (pick_id, user_id)
@@ -273,12 +306,12 @@ begin
   )
   select coalesce(array_agg(user_id order by user_id), '{}') into v_added from added;
 
-  if exists (
-    select 1 from pg_attribute
-    where attrelid = 'public.picks'::regclass and attname = 'group_id' and not attisdropped
-  ) then
-    execute 'update public.picks set group_id = $1 where id = $2'
-      using (to_jsonb(v_old) ->> 'group_id')::uuid, v_new;
+  if v_group is not null and to_regclass('public.group_members') is not null then
+    execute 'select exists (select 1 from public.group_members where group_id = $1 and user_id = $2)'
+      into v_member using v_group, p_user_id;
+    if v_member then
+      execute 'update public.picks set group_id = $1 where id = $2' using v_group, v_new;
+    end if;
   end if;
 
   return jsonb_build_object('id', v_new, 'addedUserIds', to_jsonb(v_added));
@@ -339,7 +372,7 @@ as $$
     where p.state = 'completed' and p.plan_at > p_now and p.plan_at <= p_now + interval '1 hour'
     union all
     select p.id, 'did_you_go' from public.picks p
-    where p.state = 'completed' and p.decided_at > p_now - interval '14 days'
+    where p.state = 'completed' and coalesce(p.plan_at, p.decided_at) > p_now - interval '14 days'
       and coalesce(p.plan_at + interval '3 hours', p.decided_at + interval '24 hours') <= p_now
   )
   select d.id, d.kind, array_agg(pp.user_id order by pp.user_id)

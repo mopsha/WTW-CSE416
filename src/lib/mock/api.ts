@@ -127,6 +127,8 @@ interface MockPlan {
   outcomes: Map<string, { went: boolean; again: boolean | null }>;
 }
 const mockPlans = new Map<string, MockPlan>();
+/** Pick again: source Pick id -> its newest copy (one open draft at a time). */
+const againOf = new Map<string, string>();
 function plans(pick: MockPick): MockPlan {
   let plan = mockPlans.get(pick.id);
   if (!plan) {
@@ -356,9 +358,12 @@ const ROUTES: Record<string, Handler> = {
     return json(200, { status: 'ok' });
   },
 
-  'POST again': (pick) => {
+  'POST again': hostOnly((pick) => {
     if (pick.state !== 'completed' && pick.state !== 'canceled') {
       return wrongState('This Pick is still going');
+    }
+    if (mockPicks.get(againOf.get(pick.id) ?? '')?.state === 'draft') {
+      return wrongState('There is already a new draft for this Pick');
     }
     const next = createMockPick({
       category: pick.category,
@@ -373,8 +378,9 @@ const ROUTES: Record<string, Handler> = {
         .filter((p) => p.userId !== MOCK_USER_ID)
         .map((p) => ({ ...p, answers: new Map(), vote: null })),
     );
+    againOf.set(pick.id, next.id);
     return json(201, { pickId: next.id, state: 'draft' });
-  },
+  }),
 
   'POST close-vote': hostOnly((pick) => {
     if (pick.state === 'completed') return json(200, { status: 'ok' });

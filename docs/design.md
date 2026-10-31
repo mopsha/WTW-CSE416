@@ -227,11 +227,11 @@ Float noise is ignored (differences under 1e-9 count as equal), so an exact 10-p
 
 **What users see:** rank only (1st / 2nd / 3rd, or "Clear winner!"). Scores are stored in `ranking_results.score` for tests and debugging and are never sent to the app.
 
-**Reasons (FR-14):** each of the top three gets one plain-language line built from its answer counts (`explainRank` in `_shared/domain/explainRank.ts`, served by `GET /picks/:id/reasons` once the Pick has closed), e.g. "Everyone said yes or maybe" or "Most of the group liked it; one person passed". Words only, never a number (a test checks every answer mix up to 8 people). In groups of **fewer than three**, any count would reveal the other person's answer, so the reason is based on rank alone ("The group's top match").
+**Reasons (FR-14):** each of the top three gets one plain-language line built from its answer counts (`explainRank` in `_shared/domain/explainRank.ts`, served by `GET /picks/:id/reasons` once the Pick has closed), e.g. "Everyone said yes or maybe" or "Most of the group liked it; one person passed". Words only, never a number (a test checks every answer mix up to 8 people). In groups of **fewer than four**, counts would narrow down who said what, so the reason is based on rank alone ("The group's top match").
 
 **Individual answers are never revealed**, not during the Pick, not after it completes, not in history. The app sees its own answers, progress counts, rank, the reason line, and RSVP/"Did you go?" totals. Nobody, including the host, can see who said what.
 
-**After the winner (M4):** the host sets a plan time; everyone answers Going / Maybe / Can't (counts only); the sweep sends a reminder an hour before and a "Did you go?" prompt 3 hours after (or 24 hours after the decision when no time was set; Picks older than 14 days are left alone; people who said Can't or already answered are skipped). "Did you go?" is the success metric for M5. "Pick again" makes a new draft with the same people and settings, hosted by whoever tapped it.
+**After the winner (M4):** the host sets a plan time; everyone answers Going / Maybe / Can't (counts only); the sweep sends a reminder an hour before and a "Did you go?" prompt 3 hours after (or 24 hours after the decision when no time was set; Picks older than 14 days are left alone; people who said Can't or already answered are skipped). "Did you go?" is the success metric for M5. "Pick again" (host only) makes a new draft with the same people and settings; one open copy per Pick at a time. The host can change the plan time at most 5 times; re-sending the same time changes nothing.
 
 **Input mapping:** `preferences.value` is 0 = No, 1 = Maybe, 2 = Yes; `answerFromDb` converts it before scoring.
 

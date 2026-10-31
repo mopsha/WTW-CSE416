@@ -124,14 +124,16 @@ so a Pick id reveals nothing. 409 `INVALID_PICK_STATE` when the Pick isn't at th
   Counts only; who said what is never returned.
 - `POST /picks/:id/plan-time` `{ planAt }`: host only, `completed` only, future and within 30
   days (400 otherwise). Notifies everyone else (`plan_time_set`). Moving the time re-arms the
-  plan reminder and "Did you go?".
+  plan reminder and "Did you go?". The same time again is a no-op (nobody notified); after 5
+  changes it's 409.
 - `POST /picks/:id/rsvp` `{ status: "going" | "maybe" | "not_going" }`: participants, `completed`.
 - `POST /picks/:id/outcome` `{ went: boolean, again?: boolean | null }`: "Did you go?".
 - `GET /picks/:id/reasons`: `{ reasons: [{ placeId, rank, reason }] }` for the top three once
-  the Pick is `final_vote` or `completed` (FR-14; words only, rank-only for groups under 3).
-- `POST /picks/:id/again`: 201 `{ pickId, state: "draft" }`. Same people, category, center,
-  radius, pool size and close rule; no deadline; the caller hosts; keeps `group_id` when groups
-  are installed. Works from `completed` or `canceled`. Notifies the others (`added_to_pick`).
+  the Pick is `final_vote` or `completed` (FR-14; words only, rank-only for groups under 4).
+- `POST /picks/:id/again`: 201 `{ pickId, state: "draft" }`. **Host only** (403 otherwise).
+  Same people, category, center, radius, pool size and close rule; no deadline; keeps `group_id`
+  only if the host is still in that group. Works from `completed` or `canceled`; 409 while an
+  earlier copy is still a draft. Notifies the others (`added_to_pick`).
 - `GET /history` and `GET /groups/:id/history` (`no-store`): `{ picks: [{ id, category,
   decidedAt, decidedBy, planAt, groupId, winner: { placeId, name }, finalists: [{ placeId, rank,
   name }], participants: [{ userId, displayName }], wentCount }] }`, completed Picks the caller
@@ -141,10 +143,13 @@ so a Pick id reveals nothing. 409 `INVALID_PICK_STATE` when the Pick isn't at th
   `plan_at`) or `did_you_go` (3 h after `plan_at`, or 24 h after `decided_at` with no time;
   only Picks decided in the last 14 days; skips "not going" and people who already answered).
 - Tables/RPCs (`0013_plans_rsvp.sql`): `picks.plan_at`, `pick_rsvps`, `pick_outcomes`
-  (participants read via RLS; no client writes), `pick_set_plan_time`, `pick_rsvp`,
+  (each person reads only their own row via RLS; no client writes), `pick_set_plan_time`, `pick_rsvp`,
   `pick_outcome`, `pick_plan_load`, `pick_history`, `pick_again`, `pick_finalist_counts`,
   `pick_plan_targets`. Adapter: `api/plansStore.ts`. App: `PlanBlock` on Winner,
   reasons on Results, `app/history.tsx`.
+- Known limits (review, Oct 31): no per-user rate limit on `/rsvp`, `/outcome`, `/push-tokens`
+  (Josh's limiter can cover them); a sweep that read targets just before the host moves the time
+  can send one stale reminder (rare; accepted).
 
 Errors: `{ "error": { "code": "...", "message": "..." } }`.
 400 invalid input, 401 invalid/missing token, 403 forbidden, 404 missing resource,

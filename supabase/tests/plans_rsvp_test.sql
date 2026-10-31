@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(30);
+select plan(34);
 
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
 values
@@ -57,6 +57,10 @@ select is(
     'a1111111-1111-4111-8111-111111111111', now() + interval '2 hours'),
   array['a2222222-2222-4222-8222-222222222222', 'a3333333-3333-4333-8333-333333333333']::uuid[],
   'the host sets the time and gets everyone else back to notify');
+select is(
+  (select pick_set_plan_time(id::text, 'a1111111-1111-4111-8111-111111111111', plan_at)
+   from picks where id = (select id from pk where name = 'done')),
+  '{}'::uuid[], 'setting the same time again changes nothing and notifies nobody');
 select throws_ok(
   format($$select pick_set_plan_time(%L, 'a2222222-2222-4222-8222-222222222222', now())$$,
     (select id from pk where name = 'done')),
@@ -110,7 +114,7 @@ select throws_ok(
 reset role;
 set local role authenticated;
 set local request.jwt.claims to '{"sub":"a2222222-2222-4222-8222-222222222222","role":"authenticated"}';
-select is((select count(*)::int from pick_rsvps), 2, 'participants read the RSVPs of their Picks');
+select is((select count(*)::int from pick_rsvps), 1, 'a participant reads only their own RSVP, not who said what');
 select throws_ok(
   $$insert into pick_rsvps (pick_id, user_id, status) select id, 'a2222222-2222-4222-8222-222222222222', 'going' from pk where name = 'live'$$,
   '42501', null, 'clients cannot write RSVPs');
@@ -168,12 +172,20 @@ select is(
   0, 'old Picks are left alone');
 
 -- ---------------------------------------------------------------- Pick again
+select throws_ok(
+  format($$select pick_again(%L, 'a2222222-2222-4222-8222-222222222222')$$,
+    (select id from pk where name = 'done')),
+  'PT403', null, 'only the host can pick again');
 create temporary table again on commit drop as
   select pick_again((select id from pk where name = 'done')::text,
-    'a2222222-2222-4222-8222-222222222222') as r;
+    'a1111111-1111-4111-8111-111111111111') as r;
 select is(
   (select host_id from picks where id = (select (r ->> 'id')::uuid from again)),
-  'a2222222-2222-4222-8222-222222222222'::uuid, 'the caller hosts the new Pick');
+  'a1111111-1111-4111-8111-111111111111'::uuid, 'the host hosts the new Pick');
+select throws_ok(
+  format($$select pick_again(%L, 'a1111111-1111-4111-8111-111111111111')$$,
+    (select id from pk where name = 'done')),
+  'PT409', null, 'no second copy while the first is still a draft');
 select is(
   (select count(*)::int from pick_participants where pick_id = (select (r ->> 'id')::uuid from again)),
   3, 'the new Pick has the same three people');
@@ -181,6 +193,15 @@ select throws_ok(
   format($$select pick_again(%L, 'a1111111-1111-4111-8111-111111111111')$$,
     (select id from pk where name = 'live')),
   'PT409', null, 'a Pick that is still going cannot be picked again');
+
+-- The time can change at most 5 times (the first set above was change 1).
+select pick_set_plan_time((select id from pk where name = 'done')::text,
+  'a1111111-1111-4111-8111-111111111111', now() + make_interval(hours => 2 + g))
+from generate_series(1, 4) g;
+select throws_ok(
+  format($$select pick_set_plan_time(%L, 'a1111111-1111-4111-8111-111111111111', now() + interval '9 hours')$$,
+    (select id from pk where name = 'done')),
+  'PT409', null, 'a sixth change is refused, so the host cannot spam everyone');
 
 select * from finish();
 rollback;

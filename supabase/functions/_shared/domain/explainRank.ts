@@ -1,8 +1,9 @@
 // FR-14: a plain-language reason for each finalist (Alan). Words only, never a number: users
 // see rank, not scores (docs/design.md#scoring).
 //
-// Privacy: in a group of two, any count gives away the other person's answer ("nobody
-// passed" = they didn't say No), so groups under three get a reason based on rank alone.
+// Privacy: in a small group, counts narrow down who said what (in a group of two, "nobody
+// passed" means the other person didn't say No), so groups under four get a reason based on
+// rank alone.
 
 export interface FinalistCounts {
   rank: number;
@@ -14,7 +15,7 @@ export interface FinalistCounts {
 }
 
 /** Below this size, reasons say nothing about how people answered. */
-export const MIN_GROUP_FOR_COUNTS = 3;
+export const MIN_GROUP_FOR_COUNTS = 4;
 
 const BY_RANK = ['The group’s top match', 'A close second', 'Also in the running'] as const;
 
