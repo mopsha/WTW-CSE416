@@ -69,3 +69,9 @@ export function groupNameProblem(name: string): string | null {
 export function memberCountLabel(count: number): string {
   return count === 1 ? 'Just you' : `${count} people`;
 }
+
+/** Opens New Pick for the group (one tap), where "Create Pick" opens the Lobby with everyone in. */
+export const newGroupPickRoute = (group: { id: string; name: string }) => ({
+  pathname: '/pick/new' as const,
+  params: { groupId: group.id, groupName: group.name },
+});

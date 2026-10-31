@@ -1,5 +1,5 @@
 import Slider from '@react-native-community/slider';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useState, type ReactNode } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
@@ -61,6 +61,8 @@ const MIN_MILES = 0.5;
 const MAX_MILES = 10;
 
 export default function CreatePickScreen() {
+  // From a group (Start a Pick): everyone in it is added when the Pick is created.
+  const { groupId, groupName } = useLocalSearchParams<{ groupId?: string; groupName?: string }>();
   const [category, setCategory] = useState<PickCategory>('food');
   const [center, setCenter] = useState<LatLng>(DEFAULT_CENTER);
   const [placeLabel, setPlaceLabel] = useState('SBU Academic Mall');
@@ -98,7 +100,9 @@ export default function CreatePickScreen() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const { pickId } = await api.createPick(input);
+      const { pickId } = groupId
+        ? await api.createGroupPick(input, groupId)
+        : await api.createPick(input);
       haptic.success();
       // Straight to the Lobby, replacing this form so Back goes to Picks.
       router.replace({ pathname: '/pick/[id]/lobby', params: { id: pickId } });
@@ -110,7 +114,18 @@ export default function CreatePickScreen() {
   };
 
   return (
-    <Screen title="New Pick" subtitle="Where's the group headed?" back>
+    <Screen
+      title="New Pick"
+      subtitle={groupId ? `For ${groupName ?? 'your group'}` : "Where's the group headed?"}
+      back
+    >
+      {groupId ? (
+        <Card variant="flat">
+          <Text style={styles.hint}>
+            Everyone in {groupName ?? 'the group'} is added as soon as you create it.
+          </Text>
+        </Card>
+      ) : null}
       <Section title="What are we picking?" error={problems.category}>
         <Chips
           options={CATEGORIES}
