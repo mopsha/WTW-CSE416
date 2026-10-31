@@ -3,7 +3,7 @@
 // the top picks go to a quick vote.
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,11 +20,12 @@ import {
   pickStyles,
 } from '@/components/PickParts';
 import { BigResult, SmallResult, WinnerCard } from '@/components/ResultCards';
-import { colors } from '@/components/theme';
+import { colors, fonts } from '@/components/theme';
 import { useSession } from '@/hooks/useAuth';
 import { usePickLive } from '@/hooks/usePickLive';
 import { usePickRoute } from '@/hooks/usePickRoute';
 import { finalistsOf, useReveal } from '@/hooks/useReveal';
+import { api } from '@/lib/api';
 import { haptic } from '@/lib/haptics';
 
 export default function ResultsScreen() {
@@ -40,6 +41,24 @@ export default function ResultsScreen() {
   useEffect(() => {
     if (ready) haptic.success();
   }, [ready]);
+
+  // FR-14: one plain-language line per top place. Optional: without it the screen is unchanged.
+  const [reasons, setReasons] = useState<ReadonlyMap<string, string>>(new Map());
+  useEffect(() => {
+    if (!ready) return;
+    let active = true;
+    api.getReasons(pickId).then(
+      (r) => active && setReasons(new Map(r.reasons.map((x) => [x.placeId, x.reason]))),
+      () => {},
+    );
+    return () => {
+      active = false;
+    };
+  }, [ready, pickId]);
+  const reasonFor = (placeId: string) => {
+    const text = reasons.get(placeId);
+    return text ? <Text style={styles.reason}>{text}</Text> : null;
+  };
 
   const go = (screen: 'vote' | 'winner') =>
     router.replace({ pathname: `/pick/[id]/${screen}`, params: { id: pickId } });
@@ -120,6 +139,7 @@ export default function ResultsScreen() {
                   entering={FadeInDown.delay(250 + i * 150).springify()}
                 >
                   <BigResult place={p} rank={r.rank} />
+                  {reasonFor(r.placeId)}
                 </Animated.View>
               ) : null;
             })
@@ -128,6 +148,7 @@ export default function ResultsScreen() {
               {winner ? (
                 <Animated.View entering={FadeInDown.delay(250).springify()}>
                   <WinnerCard place={winner} />
+                  {reasonFor(winner.placeId)}
                 </Animated.View>
               ) : null}
               {top3
@@ -137,6 +158,7 @@ export default function ResultsScreen() {
                   return p ? (
                     <Animated.View key={r.placeId} entering={FadeInDown.delay(450 + i * 120)}>
                       <SmallResult place={p} rank={r.rank} />
+                      {reasonFor(r.placeId)}
                     </Animated.View>
                   ) : null;
                 })}
@@ -168,4 +190,11 @@ const styles = StyleSheet.create({
   counting: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 18, padding: 24 },
   head: { alignItems: 'center', gap: 4 },
   group: { alignItems: 'center' },
+  reason: {
+    fontFamily: fonts.medium,
+    fontSize: 14,
+    color: colors.muted,
+    textAlign: 'center',
+    marginTop: 6,
+  },
 });

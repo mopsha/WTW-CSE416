@@ -4,6 +4,7 @@ import { getAccessToken } from './auth';
 import { API_BASE_URL, USE_MOCK } from './config';
 import { MOCK_API_BASE_URL, mockFetch } from './mock/api';
 import type { NotificationRow } from '@shared/api/notify.ts';
+import type { HistoryItem, PlanSummary, RsvpStatus } from '@shared/api/plans.ts';
 import type { CreatePickInput } from '@shared/domain/createPick.ts';
 
 import { candidateFromApi } from './places';
@@ -205,6 +206,32 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
       request<{ notifications: NotificationRow[]; unreadCount: number }>('GET', '/notifications'),
     markNotificationRead: (id: string) =>
       request<StatusResponse>('POST', `/notifications/${encodeURIComponent(id)}/read`),
+
+    // After the winner (Alan): plan time, RSVP, "Did you go?", reasons, history, Pick again.
+    /** Plan time, RSVP and outcome counts (never who said what), plus my own answers. */
+    getPlan: (pickId: string) => request<PlanSummary>('GET', `${pickPath(pickId)}/plan`),
+    /** One plain-language sentence per finalist, once the Pick has closed. No numbers. */
+    getReasons: (pickId: string) =>
+      request<{ reasons: { placeId: string; rank: number; reason: string }[] }>(
+        'GET',
+        `${pickPath(pickId)}/reasons`,
+      ),
+    /** Host only, completed Picks: when the group is going. Must be within 30 days. */
+    setPlanTime: (pickId: string, planAt: string) =>
+      request<{ planAt: string }>('POST', `${pickPath(pickId)}/plan-time`, { body: { planAt } }),
+    rsvp: (pickId: string, status: RsvpStatus) =>
+      request<StatusResponse>('POST', `${pickPath(pickId)}/rsvp`, { body: { status } }),
+    /** "Did you go?" (and optionally "would you go again?"). Changeable. */
+    recordOutcome: (pickId: string, went: boolean, again: boolean | null = null) =>
+      request<StatusResponse>('POST', `${pickPath(pickId)}/outcome`, { body: { went, again } }),
+    /** A new draft with the same people and settings; I host it. */
+    pickAgain: (pickId: string) => request<CreatePickResponse>('POST', `${pickPath(pickId)}/again`),
+    /** Completed Picks I was in, newest first; with a group id, that group's. */
+    getHistory: (groupId?: string) =>
+      request<{ picks: HistoryItem[] }>(
+        'GET',
+        groupId ? `/groups/${encodeURIComponent(groupId)}/history` : '/history',
+      ),
   };
 }
 

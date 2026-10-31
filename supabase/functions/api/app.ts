@@ -23,6 +23,16 @@ import {
   unregisterPushToken,
   type NotifyStore,
 } from '../_shared/api/notify.ts';
+import {
+  getHistory,
+  getPlan,
+  getReasons,
+  pickAgain,
+  recordOutcome,
+  rsvp,
+  setPlanTime,
+  type PlansStore,
+} from '../_shared/api/plans.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
   const raw = await c.req.text();
@@ -45,6 +55,7 @@ export function createApp(
     joinStore?: JoinStore;
     sweepStore?: SweepStore;
     notifyStore?: NotifyStore;
+    plansStore?: PlansStore;
     cronSecret?: string;
     refreshHours?: Parameters<typeof getPick>[3];
   },
@@ -178,6 +189,50 @@ export function createApp(
     const body = await readJsonBody(c);
     return c.json(await unregisterPushToken(requireNotify(), user.id, body));
   });
+  // After the winner: plan time, RSVP, "Did you go?", reasons, history, Pick again.
+  // Membership, host and state are rechecked inside each RPC (0013_plans_rsvp.sql).
+  app.get('/picks/:id/plan', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const user = await deps.getUser(c.req.raw);
+    return c.json(await getPlan(requirePlans(), c.req.param('id'), user.id));
+  });
+  app.get('/picks/:id/reasons', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    return c.json(await getReasons(requirePlans(), c.req.param('id'), user.id));
+  });
+  app.post('/picks/:id/plan-time', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const body = await readJsonBody(c);
+    return c.json(await setPlanTime(requirePlans(), c.req.param('id'), user.id, body));
+  });
+  app.post('/picks/:id/rsvp', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const body = await readJsonBody(c);
+    return c.json(await rsvp(requirePlans(), c.req.param('id'), user.id, body));
+  });
+  app.post('/picks/:id/outcome', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const body = await readJsonBody(c);
+    return c.json(await recordOutcome(requirePlans(), c.req.param('id'), user.id, body));
+  });
+  app.post('/picks/:id/again', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    return c.json(await pickAgain(requirePlans(), c.req.param('id'), user.id), 201);
+  });
+  app.get('/history', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const user = await deps.getUser(c.req.raw);
+    return c.json(await getHistory(requirePlans(), user.id));
+  });
+  app.get('/groups/:id/history', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const user = await deps.getUser(c.req.raw);
+    return c.json(await getHistory(requirePlans(), user.id, c.req.param('id')));
+  });
+  function requirePlans(): PlansStore {
+    if (!deps.plansStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Plans are not available');
+    return deps.plansStore;
+  }
   function requireNotify(): NotifyStore {
     if (!deps.notifyStore) {
       throw new ApiError(503, 'NOT_CONFIGURED', 'Notifications are not available');

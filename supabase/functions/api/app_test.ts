@@ -6,6 +6,7 @@ import type { ClosingStore } from '../_shared/api/closing.ts';
 import type { VotingStore } from '../_shared/api/voting.ts';
 import type { PoolBuilder } from '../_shared/places/pool.ts';
 import type { NotifyStore } from '../_shared/api/notify.ts';
+import type { PlansStore } from '../_shared/api/plans.ts';
 
 const store: HeartbeatStore = {
   loadPick: async () => null,
@@ -686,4 +687,87 @@ Deno.test('notifications: bad token 400; not configured 503', async () => {
     getUser: async () => ({ id: 'me' }),
   });
   equal((await bare.request('/notifications')).status, 503);
+});
+
+function plansApp(user: string | null) {
+  const calls: unknown[][] = [];
+  const plansStore: PlansStore = {
+    setPlanTime: async (...args) => {
+      calls.push(['setPlanTime', ...args]);
+      return [];
+    },
+    rsvp: async (...args) => {
+      calls.push(['rsvp', ...args]);
+    },
+    outcome: async (...args) => {
+      calls.push(['outcome', ...args]);
+    },
+    loadPlan: async () => {
+      throw new ApiError(404, 'PICK_NOT_FOUND', 'Pick not found');
+    },
+    history: async (...args) => {
+      calls.push(['history', ...args]);
+      return [];
+    },
+    again: async (...args) => {
+      calls.push(['again', ...args]);
+      return { id: 'new', addedUserIds: [] };
+    },
+    finalistCounts: async () => [{ placeId: 'a', rank: 1, yes: 0, maybe: 0, no: 2, n: 2 }],
+  };
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    plansStore,
+    getUser: async () => {
+      if (!user) throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+      return { id: user };
+    },
+  });
+  return { app, calls };
+}
+
+Deno.test('plans: 401 without a token on every route, before any query', async () => {
+  const { app, calls } = plansApp(null);
+  for (const [method, path] of [
+    ['GET', '/picks/p/plan'],
+    ['GET', '/picks/p/reasons'],
+    ['POST', '/picks/p/plan-time'],
+    ['POST', '/picks/p/rsvp'],
+    ['POST', '/picks/p/outcome'],
+    ['POST', '/picks/p/again'],
+    ['GET', '/history'],
+    ['GET', '/groups/g/history'],
+  ]) {
+    equal((await app.request(path, { method })).status, 401);
+  }
+  equal(calls, []);
+});
+
+Deno.test('plans: caller id from the token; bad input 400; store errors keep status', async () => {
+  const { app, calls } = plansApp('me');
+  const post = (path: string, body: unknown) =>
+    app.request(path, { method: 'POST', body: JSON.stringify(body) });
+  equal((await post('/picks/p/rsvp', { status: 'going', userId: 'other' })).status, 200);
+  equal((await post('/picks/p/rsvp', { status: 'nah' })).status, 400);
+  equal((await post('/picks/p/outcome', { went: 'yes' })).status, 400);
+  equal((await post('/picks/p/plan-time', { planAt: '2001-01-01T00:00:00Z' })).status, 400);
+  const again = await post('/picks/p/again', {});
+  equal(again.status, 201);
+  equal(await again.json(), { pickId: 'new', state: 'draft' });
+  equal((await app.request('/picks/p/plan')).status, 404);
+  const history = await app.request('/history');
+  equal(history.headers.get('cache-control'), 'private, no-store');
+  equal((await app.request('/groups/not-a-uuid/history')).status, 404);
+  const reasons = await app.request('/picks/p/reasons');
+  equal(await reasons.json(), {
+    reasons: [{ placeId: 'a', rank: 1, reason: 'The group’s top match' }],
+  });
+  equal(calls, [
+    ['rsvp', 'p', 'me', 'going'],
+    ['again', 'p', 'me'],
+    ['history', 'me', null],
+  ]);
 });

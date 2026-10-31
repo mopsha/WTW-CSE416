@@ -2,6 +2,8 @@
 // same routes, status codes, error codes and response shapes, returned as real Response
 // objects, so src/lib/api.ts runs the exact same parsing and error handling in both modes.
 import type { NotificationRow } from '@shared/api/notify.ts';
+import type { HistoryItem, PlanSummary, RsvpStatus } from '@shared/api/plans.ts';
+import { explainRank } from '@shared/domain/explainRank.ts';
 import { validateCreatePick, type CreatePickInput } from '@shared/domain/createPick.ts';
 import { parseJoinCode } from '@shared/domain/joinCode.ts';
 
@@ -118,6 +120,72 @@ function getPick(pick: MockPick) {
   };
 }
 
+// Plan time, RSVPs and "Did you go?" per Pick (the real API keeps these in 0013's tables).
+interface MockPlan {
+  planAt: string | null;
+  rsvps: Map<string, RsvpStatus>;
+  outcomes: Map<string, { went: boolean; again: boolean | null }>;
+}
+const mockPlans = new Map<string, MockPlan>();
+/** Pick again: source Pick id -> its newest copy (one open draft at a time). */
+const againOf = new Map<string, string>();
+function plans(pick: MockPick): MockPlan {
+  let plan = mockPlans.get(pick.id);
+  if (!plan) {
+    plan = { planAt: null, rsvps: new Map(), outcomes: new Map() };
+    mockPlans.set(pick.id, plan);
+  }
+  return plan;
+}
+
+function planOf(pick: MockPick): PlanSummary {
+  const plan = plans(pick);
+  const rsvps = [...plan.rsvps.values()];
+  const outcomes = [...plan.outcomes.values()];
+  return {
+    state: pick.state,
+    isHost: pick.hostId === MOCK_USER_ID,
+    planAt: plan.planAt,
+    participantCount: pick.participants.length,
+    rsvps: {
+      going: rsvps.filter((s) => s === 'going').length,
+      maybe: rsvps.filter((s) => s === 'maybe').length,
+      notGoing: rsvps.filter((s) => s === 'not_going').length,
+    },
+    myRsvp: plan.rsvps.get(MOCK_USER_ID) ?? null,
+    outcomes: {
+      went: outcomes.filter((o) => o.went).length,
+      didNotGo: outcomes.filter((o) => !o.went).length,
+      again: outcomes.filter((o) => o.again).length,
+    },
+    myOutcome: plan.outcomes.get(MOCK_USER_ID) ?? null,
+  };
+}
+
+/** GET /history: completed Picks I'm in, newest first (same shape as pick_history). */
+function historyOf(): HistoryItem[] {
+  const name = (pick: MockPick, placeId: string | null) =>
+    pick.candidates.find((c) => c.placeId === placeId)?.name ?? null;
+  return [...mockPicks.values()]
+    .filter((p) => p.state === 'completed' && p.participants.some((x) => x.userId === MOCK_USER_ID))
+    .sort((a, b) => (b.decidedAt ?? '').localeCompare(a.decidedAt ?? ''))
+    .map((p) => ({
+      id: p.id,
+      category: p.category,
+      decidedAt: p.decidedAt ?? new Date(0).toISOString(),
+      decidedBy: p.decidedBy ?? 'clear_winner',
+      planAt: plans(p).planAt,
+      groupId: null,
+      winner: p.winnerPlaceId ? { placeId: p.winnerPlaceId, name: name(p, p.winnerPlaceId) } : null,
+      finalists: p.ranking
+        .filter((r) => r.rank <= 3)
+        .sort((a, b) => a.rank - b.rank)
+        .map((r) => ({ placeId: r.placeId, rank: r.rank, name: name(p, r.placeId) })),
+      participants: p.participants.map((x) => ({ userId: x.userId, displayName: x.name })),
+      wentCount: [...plans(p).outcomes.values()].filter((o) => o.went).length,
+    }));
+}
+
 type Handler = (pick: MockPick, body: unknown) => Response;
 
 const hostOnly =
@@ -230,6 +298,90 @@ const ROUTES: Record<string, Handler> = {
     return json(200, { status: 'ok' });
   },
 
+  'GET plan': (pick) => json(200, planOf(pick)),
+
+  'GET reasons': (pick) => {
+    if (pick.state !== 'final_vote' && pick.state !== 'completed') {
+      return wrongState('The Pick has not closed yet');
+    }
+    const n = pick.participants.length;
+    const count = (placeId: string, v: PreferenceValue) =>
+      pick.participants.filter((p) => p.answers.get(placeId) === v).length;
+    const reasons = pick.ranking
+      .filter((r) => r.rank <= 3)
+      .sort((a, b) => a.rank - b.rank)
+      .map((r) => ({
+        placeId: r.placeId,
+        rank: r.rank,
+        reason: explainRank({
+          rank: r.rank,
+          yes: count(r.placeId, 2),
+          maybe: count(r.placeId, 1),
+          no: count(r.placeId, 0),
+          n,
+        }),
+      }));
+    return json(200, { reasons });
+  },
+
+  'POST plan-time': hostOnly((pick, body) => {
+    const planAt = (body as { planAt?: unknown } | null)?.planAt;
+    const at = typeof planAt === 'string' ? Date.parse(planAt) : NaN;
+    if (Number.isNaN(at) || at < Date.now() || at - Date.now() > 30 * 86_400_000) {
+      return fail(400, 'INVALID_INPUT', 'planAt must be a date within the next 30 days');
+    }
+    if (pick.state !== 'completed') return wrongState('The Pick has no winner yet');
+    plans(pick).planAt = new Date(at).toISOString();
+    return json(200, { planAt: plans(pick).planAt });
+  }),
+
+  'POST rsvp': (pick, body) => {
+    const status = (body as { status?: unknown } | null)?.status;
+    if (status !== 'going' && status !== 'maybe' && status !== 'not_going') {
+      return fail(400, 'INVALID_INPUT', 'status must be going, maybe or not_going');
+    }
+    if (pick.state !== 'completed') return wrongState('The Pick has no winner yet');
+    plans(pick).rsvps.set(MOCK_USER_ID, status);
+    return json(200, { status: 'ok' });
+  },
+
+  'POST outcome': (pick, body) => {
+    const { went, again } = (body ?? {}) as { went?: unknown; again?: unknown };
+    if (typeof went !== 'boolean' || (again != null && typeof again !== 'boolean')) {
+      return fail(400, 'INVALID_INPUT', 'went must be true or false');
+    }
+    if (pick.state !== 'completed') return wrongState('The Pick has no winner yet');
+    plans(pick).outcomes.set(MOCK_USER_ID, {
+      went,
+      again: typeof again === 'boolean' ? again : null,
+    });
+    return json(200, { status: 'ok' });
+  },
+
+  'POST again': hostOnly((pick) => {
+    if (pick.state !== 'completed' && pick.state !== 'canceled') {
+      return wrongState('This Pick is still going');
+    }
+    if (mockPicks.get(againOf.get(pick.id) ?? '')?.state === 'draft') {
+      return wrongState('There is already a new draft for this Pick');
+    }
+    const next = createMockPick({
+      category: pick.category,
+      center: pick.center,
+      radiusM: pick.radiusM,
+      poolSize: pick.poolSize,
+      deadlineAt: null,
+      closeThreshold: pick.closeThreshold,
+    });
+    next.participants.push(
+      ...pick.participants
+        .filter((p) => p.userId !== MOCK_USER_ID)
+        .map((p) => ({ ...p, answers: new Map(), vote: null })),
+    );
+    againOf.set(pick.id, next.id);
+    return json(201, { pickId: next.id, state: 'draft' });
+  }),
+
   'POST close-vote': hostOnly((pick) => {
     if (pick.state === 'completed') return json(200, { status: 'ok' });
     if (pick.state !== 'final_vote') return wrongState('Voting is not open for this Pick');
@@ -255,6 +407,11 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
 
   if (method === 'POST' && path === '/picks') return createPick(readBody(init));
   if (method === 'POST' && path === '/picks/join') return joinPick(readBody(init));
+  if (method === 'GET' && path === '/history') return json(200, { picks: historyOf() });
+  // Groups aren't in mock mode yet: every group id is unknown.
+  if (method === 'GET' && /^\/groups\/[^/]+\/history$/.test(path)) {
+    return fail(404, 'GROUP_NOT_FOUND', 'Group not found');
+  }
   if (method === 'GET' && path === '/notifications') {
     return json(200, {
       notifications: mockNotifications,
