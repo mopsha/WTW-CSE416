@@ -17,6 +17,7 @@ import {
   GroupAvatars,
   pickStyles,
 } from '@/components/PickParts';
+import { PlanBlock } from '@/components/PlanBlock';
 import { SmallResult, WinnerCard } from '@/components/ResultCards';
 import { colors, fonts } from '@/components/theme';
 import { useSession } from '@/hooks/useAuth';
@@ -121,6 +122,10 @@ export default function WinnerScreen() {
               <Ionicons name="checkmark-circle" size={18} color={colors.yes} />
               <Text style={styles.savedText}>Saved to your history</Text>
             </View>
+          </Animated.View>
+
+          <Animated.View entering={FadeInDown.delay(550)}>
+            <PlanBlock pickId={pickId} decidedAt={pick.decidedAt} />
           </Animated.View>
 
           {people.length ? (

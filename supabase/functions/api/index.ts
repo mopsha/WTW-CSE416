@@ -7,6 +7,7 @@ import { createClosingStore } from './closingStore.ts';
 import { createJoinStore } from './joinStore.ts';
 import { createSweepStore } from './sweepStore.ts';
 import { createNotifyStore } from './notifyStore.ts';
+import { createPlansStore } from './plansStore.ts';
 import { createNotifier } from '../_shared/api/notify.ts';
 import { refreshCandidateHours } from './hours.ts';
 import { createPoolBuilder } from '../_shared/places/pool.ts';
@@ -32,6 +33,7 @@ const app = createApp(
     closingStore: { ...createClosingStore(), notifier },
     sweepStore: createSweepStore(),
     notifyStore,
+    plansStore: { ...createPlansStore(), notifier },
     cronSecret: Deno.env.get('CRON_SECRET'),
     poolBuilder,
     joinStore: createJoinStore(),
