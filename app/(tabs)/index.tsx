@@ -32,8 +32,10 @@ import { useSession } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { USE_MOCK } from '@/lib/config';
 import { messageOf } from '@/lib/errors';
+import { memberCountLabel, newGroupPickRoute, type GroupSummary } from '@/lib/groups';
 import { haptic } from '@/lib/haptics';
 import { MOCK_PLACES } from '@/lib/mock/fixtures';
+import { resetMockGroups } from '@/lib/mock/groups';
 import { MOCK_INVITE_CODE, resetMockData } from '@/lib/mock/store';
 import { pickEmoji, pickTitle, STATE_LABEL } from '@/lib/pickUi';
 import { queries } from '@/lib/queries';
@@ -154,10 +156,56 @@ function PickRow({ pick }: { pick: PickSummary }) {
   );
 }
 
+/** Start a Pick for a group in one tap (then "Create Pick" opens the Lobby with everyone in). */
+function GroupsShortcut({ groups }: { groups: GroupSummary[] }) {
+  return (
+    <View style={{ gap: 10 }}>
+      <View style={styles.sectionRow}>
+        <Text style={styles.section} accessibilityRole="header">
+          Your groups
+        </Text>
+        <Button
+          label={groups.length ? 'All groups' : 'New group'}
+          variant="link"
+          onPress={() => router.push('/groups')}
+        />
+      </View>
+      {groups.slice(0, 3).map((g) => (
+        <View key={g.id} style={styles.row}>
+          <View style={styles.rowIcon}>
+            <Ionicons name="people" size={22} color={colors.text} />
+          </View>
+          <Pressable
+            style={{ flex: 1, gap: 2, minHeight: MIN_TARGET, justifyContent: 'center' }}
+            onPress={() => router.push({ pathname: '/groups/[id]', params: { id: g.id } })}
+            accessibilityRole="button"
+            accessibilityLabel={`${g.name}, ${memberCountLabel(g.memberCount)}`}
+            accessibilityHint="Opens the group"
+          >
+            <Text style={styles.rowTitle}>{g.name}</Text>
+            <Text style={styles.rowState}>{memberCountLabel(g.memberCount)}</Text>
+          </Pressable>
+          <Button
+            label="Start"
+            icon="flame"
+            variant="secondary"
+            onPress={() => {
+              haptic.tap();
+              router.push(newGroupPickRoute(g));
+            }}
+            accessibilityLabel={`Start a Pick with ${g.name}`}
+          />
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export default function PicksScreen() {
   const session = useSession();
   const { displayName } = useProfile();
   const [picks, setPicks] = useState<PickSummary[] | null>(null);
+  const [groups, setGroups] = useState<GroupSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -168,6 +216,8 @@ export default function PicksScreen() {
     } catch (e) {
       setError(messageOf(e));
     }
+    // Groups are a shortcut here; if they fail to load, Picks still work.
+    setGroups(await queries.listMyGroups(session.user.id).catch(() => []));
   }, [session.user.id]);
 
   // Reload whenever Picks comes back into focus (e.g. after a Pick is decided).
@@ -180,6 +230,7 @@ export default function PicksScreen() {
   const resetDemo = () => {
     haptic.success();
     resetMockData();
+    resetMockGroups();
     void load();
   };
 
@@ -237,6 +288,8 @@ export default function PicksScreen() {
         </View>
 
         <JoinCodeCard />
+
+        <GroupsShortcut groups={groups} />
 
         {USE_MOCK ? (
           <View style={styles.mock}>
@@ -316,6 +369,7 @@ const styles = StyleSheet.create({
   mock: { gap: 8, padding: 12, borderRadius: 18, backgroundColor: colors.infoBg },
   mockText: { fontFamily: fonts.medium, fontSize: 14, color: colors.text },
   section: { fontFamily: fonts.bold, fontSize: 18, color: colors.text, marginTop: 6 },
+  sectionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   pickCard: {
     backgroundColor: colors.card,
     borderRadius: 28,

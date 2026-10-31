@@ -1,6 +1,7 @@
 // Read-only queries. Clients only READ from Supabase; RLS limits rows to Picks I'm in
 // and to my own preferences. Every write goes through src/lib/api.ts.
 import { USE_MOCK } from './config';
+import { sortMembers, type FriendOption, type GroupDetail, type GroupSummary } from './groups';
 import { mockQueries } from './mock/queries';
 import { getSupabase } from './supabase';
 import type {
@@ -24,6 +25,12 @@ export interface Queries {
   getMyVote(pickId: string, userId: string): Promise<string | null>;
   /** The Pick's share code (Razin's pick_join_codes), or null if there isn't one yet. */
   getJoinCode(pickId: string): Promise<JoinCode | null>;
+  /** Groups I'm in (RLS: members only), by name. */
+  listMyGroups(userId: string): Promise<GroupSummary[]>;
+  /** A group I'm in, its members, and its Picks I'm in; null if it's gone or I'm not in it. */
+  getGroup(groupId: string): Promise<GroupDetail | null>;
+  /** My accepted friends (0008's friendships, PR #24); [] until that table exists. */
+  listMyFriends(userId: string): Promise<FriendOption[]>;
 }
 
 export interface MyProfile {
@@ -145,6 +152,100 @@ const supabaseQueries: Queries = {
     const row = data as { code: string; expires_at: string | null } | null;
     return row ? { code: row.code, expiresAt: row.expires_at } : null;
   },
+
+  async listMyGroups(userId) {
+    const rows = check(
+      await getSupabase()
+        .from('group_members')
+        .select('groups(id, name, owner_id, group_members(count))')
+        .eq('user_id', userId),
+    ) as unknown as { groups: GroupRow | GroupRow[] | null }[];
+    return rows
+      .flatMap((r) => (Array.isArray(r.groups) ? r.groups : r.groups ? [r.groups] : []))
+      .map((g) => ({
+        id: g.id,
+        name: g.name,
+        ownerId: g.owner_id,
+        isOwner: g.owner_id === userId,
+        memberCount: g.group_members?.[0]?.count ?? 1,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  },
+
+  async getGroup(groupId) {
+    const { data, error } = await getSupabase()
+      .from('groups')
+      .select('id, name, owner_id, group_members(user_id, role, profiles(display_name))')
+      .eq('id', groupId)
+      .maybeSingle();
+    if (error) throw new QueryError(error.message);
+    if (!data) return null;
+    const g = data as unknown as {
+      id: string;
+      name: string;
+      owner_id: string;
+      group_members: {
+        user_id: string;
+        role: 'owner' | 'member';
+        profiles: { display_name: string | null } | null;
+      }[];
+    };
+    // RLS on picks: only the group's Picks I'm in (a removed member keeps theirs).
+    const picks = check(
+      await getSupabase()
+        .from('picks')
+        .select('id, state, category, deadline_at')
+        .eq('group_id', groupId)
+        .order('created_at', { ascending: false })
+        .limit(10),
+    ) as PickRow[];
+    return {
+      id: g.id,
+      name: g.name,
+      ownerId: g.owner_id,
+      members: sortMembers(
+        g.group_members.map((m) => ({
+          userId: m.user_id,
+          displayName: m.profiles?.display_name?.trim() || null,
+          role: m.role,
+        })),
+      ),
+      picks: picks.map((p) => ({
+        id: p.id,
+        state: p.state,
+        category: p.category,
+        deadlineAt: p.deadline_at,
+      })),
+    };
+  },
+
+  async listMyFriends(userId) {
+    const { data, error } = await getSupabase()
+      .from('friendships')
+      .select('requester_id, addressee_id')
+      .eq('status', 'accepted');
+    // Before 0008_friendships (PR #24) is applied there is no table: nobody to add yet.
+    if (error) {
+      if (error.code === 'PGRST205' || error.code === '42P01') return [];
+      throw new QueryError(error.message);
+    }
+    const ids = ((data ?? []) as { requester_id: string; addressee_id: string }[]).map((f) =>
+      f.requester_id === userId ? f.addressee_id : f.requester_id,
+    );
+    if (ids.length === 0) return [];
+    const profiles = check(
+      await getSupabase().from('profiles').select('id, display_name').in('id', ids),
+    ) as { id: string; display_name: string | null }[];
+    const names = new Map(profiles.map((p) => [p.id, p.display_name?.trim() || null]));
+    return ids.map((id) => ({ userId: id, displayName: names.get(id) ?? null }));
+  },
 };
+
+interface GroupRow {
+  id: string;
+  name: string;
+  owner_id: string;
+  group_members: { count: number }[] | null;
+}
 
 export const queries: Queries = USE_MOCK ? mockQueries : supabaseQueries;
