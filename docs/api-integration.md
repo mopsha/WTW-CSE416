@@ -52,6 +52,47 @@ The app subscribes to Supabase Realtime `postgres_changes` on `picks` (`id=eq.<p
 normal reads. `preferences`, `final_votes` and `ranking_results` are deliberately **not** published.
 Test: `supabase/tests/live_progress_test.sql`.
 
+### Groups (Razin, M4)
+
+Reusable groups for repeat Picks (FR-04, FR-05). All routes need a Bearer user access token;
+the caller is always the token's user. Non-members get 404 (never 403), so a group id reveals
+nothing to outsiders.
+
+- `POST /groups` `{ "name" }` → 201 `{ id, name, ownerId }`. Names are trimmed, 1–50 characters.
+- `POST /groups/:id/rename` `{ "name" }`, `POST /groups/:id/delete` → `{ status: "ok" }`. Owner
+  only (403 `FORBIDDEN`). Deleting keeps every past Pick and result (`picks.group_id` → null).
+- `POST /groups/:id/members` `{ "userIds": [...] }` (1–25) → `{ added }`. Owner only; every id
+  must be the owner's **accepted** friend, all or nothing (403 `NOT_FRIENDS`); members are
+  skipped; 409 `GROUP_FULL` past 25 people.
+- `POST /groups/:id/members/:userId/remove` → `{ status: "ok" }`. Owner only; idempotent; 409
+  `OWNER_CANNOT_LEAVE` for the owner. `POST /groups/:id/leave`: anyone but the owner (same 409).
+- `POST /picks` accepts an optional `"groupId"`. The caller must be a member (404
+  `GROUP_NOT_FOUND`); the draft is created as before, then `pick_add_group` adds everyone in the
+  group **now** and returns 201 `{ pickId, state, groupId, added }`. If that second step fails,
+  the empty draft is canceled. Without `groupId` the route is unchanged.
+- `POST /picks/:id/invite` `{ "userIds": [...] }` → `{ added }`: host only, friends only (403
+  `NOT_FRIENDS`), while the Pick is `draft` or `swiping` (409 `PICK_CLOSED`), the same window as
+  joining by code.
+- Removing or leaving never touches `pick_participants`: people keep the Picks they were in
+  (and their results) and are simply not added to new group Picks.
+- Code: `_shared/api/groups.ts` (validation, POST /picks composition), `api/groupsStore.ts`
+  (adapter). Client: `api.createGroup/renameGroup/deleteGroup/addGroupMembers/
+  removeGroupMember/leaveGroup/createGroupPick/inviteToPick`; reads are RLS queries
+  (`queries.listMyGroups`, `getGroup`, `listMyFriends`). Mock: `src/lib/mock/groups.ts`.
+- `0012_groups.sql`: `groups (id, name, owner_id)`, `group_members (group_id, user_id, role
+  owner|member, unique (group_id, user_id), one owner)`, `picks.group_id`. RLS: members can
+  SELECT the group, its members and their `profiles.display_name`; no client writes. RPCs
+  (service role only): `group_create`, `group_rename`, `group_delete`, `group_add_members`,
+  `group_remove_member`, `group_leave`, `pick_add_group`, `pick_invite`. They raise PT400/403/
+  404/409 with a HINT (`not_owner`, `not_friends`, …) that the adapter maps to the codes above.
+- **Dependency on 0008 (PR #24):** friend checks read `public.friendships` through
+  `private.are_friends`, written in PL/pgSQL so 0012 applies with or without 0008. Until 0008
+  is applied there is no table, the check answers false, and nobody can be added (fail closed);
+  everything else works. `queries.listMyFriends` returns `[]` in that case.
+- Tests: `supabase/tests/groups_test.sql` (creates a stand-in `friendships` inside its
+  rolled-back transaction when 0008 is absent), `api/app_test.ts`, `tests/groupsStore.test.ts`,
+  `tests/lib/mockGroups.test.ts`, `tests/api/groups.test.mjs` (HTTP, in `npm run test:api`).
+
 ### Pick routes the app calls
 
 The app's typed client (`src/lib/api.ts`) and its mock (`src/lib/mock/api.ts`) follow these
