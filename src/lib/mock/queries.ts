@@ -1,5 +1,6 @@
 import type { Queries } from '../queries';
 import { MOCK_USER_ID } from './auth';
+import { mockGetGroup, mockListFriends, mockListGroups } from './groups';
 import { mockPicks, mockProfile, outcomeOf, summaryOf } from './store';
 
 const delay = () =>
@@ -48,5 +49,17 @@ export const mockQueries: Queries = {
     await delay();
     const pick = mine(pickId);
     return pick ? { code: pick.joinCode, expiresAt: null } : null;
+  },
+  async listMyGroups() {
+    await delay();
+    return mockListGroups();
+  },
+  async getGroup(groupId) {
+    await delay();
+    return mockGetGroup(groupId);
+  },
+  async listMyFriends() {
+    await delay();
+    return mockListFriends();
   },
 };

@@ -8,6 +8,7 @@ import { MOCK_FAIL_RATE } from '../config';
 import type { PreferenceValue } from '../types';
 import { MOCK_ACCESS_TOKEN, MOCK_USER_ID } from './auth';
 import { MOCK_PLACES } from './fixtures';
+import { handleMockGroups, mockCreateGroupPick, mockInvite } from './groups';
 import {
   createMockPick,
   decide,
@@ -225,6 +226,24 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   }
   if (MOCK_FAIL_RATE > 0 && Math.random() < MOCK_FAIL_RATE) {
     return fail(503, 'UNAVAILABLE', 'WTW is having trouble right now (mock failure).');
+  }
+
+  // Groups (src/lib/mock/groups.ts): /groups/..., POST /picks with groupId, and invites.
+  const groupResult = handleMockGroups(method, path, readBody(init));
+  if (groupResult) return json(groupResult.status, groupResult.body);
+  const groupId = (readBody(init) as { groupId?: unknown } | null)?.groupId;
+  if (method === 'POST' && path === '/picks' && groupId != null) {
+    const problems = validateCreatePick(readBody(init));
+    if (problems.length > 0) {
+      return fail(400, 'INVALID_INPUT', problems.map((p) => p.message).join(' '));
+    }
+    const r = mockCreateGroupPick(readBody(init) as CreatePickInput, groupId);
+    return json(r.status, r.body);
+  }
+  const invite = /^\/picks\/([^/]+)\/invite$/.exec(path);
+  if (method === 'POST' && invite) {
+    const r = mockInvite(decodeURIComponent(invite[1]!), readBody(init));
+    return json(r.status, r.body);
   }
 
   if (method === 'POST' && path === '/picks') return createPick(readBody(init));
