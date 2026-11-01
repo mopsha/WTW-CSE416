@@ -109,7 +109,7 @@ export function pickDetailFromApi(raw: RawPickDetail): PickDetail {
 
 export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOptions) {
   async function request<T>(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     { body, auth = true }: { body?: unknown; auth?: boolean } = {},
   ): Promise<T> {
@@ -156,6 +156,30 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
   const pickPath = (pickId: string) => `/picks/${encodeURIComponent(pickId)}`;
 
   return {
+    discover: (params: {
+      lat: number;
+      lng: number;
+      radiusM?: number;
+      category?: string;
+      priceMax?: number;
+      openNow?: boolean;
+    }) => {
+      const query = new URLSearchParams(
+        Object.entries(params)
+          .filter(([, v]) => v !== undefined)
+          .map(([k, v]) => [k, String(v)]),
+      );
+      return request<{
+        places: import('@shared/places/types.ts').Candidate[];
+        fallback: boolean;
+        notice: string | null;
+      }>('GET', `/discover?${query}`);
+    },
+    getSaved: () => request<{ places: { placeId: string; createdAt: string }[] }>('GET', '/saved'),
+    savePlace: (placeId: string) =>
+      request<StatusResponse>('POST', `/saved/${encodeURIComponent(placeId)}`),
+    removeSaved: (placeId: string) =>
+      request<StatusResponse>('DELETE', `/saved/${encodeURIComponent(placeId)}`),
     health: () => request<StatusResponse>('GET', '/health', { auth: false }),
     /** Validate with validateCreatePick first; the server rejects bad input with 400 INVALID_INPUT. */
     createPick: (input: CreatePickInput) =>

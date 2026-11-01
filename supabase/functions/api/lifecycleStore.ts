@@ -37,9 +37,11 @@ export function createLifecycleStore(): LifecycleStore {
   }
   return {
     async createPick(hostId, input) {
-      return (await rpc('pick_create', {
+      return (await rpc('pick_create_filtered', {
         p_host_id: hostId,
         p_category: input.category,
+        p_price_max: input.priceMax ?? null,
+        p_open_now: input.openNow ?? false,
         p_center_lat: input.center.lat,
         p_center_lng: input.center.lng,
         p_radius_m: input.radiusM,
@@ -49,9 +51,10 @@ export function createLifecycleStore(): LifecycleStore {
       })) as { id: string };
     },
     async load(pickId, userId) {
-      return (await rpc('pick_load', { p_pick_id: pickId, p_user_id: userId })) as
-        | LifecyclePick
-        | null;
+      return (await rpc('pick_load_filtered', {
+        p_pick_id: pickId,
+        p_user_id: userId,
+      })) as LifecyclePick | null;
     },
     async start(pickId, userId, candidates) {
       await rpc('pick_start', { p_pick_id: pickId, p_user_id: userId, p_candidates: candidates });

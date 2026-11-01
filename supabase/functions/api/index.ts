@@ -13,11 +13,15 @@ import { createNotifier } from '../_shared/api/notify.ts';
 import { refreshCandidateHours } from './hours.ts';
 import { createPoolBuilder } from '../_shared/places/pool.ts';
 import { MockProvider } from '../_shared/places/MockProvider.ts';
+import { placesPoolBuilder } from './places.ts';
+import { createDiscoverStore } from './discoverStore.ts';
+import { checkUserLimit } from './limits.ts';
+import { MemoryPlaceCache } from '../_shared/places/cache.ts';
 
-// MockProvider until Josh's PLACES_PROVIDER=google|mock switch (Week 2) lands;
-// createPoolBuilder itself is provider-agnostic, so swapping providers needs
-// no change here.
-const poolBuilder = createPoolBuilder(new MockProvider());
+// Discover uses configured Google/mock selection with a shared atomic HTTP budget.
+// Group Picks still require persistable snapshots and frozen ranking coordinates;
+// see docs/m4-josh-phase1.md for the remaining Google lifecycle dependency.
+const poolBuilder = createPoolBuilder(new MockProvider(), { cache: new MemoryPlaceCache() });
 
 // One notifier for every Pick event; inbox rows + Expo push (no Expo access token needed
 // unless "enhanced push security" is turned on in the Expo project).
@@ -36,6 +40,9 @@ const app = createApp(
     notifyStore,
     cronSecret: Deno.env.get('CRON_SECRET'),
     poolBuilder,
+    discoverPool: placesPoolBuilder,
+    discoverStore: createDiscoverStore(),
+    checkLimit: checkUserLimit,
     joinStore: createJoinStore(),
     friendsStore: createFriendsStore(),
     profileStore: createProfileStore(),

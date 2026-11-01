@@ -923,3 +923,152 @@ Deno.test('notifications: bad token 400; not configured 503', async () => {
   });
   equal((await bare.request('/notifications')).status, 503);
 });
+
+Deno.test(
+  'Discover authenticates, validates, uses caller profile and returns a bounded non-paginated feed',
+  async () => {
+    let profileUser = '';
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async (req) => {
+        if (!req.headers.has('authorization'))
+          throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+        return { id: 'josh' };
+      },
+      discoverStore: {
+        preferences: async (id) => {
+          profileUser = id;
+          return { categories: ['activities'] };
+        },
+        saved: async () => [],
+        save: async () => {},
+        remove: async () => {},
+      },
+      discoverPool: {
+        buildPool: async (request) =>
+          Array.from({ length: 25 }, (_, i) => ({
+            placeId: `${request.category}-${i}`,
+            name: 'Place',
+            category: request.category,
+            lat: 40,
+            lng: -73,
+            provider: 'mock' as const,
+          })),
+      },
+    });
+    equal((await app.request('/discover?lat=40&lng=-73')).status, 401);
+    const headers = { authorization: 'Bearer test' };
+    equal((await app.request('/discover?lat=no&lng=-73', { headers })).status, 400);
+    const response = await app.request('/discover?lat=40&lng=-73', { headers });
+    equal(response.status, 200);
+    equal(response.headers.get('cache-control'), 'private, no-store');
+    const body = await response.json();
+    equal(profileUser, 'josh');
+    equal(body.places.length, 20);
+    equal(body.places[0].category, 'activities');
+    equal(body.fallback, true);
+    equal('nextPage' in body, false);
+  },
+);
+
+Deno.test(
+  'Saved routes derive identity from auth, DELETE works with CORS, and do not persist content',
+  async () => {
+    const writes: unknown[] = [];
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => ({ id: 'josh' }),
+      discoverStore: {
+        preferences: async () => ({}),
+        saved: async (id) => {
+          equal(id, 'josh');
+          return [{ placeId: 'a', createdAt: 'today' }];
+        },
+        save: async (...args) => {
+          writes.push(args);
+        },
+        remove: async (...args) => {
+          writes.push(args);
+        },
+      },
+    });
+    equal(
+      (
+        await app.request('/saved/a', {
+          method: 'POST',
+          body: JSON.stringify({ userId: 'other', snapshot: { name: 'ignored' } }),
+        })
+      ).status,
+      200,
+    );
+    equal((await app.request('/saved/a', { method: 'DELETE' })).status, 200);
+    equal(writes, [
+      ['josh', 'a'],
+      ['josh', 'a'],
+    ]);
+    equal((await (await app.request('/saved')).json()).places.length, 1);
+    equal((await app.request('/saved/' + 'a'.repeat(257), { method: 'POST' })).status, 400);
+    const corsResponse = await app.request('/saved/a', {
+      method: 'OPTIONS',
+      headers: { Origin: 'https://example.test', 'Access-Control-Request-Method': 'DELETE' },
+    });
+    equal(corsResponse.headers.get('access-control-allow-methods')?.includes('DELETE'), true);
+  },
+);
+
+Deno.test('Rate limits return 429 before create/start/refresh writes or pool calls', async () => {
+  const pick = {
+    id: 'pick',
+    hostId: 'josh',
+    state: 'draft' as const,
+    category: 'food' as const,
+    center: { lat: 40, lng: -73 },
+    radiusM: 1000,
+    poolSize: 20,
+    deadlineAt: null,
+    closeThreshold: 100,
+    participantIds: ['josh', 'friend'],
+    candidates: [],
+    hasAnswers: false,
+    myAnswers: {},
+    winnerPlaceId: null,
+    decidedAt: null,
+    decidedBy: null,
+    version: '1',
+  };
+  const scopes: string[] = [];
+  const app = createApp({
+    store,
+    lifecycleStore: { ...lifecycleStore, load: async () => pick },
+    poolBuilder,
+    closingStore,
+    getUser: async () => ({ id: 'josh' }),
+    checkLimit: async (scope, user, id) => {
+      equal(user, 'josh');
+      if (scope !== 'create') equal(id, 'pick');
+      scopes.push(scope);
+      throw new ApiError(429, 'RATE_LIMITED', 'Request limit reached');
+    },
+  });
+  equal(
+    (
+      await app.request('/picks', {
+        method: 'POST',
+        body: JSON.stringify({ category: 'food', center: pick.center, radiusM: 1000 }),
+      })
+    ).status,
+    429,
+  );
+  equal((await app.request('/picks/pick/start', { method: 'POST' })).status, 429);
+  equal((await app.request('/picks/pick/refresh', { method: 'POST' })).status, 429);
+  equal(scopes, ['create', 'start', 'refresh']);
+  pick.hostId = 'other';
+  equal((await app.request('/picks/pick/start', { method: 'POST' })).status, 403);
+  equal(scopes.length, 3);
+});

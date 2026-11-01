@@ -1,3 +1,4 @@
+import type { PlaceFilters } from '@shared/domain/placeFilters.ts';
 import type { PickState } from '@shared/domain/pickState.ts';
 
 export type { PickState };
@@ -74,7 +75,7 @@ export type RankDecision =
 export type DecidedBy = 'clear_winner' | 'vote' | 'tie_break';
 
 /** GET /picks/:id (Alan's lifecycle route): the Pick, MY candidate order and MY answers. */
-export interface PickDetail {
+export interface PickDetail extends PlaceFilters {
   id: string;
   state: PickState;
   category: 'food' | 'activities';

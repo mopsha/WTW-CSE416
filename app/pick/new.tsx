@@ -16,6 +16,7 @@ import {
   type ChipOption,
 } from '@/components';
 import { LocationSearch } from '@/components/LocationSearch';
+import { PlaceFilterControls } from '@/components/PlaceFilterControls';
 import { MapPicker } from '@/components/MapPicker';
 import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
@@ -65,6 +66,8 @@ export default function CreatePickScreen() {
   const [center, setCenter] = useState<LatLng>(DEFAULT_CENTER);
   const [placeLabel, setPlaceLabel] = useState('SBU Academic Mall');
   const [miles, setMiles] = useState(2);
+  const [priceMax, setPriceMax] = useState(-1);
+  const [openNow, setOpenNow] = useState(false);
   const [poolSize, setPoolSize] = useState(DEFAULT_POOL_SIZE);
   const [deadlineMin, setDeadlineMin] = useState(60);
   const [closeThreshold, setCloseThreshold] = useState(100);
@@ -83,6 +86,8 @@ export default function CreatePickScreen() {
       category,
       center,
       radiusM: milesToMeters(miles),
+      priceMax: priceMax < 0 ? null : priceMax,
+      openNow,
       poolSize,
       // Computed at tap time so "1 hr" means an hour from now, not from when the screen opened.
       deadlineAt: deadlineMin ? new Date(Date.now() + deadlineMin * 60_000).toISOString() : null,
@@ -156,6 +161,18 @@ export default function CreatePickScreen() {
         />
       </Section>
 
+      <Section
+        title="Place filters"
+        hint="Unknown prices or hours are excluded when that filter is set."
+        error={problems.priceMax}
+      >
+        <PlaceFilterControls
+          priceMax={priceMax}
+          openNow={openNow}
+          onPrice={setPriceMax}
+          onOpen={setOpenNow}
+        />
+      </Section>
       <Section
         title="How many places"
         hint="Fewer is faster to swipe; more gives more options."
