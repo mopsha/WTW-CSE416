@@ -26,7 +26,14 @@ function store(over: Partial<FriendsStore> = {}): FriendsStore {
   const unexpected = () => {
     throw new Error('Unexpected store call');
   };
-  return { list: unexpected, request: unexpected, accept: unexpected, remove: unexpected, ...over };
+  return {
+    list: unexpected,
+    request: unexpected,
+    accept: unexpected,
+    remove: unexpected,
+    takeFriendRequestLimit: unexpected,
+    ...over,
+  };
 }
 
 describe('parseFriendRequest', () => {

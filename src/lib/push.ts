@@ -8,6 +8,22 @@ import { Platform } from 'react-native';
 import { api } from './api';
 import { notificationsAllowed } from './notify';
 
+/** Before signing out: this phone stops getting this account's pushes. Never throws. */
+export async function unregisterFromPush(): Promise<void> {
+  if (Platform.OS !== 'ios' && Platform.OS !== 'android') return;
+  if (!(await notificationsAllowed())) return;
+  const projectId =
+    (Constants.expoConfig?.extra?.eas as { projectId?: string } | undefined)?.projectId ??
+    Constants.easConfig?.projectId;
+  if (!projectId) return;
+  try {
+    const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
+    await api.removePushToken(token);
+  } catch {
+    // Offline or Expo Go: the server drops dead tokens when a push bounces.
+  }
+}
+
 /**
  * Registers the push token if notifications are already allowed. Never prompts and never
  * throws: a missing project id, Expo Go, no network, or an API without the route yet all

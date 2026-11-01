@@ -14,7 +14,7 @@ import {
 
 export interface ClosingSnapshot {
   id: string;
-  hostId: string;
+  hostId: string | null;
   state: PickState;
   center: LatLng;
   closeThreshold: number;

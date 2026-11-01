@@ -11,6 +11,7 @@
 // atomically; this layer validates input and composes POST /picks.
 
 import { ApiError } from './errors.ts';
+import { requireCleanText } from './text.ts';
 import { createPick, parseCreatePick, type LifecycleStore } from './lifecycle.ts';
 
 export const MAX_GROUP_NAME = 50;
@@ -65,6 +66,7 @@ export function parseGroupName(body: unknown): string {
   if (length < 1 || length > MAX_GROUP_NAME || hasControl(trimmed)) {
     throw new ApiError(400, 'INVALID_INPUT', `Group names are 1 to ${MAX_GROUP_NAME} characters`);
   }
+  requireCleanText(trimmed, 'group name');
   return trimmed;
 }
 
@@ -138,9 +140,13 @@ export async function inviteToPick(
   userId: string,
   pickId: string,
   body: unknown,
+  notifier?: LifecycleStore['notifier'],
 ) {
   const id = parseId(pickId, 'Pick id');
-  return { added: await store.invite(id, userId, parseUserIds(body)) };
+  const userIds = parseUserIds(body);
+  const added = await store.invite(id, userId, userIds);
+  await notifier?.(userIds, 'added_to_pick', id);
+  return { added };
 }
 
 /**
@@ -165,6 +171,12 @@ export async function createPickMaybeForGroup(
   const created = await createPick(lifecycle, userId, body);
   try {
     const added = await groups.addGroupToPick(created.pickId, userId, groupId);
+    const pick = await lifecycle.load(created.pickId, userId);
+    await lifecycle.notifier?.(
+      (pick?.participantIds ?? []).filter((id) => id !== userId),
+      'added_to_pick',
+      created.pickId,
+    );
     return { ...created, groupId, added };
   } catch (error) {
     await lifecycle.cancel(created.pickId, userId, null).catch(() => undefined);

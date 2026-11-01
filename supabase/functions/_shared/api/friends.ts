@@ -46,6 +46,8 @@ export interface FriendsStore {
   request(userId: string, email: string): Promise<FriendRequestResult>;
   accept(userId: string, friendId: string): Promise<void>;
   remove(userId: string, friendId: string): Promise<void>;
+  /** One unit of the 20-a-day request limit (0014); false when it's used up. */
+  takeFriendRequestLimit(userId: string): Promise<boolean>;
 }
 
 // Deliberately loose: the database does an exact (case-insensitive) match, so this only

@@ -7,6 +7,7 @@
 
 import { readPreferences, validatePreferences, type Preferences } from '../domain/preferences.ts';
 import { ApiError } from './errors.ts';
+import { requireCleanText } from './text.ts';
 
 /** profiles.display_name check in 0001_init.sql: char_length between 1 and 50. */
 export const DISPLAY_NAME_MAX = 50;
@@ -56,6 +57,7 @@ export function parseProfileUpdate(body: unknown): string {
   }
   const result = validateDisplayName((body as Record<string, unknown>).displayName);
   if ('error' in result) throw new ApiError(400, 'INVALID_INPUT', result.error);
+  requireCleanText(result.name, 'name');
   return result.name;
 }
 

@@ -84,7 +84,8 @@ export function handleMockFriends(
       return fail(400, 'CANNOT_FRIEND_SELF', 'You cannot add yourself');
     }
     if (email.startsWith(MOCK_UNKNOWN_EMAIL_PREFIX)) {
-      return fail(404, 'USER_NOT_FOUND', 'No WTW account uses that email');
+      // Like the API: the same answer whether or not the email has an account.
+      return ok({ status: 'sent' });
     }
     const displayName = nameFromEmail(email);
     const userId = `mock-${email}`;
@@ -94,7 +95,7 @@ export function handleMockFriends(
         existing.status = 'accepted';
         existing.acceptedAt = new Date().toISOString();
       }
-      return ok({ userId, displayName: existing.displayName, status: existing.status });
+      return ok({ status: 'sent' });
     }
     rows.push({
       userId,
@@ -104,7 +105,7 @@ export function handleMockFriends(
       createdAt: new Date().toISOString(),
       acceptedAt: null,
     });
-    return ok({ userId, displayName, status: 'pending' });
+    return ok({ status: 'sent' });
   }
 
   const match = /^\/friends\/([^/]+)\/(accept|remove)$/.exec(path);

@@ -4,6 +4,7 @@
 
 import { priorityCandidates } from '../domain/candidatePriority.ts';
 import { ApiError } from './errors.ts';
+import { requireCleanText } from './text.ts';
 import type { Notifier } from './notify.ts';
 import { canTransition, type PickState } from '../domain/pickState.ts';
 import { shuffleForUser } from '../domain/shuffle.ts';
@@ -50,7 +51,8 @@ export interface CandidateSnapshot {
 
 export interface LifecyclePick extends PlaceFilters {
   id: string;
-  hostId: string;
+  /** Null once the host deleted their account (0017); such a Pick is completed or canceled. */
+  hostId: string | null;
   includeSaved?: boolean;
   customOptions?: StoredCustomOption[];
   mixCategory?: 'food' | 'activities';
@@ -125,6 +127,10 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
   }
   const planError = planProblem(b);
   if (planError) throw new ApiError(400, 'INVALID_INPUT', planError);
+  for (const option of (b.customOptions ?? []) as { name: string; note?: string }[]) {
+    requireCleanText(option.name, 'option');
+    if (option.note) requireCleanText(option.note, 'note');
+  }
   const poolSize =
     b.poolSize ??
     (b.category === 'custom' && !b.mixCategory && !b.includeSaved
@@ -230,7 +236,7 @@ async function buildCandidates(
   store: LifecycleStore,
 ): Promise<CandidateSnapshot[]> {
   const priority: Candidate[] = [...(pick.customOptions ?? [])];
-  if (pick.includeSaved) {
+  if (pick.includeSaved && pick.hostId) {
     if (!store.savedCandidates)
       throw new ApiError(503, 'SAVED_PLACES_UNAVAILABLE', 'Saved place resolution is unavailable');
     const saved = await store.savedCandidates(pick.hostId);
@@ -398,6 +404,7 @@ export async function getPick(
     deadlineAt: pick.deadlineAt,
     closeThreshold: pick.closeThreshold,
     isHost: pick.hostId === userId,
+    hostDeleted: pick.hostId === null,
     participantCount: pick.participantIds.length,
     candidates: order.map((placeId) => byId.get(placeId)),
     ...(refreshHours ? { candidateHours } : {}),

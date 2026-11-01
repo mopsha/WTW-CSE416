@@ -12,7 +12,6 @@ import { validatePreferences } from '@shared/domain/preferences.ts';
 import { MOCK_FAIL_RATE } from '../config';
 import type { PreferenceValue } from '../types';
 import { MOCK_ACCESS_TOKEN, MOCK_USER_ID, mockAuth } from './auth';
-import { MOCK_PLACES } from './fixtures';
 import { handleMockFriends } from './friends';
 import { mockPickPool } from './placePool';
 import { mockHang } from './hang';

@@ -24,7 +24,6 @@ import {
   acceptFriend,
   listFriends,
   removeFriend,
-  requestFriend,
   type FriendsStore,
 } from '../_shared/api/friends.ts';
 import {
@@ -69,6 +68,8 @@ import {
   revokeInvite,
   type InviteStore,
 } from '../_shared/api/invites.ts';
+import { deleteAccount, type AccountStore } from '../_shared/api/account.ts';
+import { requestFriendSafely } from '../_shared/api/friendRequests.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
   const raw = await c.req.text();
@@ -94,6 +95,7 @@ export function createApp(
     groupsStore?: GroupsStore;
     safetyStore?: SafetyStore;
     inviteStore?: InviteStore;
+    accountStore?: AccountStore;
     sweepStore?: SweepStore;
     notifyStore?: NotifyStore;
     plansStore?: PlansStore;
@@ -328,7 +330,17 @@ export function createApp(
   });
   app.post('/friends/requests', async (c) => {
     const { user, store } = await friends(c);
-    return c.json(await requestFriend(store, user.id, await readJsonBody(c)));
+    // Same answer whether or not the email has an account (or blocked the caller).
+    return c.json(
+      await requestFriendSafely(
+        {
+          takeFriendRequestLimit: (id) => store.takeFriendRequestLimit(id),
+          request: (id, email) => store.request(id, email.toLowerCase()),
+        },
+        user.id,
+        await readJsonBody(c),
+      ),
+    );
   });
   app.post('/friends/:id/accept', async (c) => {
     const { user, store } = await friends(c);
@@ -438,7 +450,15 @@ export function createApp(
   };
   app.post('/picks/:id/invite', async (c) => {
     const { user, store } = await groups(c);
-    return c.json(await inviteToPick(store, user.id, c.req.param('id'), await readJsonBody(c)));
+    return c.json(
+      await inviteToPick(
+        store,
+        user.id,
+        c.req.param('id'),
+        await readJsonBody(c),
+        deps.lifecycleStore.notifier,
+      ),
+    );
   });
   app.post('/groups', async (c) => {
     const { user, store } = await groups(c);
@@ -509,6 +529,14 @@ export function createApp(
   app.delete('/invites/:token', async (c) => {
     const { user, store } = await invites(c);
     return c.json(await revokeInvite(store, c.req.param('token'), user.id));
+  });
+  // Deletes the caller's account and all of their data (0017). The app signs out after.
+  app.delete('/me', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.accountStore) {
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Account deletion is not available');
+    }
+    return c.json(await deleteAccount(deps.accountStore, user.id));
   });
   return app;
 }

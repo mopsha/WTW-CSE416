@@ -117,7 +117,7 @@ const supabaseQueries: Queries = {
     if (!data) return null;
     const row = data as {
       state: PickState;
-      host_id: string;
+      host_id: string | null;
       winner_place_id: string | null;
       decided_by: PickOutcome['decidedBy'];
     };

@@ -60,10 +60,8 @@ function AddFriendCard({ onAdded }: { onAdded: () => void }) {
     setDone(null);
     let message = '';
     const ok = await run('add', async () => {
-      const res = await api.addFriend(email.trim());
-      const name = res.displayName ?? 'them';
-      message =
-        res.status === 'accepted' ? `You and ${name} are friends 🎉` : `Request sent to ${name}`;
+      await api.addFriend(email.trim());
+      message = 'If they’re on WTW, they’ll see your request.';
     });
     if (!ok) return;
     haptic.success();

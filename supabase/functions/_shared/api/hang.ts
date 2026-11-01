@@ -1,4 +1,10 @@
 import { ApiError } from './errors.ts';
+import { requireCleanText } from './text.ts';
+
+function clean(activity: string): string {
+  requireCleanText(activity, 'activity');
+  return activity;
+}
 
 export type HangStatus = 'down' | 'maybe' | 'cant';
 export interface HangInput {
@@ -57,7 +63,7 @@ export function parseHang(body: unknown, now = new Date()): HangInput {
   return {
     startsAt: new Date(starts).toISOString(),
     expiresAt: new Date(expires).toISOString(),
-    activity: b.activity.trim(),
+    activity: clean(b.activity.trim()),
     audience: b.audience as HangInput['audience'],
     groupId: b.audience === 'group' ? (b.groupId as string) : null,
   };

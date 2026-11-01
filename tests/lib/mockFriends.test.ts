@@ -33,10 +33,7 @@ test('accept moves a request into friends; decline removes it', async () => {
 });
 
 test('sending a request shows it as outgoing until canceled', async () => {
-  await expect(api.addFriend('Dana.Lee@example.com')).resolves.toMatchObject({
-    displayName: 'Dana',
-    status: 'pending',
-  });
+  await expect(api.addFriend('Dana.Lee@example.com')).resolves.toEqual({ status: 'sent' });
   const { outgoing } = await api.listFriends();
   expect(names(outgoing)).toEqual(['Dana']);
   await api.removeFriend(outgoing[0]!.userId);
@@ -44,10 +41,8 @@ test('sending a request shows it as outgoing until canceled', async () => {
 });
 
 test('errors match the API', async () => {
-  await expect(api.addFriend('nobody@example.com')).rejects.toMatchObject({
-    code: 'USER_NOT_FOUND',
-    status: 404,
-  });
+  // Same answer for an email with no account, so the route can't find out who uses WTW.
+  await expect(api.addFriend('nobody@example.com')).resolves.toEqual({ status: 'sent' });
   await expect(api.addFriend('not an email')).rejects.toBeInstanceOf(ApiError);
   await expect(api.acceptFriend('mock-ava-nope')).rejects.toMatchObject({
     code: 'REQUEST_NOT_FOUND',

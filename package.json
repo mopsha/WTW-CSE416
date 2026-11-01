@@ -7,7 +7,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "jest",
-    "test:api": "node --test --test-concurrency=1 tests/api/heartbeat.test.mjs tests/api/loop.test.mjs tests/api/groups.test.mjs tests/api/safety.test.mjs",
+    "test:api": "node --test --test-concurrency=1 tests/api/heartbeat.test.mjs tests/api/loop.test.mjs tests/api/groups.test.mjs tests/api/safety.test.mjs tests/api/account.test.mjs",
     "format": "prettier --write ."
   },
   "dependencies": {

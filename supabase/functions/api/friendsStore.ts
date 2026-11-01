@@ -1,5 +1,6 @@
 import { ApiError } from '../_shared/api/errors.ts';
 import type { FriendRequestResult, FriendRow, FriendsStore } from '../_shared/api/friends.ts';
+import { takeFriendRequestLimit } from './friendRequestLimit.ts';
 import { createServiceClient } from './serviceClient.ts';
 
 function fail(error: { code?: string }): never {
@@ -20,6 +21,7 @@ function fail(error: { code?: string }): never {
 /** Service-role adapter for the friend_* RPCs in 0008_friendships.sql. */
 export function createFriendsStore(): FriendsStore {
   return {
+    takeFriendRequestLimit,
     async list(userId) {
       const { data, error } = await createServiceClient().rpc('friend_list', {
         p_user_id: userId,

@@ -6,7 +6,7 @@ import { MOCK_API_BASE_URL, mockFetch } from './mock/api';
 import type { NotificationRow } from '@shared/api/notify.ts';
 import type { HistoryItem, PlanSummary, RsvpStatus } from '@shared/api/plans.ts';
 import type { CreatePickInput } from '@shared/domain/createPick.ts';
-import type { FriendRequestResult, FriendsList } from '@shared/api/friends.ts';
+import type { FriendsList } from '@shared/api/friends.ts';
 import type { MeResponse } from '@shared/api/profile.ts';
 import type { Preferences } from '@shared/domain/preferences.ts';
 import type { GroupSummary as CreatedGroup } from '@shared/api/groups.ts';
@@ -234,6 +234,9 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     /** Alan's POST /push-tokens: this device's Expo push token, so Pick events reach it. */
     registerPushToken: (token: string, platform: 'ios' | 'android') =>
       request<StatusResponse>('POST', '/push-tokens', { body: { token, platform } }),
+    /** Stop this device getting my pushes (call before signing out). Only ever my own token. */
+    removePushToken: (token: string) =>
+      request<StatusResponse>('POST', '/push-tokens/remove', { body: { token } }),
     /** Razin's DELETE /me: deletes my account and its data. Sign out afterwards. */
     deleteMe: () => request<StatusResponse>('DELETE', '/me'),
 
@@ -324,11 +327,12 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     /** My friends, requests to me, and requests I sent (names only, never emails). */
     listFriends: () => request<FriendsList>('GET', '/friends'),
     /**
-     * Ask someone by the exact email they sign in with. 404 USER_NOT_FOUND if nobody does,
-     * 400 CANNOT_FRIEND_SELF for your own. If they already asked you, status is 'accepted'.
+     * Ask someone by the exact email they sign in with. Always { status: 'sent' }, so this can't
+     * reveal who has an account; if they already asked you, you're now friends. 400
+     * CANNOT_FRIEND_SELF for your own email, 429 RATE_LIMITED after 20 a day.
      */
     addFriend: (email: string) =>
-      request<FriendRequestResult>('POST', '/friends/requests', { body: { email } }),
+      request<{ status: 'sent' }>('POST', '/friends/requests', { body: { email } }),
     /** Accept their request. 404 REQUEST_NOT_FOUND if it was withdrawn. */
     acceptFriend: (userId: string) =>
       request<{ status: 'accepted' }>('POST', `/friends/${encodeURIComponent(userId)}/accept`),

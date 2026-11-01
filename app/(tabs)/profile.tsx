@@ -24,7 +24,7 @@ import { auth } from '@/lib/auth';
 import { confirmAction } from '@/lib/confirm';
 import { ensureNotificationPermission, notificationsAllowed } from '@/lib/notify';
 import { preferencesSummary } from '@/lib/preferences';
-import { registerForPush } from '@/lib/push';
+import { registerForPush, unregisterFromPush } from '@/lib/push';
 
 // My name (what friends see in Picks), my email, preferences, notifications, sign-out, and
 // account deletion (App Store 5.1.1(v): reachable from here in two taps).
@@ -209,7 +209,7 @@ export default function ProfileScreen() {
         variant="danger"
         icon="log-out-outline"
         disabled={!!busy}
-        onPress={() => void auth.signOut()}
+        onPress={() => void unregisterFromPush().finally(() => auth.signOut())}
       />
       <Button
         label="Delete account"

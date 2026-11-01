@@ -640,6 +640,7 @@ const untouched: FriendsStore = {
   remove: async () => {
     throw new Error('Unexpected remove');
   },
+  takeFriendRequestLimit: async () => true,
 };
 
 Deno.test('friends: 401 without a token, before touching the database', async () => {
@@ -725,7 +726,7 @@ Deno.test(
       body: JSON.stringify({ email: '  Bo@Example.com ' }),
     });
     equal(sent.status, 200);
-    equal(await sent.json(), { userId: BO, displayName: 'Bo', status: 'pending' });
+    equal(await sent.json(), { status: 'sent' });
     const accepted = await app.request(`/friends/${BO.toUpperCase()}/accept`, {
       method: 'POST',
       headers: auth,
@@ -748,9 +749,10 @@ Deno.test('friends: store errors keep their status; 503 if not configured', asyn
     },
   });
   const body = JSON.stringify({ email: 'nobody@example.com' });
+  // An unknown email gets the same answer as a real one: no account leak.
   const res = await app.request('/friends/requests', { method: 'POST', headers: auth, body });
-  equal(res.status, 404);
-  equal((await res.json()).error.code, 'USER_NOT_FOUND');
+  equal(res.status, 200);
+  equal(await res.json(), { status: 'sent' });
   equal(
     (await app.request(`/friends/${BO}/accept`, { method: 'POST', headers: auth })).status,
     404,
@@ -1862,3 +1864,95 @@ Deno.test(
     equal((await response.json()).error.code, 'HANG_PICK_HELPER_UNAVAILABLE');
   },
 );
+
+function accountApp(deleted: string[], deleteUser?: () => Promise<void>) {
+  return createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async (req) => {
+      if (!req.headers.get('Authorization')) throw new ApiError(401, 'UNAUTHENTICATED', 'No token');
+      return { id: 'me' };
+    },
+    accountStore: {
+      deleteUser:
+        deleteUser ??
+        (async (userId) => {
+          deleted.push(userId);
+        }),
+    },
+  });
+}
+
+Deno.test('DELETE /me: 401 without a token, before deleting anything', async () => {
+  const deleted: string[] = [];
+  const response = await accountApp(deleted).request('/me', { method: 'DELETE' });
+  equal(response.status, 401);
+  equal(deleted, []);
+});
+
+Deno.test('DELETE /me: deletes the verified caller only, whatever the request names', async () => {
+  const deleted: string[] = [];
+  const response = await accountApp(deleted).request('/me?userId=someone-else', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer token', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId: 'someone-else' }),
+  });
+  equal(response.status, 200);
+  equal(await response.json(), { status: 'ok' });
+  equal(deleted, ['me']);
+});
+
+Deno.test('DELETE /me: a failed deletion is a generic 500, unconfigured is 503', async () => {
+  const failing = accountApp([], async () => {
+    throw new Error('secret Auth details');
+  });
+  const response = await failing.request('/me', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer token' },
+  });
+  equal(response.status, 500);
+  equal((await response.text()).includes('secret'), false);
+  const unconfigured = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async () => ({ id: 'me' }),
+  });
+  equal((await unconfigured.request('/me', { method: 'DELETE' })).status, 503);
+});
+
+Deno.test('DELETE /me: CORS preflight allows DELETE from the web app', async () => {
+  const response = await accountApp([]).request('/me', {
+    method: 'OPTIONS',
+    headers: { Origin: 'http://localhost:8081', 'Access-Control-Request-Method': 'DELETE' },
+  });
+  equal(response.headers.get('access-control-allow-methods')?.includes('DELETE'), true);
+});
+
+Deno.test('friends: requests stop at the daily limit, before touching the database', async () => {
+  const app = friendsApp({ ...untouched, takeFriendRequestLimit: async () => false });
+  const body = JSON.stringify({ email: 'bo@example.com' });
+  const res = await app.request('/friends/requests', { method: 'POST', headers: auth, body });
+  equal(res.status, 429);
+});
+
+Deno.test('text other people see is filtered: POST /me', async () => {
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    profileStore: {
+      ...unusedProfileReads,
+      setDisplayName: () => Promise.reject(new Error('Unexpected write')),
+    },
+    getUser: async () => ({ id: 'me' }),
+  });
+  const body = JSON.stringify({ displayName: 'fuck' });
+  const res = await app.request('/me', { method: 'POST', body });
+  equal(res.status, 400);
+  equal((await res.json()).error.code, 'TEXT_NOT_ALLOWED');
+});
