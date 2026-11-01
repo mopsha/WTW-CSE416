@@ -602,3 +602,70 @@ Deno.test(
     equal(refreshes, 1);
   },
 );
+
+function accountApp(deleted: string[], deleteUser?: () => Promise<void>) {
+  return createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async (req) => {
+      if (!req.headers.get('Authorization')) throw new ApiError(401, 'UNAUTHENTICATED', 'No token');
+      return { id: 'me' };
+    },
+    accountStore: {
+      deleteUser:
+        deleteUser ??
+        (async (userId) => {
+          deleted.push(userId);
+        }),
+    },
+  });
+}
+
+Deno.test('DELETE /me: 401 without a token, before deleting anything', async () => {
+  const deleted: string[] = [];
+  const response = await accountApp(deleted).request('/me', { method: 'DELETE' });
+  equal(response.status, 401);
+  equal(deleted, []);
+});
+
+Deno.test('DELETE /me: deletes the verified caller only, whatever the request names', async () => {
+  const deleted: string[] = [];
+  const response = await accountApp(deleted).request('/me?userId=someone-else', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer token', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId: 'someone-else' }),
+  });
+  equal(response.status, 200);
+  equal(await response.json(), { status: 'ok' });
+  equal(deleted, ['me']);
+});
+
+Deno.test('DELETE /me: a failed deletion is a generic 500, unconfigured is 503', async () => {
+  const failing = accountApp([], async () => {
+    throw new Error('secret Auth details');
+  });
+  const response = await failing.request('/me', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer token' },
+  });
+  equal(response.status, 500);
+  equal((await response.text()).includes('secret'), false);
+  const unconfigured = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async () => ({ id: 'me' }),
+  });
+  equal((await unconfigured.request('/me', { method: 'DELETE' })).status, 503);
+});
+
+Deno.test('DELETE /me: CORS preflight allows DELETE from the web app', async () => {
+  const response = await accountApp([]).request('/me', {
+    method: 'OPTIONS',
+    headers: { Origin: 'http://localhost:8081', 'Access-Control-Request-Method': 'DELETE' },
+  });
+  equal(response.headers.get('access-control-allow-methods')?.includes('DELETE'), true);
+});

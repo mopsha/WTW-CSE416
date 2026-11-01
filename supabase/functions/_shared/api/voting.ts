@@ -7,7 +7,7 @@ import { voteWinner, type VoteFinalist } from '../domain/ranking.ts';
 
 export interface VoteSnapshot {
   id: string;
-  hostId: string;
+  hostId: string | null;
   state: PickState;
   participantIds: string[];
   finalists: VoteFinalist[];

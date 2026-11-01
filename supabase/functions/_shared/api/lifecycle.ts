@@ -43,7 +43,8 @@ export interface CandidateSnapshot {
 
 export interface LifecyclePick {
   id: string;
-  hostId: string;
+  /** Null once the host deleted their account (0017); such a Pick is completed or canceled. */
+  hostId: string | null;
   state: PickState;
   category: Category;
   center: LatLng;
@@ -287,6 +288,7 @@ export async function getPick(
     deadlineAt: pick.deadlineAt,
     closeThreshold: pick.closeThreshold,
     isHost: pick.hostId === userId,
+    hostDeleted: pick.hostId === null,
     participantCount: pick.participantIds.length,
     candidates: order.map((placeId) => byId.get(placeId)),
     ...(refreshHours ? { candidateHours } : {}),

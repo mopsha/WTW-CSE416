@@ -8,7 +8,7 @@ import { answerFromDb, clearWinner, rankCandidates, type RankCandidate } from '.
 
 export interface ClosingSnapshot {
   id: string;
-  hostId: string;
+  hostId: string | null;
   state: PickState;
   center: LatLng;
   closeThreshold: number;
