@@ -2,10 +2,11 @@
 // The app validates before sending and the API must validate again with the same
 // function, so both sides agree on the limits. Limits mirror the picks table checks.
 
+import { planProblem, type PlanOptions } from './customPlans.ts';
 import { validFilters, type PlaceFilters } from './placeFilters.ts';
 import type { LatLng } from './geo.ts';
 
-export const PICK_CATEGORIES = ['food', 'activities'] as const;
+export const PICK_CATEGORIES = ['food', 'activities', 'custom'] as const;
 export type PickCategory = (typeof PICK_CATEGORIES)[number];
 
 /** picks.radius_m: > 0 and <= 50 km. The app's slider stays well inside this. */
@@ -25,7 +26,7 @@ export const MAX_CLOSE_THRESHOLD = 100;
 export const MIN_DEADLINE_LEAD_MS = 5 * 60_000;
 export const MAX_DEADLINE_LEAD_MS = 7 * 24 * 60 * 60_000;
 
-export interface CreatePickInput extends PlaceFilters {
+export interface CreatePickInput extends PlaceFilters, PlanOptions {
   category: PickCategory;
   center: LatLng;
   radiusM: number;
@@ -59,7 +60,7 @@ export function validateCreatePick(input: unknown, now: number = Date.now()): Cr
   >;
 
   if (!PICK_CATEGORIES.includes(body.category as PickCategory)) {
-    add('category', 'Choose food or activities.');
+    add('category', 'Choose food, activities or a custom plan.');
   }
 
   const center = body.center as Partial<LatLng> | undefined;
@@ -78,8 +79,15 @@ export function validateCreatePick(input: unknown, now: number = Date.now()): Cr
     add('radiusM', `Radius must be between ${MIN_RADIUS_M} m and ${MAX_RADIUS_M / 1000} km.`);
   }
 
-  if (!isInt(body.poolSize) || body.poolSize < MIN_POOL_SIZE || body.poolSize > MAX_POOL_SIZE) {
-    add('poolSize', `Pool size must be between ${MIN_POOL_SIZE} and ${MAX_POOL_SIZE} places.`);
+  if (
+    !isInt(body.poolSize) ||
+    body.poolSize < (body.category === 'custom' ? 2 : MIN_POOL_SIZE) ||
+    body.poolSize > MAX_POOL_SIZE
+  ) {
+    add(
+      'poolSize',
+      `Pool size must be between ${body.category === 'custom' ? 2 : MIN_POOL_SIZE} and ${MAX_POOL_SIZE} places.`,
+    );
   }
 
   if (body.deadlineAt !== null) {
@@ -99,6 +107,14 @@ export function validateCreatePick(input: unknown, now: number = Date.now()): Cr
 
   if (!validFilters(body as PlaceFilters))
     add('priceMax', 'Choose a price from 0 to 4 and a valid open-now filter.');
+  const planError = planProblem(body);
+  if (planError) add('customOptions', planError);
+  if (
+    Array.isArray(body.customOptions) &&
+    isInt(body.poolSize) &&
+    body.poolSize < body.customOptions.length
+  )
+    add('poolSize', 'Pool must fit all typed options.');
   return problems;
 }
 

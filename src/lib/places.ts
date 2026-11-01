@@ -12,14 +12,22 @@ export function candidateFromSnapshot(placeId: string, snapshot: unknown): Candi
   const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
   return {
     placeId,
+    ...(s.provider === 'custom' ? { note: str(s.note) } : {}),
+    ...(s.provider === 'custom'
+      ? {
+          provider: 'custom' as const,
+          createdBy: str(s.createdBy) ?? undefined,
+          locationProvided: s.locationProvided === true,
+        }
+      : {}),
     name: str(s.name) ?? 'Unnamed place',
     photoUrl: str(s.photoUrl),
     priceLevel: num(s.priceLevel),
     rating: num(s.rating),
     cuisine: str(s.cuisine),
     address: str(s.address),
-    lat: num(s.lat),
-    lng: num(s.lng),
+    lat: s.provider === 'custom' && s.locationProvided === false ? null : num(s.lat),
+    lng: s.provider === 'custom' && s.locationProvided === false ? null : num(s.lng),
     openNow: typeof s.openNow === 'boolean' ? s.openNow : null,
     closesAt: str(s.closesAt),
   };

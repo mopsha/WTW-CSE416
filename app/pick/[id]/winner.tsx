@@ -43,6 +43,7 @@ const HOW: Record<DecidedBy, { eyebrow: string; title: string; body: string }> =
 };
 
 function openDirections(place: Candidate) {
+  if (place.provider === 'custom' && !place.locationProvided) return;
   haptic.tap();
   void Linking.openURL(directionsUrl(place, Platform.OS)).catch(() => {});
 }
@@ -113,11 +114,13 @@ export default function WinnerScreen() {
           </Animated.View>
 
           <Animated.View entering={FadeInDown.delay(450)} style={{ gap: 10 }}>
-            <GradientButton
-              label="Let’s go 🚗  Get directions"
-              accessibilityHint={`Opens ${Platform.OS === 'ios' ? 'Apple Maps' : 'Google Maps'}`}
-              onPress={() => openDirections(winner)}
-            />
+            {winner.provider !== 'custom' || winner.locationProvided ? (
+              <GradientButton
+                label="Let’s go 🚗  Get directions"
+                accessibilityHint={`Opens ${Platform.OS === 'ios' ? 'Apple Maps' : 'Google Maps'}`}
+                onPress={() => openDirections(winner)}
+              />
+            ) : null}
             <View style={styles.saved} accessible accessibilityLabel="Saved to your history">
               <Ionicons name="checkmark-circle" size={18} color={colors.yes} />
               <Text style={styles.savedText}>Saved to your history</Text>

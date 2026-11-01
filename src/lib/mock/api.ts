@@ -14,7 +14,9 @@ import type { PreferenceValue } from '../types';
 import { MOCK_ACCESS_TOKEN, MOCK_USER_ID, mockAuth } from './auth';
 import { MOCK_PLACES } from './fixtures';
 import { handleMockFriends } from './friends';
-import { mockPool } from './placePool';
+import { mockPickPool } from './placePool';
+import { mockHang } from './hang';
+import { savedPlaces } from './saved';
 import { DISCOVER_PLACES } from '../discover';
 import { discover, parseDiscover } from '@shared/api/discover.ts';
 import { errorResponse } from '@shared/api/errors.ts';
@@ -64,7 +66,6 @@ export const mockNotifications: NotificationRow[] = [
     readAt: new Date(Date.now() - 6 * 86_400_000).toISOString(),
   },
 ];
-const savedPlaces = new Map<string, string>();
 const discoverPool = createPoolBuilder(new MockProvider());
 
 const LATENCY_MS = process.env.NODE_ENV === 'test' ? 0 : 300;
@@ -162,6 +163,9 @@ function getPick(pick: MockPick) {
     category: pick.category,
     center: pick.center,
     radiusM: pick.radiusM,
+    includeSaved: pick.includeSaved,
+    customOptions: pick.customOptions,
+    mixCategory: pick.mixCategory,
     priceMax: pick.priceMax,
     openNow: pick.openNow,
     poolSize: pick.poolSize,
@@ -263,7 +267,7 @@ const ROUTES: Record<string, Handler> = {
     if (pick.participants.length < 2) {
       return fail(409, 'NOT_ENOUGH_PARTICIPANTS', 'A Pick needs at least 2 participants to start');
     }
-    const candidates = mockPool(pick).slice(0, pick.poolSize);
+    const candidates = mockPickPool(pick);
     if (!candidates.length) return fail(409, 'NO_CANDIDATES', 'No places match these filters');
     pick.candidates = candidates;
     pick.state = 'swiping';
@@ -287,10 +291,9 @@ const ROUTES: Record<string, Handler> = {
       );
     }
     // A "new" pool: the same places, rotated, so the deck visibly changes.
-    const pool = mockPool(pick);
+    const pool = mockPickPool(pick, true);
     if (!pool.length) return fail(409, 'NO_CANDIDATES', 'No places match these filters');
-    const shift = Math.floor(pool.length / 3);
-    const rotated = [...pool.slice(shift), ...pool.slice(0, shift)];
+    const rotated = pool;
     if (pick.state === 'swiping') pick.candidates = rotated.slice(0, pick.poolSize);
     pick.participants.forEach((p) => p.answers.clear());
     emit(pick.id);
@@ -535,6 +538,8 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     return fail(503, 'UNAVAILABLE', 'WTW is having trouble right now (mock failure).');
   }
 
+  const hangResponse = mockHang(method, path, readBody(init));
+  if (hangResponse) return hangResponse;
   if (method === 'GET' && path.startsWith('/discover?')) {
     try {
       const result = await discover(

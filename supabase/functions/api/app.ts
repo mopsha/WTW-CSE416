@@ -1,3 +1,5 @@
+import { cleanupCache, type CacheCleanupStore } from '../_shared/api/cacheCleanup.ts';
+import { parseHang, respondHang, hangPick, type HangStore } from '../_shared/api/hang.ts';
 import { discover, parseDiscover } from '../_shared/api/discover.ts';
 import type { DiscoverPreferences } from '../_shared/domain/discoverScore.ts';
 import { parseCreatePick } from '../_shared/api/lifecycle.ts';
@@ -95,6 +97,8 @@ export function createApp(
     sweepStore?: SweepStore;
     notifyStore?: NotifyStore;
     plansStore?: PlansStore;
+    cacheCleanupStore?: CacheCleanupStore;
+    hangStore?: HangStore;
     cronSecret?: string;
     discoverPool?: PoolBuilder;
     discoverStore?: {
@@ -133,7 +137,41 @@ export function createApp(
       throw new ApiError(503, 'SERVER_NOT_CONFIGURED', 'Deadline automation is not configured');
     }
     const result = await sweepDeadlines(deps.sweepStore, deps.closingStore);
-    return c.json(result, result.status === 'ok' ? 200 : 503);
+    const cacheCleanup = await cleanupCache(deps.cacheCleanupStore);
+    console.info(JSON.stringify({ service: 'sweep', event: 'cache_cleanup', ...cacheCleanup }));
+    const status =
+      result.status === 'ok' && cacheCleanup.status !== 'partial_failure'
+        ? 'ok'
+        : 'partial_failure';
+    return c.json({ ...result, status, cacheCleanup }, status === 'ok' ? 200 : 503);
+  });
+  app.get('/hang', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.hangStore) throw new ApiError(503, 'HANG_UNAVAILABLE', 'Hang posts unavailable');
+    c.header('Cache-Control', 'private, no-store');
+    return c.json({
+      posts: await deps.hangStore.listOwn(user.id, new Date().toISOString()),
+      sharedAvailable: false,
+      notice: 'Sharing and responses are not available yet.',
+    });
+  });
+  app.post('/hang', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const input = parseHang(await readJsonBody(c));
+    if (!deps.hangStore) throw new ApiError(503, 'HANG_UNAVAILABLE', 'Hang posts unavailable');
+    return c.json(await deps.hangStore.create(user.id, input), 201);
+  });
+  app.post('/hang/:id/respond', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.hangStore) throw new ApiError(503, 'HANG_UNAVAILABLE', 'Hang posts unavailable');
+    return c.json(
+      await respondHang(deps.hangStore, c.req.param('id'), user.id, await readJsonBody(c)),
+    );
+  });
+  app.post('/hang/:id/pick', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.hangStore) throw new ApiError(503, 'HANG_UNAVAILABLE', 'Hang posts unavailable');
+    return c.json(await hangPick(deps.hangStore, c.req.param('id'), user.id));
   });
   app.post('/picks/:id/swipes', async (c) => {
     const user = await deps.getUser(c.req.raw);

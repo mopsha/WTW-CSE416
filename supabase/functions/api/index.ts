@@ -1,3 +1,4 @@
+import { createHangStore } from './hangStore.ts';
 import { createApp } from './app.ts';
 import { getUser } from './auth.ts';
 import { createProgressStore } from './progressStore.ts';
@@ -36,6 +37,7 @@ const notifier = createNotifier(notifyStore, (url, init) => fetch(url, init));
 const app = createApp(
   {
     getUser,
+    hangStore: createHangStore(),
     store: createStore(),
     progressStore: createProgressStore(),
     lifecycleStore: { ...createLifecycleStore(), notifier },

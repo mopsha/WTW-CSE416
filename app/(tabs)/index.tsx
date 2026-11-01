@@ -1,3 +1,4 @@
+import { HangCard } from '@/components/HangCard';
 // Picks (home), in the live-demo style: the newest active Pick as a photo-collage hero card,
 // other active Picks below, and decided/canceled ones under History (the saved results).
 import { Ionicons } from '@expo/vector-icons';
@@ -329,6 +330,7 @@ export default function PicksScreen() {
           <GradientButton label="Start a new Pick 🔥" onPress={() => router.push('/pick/new')} />
         ) : null}
 
+        <HangCard />
         {hero ? <HeroCard pick={hero} /> : null}
         {more.length ? <Text style={styles.section}>More Picks</Text> : null}
         {more.map((p) => (

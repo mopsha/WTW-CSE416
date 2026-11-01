@@ -1730,3 +1730,135 @@ Deno.test(
     equal((await limited.json()).error.code, 'RATE_LIMITED');
   },
 );
+
+Deno.test(
+  'Phase 2 create validates custom options and forwards includeSaved to existing lifecycle',
+  async () => {
+    let input: unknown;
+    const app = createApp({
+      store,
+      lifecycleStore: {
+        ...lifecycleStore,
+        createPick: async (host, body) => {
+          equal(host, 'josh');
+          input = body;
+          return { id: 'custom-pick' };
+        },
+      },
+      poolBuilder,
+      closingStore,
+      getUser: async () => ({ id: 'josh' }),
+    });
+    const body = {
+      category: 'custom',
+      center: { lat: 40, lng: -73 },
+      radiusM: 1000,
+      includeSaved: true,
+      customOptions: [
+        { name: 'Game night' },
+        { name: 'Basketball' },
+        { name: 'Cookout' },
+        { name: 'Study session' },
+      ],
+    };
+    const response = await app.request('/picks', { method: 'POST', body: JSON.stringify(body) });
+    equal(response.status, 201);
+    equal((input as { poolSize: number }).poolSize, 20);
+    equal((input as { includeSaved: boolean }).includeSaved, true);
+    equal(
+      (
+        await app.request('/picks', {
+          method: 'POST',
+          body: JSON.stringify({ ...body, customOptions: [{ name: 'one' }] }),
+        })
+      ).status,
+      400,
+    );
+  },
+);
+Deno.test(
+  'Sweep cleanup is secret-protected, uses TTL cutoff, logs count and preserves deadline work',
+  async () => {
+    let count = 0;
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => ({ id: 'josh' }),
+      cronSecret: 'test',
+      sweepStore: { expiredPage: async () => [] },
+      cacheCleanupStore: {
+        deleteExpiredOnce: async (day, cutoff) => {
+          count++;
+          equal(day.length, 10);
+          const age = Date.now() - Date.parse(cutoff);
+          if (age < 300000 || age > 301000) throw new Error('wrong TTL');
+          return { removed: 7, ran: true };
+        },
+      },
+    });
+    equal((await app.request('/internal/sweep', { method: 'POST' })).status, 401);
+    equal(count, 0);
+    const response = await app.request('/internal/sweep', {
+      method: 'POST',
+      headers: { 'x-cron-secret': 'test' },
+    });
+    equal(response.status, 200);
+    equal((await response.json()).cacheCleanup.removed, 7);
+    equal(count, 1);
+  },
+);
+Deno.test(
+  'Hang routes authenticate, derive author and report missing teammate capabilities',
+  async () => {
+    const post = {
+      id: 'post',
+      authorId: 'josh',
+      activity: 'Game night',
+      startsAt: new Date(Date.now() + 3600000).toISOString(),
+      expiresAt: new Date(Date.now() + 7200000).toISOString(),
+      audience: 'all_friends' as const,
+      groupId: null,
+    };
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async (req) => {
+        if (!req.headers.has('Authorization'))
+          throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+        return { id: 'josh' };
+      },
+      hangStore: {
+        create: async (authorId, input) => ({ ...input, id: 'post', authorId }),
+        listOwn: async () => [post],
+        load: async () => post,
+      },
+    });
+    equal((await app.request('/hang')).status, 401);
+    const headers = { Authorization: 'Bearer test' };
+    const created = await app.request('/hang', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...post, authorId: 'other' }),
+    });
+    equal(created.status, 201);
+    equal((await created.json()).authorId, 'josh');
+    equal((await app.request('/hang', { headers })).status, 200);
+    equal(
+      (
+        await app.request('/hang/post/respond', {
+          method: 'POST',
+          headers,
+          body: '{"status":"down"}',
+        })
+      ).status,
+      503,
+    );
+    const response = await app.request('/hang/post/pick', { method: 'POST', headers });
+    equal(response.status, 503);
+    equal((await response.json()).error.code, 'HANG_PICK_HELPER_UNAVAILABLE');
+  },
+);
