@@ -157,9 +157,15 @@ test(
       );
 
       // Nothing of hers is readable, with her old token or by anyone.
-      for (const table of ['picks', 'profiles', 'pick_participants', 'preferences']) {
+      // A readable column each, not select=*: clients have no grant on profiles' survey columns.
+      for (const [table, column] of [
+        ['picks', 'id'],
+        ['profiles', 'id'],
+        ['pick_participants', 'pick_id'],
+        ['preferences', 'pick_id'],
+      ]) {
         const rows = requireStatus(
-          await request(config, `/rest/v1/${table}?select=*`, { token: ava.token }),
+          await request(config, `/rest/v1/${table}?select=${column}`, { token: ava.token }),
           200,
           `read ${table} with the old token`,
         );
