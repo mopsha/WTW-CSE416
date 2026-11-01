@@ -11,6 +11,7 @@ import { GradientButton } from '@/components/GradientButton';
 import { CenterMessage, FlameOrb, goToPicks, pickStyles } from '@/components/PickParts';
 import { usePickLive } from '@/hooks/usePickLive';
 import { pathFor, screenForState } from '@/lib/pickRoute';
+import { DELETED_USER_NAME } from '@shared/api/account.ts';
 
 export default function PickEntry() {
   const { id: pickId = '' } = useLocalSearchParams<{ id: string }>();
@@ -29,7 +30,11 @@ export default function PickEntry() {
         <CenterMessage
           emoji="🚫"
           title="This Pick was canceled"
-          body="The host called it off. Nothing was decided, and nobody’s answers were shared."
+          body={
+            progress?.hostDeleted
+              ? `The host (${DELETED_USER_NAME}) deleted their account. Nothing was decided, and nobody’s answers were shared.`
+              : 'The host called it off. Nothing was decided, and nobody’s answers were shared.'
+          }
         >
           <GradientButton label="Start a new Pick" onPress={() => router.replace('/pick/new')} />
           <Button label="Back to your Picks" variant="link" onPress={goToPicks} />

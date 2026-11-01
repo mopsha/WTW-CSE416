@@ -52,8 +52,11 @@ export interface RankedPlace {
 
 export interface PickOutcome {
   state: PickState;
-  /** Only the host may close swiping and rank (POST /picks/:id/rank returns 403 otherwise). */
-  hostId: string;
+  /**
+   * Only the host may close swiping and rank (POST /picks/:id/rank returns 403 otherwise).
+   * Null once the host deleted their account (shown as "Deleted user").
+   */
+  hostId: string | null;
   winnerPlaceId: string | null;
   decidedBy: DecidedBy | null;
 }
@@ -84,6 +87,8 @@ export interface PickDetail {
   deadlineAt: string | null;
   closeThreshold: number;
   isHost: boolean;
+  /** The host deleted their account. Optional: older backends don't send it. */
+  hostDeleted?: boolean;
   participantCount: number;
   /** Already in this caller's per-person shuffle order. */
   candidates: Candidate[];
@@ -114,4 +119,6 @@ export interface PickProgress {
   doneCount: number;
   votedCount: number;
   total: number;
+  /** The host deleted their account. Optional: older backends don't send it. */
+  hostDeleted?: boolean;
 }

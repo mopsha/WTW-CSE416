@@ -7,7 +7,8 @@ import type { PickState } from '../domain/pickState.ts';
 
 export interface ProgressSnapshot {
   state: PickState;
-  hostId: string;
+  /** Null once the host deleted their account (0017); such a Pick is completed or canceled. */
+  hostId: string | null;
   deadlineAt: string | null;
   /** picks.vote_deadline_at (0004): when the final vote closes; null outside final_vote. */
   voteDeadlineAt: string | null;
@@ -44,6 +45,8 @@ export interface PickProgress {
   doneCount: number;
   votedCount: number;
   total: number;
+  /** The host deleted their account: show them as DELETED_USER_NAME. */
+  hostDeleted: boolean;
 }
 
 /** Shape the snapshot for one caller: host first, then by join time. */
@@ -71,6 +74,7 @@ export function toProgress(snapshot: ProgressSnapshot, userId: string): PickProg
     doneCount: participants.filter((p) => p.done).length,
     votedCount: participants.filter((p) => p.voted).length,
     total: participants.length,
+    hostDeleted: snapshot.hostId === null,
   };
 }
 
