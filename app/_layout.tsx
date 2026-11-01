@@ -120,6 +120,7 @@ function RootStack() {
           <Stack.Screen name="pick/[id]/vote" options={{ animation: 'fade' }} />
           <Stack.Screen name="pick/[id]/winner" options={{ animation: 'fade' }} />
           <Stack.Screen name="history" />
+          <Stack.Screen name="inbox" />
         </Stack.Protected>
         {/* Join and invite links open signed in or out; the screen sends you to sign-in if needed.
             Listed last so it is never the guard's fallback screen. */}

@@ -29,20 +29,11 @@ import { USE_MOCK } from '@/lib/config';
 import { confirmAction } from '@/lib/confirm';
 import { messageOf } from '@/lib/errors';
 import { haptic } from '@/lib/haptics';
+import { timeAgo } from '@/lib/time';
 
 const nameOf = (p: FriendPerson) => p.displayName ?? 'WTW friend';
 
 /** "just now", "45m ago", "3h ago", "Oct 11". */
-function when(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!Number.isFinite(ms)) return '';
-  const min = Math.floor(ms / 60_000);
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min}m ago`;
-  if (min < 60 * 24) return `${Math.floor(min / 60)}h ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
 /** "today" or "Oct 11", for "Friends since …". */
 function day(iso: string): string {
   const d = new Date(iso);
@@ -230,7 +221,7 @@ export default function FriendsScreen() {
           <Section title="Requests" count={list.incoming.length} />
           {list.incoming.map((p) => (
             <Card key={p.userId} style={styles.highlight}>
-              <PersonRow person={p} detail={`Wants to be friends · ${when(p.since)}`} />
+              <PersonRow person={p} detail={`Wants to be friends · ${timeAgo(p.since)}`} />
               <View style={styles.actions}>
                 <Button
                   label="Accept"

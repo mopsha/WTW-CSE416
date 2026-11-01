@@ -27,6 +27,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { ErrorBanner } from '@/components/ErrorBanner';
 import { GradientButton } from '@/components/GradientButton';
 import { JoinCodeCard } from '@/components/JoinCodeCard';
+import { NotificationBell } from '@/components/NotificationBell';
 import { PlacePhoto } from '@/components/PlaceCard';
 import { colors, flame, fonts, MIN_TARGET } from '@/components/theme';
 import { useSession } from '@/hooks/useAuth';
@@ -271,14 +272,17 @@ export default function PicksScreen() {
               <Text style={styles.logoText}>wtw</Text>
             </LinearGradient>
           </Pressable>
-          <Pressable
-            onPress={() => router.push('/pick/new')}
-            accessibilityRole="button"
-            accessibilityLabel="Create a Pick"
-            style={styles.iconBtn}
-          >
-            <Ionicons name="add" size={26} color={colors.text} />
-          </Pressable>
+          <View style={styles.headerActions}>
+            <NotificationBell />
+            <Pressable
+              onPress={() => router.push('/pick/new')}
+              accessibilityRole="button"
+              accessibilityLabel="Create a Pick"
+              style={styles.iconBtn}
+            >
+              <Ionicons name="add" size={26} color={colors.text} />
+            </Pressable>
+          </View>
         </View>
 
         <View style={{ gap: 4 }}>
@@ -365,6 +369,7 @@ const styles = StyleSheet.create({
     transform: [{ rotate: '-8deg' }],
   },
   logoText: { fontFamily: fonts.black, fontSize: 18, color: '#FFFFFF', letterSpacing: -0.5 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   iconBtn: {
     width: MIN_TARGET,
     height: MIN_TARGET,

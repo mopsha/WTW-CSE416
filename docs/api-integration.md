@@ -175,6 +175,11 @@ exactly: `GET /picks/:id`, `POST /picks/:id/start`, `/refresh` (`{ confirm }`, 4
 
 ### Notifications and push (Alan, M4)
 
+- App (Mike): the Picks header has a bell with an unread badge (`NotificationBell`,
+  `useUnreadCount`: refreshed on focus and when a push arrives). It opens `app/inbox.tsx`, which
+  lists `GET /notifications`. Tapping a row marks it read and opens `/pick/<pickId>`. There's no
+  "mark all read" route, and the count covers the newest 50 rows.
+
 - `GET /notifications`: my newest 50, newest first, `Cache-Control: private, no-store`.
   Returns `{ notifications: [{ id, type, pickId, payload, createdAt, readAt }], unreadCount }`.
   Clients may also read `notifications` through RLS (own rows only).

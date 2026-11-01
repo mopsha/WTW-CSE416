@@ -69,6 +69,13 @@ export function routeForNotification(data: unknown): string | null {
   return null;
 }
 
+/** Calls `listener` when a notification arrives while the app is open. Returns an unsubscribe. */
+export function onNotificationReceived(listener: () => void): () => void {
+  if (!supported) return () => {};
+  const sub = Notifications.addNotificationReceivedListener(() => listener());
+  return () => sub.remove();
+}
+
 /**
  * Calls `open(route)` when the user taps one of our notifications, including the tap that
  * launched the app from closed. Returns an unsubscribe.
