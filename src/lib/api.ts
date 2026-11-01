@@ -50,6 +50,18 @@ export interface ApiClientOptions {
   fetch: FetchLike;
 }
 
+export type InviteKind = 'pick' | 'group';
+
+/** POST /invites. `url` is the wtw://i/TOKEN deep link. */
+export interface InviteLinkResponse {
+  token: string;
+  url: string;
+  kind: InviteKind;
+  targetId: string;
+  expiresAt: string;
+  maxUses: number | null;
+}
+
 /** GET /health and POST /picks/:id/swipes. */
 export interface StatusResponse {
   status: 'ok';
@@ -107,7 +119,7 @@ export function pickDetailFromApi(raw: RawPickDetail): PickDetail {
 
 export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOptions) {
   async function request<T>(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     { body, auth = true }: { body?: unknown; auth?: boolean } = {},
   ): Promise<T> {
@@ -164,6 +176,27 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
      */
     joinPick: (code: string) =>
       request<{ pickId: string }>('POST', '/picks/join', { body: { code } }),
+    /** Host only: a wtw://i/TOKEN link to share (7 days, unlimited uses unless maxUses). */
+    createInvite: (input: { kind: InviteKind; targetId: string; maxUses?: number | null }) =>
+      request<InviteLinkResponse>('POST', '/invites', { body: input }),
+    /** Every unusable link is 404 INVITE_NOT_FOUND; too many failed joins is 429 RATE_LIMITED. */
+    acceptInvite: (token: string) =>
+      request<{ kind: InviteKind; targetId: string }>(
+        'POST',
+        `/invites/${encodeURIComponent(token)}/accept`,
+      ),
+    revokeInvite: (token: string) =>
+      request<StatusResponse>('DELETE', `/invites/${encodeURIComponent(token)}`),
+    /** Host only: stop (or allow) new people joining by code or link. */
+    setLobbyLocked: (pickId: string, locked: boolean) =>
+      request<{ locked: boolean }>('POST', `${pickPath(pickId)}/lock`, { body: { locked } }),
+    blockUser: (userId: string) =>
+      request<StatusResponse>('POST', `/blocks/${encodeURIComponent(userId)}`),
+    unblockUser: (userId: string) =>
+      request<StatusResponse>('POST', `/blocks/${encodeURIComponent(userId)}/remove`),
+    /** 10 a day; 404 for anything I can't see. */
+    report: (input: { kind: 'user' | 'pick' | 'group'; targetId: string; reason: string }) =>
+      request<StatusResponse>('POST', '/reports', { body: input }),
     submitSwipe: (pickId: string, placeId: string, value: PreferenceValue) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/swipes`, { body: { placeId, value } }),
     /** Host only: closes swiping and ranks. Others get 403 FORBIDDEN. */

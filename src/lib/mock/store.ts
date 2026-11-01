@@ -57,9 +57,16 @@ export interface MockPick {
   decidedBy: DecidedBy | null;
   decidedAt: string | null;
   joinCode: string;
+  /** Host's "lock lobby" (0014): no new people by code or link. */
+  lobbyLocked?: boolean;
   /** For newest-first ordering; fixtures count down from 0. */
   createdAt: number;
 }
+
+/** People I blocked (0014). Declared before anything runs at load (see bug #7). */
+export const mockBlocks = new Set<string>();
+/** Invite links by token. */
+const mockInvites = new Map<string, { pickId: string; revoked: boolean }>();
 
 // ---------------------------------------------------------------------------
 // Change notifications (stands in for Supabase Realtime in mock mode)
@@ -232,6 +239,8 @@ export function resetMockData() {
   timers.clear();
   scheduled.clear();
   mockPicks.clear();
+  mockBlocks.clear();
+  mockInvites.clear();
   for (const [id, pick] of initial()) mockPicks.set(id, pick);
   for (const id of listeners.keys()) emit(id);
 }
@@ -414,15 +423,51 @@ export function progressOf(pick: MockPick): PickProgress {
   };
 }
 
-/** POST /picks/join rules: draft/swiping only; joining twice is a no-op. */
-export function joinMockPick(code: string): { pickId: string } | 'not_found' | 'closed' {
+/** POST /picks/join rules (0014): draft/swiping, unlocked, under 30; twice is a no-op. */
+export function joinMockPick(code: string): { pickId: string } | 'not_found' {
   const pick = [...mockPicks.values()].find((p) => p.joinCode === code);
-  if (!pick) return 'not_found';
+  return pick ? admitMe(pick) : 'not_found';
+}
+
+function admitMe(pick: MockPick): { pickId: string } | 'not_found' {
   if (pick.participants.some((p) => p.userId === MOCK_USER_ID)) return { pickId: pick.id };
-  if (pick.state !== 'draft' && pick.state !== 'swiping') return 'closed';
+  if (
+    (pick.state !== 'draft' && pick.state !== 'swiping') ||
+    pick.lobbyLocked ||
+    pick.participants.length >= 30 ||
+    mockBlocks.has(pick.hostId)
+  ) {
+    return 'not_found';
+  }
   pick.participants.push(me());
   emit(pick.id);
   return { pickId: pick.id };
+}
+
+// ---------------------------------------------------------------------------
+// Invite links and blocks (0014)
+// ---------------------------------------------------------------------------
+const TOKEN_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+export function createMockInvite(pick: MockPick, random: () => number = Math.random): string {
+  let token = '';
+  for (let i = 0; i < 22; i++) token += TOKEN_CHARS[Math.floor(random() * 64)];
+  mockInvites.set(token, { pickId: pick.id, revoked: false });
+  return token;
+}
+
+export function acceptMockInvite(token: string): { pickId: string } | 'not_found' {
+  const invite = mockInvites.get(token);
+  const pick = invite && !invite.revoked ? mockPicks.get(invite.pickId) : undefined;
+  return pick ? admitMe(pick) : 'not_found';
+}
+
+/** Only links I made (in mock mode, every link is mine). */
+export function revokeMockInvite(token: string): boolean {
+  const invite = mockInvites.get(token);
+  if (!invite) return false;
+  invite.revoked = true;
+  return true;
 }
 
 /** Lazily applies the deadline (the real deadline sweep runs every minute) and wakes the bots. */

@@ -80,37 +80,37 @@ export function HostMenu({ pickId, onChanged }: Props) {
         accessibilityRole="button"
         accessibilityLabel="Host options"
         accessibilityHint="Close swiping, refresh the places, or cancel"
-        style={styles.trigger}
+        style={menuStyles.trigger}
       >
         <Ionicons name="options" size={20} color={colors.text} />
       </Pressable>
       <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
         <Pressable
-          style={styles.backdrop}
+          style={menuStyles.backdrop}
           onPress={() => setOpen(false)}
           accessibilityLabel="Close host options"
         />
-        <SafeAreaView edges={['bottom']} style={styles.sheet}>
-          <View style={styles.handle} />
-          <Text style={styles.title} accessibilityRole="header">
+        <SafeAreaView edges={['bottom']} style={menuStyles.sheet}>
+          <View style={menuStyles.handle} />
+          <Text style={menuStyles.title} accessibilityRole="header">
             Host options
           </Text>
           {action.error ? <ErrorBanner message={action.error} onRetry={action.clearError} /> : null}
-          <Item
+          <MenuItem
             icon="flag"
             label="Close swiping now"
             hint="Rank what we have and pick a winner"
             busy={action.busy === 'close'}
             onPress={() => void closeNow()}
           />
-          <Item
+          <MenuItem
             icon="refresh"
             label="Get new places"
             hint="Rebuilds the pool; clears answers if anyone has swiped"
             busy={action.busy === 'refresh'}
             onPress={() => void refresh()}
           />
-          <Item
+          <MenuItem
             icon="close-circle"
             label="Cancel Pick"
             hint="Stops it for everyone"
@@ -124,7 +124,8 @@ export function HostMenu({ pickId, onChanged }: Props) {
   );
 }
 
-function Item({
+/** One row of a bottom-sheet menu (HostMenu, MemberMenu). */
+export function MenuItem({
   icon,
   label,
   hint,
@@ -147,22 +148,23 @@ function Item({
       accessibilityLabel={label}
       accessibilityHint={hint}
       accessibilityState={{ busy: !!busy }}
-      style={({ pressed }) => [styles.item, pressed && { opacity: 0.7 }]}
+      style={({ pressed }) => [menuStyles.item, pressed && { opacity: 0.7 }]}
     >
-      <View style={[styles.itemIcon, danger && { backgroundColor: colors.dangerBg }]}>
+      <View style={[menuStyles.itemIcon, danger && { backgroundColor: colors.dangerBg }]}>
         <Ionicons name={icon} size={20} color={danger ? colors.danger : colors.text} />
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={[styles.itemLabel, danger && { color: colors.danger }]}>
+        <Text style={[menuStyles.itemLabel, danger && { color: colors.danger }]}>
           {busy ? 'Working…' : label}
         </Text>
-        <Text style={styles.itemHint}>{hint}</Text>
+        <Text style={menuStyles.itemHint}>{hint}</Text>
       </View>
     </Pressable>
   );
 }
 
-const styles = StyleSheet.create({
+/** Shared by the bottom-sheet menus. */
+export const menuStyles = StyleSheet.create({
   trigger: {
     width: MIN_TARGET,
     height: MIN_TARGET,

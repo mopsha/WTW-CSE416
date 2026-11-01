@@ -24,6 +24,8 @@ export interface Queries {
   getMyVote(pickId: string, userId: string): Promise<string | null>;
   /** The Pick's share code (Razin's pick_join_codes), or null if there isn't one yet. */
   getJoinCode(pickId: string): Promise<JoinCode | null>;
+  /** picks.lobby_locked (0014): the host stopped new people joining by code or link. */
+  getLobbyLocked(pickId: string): Promise<boolean>;
 }
 
 export interface MyProfile {
@@ -131,6 +133,15 @@ const supabaseQueries: Queries = {
     return (data as { place_id: string } | null)?.place_id ?? null;
   },
 
+  async getLobbyLocked(pickId) {
+    const { data, error } = await getSupabase()
+      .from('picks')
+      .select('lobby_locked')
+      .eq('id', pickId)
+      .maybeSingle();
+    if (error) throw new QueryError(error.message);
+    return (data as { lobby_locked?: boolean } | null)?.lobby_locked === true;
+  },
   async getJoinCode(pickId) {
     const { data, error } = await getSupabase()
       .from('pick_join_codes')
