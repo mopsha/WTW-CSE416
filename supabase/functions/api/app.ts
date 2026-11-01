@@ -16,6 +16,13 @@ import { castVote, closeVote, type VotingStore } from '../_shared/api/voting.ts'
 import type { PoolBuilder } from '../_shared/places/pool.ts';
 import { joinPick, type JoinStore } from '../_shared/api/join.ts';
 import { authorizeSweep, sweepDeadlines, type SweepStore } from '../_shared/api/sweep.ts';
+import {
+  acceptFriend,
+  listFriends,
+  removeFriend,
+  requestFriend,
+  type FriendsStore,
+} from '../_shared/api/friends.ts';
 import { updateMe, type ProfileStore } from '../_shared/api/profile.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
@@ -37,6 +44,7 @@ export function createApp(
     poolBuilder: PoolBuilder;
     closingStore: ClosingStore & VotingStore;
     joinStore?: JoinStore;
+    friendsStore?: FriendsStore;
     profileStore?: ProfileStore;
     sweepStore?: SweepStore;
     cronSecret?: string;
@@ -150,6 +158,30 @@ export function createApp(
     const body = await readJsonBody(c);
     if (!deps.joinStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Joining is not available');
     return c.json(await joinPick(deps.joinStore, user.id, body));
+  });
+  // Friends: one row per pair (0008_friendships.sql). The user is authenticated
+  // before the store is checked, like /picks/join.
+  const friends = async (c: { req: { raw: Request } }) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.friendsStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Friends are not available');
+    return { user, store: deps.friendsStore };
+  };
+  app.get('/friends', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await friends(c);
+    return c.json(await listFriends(store, user.id));
+  });
+  app.post('/friends/requests', async (c) => {
+    const { user, store } = await friends(c);
+    return c.json(await requestFriend(store, user.id, await readJsonBody(c)));
+  });
+  app.post('/friends/:id/accept', async (c) => {
+    const { user, store } = await friends(c);
+    return c.json(await acceptFriend(store, user.id, c.req.param('id')));
+  });
+  app.post('/friends/:id/remove', async (c) => {
+    const { user, store } = await friends(c);
+    return c.json(await removeFriend(store, user.id, c.req.param('id')));
   });
   // The caller's own display name ("what should we call you?" and the Profile tab).
   // The row is always the verified caller's; the body cannot name another user.

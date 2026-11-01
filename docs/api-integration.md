@@ -81,6 +81,29 @@ exactly: `GET /picks/:id`, `POST /picks/:id/start`, `/refresh` (`{ confirm }`, 4
   guard: signed out, it signs in first and then joins); the Picks tab has "Join with code".
   Both open `/pick/[id]`, which forwards a draft Pick to the Lobby.
 
+### Friends (Mike, M3)
+
+- All routes need a Bearer user access token; the caller is always the token's user.
+  - `GET /friends` → `{ friends, incoming, outgoing }`, each `[{ userId, displayName, since }]`,
+    newest first (`since` = accepted for friends, sent for requests). `Cache-Control: private, no-store`.
+  - `POST /friends/requests` `{ "email": "..." }` → `{ userId, displayName, status }`. Exact
+    email match (case and surrounding spaces ignored). 404 `USER_NOT_FOUND`, 400
+    `CANNOT_FRIEND_SELF`, 400 `INVALID_INPUT`. If they already asked you, this accepts
+    (`status: "accepted"`); asking again is idempotent.
+  - `POST /friends/:userId/accept` → `{ status: "accepted" }`; 404 `REQUEST_NOT_FOUND` unless
+    they sent you a request (accepting twice is fine).
+  - `POST /friends/:userId/remove` → `{ status: "ok" }`: decline, cancel, or unfriend. Idempotent.
+  - Code: `_shared/api/friends.ts` (validation, grouping), `api/friendsStore.ts` (adapter).
+    Client: `api.listFriends/addFriend/acceptFriend/removeFriend`; the mock
+    (`src/lib/mock/friends.ts`) starts with Ava, Ben, Cam as friends and a request from Jordan.
+- `0008_friendships.sql`: `friendships (requester_id, addressee_id, status pending|accepted,
+  created_at, accepted_at)`, one row per pair either way, no self rows. RLS: the two people in a
+  row can SELECT it, and can read each other's `profiles.display_name`. No client writes.
+  RPCs (service role only): `friend_request`, `friend_accept`, `friend_remove`, `friend_list`;
+  PT404 / PT400 / PT403 as above. Emails stay in `auth.users` and are never returned.
+- Privacy trade-off: a 404 tells the caller whether an email has an account. There's no rate
+  limit yet.
+
 ### My display name (Razin's Week 2 task)
 
 - `POST /me`: Bearer user access token; body `{ "displayName": "Ava" }`. Trimmed, then 1–50

@@ -7,8 +7,9 @@ import { validateDisplayName } from '@shared/api/profile.ts';
 
 import { MOCK_FAIL_RATE } from '../config';
 import type { PreferenceValue } from '../types';
-import { MOCK_ACCESS_TOKEN, MOCK_USER_ID } from './auth';
+import { MOCK_ACCESS_TOKEN, MOCK_USER_ID, mockAuth } from './auth';
 import { MOCK_PLACES } from './fixtures';
+import { handleMockFriends } from './friends';
 import {
   createMockPick,
   decide,
@@ -245,6 +246,12 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   if (method === 'POST' && path === '/picks') return createPick(readBody(init));
   if (method === 'POST' && path === '/picks/join') return joinPick(readBody(init));
   if (method === 'POST' && path === '/me') return updateMe(readBody(init));
+
+  if (path.startsWith('/friends')) {
+    const session = await mockAuth.getSession();
+    const result = handleMockFriends(method, path, readBody(init), session?.user.email ?? null);
+    return result ? json(result.status, result.body) : fail(404, 'NOT_FOUND', 'Route not found');
+  }
 
   const match = /^\/picks\/([^/]+)(?:\/([a-z-]+))?$/.exec(path);
   const handler = match ? ROUTES[`${method} ${match[2] ?? ''}`] : undefined;

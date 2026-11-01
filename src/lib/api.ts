@@ -4,6 +4,7 @@ import { getAccessToken } from './auth';
 import { API_BASE_URL, USE_MOCK } from './config';
 import { MOCK_API_BASE_URL, mockFetch } from './mock/api';
 import type { CreatePickInput } from '@shared/domain/createPick.ts';
+import type { FriendRequestResult, FriendsList } from '@shared/api/friends.ts';
 
 import { candidateFromApi } from './places';
 import type {
@@ -199,6 +200,21 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     /** Host only: tally now, before everyone has voted. */
     closeVote: (pickId: string) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/close-vote`),
+
+    /** My friends, requests to me, and requests I sent (names only, never emails). */
+    listFriends: () => request<FriendsList>('GET', '/friends'),
+    /**
+     * Ask someone by the exact email they sign in with. 404 USER_NOT_FOUND if nobody does,
+     * 400 CANNOT_FRIEND_SELF for your own. If they already asked you, status is 'accepted'.
+     */
+    addFriend: (email: string) =>
+      request<FriendRequestResult>('POST', '/friends/requests', { body: { email } }),
+    /** Accept their request. 404 REQUEST_NOT_FOUND if it was withdrawn. */
+    acceptFriend: (userId: string) =>
+      request<{ status: 'accepted' }>('POST', `/friends/${encodeURIComponent(userId)}/accept`),
+    /** Decline their request, cancel mine, or unfriend. Idempotent. */
+    removeFriend: (userId: string) =>
+      request<StatusResponse>('POST', `/friends/${encodeURIComponent(userId)}/remove`),
   };
 }
 
