@@ -23,6 +23,7 @@ import {
   unregisterPushToken,
   type NotifyStore,
 } from '../_shared/api/notify.ts';
+import { updateMe, type ProfileStore } from '../_shared/api/profile.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
   const raw = await c.req.text();
@@ -43,6 +44,7 @@ export function createApp(
     poolBuilder: PoolBuilder;
     closingStore: ClosingStore & VotingStore;
     joinStore?: JoinStore;
+    profileStore?: ProfileStore;
     sweepStore?: SweepStore;
     notifyStore?: NotifyStore;
     cronSecret?: string;
@@ -184,5 +186,13 @@ export function createApp(
     }
     return deps.notifyStore;
   }
+  // The caller's own display name ("what should we call you?" and the Profile tab).
+  // The row is always the verified caller's; the body cannot name another user.
+  app.post('/me', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const body = await readJsonBody(c);
+    if (!deps.profileStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Profiles are not available');
+    return c.json(await updateMe(deps.profileStore, user.id, body));
+  });
   return app;
 }
