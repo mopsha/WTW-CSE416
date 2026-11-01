@@ -753,6 +753,12 @@ Deno.test('friends: store errors keep their status; 503 if not configured', asyn
   equal((await friendsApp().request('/friends', { headers: auth })).status, 503);
 });
 
+// The display-name tests below never read the profile or save preferences.
+const unusedProfileReads = {
+  getProfile: () => Promise.reject(new Error('Unexpected read')),
+  setPreferences: () => Promise.reject(new Error('Unexpected write')),
+};
+
 Deno.test('POST /me: 401 without a token, before touching the database', async () => {
   const writes: string[] = [];
   const app = createApp({
@@ -761,6 +767,7 @@ Deno.test('POST /me: 401 without a token, before touching the database', async (
     poolBuilder,
     closingStore,
     profileStore: {
+      ...unusedProfileReads,
       setDisplayName: async (_userId, name) => {
         writes.push(name);
       },
@@ -784,6 +791,7 @@ Deno.test('POST /me: 400 for bad names, before touching the database', async () 
     poolBuilder,
     closingStore,
     profileStore: {
+      ...unusedProfileReads,
       setDisplayName: async () => {
         throw new Error('Unexpected write');
       },
@@ -812,6 +820,7 @@ Deno.test('POST /me: saves the trimmed name for the verified caller only', async
     poolBuilder,
     closingStore,
     profileStore: {
+      ...unusedProfileReads,
       setDisplayName: async (userId, name) => {
         calls.push([userId, name]);
       },
@@ -1071,4 +1080,119 @@ Deno.test('Rate limits return 429 before create/start/refresh writes or pool cal
   pick.hostId = 'other';
   equal((await app.request('/picks/pick/start', { method: 'POST' })).status, 403);
   equal(scopes.length, 3);
+});
+
+function profileApp(
+  rows: Map<
+    string,
+    { displayName: string | null; preferences: unknown; preferencesUpdatedAt: string | null }
+  >,
+  userId = 'me',
+) {
+  return createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    profileStore: {
+      setDisplayName: () => Promise.reject(new Error('Unexpected write')),
+      getProfile: async (id) => rows.get(id) ?? null,
+      setPreferences: async (id, preferences) => {
+        const row = rows.get(id) ?? {
+          displayName: null,
+          preferences: {},
+          preferencesUpdatedAt: null,
+        };
+        rows.set(id, { ...row, preferences, preferencesUpdatedAt: '2026-10-30T00:00:00Z' });
+      },
+    },
+    getUser: async () => ({ id: userId }),
+  });
+}
+
+Deno.test('GET /me: my name, preferences and onboarding flag, never someone else’s', async () => {
+  const rows = new Map([
+    [
+      'me',
+      {
+        displayName: 'Ava',
+        preferences: { types: ['cafe'], priceMax: 2 },
+        preferencesUpdatedAt: null,
+      },
+    ],
+    ['other', { displayName: 'Bo', preferences: { types: ['zoo'] }, preferencesUpdatedAt: 'x' }],
+  ]);
+  const result = await profileApp(rows).request('/me?userId=other');
+  equal(result.status, 200);
+  equal(await result.json(), {
+    displayName: 'Ava',
+    preferences: {
+      categories: [],
+      types: ['cafe'],
+      dislikedTypes: [],
+      priceMax: 2,
+      maxDistanceM: null,
+    },
+    onboarded: false,
+  });
+});
+
+Deno.test('POST /me/preferences: 400 for bad answers, before touching the database', async () => {
+  const rows = new Map();
+  const app = profileApp(rows);
+  for (const body of [
+    '{',
+    '{}',
+    JSON.stringify({ preferences: [] }),
+    JSON.stringify({ preferences: { categories: ['nightlife'] } }),
+    JSON.stringify({ preferences: { types: ['casino'] } }),
+    JSON.stringify({ preferences: { types: ['cafe'], dislikedTypes: ['cafe'] } }),
+    JSON.stringify({ preferences: { priceMax: 5 } }),
+    JSON.stringify({ preferences: { maxDistanceM: 123 } }),
+  ]) {
+    equal((await app.request('/me/preferences', { method: 'POST', body })).status, 400);
+  }
+  equal(rows.size, 0);
+});
+
+Deno.test(
+  'POST /me/preferences: saves for the verified caller and marks onboarding done',
+  async () => {
+    const rows = new Map();
+    const app = profileApp(rows);
+    const preferences = {
+      categories: ['food'],
+      types: ['pizza_restaurant', 'bowling_alley'],
+      dislikedTypes: ['seafood_restaurant'],
+      priceMax: 2,
+      maxDistanceM: 8045,
+    };
+    const result = await app.request('/me/preferences', {
+      method: 'POST',
+      body: JSON.stringify({ preferences, userId: 'someone-else' }),
+    });
+    equal(result.status, 200);
+    equal(await result.json(), { preferences, onboarded: true });
+    equal([...rows.keys()], ['me']);
+    equal(((await (await app.request('/me')).json()) as { onboarded: boolean }).onboarded, true);
+  },
+);
+
+Deno.test('GET /me and POST /me/preferences: 401 without a token', async () => {
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    profileStore: {
+      setDisplayName: () => Promise.reject(new Error('Unexpected write')),
+      getProfile: () => Promise.reject(new Error('Unexpected read')),
+      setPreferences: () => Promise.reject(new Error('Unexpected write')),
+    },
+    getUser: async () => {
+      throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+    },
+  });
+  equal((await app.request('/me')).status, 401);
+  equal((await app.request('/me/preferences', { method: 'POST', body: '{}' })).status, 401);
 });

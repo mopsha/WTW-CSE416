@@ -5,6 +5,7 @@ import type { NotificationRow } from '@shared/api/notify.ts';
 import { validateCreatePick, type CreatePickInput } from '@shared/domain/createPick.ts';
 import { parseJoinCode } from '@shared/domain/joinCode.ts';
 import { validateDisplayName } from '@shared/api/profile.ts';
+import { validatePreferences } from '@shared/domain/preferences.ts';
 
 import { MOCK_FAIL_RATE } from '../config';
 import type { PreferenceValue } from '../types';
@@ -28,6 +29,7 @@ import {
   mockPicks,
   mockProfile,
   progressOf,
+  resetMockProfile,
   scheduleBots,
   settleVote,
   touch,
@@ -119,6 +121,29 @@ function updateMe(body: unknown): Response {
   mockProfile.displayName = result.name;
   for (const id of mockPicks.keys()) emit(id);
   return json(200, { displayName: result.name });
+}
+
+/** POST /me/preferences: same validation as the API (shared validatePreferences). */
+function updatePreferences(body: unknown): Response {
+  if (body === undefined) return fail(400, 'INVALID_JSON', 'Request body must be valid JSON');
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return fail(400, 'INVALID_INPUT', 'Expected a preferences object');
+  }
+  const result = validatePreferences((body as { preferences?: unknown }).preferences);
+  if ('error' in result) return fail(400, 'INVALID_INPUT', result.error);
+  mockProfile.preferences = result.preferences;
+  mockProfile.onboarded = true;
+  return json(200, { preferences: result.preferences, onboarded: true });
+}
+
+/** POST /push-tokens (Alan): a non-empty token and ios|android. */
+function registerPushToken(body: unknown): Response {
+  const { token, platform } = (body ?? {}) as { token?: unknown; platform?: unknown };
+  if (typeof token !== 'string' || !token || (platform !== 'ios' && platform !== 'android')) {
+    return fail(400, 'INVALID_INPUT', 'Expected a push token and platform');
+  }
+  if (!mockProfile.pushTokens.includes(token)) mockProfile.pushTokens.push(token);
+  return json(200, { status: 'ok' });
 }
 
 function getPick(pick: MockPick) {
@@ -317,6 +342,16 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   if (method === 'POST' && path === '/picks') return createPick(readBody(init));
   if (method === 'POST' && path === '/picks/join') return joinPick(readBody(init));
   if (method === 'POST' && path === '/me') return updateMe(readBody(init));
+  if (method === 'GET' && path === '/me') {
+    const { displayName, preferences, onboarded } = mockProfile;
+    return json(200, { displayName, preferences, onboarded });
+  }
+  if (method === 'POST' && path === '/me/preferences') return updatePreferences(readBody(init));
+  if (method === 'POST' && path === '/push-tokens') return registerPushToken(readBody(init));
+  if (method === 'DELETE' && path === '/me') {
+    resetMockProfile();
+    return json(200, { status: 'ok' });
+  }
 
   if (path.startsWith('/friends')) {
     const session = await mockAuth.getSession();

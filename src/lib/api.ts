@@ -6,6 +6,8 @@ import { MOCK_API_BASE_URL, mockFetch } from './mock/api';
 import type { NotificationRow } from '@shared/api/notify.ts';
 import type { CreatePickInput } from '@shared/domain/createPick.ts';
 import type { FriendRequestResult, FriendsList } from '@shared/api/friends.ts';
+import type { MeResponse } from '@shared/api/profile.ts';
+import type { Preferences } from '@shared/domain/preferences.ts';
 
 import { candidateFromApi } from './places';
 import type {
@@ -193,6 +195,18 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     /** My display name (trimmed, 1–50 characters; 400 INVALID_INPUT otherwise). Only ever mine. */
     updateMe: (displayName: string) =>
       request<{ displayName: string }>('POST', '/me', { body: { displayName } }),
+    /** My name, survey answers and whether onboarding is done (survey answers are API-only). */
+    getMe: () => request<MeResponse>('GET', '/me'),
+    /** Saves the survey (FR-02); even all-empty answers mark onboarding done. */
+    savePreferences: (preferences: Preferences) =>
+      request<{ preferences: Preferences; onboarded: true }>('POST', '/me/preferences', {
+        body: { preferences },
+      }),
+    /** Alan's POST /push-tokens: this device's Expo push token, so Pick events reach it. */
+    registerPushToken: (token: string, platform: 'ios' | 'android') =>
+      request<StatusResponse>('POST', '/push-tokens', { body: { token, platform } }),
+    /** Razin's DELETE /me: deletes my account and its data. Sign out afterwards. */
+    deleteMe: () => request<StatusResponse>('DELETE', '/me'),
     submitSwipe: (pickId: string, placeId: string, value: PreferenceValue) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/swipes`, { body: { placeId, value } }),
     /** Host only: closes swiping and ranks. Others get 403 FORBIDDEN. */

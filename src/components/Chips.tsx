@@ -55,6 +55,47 @@ export function Chips<T extends string | number>({
   );
 }
 
+/** Pick any number of options (cuisines, activities...). Tapping a selected chip clears it. */
+export function MultiChips<T extends string>({
+  options,
+  values,
+  onChange,
+  accessibilityLabel,
+}: {
+  options: readonly ChipOption<T>[];
+  values: readonly T[];
+  onChange: (values: T[]) => void;
+  /** Names the group for screen readers (e.g. "Cuisines you like"). */
+  accessibilityLabel: string;
+}) {
+  return (
+    <View style={styles.row} accessibilityLabel={accessibilityLabel}>
+      {options.map((o) => {
+        const selected = values.includes(o.value);
+        return (
+          <Pressable
+            key={o.value}
+            onPress={() => {
+              haptic.tick();
+              onChange(selected ? values.filter((v) => v !== o.value) : [...values, o.value]);
+            }}
+            accessibilityRole="checkbox"
+            accessibilityLabel={o.accessibilityLabel ?? o.label}
+            accessibilityState={{ checked: selected }}
+            style={({ pressed }) => [
+              styles.chip,
+              selected && styles.selected,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={[styles.label, selected && styles.selectedLabel]}>{o.label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   chip: {
