@@ -81,6 +81,42 @@ exactly: `GET /picks/:id`, `POST /picks/:id/start`, `/refresh` (`{ confirm }`, 4
   guard: signed out, it signs in first and then joins); the Picks tab has "Join with code".
   Both open `/pick/[id]`, which forwards a draft Pick to the Lobby.
 
+### Delete my account (Razin, M4)
+
+- `DELETE /me`: Bearer user access token, no body. Deletes the caller's account and all of their
+  data and returns 200 `{ "status": "ok" }`; the app signs out afterwards. The user is always the
+  verified token's user (a body or query naming someone else is ignored). 401 without a valid
+  token, 500 `INTERNAL_ERROR` if Auth fails (nothing is deleted then), 503 if unconfigured.
+  Code: `_shared/api/account.ts`, `api/accountStore.ts` (Auth admin API, service role only).
+  Client: `api.deleteMe()` (Mike, PR #29). CORS allows `DELETE`.
+- The API deletes the `auth.users` row; never the client. Postgres cascades to `profiles`, and a
+  `BEFORE DELETE` trigger on `profiles` (`0017_account_deletion.sql`) applies these rules in the
+  same transaction, so it is all or nothing and the dashboard's "Delete user" behaves the same:
+  - Hosted Picks nobody else is in: deleted.
+  - Hosted unfinished Picks (draft, swiping, final vote): `canceled`, with `cancel_reason` "The
+    host deleted their account." and a `pick_canceled` inbox entry for each participant when
+    0009 is applied.
+  - Hosted completed (or already canceled) Picks: kept, with their results.
+  - Kept hosted Picks get `host_id = null`. `GET /picks/:id` and `/progress` send
+    `hostDeleted: true`; show the host as `DELETED_USER_NAME` ("Deleted user"). A hostless Pick
+    is read-only: only `version`/`updated_at` and the FK set-null columns may change (PT409),
+    and it can't be "picked again" (PT403). Constraint: a hostless Pick is completed or canceled.
+  - Other people's Picks are never deleted; they lose this person's participant row, answers and
+    ballot. Their candidates, ranking and winner stay.
+  - Groups they own are deleted (their Picks stay, `group_id` null); memberships, friendships,
+    saved places, notifications, push tokens, RSVPs/outcomes, hang posts/responses, the per-user
+    rate-limit counter go. Custom options they typed stay in other people's Picks with the creator
+    erased (`created_by` null, `createdBy` removed); ones no Pick uses are deleted.
+  - Tables from unmerged PRs are found with `to_regclass` at run time, so any merge order works.
+    One exception: 0017 relaxes 0015's creator constraints when it runs, so 0015 must be applied
+    first. `db reset`/CI apply by number, so it always is; a hosted database that ran 0017
+    before 0015 would fail deletions of custom-option creators (atomically) until re-run.
+- Sessions: Auth revokes refresh tokens, and `getUser` rejects the old access token (401). An
+  unexpired access token can still reach PostgREST until it expires, but RLS finds no rows for it.
+- Fixed with it (`docs/bugs.md` #21): deleting any Auth user who was in a Pick failed.
+  Tests: `supabase/tests/account_deletion_test.sql`, `app_test.ts` (DELETE /me),
+  `tests/account.test.ts`, `tests/api/account.test.mjs` (`npm run test:api`).
+
 Errors: `{ "error": { "code": "...", "message": "..." } }`.
 400 invalid input, 401 invalid/missing token, 403 forbidden, 404 missing resource,
 409 wrong state/concurrent change, 500 unexpected failure, 503 unconfigured backend.
