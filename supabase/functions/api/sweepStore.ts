@@ -28,5 +28,18 @@ export function createSweepStore(): SweepStore {
         userIds: r.user_ids,
       }));
     },
+    async planTargets(now) {
+      const { data, error } = await createServiceClient().rpc('pick_plan_targets', {
+        p_now: now,
+      });
+      if (error) throw new Error('Plan query failed');
+      return (
+        (data ?? []) as {
+          pick_id: string;
+          kind: 'plan_reminder' | 'did_you_go';
+          user_ids: string[];
+        }[]
+      ).map((r) => ({ pickId: r.pick_id, kind: r.kind, userIds: r.user_ids }));
+    },
   };
 }

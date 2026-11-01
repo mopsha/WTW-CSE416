@@ -338,6 +338,13 @@ export default function PicksScreen() {
         {history.map((p) => (
           <PickRow key={p.id} pick={p} />
         ))}
+        {history.length ? (
+          <Button
+            label="See winners, who went, and Pick again"
+            variant="link"
+            onPress={() => router.push('/history')}
+          />
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
