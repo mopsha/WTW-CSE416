@@ -104,6 +104,29 @@ exactly: `GET /picks/:id`, `POST /picks/:id/start`, `/refresh` (`{ confirm }`, 4
 - Privacy trade-off: a 404 tells the caller whether an email has an account. There's no rate
   limit yet.
 
+### My display name (Razin's Week 2 task)
+
+- `POST /me`: Bearer user access token; body `{ "displayName": "Ava" }`. Trimmed, then 1–50
+  characters counted like Postgres `char_length` (an emoji is one), one line (no control
+  characters); otherwise 400 `INVALID_INPUT`, checked before the database. Returns 200
+  `{ "displayName": "Ava" }`. It always writes the verified caller's own `profiles` row; any
+  other field in the body (e.g. a `userId`) is ignored. POST, like every other mutation, so
+  CORS stays `GET, POST`.
+  Code: `_shared/api/profile.ts` (`validateDisplayName`, shared with the app and the mock),
+  `api/profileStore.ts` (service-role upsert of `display_name` + `updated_at`, so an account
+  without a profile row still gets one). No migration: `profiles` and its 1–50 check are in
+  `0001_init.sql`, and clients still only read it through RLS (own row + co-participants).
+- App: `ProfileProvider` (`src/hooks/useProfile.tsx`) reads my row with
+  `queries.getMyProfile`. While `display_name` is null the root layout's guard shows
+  `app/welcome.tsx` ("What should we call you?", prefilled from the email's local part)
+  instead of the tabs; Save calls `api.updateMe(name)` and the guard moves on. If the read fails
+  or times out (4 s) the step is skipped rather than blocking the app. The Profile tab shows
+  and edits the same name. Mock mode starts with no name, so the step shows there too.
+- Names show wherever `GET /picks/:id/progress` is used (Lobby, Waiting room, votes); a
+  participant without a name is still shown as "Someone".
+- `scripts/wtw-dev-code.mjs` (PR #21) can still set names server-side on wtw-dev, e.g. for
+  seeded demo accounts; the app's step only appears for accounts that still have no name.
+
 Errors: `{ "error": { "code": "...", "message": "..." } }`.
 400 invalid input, 401 invalid/missing token, 403 forbidden, 404 missing resource,
 409 wrong state/concurrent change, 500 unexpected failure, 503 unconfigured backend.
@@ -284,11 +307,9 @@ implemented route set. Unit/route tests supplement the database/API harness.
 
 The existing authenticated `GET /picks/:id` adds `candidateHours` metadata for
 `completed` and `final_vote` Picks. Membership is checked before provider access;
-responses use `Cache-Control: private, no-store`. The existing frontend
-`queries.getCandidates()` still reads the persisted candidate identity/display
-snapshot, then obtains this metadata through GET Pick. It preserves candidate
-order and fields, adding optional `openNow` and `closesAt`. Existing mock-app reads
-remain unchanged. No screen layout or lifecycle decision changes are included.
+responses use `Cache-Control: private, no-store`. The frontend uses `api.getPick()`
+to read candidates and hours together. Its adapter preserves candidate order and
+fields, merging matching `candidateHours` metadata into `openNow` and `closesAt`.
 
 The read uses `refreshOpenHours` through a provenance-aware adapter. Explicitly
 Google-tagged candidates fetch current hours using the server-only
@@ -300,8 +321,8 @@ The current fixtures have no authoritative hours source. Discovery mode changes
 never relabel an existing candidate or send a mock ID to Google.
 
 Hours failures do not replace candidates or alter winner, ranking, votes, snapshots,
-or Pick state. Swiping/draft reads do not fetch hours. The client retains persisted
-candidates if the optional metadata request fails. Google candidate creation and
+or Pick state. Swiping/draft reads do not fetch hours. The Pick response retains
+candidates when optional hours metadata is unavailable. Google candidate creation and
 full display hydration remain blocked on the separate persistence design; this
 read path does not enable Google lifecycle discovery or authorize Google snapshots.
 

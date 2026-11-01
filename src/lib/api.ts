@@ -155,10 +155,6 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
   const pickPath = (pickId: string) => `/picks/${encodeURIComponent(pickId)}`;
 
   return {
-    getPickHours: (pickId: string) =>
-      request<{
-        candidateHours?: { placeId: string; openNow: boolean | null; closesAt: string | null }[];
-      }>('GET', pickPath(pickId)),
     health: () => request<StatusResponse>('GET', '/health', { auth: false }),
     /** Validate with validateCreatePick first; the server rejects bad input with 400 INVALID_INPUT. */
     createPick: (input: CreatePickInput) =>
@@ -169,6 +165,9 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
      */
     joinPick: (code: string) =>
       request<{ pickId: string }>('POST', '/picks/join', { body: { code } }),
+    /** My display name (trimmed, 1–50 characters; 400 INVALID_INPUT otherwise). Only ever mine. */
+    updateMe: (displayName: string) =>
+      request<{ displayName: string }>('POST', '/me', { body: { displayName } }),
     submitSwipe: (pickId: string, placeId: string, value: PreferenceValue) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/swipes`, { body: { placeId, value } }),
     /** Host only: closes swiping and ranks. Others get 403 FORBIDDEN. */

@@ -19,6 +19,7 @@
     "aes-js": "^3.1.2",
     "expo": "~57.0.25",
     "expo-constants": "~57.0.19",
+    "expo-dev-client": "~57.0.20",
     "expo-font": "~57.0.4",
     "expo-haptics": "~57.0.3",
     "expo-linear-gradient": "~57.0.2",
