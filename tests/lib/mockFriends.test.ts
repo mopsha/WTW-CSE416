@@ -18,7 +18,6 @@ test('starts with Ava, Ben and Cam as friends and one request from Jordan', asyn
   const list = await api.listFriends();
   expect(names(list.friends).sort()).toEqual(['Ava', 'Ben', 'Cam']);
   expect(names(list.incoming)).toEqual(['Jordan']);
-  expect(list.outgoing).toEqual([]);
 });
 
 test('accept moves a request into friends; decline removes it', async () => {
@@ -32,12 +31,9 @@ test('accept moves a request into friends; decline removes it', async () => {
   expect(names(list.friends)).not.toContain('Jordan');
 });
 
-test('sending a request shows it as outgoing until canceled', async () => {
+test('a sent request is not listed, so the list cannot reveal who has an account', async () => {
   await expect(api.addFriend('Dana.Lee@example.com')).resolves.toEqual({ status: 'sent' });
-  const { outgoing } = await api.listFriends();
-  expect(names(outgoing)).toEqual(['Dana']);
-  await api.removeFriend(outgoing[0]!.userId);
-  expect((await api.listFriends()).outgoing).toEqual([]);
+  expect(JSON.stringify(await api.listFriends())).not.toContain('Dana');
 });
 
 test('errors match the API', async () => {

@@ -87,10 +87,8 @@ select is(
    where x ->> 'displayName' = 'Di'),
   '{"userId":"74444444-4444-4444-8444-444444444444","displayName":"Di","status":"pending","direction":"in"}'::jsonb,
   'Bo sees Di''s request as incoming and pending');
-select is(
-  (select x ->> 'direction'
-   from jsonb_array_elements(friend_list('74444444-4444-4444-8444-444444444444')) x),
-  'out', 'Di sees the same request as outgoing');
+select is(friend_list('74444444-4444-4444-8444-444444444444'), '[]'::jsonb,
+  'Di''s list does not show her pending request (0018)');
 select is(friend_list('00000000-0000-4000-8000-000000000000'), '[]'::jsonb,
   'someone with no friends gets an empty list');
 reset role;
@@ -98,10 +96,10 @@ reset role;
 -- ---------------------------------------------------------------- RLS (as a client)
 set local role authenticated;
 set local request.jwt.claims to '{"sub":"74444444-4444-4444-8444-444444444444","role":"authenticated"}';
-select is((select count(*)::int from friendships), 1, 'Di sees only her own row');
+select is((select count(*)::int from friendships), 0, 'Di cannot see her pending request');
 select is(
-  (select display_name from profiles where id = '72222222-2222-4222-8222-222222222222'),
-  'Bo', 'Di can read the name of someone she asked');
+  (select count(*)::int from profiles where id = '72222222-2222-4222-8222-222222222222'),
+  0, 'Di cannot read the name of someone she asked until they accept');
 select is(
   (select count(*)::int from profiles where id = '71111111-1111-4111-8111-111111111111'),
   0, 'Di cannot read the profile of someone she has no row with');

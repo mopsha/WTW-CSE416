@@ -195,7 +195,7 @@ export default function FriendsScreen() {
     if (ok) await act(`remove:${p.userId}`, () => api.removeFriend(p.userId));
   };
 
-  const empty = list && !list.friends.length && !list.incoming.length && !list.outgoing.length;
+  const empty = list && !list.friends.length && !list.incoming.length;
 
   return (
     <Screen
@@ -267,28 +267,6 @@ export default function FriendsScreen() {
                     icon="person-remove-outline"
                     accessibilityLabel={`Remove ${nameOf(p)} from friends`}
                     onPress={() => void remove(p)}
-                  />
-                </PersonRow>
-              </View>
-            ))}
-          </Card>
-        </View>
-      ) : null}
-
-      {list?.outgoing.length ? (
-        <View style={styles.group}>
-          <Section title="Sent" count={list.outgoing.length} />
-          <Card style={styles.listCard}>
-            {list.outgoing.map((p, i) => (
-              <View key={p.userId} style={i > 0 && styles.divider}>
-                <PersonRow person={p} detail={`Request sent · ${when(p.since)}`}>
-                  <Button
-                    label="Cancel"
-                    variant="link"
-                    loading={action.busy === `remove:${p.userId}`}
-                    disabled={!!action.busy}
-                    accessibilityLabel={`Cancel your friend request to ${nameOf(p)}`}
-                    onPress={() => void act(`remove:${p.userId}`, () => api.removeFriend(p.userId))}
                   />
                 </PersonRow>
               </View>

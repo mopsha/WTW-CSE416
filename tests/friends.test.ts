@@ -66,7 +66,7 @@ describe('parseFriendId', () => {
 });
 
 describe('groupFriends', () => {
-  test('splits friends, incoming and outgoing, newest first', () => {
+  test('splits friends and incoming, newest first, and never lists requests I sent', () => {
     const list = groupFriends([
       row({ userId: 'old-friend', status: 'accepted', acceptedAt: '2026-10-02T00:00:00Z' }),
       row({ userId: 'new-friend', status: 'accepted', acceptedAt: '2026-10-05T00:00:00Z' }),
@@ -77,11 +77,11 @@ describe('groupFriends', () => {
     expect(list.incoming).toEqual([
       { userId: 'asked-me', displayName: null, since: '2026-10-03T00:00:00Z' },
     ]);
-    expect(list.outgoing.map((p) => p.userId)).toEqual(['i-asked']);
+    expect(JSON.stringify(list)).not.toContain('i-asked');
   });
 
-  test('an empty list has three empty groups', () => {
-    expect(groupFriends([])).toEqual({ friends: [], incoming: [], outgoing: [] });
+  test('an empty list has two empty groups', () => {
+    expect(groupFriends([])).toEqual({ friends: [], incoming: [] });
   });
 });
 

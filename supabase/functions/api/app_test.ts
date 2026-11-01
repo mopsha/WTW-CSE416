@@ -699,7 +699,6 @@ Deno.test('friends: list is grouped and never cached', async () => {
   equal(await res.json(), {
     friends: [{ userId: BO, displayName: 'Bo', since: '2026-10-02T00:00:00Z' }],
     incoming: [{ userId: 'cy', displayName: null, since: '2026-10-03T00:00:00Z' }],
-    outgoing: [],
   });
 });
 

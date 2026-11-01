@@ -169,17 +169,21 @@ export async function createPickMaybeForGroup(
     throw new ApiError(404, 'GROUP_NOT_FOUND', 'Group not found');
   }
   const created = await createPick(lifecycle, userId, body);
+  let added: number;
   try {
-    const added = await groups.addGroupToPick(created.pickId, userId, groupId);
-    const pick = await lifecycle.load(created.pickId, userId);
-    await lifecycle.notifier?.(
-      (pick?.participantIds ?? []).filter((id) => id !== userId),
-      'added_to_pick',
-      created.pickId,
-    );
-    return { ...created, groupId, added };
+    added = await groups.addGroupToPick(created.pickId, userId, groupId);
   } catch (error) {
     await lifecycle.cancel(created.pickId, userId, null).catch(() => undefined);
     throw error;
   }
+  // The Pick is good from here on: a failed read only skips the notice.
+  const pick = await lifecycle.load(created.pickId, userId).catch(() => null);
+  if (pick) {
+    await lifecycle.notifier?.(
+      pick.participantIds.filter((id) => id !== userId),
+      'added_to_pick',
+      created.pickId,
+    );
+  }
+  return { ...created, groupId, added };
 }

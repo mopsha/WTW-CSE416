@@ -1,6 +1,6 @@
 // Friends (Mike, M3). One row per pair in public.friendships (0008_friendships.sql):
-//   GET  /friends                 -> { friends, incoming, outgoing }
-//   POST /friends/requests        { email } -> { userId, displayName, status }
+//   GET  /friends                 -> { friends, incoming }
+//   POST /friends/requests        { email } -> { status: 'sent' }
 //   POST /friends/:userId/accept  -> { status: 'accepted' }
 //   POST /friends/:userId/remove  -> { status: 'ok' }  (decline, cancel, or unfriend)
 // The RPCs enforce who may do what atomically; this layer validates input and
@@ -30,7 +30,6 @@ export interface FriendPerson {
 export interface FriendsList {
   friends: FriendPerson[];
   incoming: FriendPerson[];
-  outgoing: FriendPerson[];
 }
 
 export interface FriendRequestResult {
@@ -72,7 +71,10 @@ export function parseFriendId(id: string): string {
   return id.toLowerCase();
 }
 
-/** Friends, requests to me, and requests I sent, each newest first. */
+/**
+ * Friends and requests to me, each newest first. Requests I sent aren't listed: a row (and
+ * name) that only appears for a real email would reveal who has an account (0018).
+ */
 export function groupFriends(rows: readonly FriendRow[]): FriendsList {
   const person = (r: FriendRow): FriendPerson => ({
     userId: r.userId,
@@ -87,10 +89,6 @@ export function groupFriends(rows: readonly FriendRow[]): FriendsList {
       .sort(newest),
     incoming: rows
       .filter((r) => r.status === 'pending' && r.direction === 'in')
-      .map(person)
-      .sort(newest),
-    outgoing: rows
-      .filter((r) => r.status === 'pending' && r.direction === 'out')
       .map(person)
       .sort(newest),
   };
