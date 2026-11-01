@@ -16,6 +16,7 @@ import { castVote, closeVote, type VotingStore } from '../_shared/api/voting.ts'
 import type { PoolBuilder } from '../_shared/places/pool.ts';
 import { joinPick, type JoinStore } from '../_shared/api/join.ts';
 import { authorizeSweep, sweepDeadlines, type SweepStore } from '../_shared/api/sweep.ts';
+import { deleteAccount, type AccountStore } from '../_shared/api/account.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
   const raw = await c.req.text();
@@ -36,6 +37,7 @@ export function createApp(
     poolBuilder: PoolBuilder;
     closingStore: ClosingStore & VotingStore;
     joinStore?: JoinStore;
+    accountStore?: AccountStore;
     sweepStore?: SweepStore;
     cronSecret?: string;
     refreshHours?: Parameters<typeof getPick>[3];
@@ -48,7 +50,7 @@ export function createApp(
     cors({
       origin: '*',
       allowHeaders: ['Authorization', 'Content-Type', 'apikey', 'x-client-info'],
-      allowMethods: ['GET', 'POST', 'OPTIONS'],
+      allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
     }),
   );
   app.onError((error, c) => {
@@ -148,6 +150,14 @@ export function createApp(
     const body = await readJsonBody(c);
     if (!deps.joinStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Joining is not available');
     return c.json(await joinPick(deps.joinStore, user.id, body));
+  });
+  // Deletes the caller's account and all of their data (0017). The app signs out after.
+  app.delete('/me', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.accountStore) {
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Account deletion is not available');
+    }
+    return c.json(await deleteAccount(deps.accountStore, user.id));
   });
   return app;
 }
