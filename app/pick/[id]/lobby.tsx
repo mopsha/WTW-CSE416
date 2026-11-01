@@ -1,4 +1,5 @@
-// Lobby (draft): who's in, the join code + QR + Share, and the host's Start / Cancel.
+// Lobby (draft): who's in, the join code + QR + Share, the host's invite link, lobby lock and
+// Start / Cancel, and Report / Block on everyone else's row.
 // Everyone moves to the deck by themselves when the host starts (usePickRoute).
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams } from 'expo-router';
@@ -11,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '@/components/Button';
 import { ErrorBanner } from '@/components/ErrorBanner';
 import { GradientButton } from '@/components/GradientButton';
+import { MemberMenu } from '@/components/MemberMenu';
 import {
   goToPicks,
   LiveDot,
@@ -42,6 +44,7 @@ export default function LobbyScreen() {
 
   const [pick, setPick] = useState<PickDetail | null>(null);
   const [code, setCode] = useState<JoinCode | null | undefined>(undefined);
+  const [locked, setLocked] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   // Pull down: re-read who's in and the Pick (code, settings), not just wait for Realtime.
@@ -54,11 +57,16 @@ export default function LobbyScreen() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([api.getPick(pickId), queries.getJoinCode(pickId)]).then(
-      ([p, c]) => {
+    Promise.all([
+      api.getPick(pickId),
+      queries.getJoinCode(pickId),
+      queries.getLobbyLocked(pickId),
+    ]).then(
+      ([p, c, l]) => {
         if (!active) return;
         setPick(p);
         setCode(c);
+        setLocked(l);
         setLoadError(null);
       },
       (e: unknown) => active && setLoadError(messageOf(e)),
@@ -94,6 +102,22 @@ export default function LobbyScreen() {
     haptic.tap();
     void Share.share({ message: shareMessage(code.code) }).catch(() => {});
   };
+
+  // A link instead of the code: works signed out (it waits through sign-in), and the host can
+  // revoke it. Made fresh each time, so one leaked link doesn't open every future Pick.
+  const shareLink = () =>
+    void action.run('link', async () => {
+      haptic.tap();
+      const link = await api.createInvite({ kind: 'pick', targetId: pickId });
+      await Share.share({ message: `Join my Pick on WTW: ${link.url}` }).catch(() => {});
+    });
+
+  const toggleLock = () =>
+    void action.run('lock', async () => {
+      const result = await api.setLobbyLocked(pickId, !locked);
+      haptic.success();
+      setLocked(result.locked);
+    });
 
   const settings = pick
     ? [
@@ -160,6 +184,35 @@ export default function LobbyScreen() {
                 icon="share-outline"
                 onPress={share}
               />
+              {isHost ? (
+                <Button
+                  label="Share invite link"
+                  variant="secondary"
+                  icon="link-outline"
+                  accessibilityHint="Makes a one-tap link to this Pick that you can revoke"
+                  loading={action.busy === 'link'}
+                  disabled={!!action.busy || locked}
+                  onPress={shareLink}
+                />
+              ) : null}
+              {isHost ? (
+                <Button
+                  label={locked ? 'Unlock the lobby' : 'Lock the lobby'}
+                  variant="link"
+                  icon={locked ? 'lock-open-outline' : 'lock-closed-outline'}
+                  accessibilityHint={
+                    locked
+                      ? 'Lets people join with the code or a link again'
+                      : 'Stops anyone new joining with the code or a link'
+                  }
+                  loading={action.busy === 'lock'}
+                  disabled={!!action.busy}
+                  onPress={toggleLock}
+                />
+              ) : null}
+              {locked ? (
+                <Text style={pickStyles.muted}>Locked: nobody new can join right now.</Text>
+              ) : null}
             </>
           ) : (
             <Text style={pickStyles.muted}>
@@ -192,7 +245,11 @@ export default function LobbyScreen() {
               entering={FadeInDown.springify()}
               layout={LinearTransition}
             >
-              <ParticipantRow person={p} status={p.isHost ? null : 'Joined'} />
+              <ParticipantRow
+                person={p}
+                status={p.isHost ? null : 'Joined'}
+                right={p.isMe ? null : <MemberMenu userId={p.userId} name={p.displayName} />}
+              />
             </Animated.View>
           ))}
           {!enough ? (

@@ -103,18 +103,21 @@ export function LiveDot({ mode, offline }: { mode: LiveMode; offline?: boolean }
 export function ParticipantRow({
   person,
   status,
+  right,
 }: {
   person: ParticipantProgress;
   /** e.g. "Done", "Swiping…", "Voted". Never what they answered. */
   status?: string | null;
+  /** A control after the row (e.g. MemberMenu), outside its single accessibility label. */
+  right?: ReactNode;
 }) {
   const name =
     person.isMe && person.displayName !== 'You'
       ? `${person.displayName} (you)`
       : person.displayName;
-  return (
+  const row = (
     <View
-      style={styles.person}
+      style={[styles.person, right ? { flex: 1 } : null]}
       accessible
       accessibilityLabel={[name, person.isHost ? 'host' : null, status].filter(Boolean).join(', ')}
     >
@@ -128,6 +131,13 @@ export function ParticipantRow({
         </View>
       ) : null}
       {status ? <Text style={styles.personStatus}>{status}</Text> : null}
+    </View>
+  );
+  if (!right) return row;
+  return (
+    <View style={styles.personWithAction}>
+      {row}
+      {right}
     </View>
   );
 }
@@ -296,6 +306,7 @@ const styles = StyleSheet.create({
   liveDot: { width: 8, height: 8, borderRadius: 4 },
   liveText: { fontFamily: fonts.semibold, fontSize: 12, color: colors.text },
   person: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 52 },
+  personWithAction: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   personName: { flexShrink: 1, fontFamily: fonts.semibold, fontSize: 16, color: colors.text },
   personStatus: { marginLeft: 'auto', fontFamily: fonts.medium, fontSize: 13, color: colors.muted },
   hostTag: {

@@ -15,6 +15,7 @@ import { colors } from '@/components/theme';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { ProfileProvider } from '@/hooks/useProfile';
 import { configureNotifications, onNotificationTap } from '@/lib/notify';
+import { takePendingInvite } from '@/lib/pendingInvite';
 import { takePendingJoin } from '@/lib/pendingJoin';
 
 void SplashScreen.preventAutoHideAsync();
@@ -54,7 +55,14 @@ function RootStack() {
   useEffect(() => {
     if (!ready || !session) return;
     const code = takePendingJoin();
-    if (code) router.push({ pathname: '/join/[code]', params: { code } });
+    if (code) {
+      router.push({ pathname: '/join/[code]', params: { code } });
+      return;
+    }
+    // Invite links are parked in SecureStore, so they survive a restart during sign-in.
+    void takePendingInvite().then((token) => {
+      if (token) router.push({ pathname: '/i/[token]', params: { token } });
+    });
   }, [ready, session]);
 
   // Keep the splash up until the stored session and fonts are loaded. Rendering the
@@ -87,9 +95,10 @@ function RootStack() {
           <Stack.Screen name="pick/[id]/vote" options={{ animation: 'fade' }} />
           <Stack.Screen name="pick/[id]/winner" options={{ animation: 'fade' }} />
         </Stack.Protected>
-        {/* Join links open signed in or out; the screen sends you to sign-in if needed.
+        {/* Join and invite links open signed in or out; the screen sends you to sign-in if needed.
             Listed last so it is never the guard's fallback screen. */}
         <Stack.Screen name="join/[code]" options={{ animation: 'fade' }} />
+        <Stack.Screen name="i/[token]" options={{ animation: 'fade' }} />
       </Stack>
     </>
   );

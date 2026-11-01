@@ -38,9 +38,10 @@ test('bad input, unknown codes and closed Picks fail like the server', async () 
     code: 'JOIN_CODE_NOT_FOUND',
   });
   mockPicks.get('invite-pick')!.state = 'completed';
+  // Same answer as an unknown code (0014): a code's Pick is never confirmed to exist.
   await expect(api.joinPick(MOCK_INVITE_CODE)).rejects.toMatchObject({
-    status: 409,
-    code: 'PICK_CLOSED',
+    status: 404,
+    code: 'JOIN_CODE_NOT_FOUND',
   });
   expect(members('invite-pick')).toBe(0);
 });
