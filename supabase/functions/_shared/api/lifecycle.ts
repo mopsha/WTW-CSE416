@@ -3,6 +3,7 @@
 // goes through canTransition.
 
 import { ApiError } from './errors.ts';
+import type { Notifier } from './notify.ts';
 import { canTransition, type PickState } from '../domain/pickState.ts';
 import { shuffleForUser } from '../domain/shuffle.ts';
 import type { LatLng } from '../domain/geo.ts';
@@ -68,7 +69,9 @@ export interface LifecycleStore {
   load(pickId: string, userId: string): Promise<LifecyclePick | null>;
   start(pickId: string, userId: string, candidates: CandidateSnapshot[]): Promise<void>;
   refresh(pickId: string, userId: string, candidates: CandidateSnapshot[]): Promise<void>;
-  cancel(pickId: string, userId: string): Promise<void>;
+  cancel(pickId: string, userId: string, reason: string | null): Promise<void>;
+  /** Tells the other participants when the host starts or cancels. Optional in tests. */
+  notifier?: Notifier;
 }
 
 /**
@@ -192,7 +195,10 @@ function requireHost(pick: LifecyclePick, userId: string) {
   if (pick.hostId !== userId) throw new ApiError(403, 'FORBIDDEN', 'Only the host can do this');
 }
 
-async function buildCandidates(pool: PoolBuilder, pick: LifecyclePick): Promise<CandidateSnapshot[]> {
+async function buildCandidates(
+  pool: PoolBuilder,
+  pick: LifecyclePick,
+): Promise<CandidateSnapshot[]> {
   const candidates = await pool.buildPool({
     center: pick.center,
     radiusM: pick.radiusM,
@@ -223,6 +229,7 @@ export async function startPick(
   }
   const candidates = await buildCandidates(pool, pick);
   await store.start(pickId, userId, candidates);
+  await store.notifier?.(othersThan(pick, userId), 'pick_started', pickId);
   return { state: 'swiping' as const, candidateCount: candidates.length };
 }
 
@@ -251,25 +258,68 @@ export async function refreshPick(
   return { candidateCount: candidates.length };
 }
 
-export async function cancelPick(store: LifecycleStore, pickId: string, userId: string) {
+export const MAX_CANCEL_REASON = 200;
+
+/** POST /picks/:id/cancel body: nothing, or { reason } (trimmed, up to 200 characters). */
+export function parseCancelBody(body: unknown): string | null {
+  if (body === undefined || body === null) return null;
+  if (typeof body !== 'object' || Array.isArray(body)) {
+    throw new ApiError(400, 'INVALID_INPUT', 'Expected an object with an optional reason');
+  }
+  const { reason } = body as Record<string, unknown>;
+  if (reason === undefined || reason === null) return null;
+  if (typeof reason !== 'string' || reason.trim().length > MAX_CANCEL_REASON) {
+    throw new ApiError(
+      400,
+      'INVALID_INPUT',
+      `reason must be text of at most ${MAX_CANCEL_REASON} characters`,
+    );
+  }
+  return reason.trim() || null;
+}
+
+function othersThan(pick: LifecyclePick, userId: string) {
+  return pick.participantIds.filter((id) => id !== userId);
+}
+
+export async function cancelPick(
+  store: LifecycleStore,
+  pickId: string,
+  userId: string,
+  body?: unknown,
+) {
+  const reason = parseCancelBody(body);
   const pick = await loadAsParticipant(store, pickId, userId);
   requireHost(pick, userId);
   if (!canTransition(pick.state, 'canceled', 'host')) {
     throw new ApiError(409, 'INVALID_PICK_STATE', 'This Pick can no longer be canceled');
   }
-  await store.cancel(pickId, userId);
+  await store.cancel(pickId, userId, reason);
+  // The reason is shown in the inbox only; push text stays generic.
+  await store.notifier?.(
+    othersThan(pick, userId),
+    'pick_canceled',
+    pickId,
+    reason ? { reason } : {},
+  );
   return { state: 'canceled' as const };
 }
 
 export async function getPick(
-  store: LifecycleStore, pickId: string, userId: string,
+  store: LifecycleStore,
+  pickId: string,
+  userId: string,
   refreshHours?: (candidates: CandidateSnapshot[]) => Promise<HoursMetadata[]>,
 ) {
   const pick = await loadAsParticipant(store, pickId, userId);
   // Membership is checked before any provider access. Metadata never changes snapshots.
   let candidateHours: HoursMetadata[] = [];
   if (refreshHours && (pick.state === 'completed' || pick.state === 'final_vote')) {
-    try { candidateHours = await refreshHours(pick.candidates); } catch { /* Optional metadata only. */ }
+    try {
+      candidateHours = await refreshHours(pick.candidates);
+    } catch {
+      /* Optional metadata only. */
+    }
   }
   const order = shuffleForUser(
     pick.candidates.map((c) => c.placeId),

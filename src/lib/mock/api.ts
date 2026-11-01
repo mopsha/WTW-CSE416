@@ -1,6 +1,7 @@
 // A fake `fetch` for our Edge Function. It mirrors the API contract (docs/api-integration.md):
 // same routes, status codes, error codes and response shapes, returned as real Response
 // objects, so src/lib/api.ts runs the exact same parsing and error handling in both modes.
+import type { NotificationRow } from '@shared/api/notify.ts';
 import { validateCreatePick, type CreatePickInput } from '@shared/domain/createPick.ts';
 import { parseJoinCode } from '@shared/domain/joinCode.ts';
 import { validateDisplayName } from '@shared/api/profile.ts';
@@ -27,6 +28,26 @@ import {
 } from './store';
 
 export const MOCK_API_BASE_URL = 'https://mock.wtw.local/functions/v1/api';
+
+/** A seeded inbox for the fixture Picks, so the inbox has something to show in mock mode. */
+export const mockNotifications: NotificationRow[] = [
+  {
+    id: 'mock-n-vote',
+    type: 'vote_needed',
+    pickId: 'vote-pick',
+    payload: {},
+    createdAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+    readAt: null,
+  },
+  {
+    id: 'mock-n-done',
+    type: 'winner_decided',
+    pickId: 'done-pick',
+    payload: {},
+    createdAt: new Date(Date.now() - 6 * 86_400_000).toISOString(),
+    readAt: new Date(Date.now() - 6 * 86_400_000).toISOString(),
+  },
+];
 
 const LATENCY_MS = process.env.NODE_ENV === 'test' ? 0 : 300;
 
@@ -162,7 +183,12 @@ const ROUTES: Record<string, Handler> = {
     return json(200, { candidateCount: pick.state === 'swiping' ? pick.candidates.length : 0 });
   }),
 
-  'POST cancel': hostOnly((pick) => {
+  'POST cancel': hostOnly((pick, body) => {
+    const reason =
+      typeof body === 'object' && body !== null && 'reason' in body ? body.reason : undefined;
+    if (reason !== undefined && (typeof reason !== 'string' || reason.trim().length > 200)) {
+      return fail(400, 'INVALID_INPUT', 'reason must be text of at most 200 characters');
+    }
     if (pick.state === 'completed' || pick.state === 'canceled') {
       return wrongState('This Pick can no longer be canceled');
     }
@@ -244,6 +270,19 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
 
   if (method === 'POST' && path === '/picks') return createPick(readBody(init));
   if (method === 'POST' && path === '/picks/join') return joinPick(readBody(init));
+  if (method === 'GET' && path === '/notifications') {
+    return json(200, {
+      notifications: mockNotifications,
+      unreadCount: mockNotifications.filter((n) => !n.readAt).length,
+    });
+  }
+  const read = method === 'POST' && /^\/notifications\/([^/]+)\/read$/.exec(path);
+  if (read) {
+    const n = mockNotifications.find((x) => x.id === decodeURIComponent(read[1] ?? ''));
+    if (!n) return fail(404, 'NOTIFICATION_NOT_FOUND', 'Notification not found');
+    n.readAt ??= new Date().toISOString();
+    return json(200, { status: 'ok' });
+  }
   if (method === 'POST' && path === '/me') return updateMe(readBody(init));
 
   const match = /^\/picks\/([^/]+)(?:\/([a-z-]+))?$/.exec(path);

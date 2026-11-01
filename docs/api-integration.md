@@ -81,6 +81,39 @@ exactly: `GET /picks/:id`, `POST /picks/:id/start`, `/refresh` (`{ confirm }`, 4
   guard: signed out, it signs in first and then joins); the Picks tab has "Join with code".
   Both open `/pick/[id]`, which forwards a draft Pick to the Lobby.
 
+### Notifications and push (Alan, M4)
+
+- `GET /notifications`: my newest 50, newest first, `Cache-Control: private, no-store`.
+  Returns `{ notifications: [{ id, type, pickId, payload, createdAt, readAt }], unreadCount }`.
+  Clients may also read `notifications` through RLS (own rows only).
+- `POST /notifications/:id/read`: 200 `{ status: "ok" }`; 404 `NOTIFICATION_NOT_FOUND` for an
+  unknown id or someone else's (same answer, so ids can't be probed).
+- `POST /push-tokens` `{ token: "ExponentPushToken[…]", platform: "ios" | "android" }`: the
+  device's token now belongs to the caller (a phone that switches accounts moves with it).
+  400 for a malformed token. Client: Mike's `api.registerPushToken` (PR #29).
+- `POST /push-tokens/remove` `{ token }`: call on sign-out so the phone stops getting this
+  account's pushes. Only removes the caller's own token; anything else is a silent no-op.
+- `POST /picks/:id/cancel` now takes an optional `{ reason }` (trimmed, ≤ 200 characters, 400
+  otherwise), stored in `picks.cancel_reason` and shown in everyone's inbox.
+- Events (`notify()` in `_shared/api/notify.ts`): `pick_started` (everyone but the host),
+  `vote_needed` / `winner_decided` (everyone, from the canonical closers, so host close,
+  auto-close and the sweep all send it), `pick_canceled` (everyone but the host, reason in the
+  payload), `reminder` (the sweep, unfinished participants when the deadline is < 1 hour away).
+  `added_to_pick`, `plan_time_set`, `plan_reminder`, `did_you_go` are reserved for groups/invites
+  (Razin) and RSVP (Alan, next PR). Razin/Josh: call `lifecycleStore.notifier` /
+  `closingStore.notifier` with `(userIds, type, pickId, payload?)`; it never throws.
+- Once per person per event per Pick is a database rule: a unique index on
+  `notifications (user_id, pick_id, type)` (except `plan_time_set`). `notify_insert` returns
+  only the users who got a new row, and only they are pushed, so retries never double-push.
+- Push text is generic (`PUSH_TEXT`): no place names, answers or cancel reasons on lock screens.
+  Sent through the Expo Push API in batches of 100 with a 5 s timeout per request; tokens Expo reports as
+  `DeviceNotRegistered` are deleted. Push receipts are not checked yet.
+- Late joins: unchanged from 0006. Swiping = join and swipe; `final_vote` = only people who
+  were already in vote; `completed` = read only for participants.
+- Tables/RPCs (`0009_notifications.sql`): `notifications`, `push_tokens` (no client access),
+  `notify_insert`, `notification_mark_read`, `push_token_register`, `pick_reminder_targets`,
+  `pick_cancel(p_pick_id, p_user_id, p_reason default null)`. Adapter: `api/notifyStore.ts`.
+
 ### My display name (Razin's Week 2 task)
 
 - `POST /me`: Bearer user access token; body `{ "displayName": "Ava" }`. Trimmed, then 1–50

@@ -3,6 +3,7 @@
 import { getAccessToken } from './auth';
 import { API_BASE_URL, USE_MOCK } from './config';
 import { MOCK_API_BASE_URL, mockFetch } from './mock/api';
+import type { NotificationRow } from '@shared/api/notify.ts';
 import type { CreatePickInput } from '@shared/domain/createPick.ts';
 
 import { candidateFromApi } from './places';
@@ -189,8 +190,11 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
       request<{ candidateCount: number }>('POST', `${pickPath(pickId)}/refresh`, {
         body: { confirm },
       }),
-    cancelPick: (pickId: string) =>
-      request<{ state: PickState }>('POST', `${pickPath(pickId)}/cancel`),
+    /** Host only. The reason (optional, up to 200 characters) shows in everyone's inbox. */
+    cancelPick: (pickId: string, reason?: string) =>
+      request<{ state: PickState }>('POST', `${pickPath(pickId)}/cancel`, {
+        body: reason?.trim() ? { reason: reason.trim() } : undefined,
+      }),
     /** Host only: close swiping now (rank -> clear winner or final vote). */
     closePick: (pickId: string) => request<CloseResponse>('POST', `${pickPath(pickId)}/close`),
     /** One changeable ballot among the finalists, while the Pick is in final_vote. */
@@ -199,6 +203,11 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     /** Host only: tally now, before everyone has voted. */
     closeVote: (pickId: string) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/close-vote`),
+    /** My newest 50 notifications (the inbox) and how many are unread. */
+    listNotifications: () =>
+      request<{ notifications: NotificationRow[]; unreadCount: number }>('GET', '/notifications'),
+    markNotificationRead: (id: string) =>
+      request<StatusResponse>('POST', `/notifications/${encodeURIComponent(id)}/read`),
   };
 }
 

@@ -16,6 +16,13 @@ import { castVote, closeVote, type VotingStore } from '../_shared/api/voting.ts'
 import type { PoolBuilder } from '../_shared/places/pool.ts';
 import { joinPick, type JoinStore } from '../_shared/api/join.ts';
 import { authorizeSweep, sweepDeadlines, type SweepStore } from '../_shared/api/sweep.ts';
+import {
+  listNotifications,
+  markNotificationRead,
+  registerPushToken,
+  unregisterPushToken,
+  type NotifyStore,
+} from '../_shared/api/notify.ts';
 import { updateMe, type ProfileStore } from '../_shared/api/profile.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
@@ -39,6 +46,7 @@ export function createApp(
     joinStore?: JoinStore;
     profileStore?: ProfileStore;
     sweepStore?: SweepStore;
+    notifyStore?: NotifyStore;
     cronSecret?: string;
     refreshHours?: Parameters<typeof getPick>[3];
   },
@@ -128,7 +136,8 @@ export function createApp(
   });
   app.post('/picks/:id/cancel', async (c) => {
     const user = await deps.getUser(c.req.raw);
-    return c.json(await cancelPick(deps.lifecycleStore, c.req.param('id'), user.id));
+    const body = await readJsonBody(c);
+    return c.json(await cancelPick(deps.lifecycleStore, c.req.param('id'), user.id, body));
   });
   app.post('/picks/:id/close', async (c) => {
     const user = await deps.getUser(c.req.raw);
@@ -151,6 +160,32 @@ export function createApp(
     if (!deps.joinStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Joining is not available');
     return c.json(await joinPick(deps.joinStore, user.id, body));
   });
+  // My inbox (newest 50) and push registration. Always the verified caller's own rows.
+  app.get('/notifications', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const user = await deps.getUser(c.req.raw);
+    return c.json(await listNotifications(requireNotify(), user.id));
+  });
+  app.post('/notifications/:id/read', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    return c.json(await markNotificationRead(requireNotify(), c.req.param('id'), user.id));
+  });
+  app.post('/push-tokens', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const body = await readJsonBody(c);
+    return c.json(await registerPushToken(requireNotify(), user.id, body));
+  });
+  app.post('/push-tokens/remove', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const body = await readJsonBody(c);
+    return c.json(await unregisterPushToken(requireNotify(), user.id, body));
+  });
+  function requireNotify(): NotifyStore {
+    if (!deps.notifyStore) {
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Notifications are not available');
+    }
+    return deps.notifyStore;
+  }
   // The caller's own display name ("what should we call you?" and the Profile tab).
   // The row is always the verified caller's; the body cannot name another user.
   app.post('/me', async (c) => {

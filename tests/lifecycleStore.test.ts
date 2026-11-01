@@ -53,8 +53,12 @@ test('uses the SQL argument names for every operation', async () => {
     p_candidates: candidates,
   });
 
-  await store.cancel('pick', 'host');
-  expect(mockRpc).toHaveBeenLastCalledWith('pick_cancel', { p_pick_id: 'pick', p_user_id: 'host' });
+  await store.cancel('pick', 'host', 'Rained out');
+  expect(mockRpc).toHaveBeenLastCalledWith('pick_cancel', {
+    p_pick_id: 'pick',
+    p_user_id: 'host',
+    p_reason: 'Rained out',
+  });
 });
 
 test.each([
