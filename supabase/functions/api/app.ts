@@ -16,6 +16,7 @@ import { castVote, closeVote, type VotingStore } from '../_shared/api/voting.ts'
 import type { PoolBuilder } from '../_shared/places/pool.ts';
 import { joinPick, type JoinStore } from '../_shared/api/join.ts';
 import { authorizeSweep, sweepDeadlines, type SweepStore } from '../_shared/api/sweep.ts';
+import { updateMe, type ProfileStore } from '../_shared/api/profile.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
   const raw = await c.req.text();
@@ -36,6 +37,7 @@ export function createApp(
     poolBuilder: PoolBuilder;
     closingStore: ClosingStore & VotingStore;
     joinStore?: JoinStore;
+    profileStore?: ProfileStore;
     sweepStore?: SweepStore;
     cronSecret?: string;
     refreshHours?: Parameters<typeof getPick>[3];
@@ -148,6 +150,14 @@ export function createApp(
     const body = await readJsonBody(c);
     if (!deps.joinStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Joining is not available');
     return c.json(await joinPick(deps.joinStore, user.id, body));
+  });
+  // The caller's own display name ("what should we call you?" and the Profile tab).
+  // The row is always the verified caller's; the body cannot name another user.
+  app.post('/me', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const body = await readJsonBody(c);
+    if (!deps.profileStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Profiles are not available');
+    return c.json(await updateMe(deps.profileStore, user.id, body));
   });
   return app;
 }

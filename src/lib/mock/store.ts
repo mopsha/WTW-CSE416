@@ -100,8 +100,8 @@ export function setMockBots(enabled: boolean) {
 }
 
 /**
- * My profile (public.profiles in mock form). No name, like a new account, so screens fall
- * back to the email-derived name. Survives resetMockData().
+ * My profile (public.profiles in mock form). Starts without a name, like a new account,
+ * so mock mode shows the "what should we call you?" step. Survives resetMockData().
  */
 export const mockProfile: { displayName: string | null } = { displayName: null };
 
