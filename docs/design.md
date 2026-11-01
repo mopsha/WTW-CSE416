@@ -305,8 +305,8 @@ Status as of M3 (Oct 21). "Screen done" means the app side is built and runs end
 | FR-01 | Create an account, sign in, sign out, and maintain a profile. | Sign in; Profile tab (sign out) | None (Supabase Auth) | `profiles` | Razin (auth), Mike (screens) | Sign-in done; profile editing: Razin |
 | FR-02 | Complete and later edit a short preference profile. | Onboarding (survey + permission explainers); Profile → Edit preferences | `GET /me`, `POST /me/preferences` | `profiles.discover_preferences` (0011) | Mike | **Done** (M4) |
 | FR-03 | Send, accept, remove, and block friend relationships. | Friends tab (placeholder) | planned | `friendships` | Razin | M4 |
-| FR-04 | Create, name, and manage a reusable group. | planned | planned | `groups`, `group_members` | Razin | M4 |
-| FR-05 | Create a Pick for selected friends or a saved group. | Create Pick → Lobby | `POST /picks` (PR #12) | `picks`, `pick_participants` | Alan, Mike (screens) | **Done** by join code; friends/groups M4 |
+| FR-04 | Create, name, and manage a reusable group. | Picks tab "Your groups"; `app/groups/` list + detail | `/groups` routes (0012) | `groups`, `group_members` | Razin | **Done** (M4); adding people needs 0008 friends |
+| FR-05 | Create a Pick for selected friends or a saved group. | Group → Start → Create Pick → Lobby | `POST /picks` `{ groupId }`, `POST /picks/:id/invite` | `picks.group_id`, `pick_participants` | Alan, Mike (screens), Razin (groups) | **Done** by join code and group; invite API done, invite screen not yet |
 | FR-06 | Select Food or Activities and optionally refine location, radius, price, and open status. | Create Pick (map pin, search, radius, pool, deadline, close rule) | `POST /picks` | `picks` | Josh, Mike (screen) | **Done**; price/open filters M4 |
 | FR-07 | Retrieve and normalize a bounded nearby candidate pool. | Lobby Start; host "Get new places" | `POST /picks/:id/start`, `/refresh` (PR #12) | `places`, `place_cache`, `pick_candidates` | Josh, Alan | API in review |
 | FR-08 | Join an authorized Pick through the app or invitation link. | Lobby shows code + QR + Share (`wtw://join/CODE`) | `POST /picks/join` (Razin) | `pick_join_codes`, `pick_participants` | Razin, Mike (lobby) | **Done**: code, QR/link (`app/join/[code].tsx`), Picks-tab "Join with code" |
@@ -448,6 +448,8 @@ Code: `supabase/migrations/0001_init.sql` (RLS, grants), `0002`–`0004` (server
 | participant | `final_votes` | ✓ only my own ballot | ✗ (vote via API) | RLS `user_id = auth.uid()`. Not in Realtime. |
 | participant | `pick_join_codes` | ✓ my Picks' codes (to share) | ✗ | RLS `is_pick_participant(pick_id)`; `select` grant only. |
 | stranger | all of the above | ✗ 0 rows (even with the Pick id) | ✗ | The same RLS policies; tested table by table in `join_and_security_test.sql`. |
+| group member | `groups`, `group_members` | ✓ groups I'm in and everyone in them (+ their `profiles.display_name`) | ✗ (via API) | RLS `private.is_group_member(id)` / `shares_group_with` (0012). A removed member loses the group but keeps Picks they were in (participant RLS). |
+| non-member | `groups`, `group_members` | ✗ 0 rows, even with the id | ✗ | Same policies; RPCs answer 404. Tested in `groups_test.sql`. |
 | `authenticated` | `pick_join` and every `heartbeat_*` / `pick_*` RPC | — | ✗ execute | Executable only by `service_role`; calling one directly fails with 42501. |
 | `service_role` (API) | every table | ✓ | ✓ via RPCs | Bypasses RLS, so the RPCs recheck membership/host, state and version under `SELECT … FOR UPDATE`; PT400/403/404/409 map to HTTP 400/403/404/409. |
 | `service_role` (API) | `pick_join_codes` | ✓ | ✓ via trigger + `pick_join` | Codes are issued by a trigger on every new Pick; `pick_join` is the only way into a Pick. |
@@ -485,6 +487,8 @@ Base URL: `<SUPABASE_URL>/functions/v1/api`. User routes need `Authorization: Be
 | `POST /picks/:id/close-vote` | host | canonical final-vote close | implemented |
 | `GET /picks/:id` | participant | Pick read plus reveal hours metadata | implemented |
 | `POST /internal/sweep` | cron secret | delegate expired Picks to canonical closers | implemented; hosted delivery unverified |
+| `POST /groups`, `/groups/:id/rename`, `/delete`, `/members`, `/members/:userId/remove`, `/leave` | owner (leave: members) | groups; friends-only adds (0012) | implemented |
+| `POST /picks/:id/invite` | host, `draft`/`swiping` | `{ userIds }` of friends | implemented |
 | `PATCH /me` | signed-in user | update display name / avatar | planned |
 
 **Database RPCs used by the API** (service role only, `0002_heartbeat_rpcs.sql`)

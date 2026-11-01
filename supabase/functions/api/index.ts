@@ -7,6 +7,7 @@ import { createClosingStore } from './closingStore.ts';
 import { createJoinStore } from './joinStore.ts';
 import { createFriendsStore } from './friendsStore.ts';
 import { createProfileStore } from './profileStore.ts';
+import { createGroupsStore } from './groupsStore.ts';
 import { createSweepStore } from './sweepStore.ts';
 import { createNotifyStore } from './notifyStore.ts';
 import { createNotifier } from '../_shared/api/notify.ts';
@@ -46,6 +47,7 @@ const app = createApp(
     joinStore: createJoinStore(),
     friendsStore: createFriendsStore(),
     profileStore: createProfileStore(),
+    groupsStore: createGroupsStore(),
     refreshHours: refreshCandidateHours,
   },
   '/api',

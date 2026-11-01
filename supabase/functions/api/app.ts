@@ -8,7 +8,6 @@ import { swipe, type HeartbeatStore } from '../_shared/api/heartbeat.ts';
 import { getProgress, type ProgressStore } from '../_shared/api/progress.ts';
 import {
   cancelPick,
-  createPick,
   getPick,
   refreshPick,
   startPick,
@@ -34,6 +33,17 @@ import {
   type NotifyStore,
 } from '../_shared/api/notify.ts';
 import { getMe, updateMe, updatePreferences, type ProfileStore } from '../_shared/api/profile.ts';
+import {
+  addGroupMembers,
+  createGroup,
+  createPickMaybeForGroup,
+  deleteGroup,
+  inviteToPick,
+  leaveGroup,
+  removeGroupMember,
+  renameGroup,
+  type GroupsStore,
+} from '../_shared/api/groups.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
   const raw = await c.req.text();
@@ -56,6 +66,7 @@ export function createApp(
     joinStore?: JoinStore;
     friendsStore?: FriendsStore;
     profileStore?: ProfileStore;
+    groupsStore?: GroupsStore;
     sweepStore?: SweepStore;
     notifyStore?: NotifyStore;
     cronSecret?: string;
@@ -174,7 +185,11 @@ export function createApp(
     const body = await readJsonBody(c);
     parseCreatePick(body);
     await deps.checkLimit?.('create', user.id);
-    return c.json(await createPick(deps.lifecycleStore, user.id, body), 201);
+    // With { groupId }, everyone in the group is added too (0012_groups.sql).
+    return c.json(
+      await createPickMaybeForGroup(deps.lifecycleStore, deps.groupsStore, user.id, body),
+      201,
+    );
   });
   app.get('/picks/:id', async (c) => {
     c.header('Cache-Control', 'private, no-store');
@@ -306,6 +321,42 @@ export function createApp(
     const body = await readJsonBody(c);
     if (!deps.profileStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Profiles are not available');
     return c.json(await updatePreferences(deps.profileStore, user.id, body));
+  });
+  // Groups (0012_groups.sql). Authenticate first, then check the store, like /picks/join.
+  const groups = async (c: { req: { raw: Request } }) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.groupsStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Groups are not available');
+    return { user, store: deps.groupsStore };
+  };
+  app.post('/picks/:id/invite', async (c) => {
+    const { user, store } = await groups(c);
+    return c.json(await inviteToPick(store, user.id, c.req.param('id'), await readJsonBody(c)));
+  });
+  app.post('/groups', async (c) => {
+    const { user, store } = await groups(c);
+    return c.json(await createGroup(store, user.id, await readJsonBody(c)), 201);
+  });
+  app.post('/groups/:id/rename', async (c) => {
+    const { user, store } = await groups(c);
+    return c.json(await renameGroup(store, user.id, c.req.param('id'), await readJsonBody(c)));
+  });
+  app.post('/groups/:id/delete', async (c) => {
+    const { user, store } = await groups(c);
+    return c.json(await deleteGroup(store, user.id, c.req.param('id')));
+  });
+  app.post('/groups/:id/members', async (c) => {
+    const { user, store } = await groups(c);
+    return c.json(await addGroupMembers(store, user.id, c.req.param('id'), await readJsonBody(c)));
+  });
+  app.post('/groups/:id/members/:userId/remove', async (c) => {
+    const { user, store } = await groups(c);
+    return c.json(
+      await removeGroupMember(store, user.id, c.req.param('id'), c.req.param('userId')),
+    );
+  });
+  app.post('/groups/:id/leave', async (c) => {
+    const { user, store } = await groups(c);
+    return c.json(await leaveGroup(store, user.id, c.req.param('id')));
   });
   return app;
 }

@@ -18,6 +18,7 @@ import { discover, parseDiscover } from '@shared/api/discover.ts';
 import { errorResponse } from '@shared/api/errors.ts';
 import { createPoolBuilder } from '@shared/places/pool.ts';
 import { MockProvider } from '@shared/places/MockProvider.ts';
+import { handleMockGroups, mockCreateGroupPick, mockInvite } from './groups';
 import {
   createMockPick,
   decide,
@@ -339,6 +340,24 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     if (method === 'DELETE') savedPlaces.delete(id);
     return json(200, { status: 'ok' });
   }
+  // Groups (src/lib/mock/groups.ts): /groups/..., POST /picks with groupId, and invites.
+  const groupResult = handleMockGroups(method, path, readBody(init));
+  if (groupResult) return json(groupResult.status, groupResult.body);
+  const groupId = (readBody(init) as { groupId?: unknown } | null)?.groupId;
+  if (method === 'POST' && path === '/picks' && groupId != null) {
+    const problems = validateCreatePick(readBody(init));
+    if (problems.length > 0) {
+      return fail(400, 'INVALID_INPUT', problems.map((p) => p.message).join(' '));
+    }
+    const r = mockCreateGroupPick(readBody(init) as CreatePickInput, groupId);
+    return json(r.status, r.body);
+  }
+  const invite = /^\/picks\/([^/]+)\/invite$/.exec(path);
+  if (method === 'POST' && invite) {
+    const r = mockInvite(decodeURIComponent(invite[1]!), readBody(init));
+    return json(r.status, r.body);
+  }
+
   if (method === 'POST' && path === '/picks') return createPick(readBody(init));
   if (method === 'POST' && path === '/picks/join') return joinPick(readBody(init));
   if (method === 'POST' && path === '/me') return updateMe(readBody(init));

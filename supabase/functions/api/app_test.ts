@@ -7,6 +7,7 @@ import type { VotingStore } from '../_shared/api/voting.ts';
 import type { PoolBuilder } from '../_shared/places/pool.ts';
 import type { FriendsStore } from '../_shared/api/friends.ts';
 import type { NotifyStore } from '../_shared/api/notify.ts';
+import type { GroupsStore } from '../_shared/api/groups.ts';
 
 const store: HeartbeatStore = {
   loadPick: async () => null,
@@ -1195,4 +1196,232 @@ Deno.test('GET /me and POST /me/preferences: 401 without a token', async () => {
   });
   equal((await app.request('/me')).status, 401);
   equal((await app.request('/me/preferences', { method: 'POST', body: '{}' })).status, 401);
+});
+
+// ---------------------------------------------------------------- groups (0012_groups.sql)
+// An in-memory GroupsStore with the RPCs' rules: non-members 404, non-owners/hosts 403,
+// only the owner's friends can be added, and a group Pick copies who is in the group now.
+const OWNER = '71111111-1111-4111-8111-111111111111';
+const AVA = '72222222-2222-4222-8222-222222222222';
+const BEN = '73333333-3333-4333-8333-333333333333';
+const STRANGER = '75555555-5555-4555-8555-555555555555';
+const GROUP = 'a0000000-0000-4000-8000-000000000001';
+const PICK = 'b0000000-0000-4000-8000-000000000001';
+const DRAFT_BODY = { category: 'food', center: { lat: 1, lng: 2 }, radiusM: 500 };
+
+function groupsWorld() {
+  const friends = new Set([AVA, BEN]); // the owner's accepted friends
+  const members = new Map<string, Set<string>>([[GROUP, new Set([OWNER])]]);
+  const picks = new Map<string, { hostId: string; participants: Set<string>; canceled: boolean }>();
+  let nextPick = 0;
+  const notFound = () => new ApiError(404, 'GROUP_NOT_FOUND', 'Group not found');
+  const asOwner = (userId: string, groupId: string) => {
+    const m = members.get(groupId);
+    if (!m?.has(userId)) throw notFound();
+    if (userId !== OWNER) throw new ApiError(403, 'FORBIDDEN', 'Only the group owner can do this');
+    return m;
+  };
+  const groupsStore: GroupsStore = {
+    create: async (userId, name) => ({ id: GROUP, name, ownerId: userId }),
+    rename: async (userId, groupId) => void asOwner(userId, groupId),
+    delete: async (userId, groupId) => {
+      asOwner(userId, groupId);
+      members.delete(groupId);
+    },
+    addMembers: async (userId, groupId, ids) => {
+      const m = asOwner(userId, groupId);
+      if (ids.some((id) => id !== userId && !friends.has(id))) {
+        throw new ApiError(403, 'NOT_FRIENDS', 'You can only add your friends');
+      }
+      const before = m.size;
+      ids.forEach((id) => m.add(id));
+      return m.size - before;
+    },
+    removeMember: async (userId, groupId, memberId) =>
+      void asOwner(userId, groupId).delete(memberId),
+    leave: async (userId, groupId) => {
+      if (!members.get(groupId)?.has(userId)) throw notFound();
+      if (userId === OWNER) throw new ApiError(409, 'OWNER_CANNOT_LEAVE', 'Delete it instead');
+      members.get(groupId)!.delete(userId);
+    },
+    isMember: async (groupId, userId) => members.get(groupId)?.has(userId) ?? false,
+    addGroupToPick: async (pickId, userId, groupId) => {
+      const m = members.get(groupId);
+      if (!m?.has(userId)) throw notFound();
+      const p = picks.get(pickId)!;
+      const before = p.participants.size;
+      m.forEach((id) => p.participants.add(id));
+      return p.participants.size - before;
+    },
+    invite: async (pickId, userId, ids) => {
+      const p = picks.get(pickId);
+      if (!p?.participants.has(userId)) throw new ApiError(404, 'PICK_NOT_FOUND', 'Pick not found');
+      if (p.hostId !== userId) throw new ApiError(403, 'FORBIDDEN', 'Only the host can do this');
+      if (ids.some((id) => id !== userId && !friends.has(id))) {
+        throw new ApiError(403, 'NOT_FRIENDS', 'You can only add your friends');
+      }
+      const before = p.participants.size;
+      ids.forEach((id) => p.participants.add(id));
+      return p.participants.size - before;
+    },
+  };
+  const lifecycle: LifecycleStore = {
+    ...lifecycleStore,
+    createPick: async (hostId) => {
+      const id = nextPick++ === 0 ? PICK : `b0000000-0000-4000-8000-00000000000${nextPick}`;
+      picks.set(id, { hostId, participants: new Set([hostId]), canceled: false });
+      return { id };
+    },
+    cancel: async (pickId) => {
+      picks.get(pickId)!.canceled = true;
+    },
+  };
+  const app = createApp({
+    store,
+    poolBuilder,
+    closingStore,
+    getUser: async (req) => {
+      const id = req.headers.get('x-test-user');
+      if (!id) throw new ApiError(401, 'UNAUTHORIZED', 'Missing bearer token');
+      return { id };
+    },
+    lifecycleStore: lifecycle,
+    groupsStore,
+  });
+  const post = (path: string, user: string | null, body?: unknown) =>
+    app.request(path, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(user ? { 'x-test-user': user } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  return { post, members, picks, groupsStore };
+}
+
+Deno.test('POST /groups: 401 without a token, 400 for a bad name, 201 trimmed', async () => {
+  const { post } = groupsWorld();
+  equal((await post('/groups', null, { name: 'Roommates' })).status, 401);
+  for (const name of ['', '   ', 'x'.repeat(51), 7, 'tab\there']) {
+    const res = await post('/groups', OWNER, { name });
+    equal(res.status, 400);
+    equal((await res.json()).error.code, 'INVALID_INPUT');
+  }
+  equal((await post('/groups', OWNER, { name: '😀'.repeat(50) })).status, 201);
+  const res = await post('/groups', OWNER, { name: '  Roommates ' });
+  equal(res.status, 201);
+  equal(await res.json(), { id: GROUP, name: 'Roommates', ownerId: OWNER });
+});
+
+Deno.test('group routes: 503 when groups are not configured, after authenticating', async () => {
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async () => ({ id: OWNER }),
+  });
+  for (const path of ['/groups', `/groups/${GROUP}/leave`, `/picks/${PICK}/invite`]) {
+    equal((await app.request(path, { method: 'POST', body: '{}' })).status, 503);
+  }
+});
+
+Deno.test('only friends can be added to a group, and only by the owner', async () => {
+  const { post, members } = groupsWorld();
+  const stranger = await post(`/groups/${GROUP}/members`, OWNER, { userIds: [STRANGER] });
+  equal(stranger.status, 403);
+  equal((await stranger.json()).error.code, 'NOT_FRIENDS');
+  const mixed = await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA, STRANGER] });
+  equal(mixed.status, 403);
+  equal([...members.get(GROUP)!], [OWNER]); // all or nothing
+  const ok = await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA, BEN, AVA] });
+  equal(await ok.json(), { added: 2 });
+  equal((await post(`/groups/${GROUP}/members`, AVA, { userIds: [BEN] })).status, 403);
+  for (const userIds of [[], ['not-a-uuid'], undefined, Array(26).fill(AVA)]) {
+    equal((await post(`/groups/${GROUP}/members`, OWNER, { userIds })).status, 400);
+  }
+  equal((await post('/groups/not-a-uuid/members', OWNER, { userIds: [AVA] })).status, 400);
+});
+
+Deno.test('a non-member cannot see or change a group (404, not 403)', async () => {
+  const { post } = groupsWorld();
+  for (const [path, body] of [
+    [`/groups/${GROUP}/rename`, { name: 'Mine' }],
+    [`/groups/${GROUP}/delete`, undefined],
+    [`/groups/${GROUP}/members`, { userIds: [AVA] }],
+    [`/groups/${GROUP}/leave`, undefined],
+  ] as const) {
+    const res = await post(path, STRANGER, body);
+    equal(res.status, 404);
+    equal((await res.json()).error.code, 'GROUP_NOT_FOUND');
+  }
+  const pick = await post('/picks', STRANGER, { ...DRAFT_BODY, groupId: GROUP });
+  equal(pick.status, 404);
+});
+
+Deno.test('POST /picks with groupId adds every member; without it, nothing changes', async () => {
+  const { post, picks } = groupsWorld();
+  await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA, BEN] });
+  const res = await post('/picks', OWNER, { ...DRAFT_BODY, groupId: GROUP.toUpperCase() });
+  equal(res.status, 201);
+  equal(await res.json(), { pickId: PICK, state: 'draft', groupId: GROUP, added: 2 });
+  equal([...picks.get(PICK)!.participants].sort(), [OWNER, AVA, BEN].sort());
+  const plain = await post('/picks', OWNER, DRAFT_BODY);
+  equal(plain.status, 201);
+  equal(Object.keys(await plain.json()), ['pickId', 'state']);
+  equal((await post('/picks', OWNER, { ...DRAFT_BODY, groupId: 'nope' })).status, 400);
+  // Bad Pick input is a 400 before any group lookup or Pick is created.
+  const before = picks.size;
+  equal((await post('/picks', OWNER, { groupId: GROUP })).status, 400);
+  equal(picks.size, before);
+});
+
+Deno.test('a removed member keeps past Picks but is not added to new ones', async () => {
+  const { post, picks } = groupsWorld();
+  await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA, BEN] });
+  const first = await (await post('/picks', OWNER, { ...DRAFT_BODY, groupId: GROUP })).json();
+  equal((await post(`/groups/${GROUP}/members/${BEN}/remove`, OWNER)).status, 200);
+  equal(picks.get(first.pickId)!.participants.has(BEN), true);
+  const second = await (await post('/picks', OWNER, { ...DRAFT_BODY, groupId: GROUP })).json();
+  equal(second.added, 1);
+  equal(picks.get(second.pickId)!.participants.has(BEN), false);
+  // And Ben can no longer start one for the group.
+  equal((await post('/picks', BEN, { ...DRAFT_BODY, groupId: GROUP })).status, 404);
+});
+
+Deno.test(
+  'POST /picks with groupId cancels the empty draft if adding the group fails',
+  async () => {
+    const world = groupsWorld();
+    world.groupsStore.addGroupToPick = async () => {
+      throw new ApiError(404, 'GROUP_NOT_FOUND', 'Group not found');
+    };
+    const res = await world.post('/picks', OWNER, { ...DRAFT_BODY, groupId: GROUP });
+    equal(res.status, 404);
+    equal(world.picks.get(PICK)!.canceled, true);
+  },
+);
+
+Deno.test('leave: members can, the owner cannot', async () => {
+  const { post, members } = groupsWorld();
+  await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA] });
+  equal(await (await post(`/groups/${GROUP}/leave`, AVA)).json(), { status: 'ok' });
+  equal(members.get(GROUP)!.has(AVA), false);
+  const owner = await post(`/groups/${GROUP}/leave`, OWNER);
+  equal(owner.status, 409);
+  equal((await owner.json()).error.code, 'OWNER_CANNOT_LEAVE');
+});
+
+Deno.test('POST /picks/:id/invite: host only, friends only', async () => {
+  const { post, picks } = groupsWorld();
+  await post('/picks', OWNER, DRAFT_BODY);
+  equal((await post(`/picks/${PICK}/invite`, OWNER, { userIds: [STRANGER] })).status, 403);
+  equal(await (await post(`/picks/${PICK}/invite`, OWNER, { userIds: [AVA] })).json(), {
+    added: 1,
+  });
+  equal(picks.get(PICK)!.participants.has(AVA), true);
+  equal((await post(`/picks/${PICK}/invite`, AVA, { userIds: [BEN] })).status, 403);
+  equal((await post(`/picks/${PICK}/invite`, OWNER, {})).status, 400);
+  equal((await post(`/picks/${PICK}/invite`, null, { userIds: [AVA] })).status, 401);
 });

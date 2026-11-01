@@ -8,6 +8,7 @@ import type { CreatePickInput } from '@shared/domain/createPick.ts';
 import type { FriendRequestResult, FriendsList } from '@shared/api/friends.ts';
 import type { MeResponse } from '@shared/api/profile.ts';
 import type { Preferences } from '@shared/domain/preferences.ts';
+import type { GroupSummary as CreatedGroup } from '@shared/api/groups.ts';
 
 import { candidateFromApi } from './places';
 import type {
@@ -156,6 +157,7 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
   }
 
   const pickPath = (pickId: string) => `/picks/${encodeURIComponent(pickId)}`;
+  const groupPath = (groupId: string) => `/groups/${encodeURIComponent(groupId)}`;
 
   return {
     discover: (params: {
@@ -207,6 +209,34 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
       request<StatusResponse>('POST', '/push-tokens', { body: { token, platform } }),
     /** Razin's DELETE /me: deletes my account and its data. Sign out afterwards. */
     deleteMe: () => request<StatusResponse>('DELETE', '/me'),
+
+    // Groups (0012_groups.sql). Reads are RLS queries (queries.listMyGroups / getGroup).
+    /** A draft Pick with everyone in the group already in it. 404 GROUP_NOT_FOUND if I'm not in it. */
+    createGroupPick: (input: CreatePickInput, groupId: string) =>
+      request<CreatePickResponse & { groupId: string; added: number }>('POST', '/picks', {
+        body: { ...input, groupId },
+      }),
+    /** Host only: add friends to a draft or swiping Pick. 403 NOT_FRIENDS for anyone else. */
+    inviteToPick: (pickId: string, userIds: string[]) =>
+      request<{ added: number }>('POST', `${pickPath(pickId)}/invite`, { body: { userIds } }),
+    createGroup: (name: string) => request<CreatedGroup>('POST', '/groups', { body: { name } }),
+    /** Owner only. */
+    renameGroup: (groupId: string, name: string) =>
+      request<StatusResponse>('POST', `${groupPath(groupId)}/rename`, { body: { name } }),
+    /** Owner only. Past Picks and their results stay. */
+    deleteGroup: (groupId: string) =>
+      request<StatusResponse>('POST', `${groupPath(groupId)}/delete`),
+    /** Owner only; accepted friends only (403 NOT_FRIENDS). Already-members are skipped. */
+    addGroupMembers: (groupId: string, userIds: string[]) =>
+      request<{ added: number }>('POST', `${groupPath(groupId)}/members`, { body: { userIds } }),
+    /** Owner only. They keep past Picks; new group Picks won't include them. */
+    removeGroupMember: (groupId: string, userId: string) =>
+      request<StatusResponse>(
+        'POST',
+        `${groupPath(groupId)}/members/${encodeURIComponent(userId)}/remove`,
+      ),
+    /** Anyone but the owner (409 OWNER_CANNOT_LEAVE). */
+    leaveGroup: (groupId: string) => request<StatusResponse>('POST', `${groupPath(groupId)}/leave`),
     submitSwipe: (pickId: string, placeId: string, value: PreferenceValue) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/swipes`, { body: { placeId, value } }),
     /** Host only: closes swiping and ranks. Others get 403 FORBIDDEN. */
