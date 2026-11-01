@@ -1,18 +1,18 @@
 # Requirements status (M4)
 
-State of `integ/m4` (PR #35) on Nov 1, 2026: **11 done, 11 partial, 0 cut**. This is a draft; owners should correct their rows.
+State of `integ/m4` (PR #35) on Nov 1, 2026: **12 done, 10 partial, 0 cut**. This is a draft; owners should correct their rows.
 
 **Read this first**
 
 - **Most M4 work isn't on `main` yet.** Of M4's work, only the display name and EAS config have merged. The rest lands when #35 merges.
-- **Nothing here has run on wtw-dev or on a phone.** Evidence is CI (migrations, database tests, API tests, Jest), reading the code, and clicking through mock mode in a browser. The installed test builds predate most of it.
+- **Apart from the sign-in email, nothing here has run on wtw-dev or on a phone.** Evidence is CI (migrations, database tests, API tests, Jest), reading the code, and clicking through mock mode in a browser. The installed test builds predate most of it.
 - **Done** means the requirement is built and works in those checks; known bugs are listed. **Partial** means part of the requirement is missing or doesn't work. **Cut** means the team decided not to ship it for M4, with a reason.
 
 ## Functional requirements
 
 | FR | Requirement | Status | What's there | What's missing | Owner |
 |---|---|---|---|---|---|
-| FR-01 | Account, sign in, sign out, profile | Partial | Name step, profile editing, sign out, account deletion | On wtw-dev the sign-in email has a link, not the code the app asks for, so people need a code from Mike's script until SMTP is set up | Mike |
+| FR-01 | Account, sign in, sign out, profile | Done | Emailed 6-digit codes on wtw-dev through custom SMTP, name step, profile editing, sign out, account deletion. A new-user sign-up worked on a phone on Nov 1; the email for an existing account isn't tested yet | | Mike |
 | FR-02 | Preference survey, editable later | Done | Onboarding survey, edit from Profile, private to the API | | Mike |
 | FR-03 | Send, accept, remove, block friends | Partial | Add by email, accept, decline, unfriend, block API | Block is only in the Lobby and Waiting room, not on the Friends tab or requests. A sender can't see or cancel a pending request (by design, 0018) | Razin, Mike |
 | FR-04 | Create, name, manage a group | Done | Create, rename, delete, add and remove members, leave. Known bug: Pick again can re-add removed members | | Razin |
