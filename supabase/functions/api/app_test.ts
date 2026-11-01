@@ -9,6 +9,9 @@ import type { FriendsStore } from '../_shared/api/friends.ts';
 import type { NotifyStore } from '../_shared/api/notify.ts';
 import type { GroupsStore } from '../_shared/api/groups.ts';
 import type { PlansStore } from '../_shared/api/plans.ts';
+import type { SafetyStore } from '../_shared/api/safety.ts';
+import { INVITE_NOT_FOUND, type InviteStore } from '../_shared/api/invites.ts';
+import { JOIN_CODE_NOT_FOUND, JOIN_RATE_LIMITED } from '../_shared/api/join.ts';
 
 const store: HeartbeatStore = {
   loadPick: async () => null,
@@ -1509,3 +1512,221 @@ Deno.test('plans: caller id from the token; bad input 400; store errors keep sta
     ['history', 'me', null],
   ]);
 });
+
+// ---------------------------------------------------------------- 0014: safety and invites
+const ME = '00000000-0000-4000-8000-000000000001';
+const OTHER = '00000000-0000-4000-8000-000000000002';
+const TOKEN = 'AbCdEfGhIjKlMnOpQrStU_';
+
+function safetyApp(calls: string[], overrides: Partial<SafetyStore & InviteStore> = {}) {
+  return createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async (req) => {
+      if (!req.headers.get('Authorization')) throw new ApiError(401, 'UNAUTHENTICATED', 'No token');
+      return { id: ME };
+    },
+    safetyStore: {
+      block: async (u, t) => void calls.push(`block ${u} ${t}`),
+      unblock: async (u, t) => void calls.push(`unblock ${u} ${t}`),
+      report: async (u, r) => void calls.push(`report ${u} ${r.kind} ${r.targetId} ${r.reason}`),
+      setLobbyLocked: async (p, u, l) => {
+        calls.push(`lock ${p} ${u} ${l}`);
+        return l;
+      },
+      ...overrides,
+    },
+    inviteStore: {
+      create: async (u, input) => {
+        calls.push(`create ${u} ${input.kind} ${input.targetId} ${input.maxUses}`);
+        return {
+          token: TOKEN,
+          kind: input.kind,
+          targetId: input.targetId,
+          expiresAt: 'later',
+          maxUses: input.maxUses,
+        };
+      },
+      accept: async (t, u) => {
+        calls.push(`accept ${t} ${u}`);
+        return { kind: 'pick', targetId: OTHER };
+      },
+      revoke: async (t, u) => void calls.push(`revoke ${t} ${u}`),
+      ...overrides,
+    },
+  });
+}
+const authed = (method: string, body?: unknown): RequestInit => ({
+  method,
+  headers: { Authorization: 'Bearer t', 'Content-Type': 'application/json' },
+  ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+});
+
+Deno.test('safety and invite routes: 401 without a token, before any store call', async () => {
+  const calls: string[] = [];
+  const app = safetyApp(calls);
+  const routes: [string, string][] = [
+    ['POST', `/blocks/${OTHER}`],
+    ['POST', `/blocks/${OTHER}/remove`],
+    ['POST', '/reports'],
+    ['POST', '/picks/p/lock'],
+    ['POST', '/invites'],
+    ['POST', `/invites/${TOKEN}/accept`],
+    ['DELETE', `/invites/${TOKEN}`],
+  ];
+  for (const [method, path] of routes) {
+    equal((await app.request(path, { method })).status, 401);
+  }
+  equal(calls, []);
+});
+
+Deno.test('safety and invite routes: 503 when not configured', async () => {
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async () => ({ id: ME }),
+  });
+  equal((await app.request(`/blocks/${OTHER}`, { method: 'POST' })).status, 503);
+  equal((await app.request('/invites', { method: 'POST' })).status, 503);
+});
+
+Deno.test(
+  'POST /blocks/:userId: blocks for the verified caller; bad ids and self are 400',
+  async () => {
+    const calls: string[] = [];
+    const app = safetyApp(calls);
+    equal(await (await app.request(`/blocks/${OTHER}`, authed('POST'))).json(), { status: 'ok' });
+    equal(await (await app.request(`/blocks/${OTHER}/remove`, authed('POST'))).json(), {
+      status: 'ok',
+    });
+    equal((await app.request('/blocks/not-a-uuid', authed('POST'))).status, 400);
+    equal((await app.request(`/blocks/${ME}`, authed('POST'))).status, 400);
+    equal(calls, [`block ${ME} ${OTHER}`, `unblock ${ME} ${OTHER}`]);
+  },
+);
+
+Deno.test('POST /reports: validates, trims, 201; the store’s 429 passes through', async () => {
+  const calls: string[] = [];
+  const app = safetyApp(calls);
+  const ok = await app.request(
+    '/reports',
+    authed('POST', { kind: 'user', targetId: OTHER, reason: '  rude  ' }),
+  );
+  equal(ok.status, 201);
+  equal(calls, [`report ${ME} user ${OTHER} rude`]);
+  for (const bad of [
+    { kind: 'place', targetId: OTHER, reason: 'x' },
+    { kind: 'user', targetId: 'x', reason: 'x' },
+    { kind: 'user', targetId: OTHER, reason: '   ' },
+    { kind: 'user', targetId: OTHER, reason: 'x'.repeat(501) },
+  ]) {
+    equal((await app.request('/reports', authed('POST', bad))).status, 400);
+  }
+  const limited = safetyApp([], {
+    report: async () => {
+      throw new ApiError(429, 'RATE_LIMITED', 'Too many');
+    },
+  });
+  const response = await limited.request(
+    '/reports',
+    authed('POST', { kind: 'user', targetId: OTHER, reason: 'x' }),
+  );
+  equal(response.status, 429);
+});
+
+Deno.test('POST /picks/:id/lock: needs a boolean', async () => {
+  const calls: string[] = [];
+  const app = safetyApp(calls);
+  equal(await (await app.request('/picks/p1/lock', authed('POST', { locked: true }))).json(), {
+    locked: true,
+  });
+  equal((await app.request('/picks/p1/lock', authed('POST', { locked: 'yes' }))).status, 400);
+  equal(calls, [`lock p1 ${ME} true`]);
+});
+
+Deno.test('POST /invites: 201 with a wtw://i/ url; bad input is 400', async () => {
+  const calls: string[] = [];
+  const app = safetyApp(calls);
+  const response = await app.request('/invites', authed('POST', { kind: 'pick', targetId: OTHER }));
+  equal(response.status, 201);
+  const body = await response.json();
+  equal(body.url, `wtw://i/${TOKEN}`);
+  equal(calls, [`create ${ME} pick ${OTHER} null`]);
+  for (const bad of [
+    { kind: 'party', targetId: OTHER },
+    { kind: 'pick', targetId: 'x' },
+    { kind: 'pick', targetId: OTHER, maxUses: 0 },
+    { kind: 'pick', targetId: OTHER, maxUses: 1.5 },
+  ]) {
+    equal((await app.request('/invites', authed('POST', bad))).status, 400);
+  }
+});
+
+Deno.test(
+  'POST /invites/:token/accept: a malformed token looks like any unusable one',
+  async () => {
+    const calls: string[] = [];
+    const unusable = safetyApp([], {
+      accept: async () => {
+        throw INVITE_NOT_FOUND;
+      },
+    });
+    const malformed = await safetyApp(calls).request('/invites/short/accept', authed('POST'));
+    const rejected = await unusable.request(`/invites/${TOKEN}/accept`, authed('POST'));
+    equal(malformed.status, 404);
+    equal(rejected.status, 404);
+    equal(await malformed.json(), await rejected.json());
+    equal(calls, []);
+    const ok = await safetyApp(calls).request(`/invites/${TOKEN}/accept`, authed('POST'));
+    equal(await ok.json(), { kind: 'pick', targetId: OTHER });
+    equal(calls, [`accept ${TOKEN} ${ME}`]);
+  },
+);
+
+Deno.test('DELETE /invites/:token revokes for the caller; CORS allows DELETE', async () => {
+  const calls: string[] = [];
+  const app = safetyApp(calls);
+  equal(await (await app.request(`/invites/${TOKEN}`, authed('DELETE'))).json(), { status: 'ok' });
+  equal(calls, [`revoke ${TOKEN} ${ME}`]);
+  const preflight = await app.request(`/invites/${TOKEN}`, {
+    method: 'OPTIONS',
+    headers: { Origin: 'http://localhost:8081', 'Access-Control-Request-Method': 'DELETE' },
+  });
+  equal(preflight.headers.get('access-control-allow-methods')?.includes('DELETE'), true);
+});
+
+Deno.test(
+  'POST /picks/join: every failed code gets the same body; rate limiting is 429',
+  async () => {
+    const withError = (error: ApiError) =>
+      createApp({
+        store,
+        lifecycleStore,
+        poolBuilder,
+        closingStore,
+        joinStore: {
+          joinByCode: async () => {
+            throw error;
+          },
+        },
+        getUser: async () => ({ id: ME }),
+      });
+    const body = JSON.stringify({ code: 'K7P2QX' });
+    const failed = await withError(JOIN_CODE_NOT_FOUND).request('/picks/join', {
+      method: 'POST',
+      body,
+    });
+    equal(failed.status, 404);
+    equal((await failed.json()).error.code, 'JOIN_CODE_NOT_FOUND');
+    const limited = await withError(JOIN_RATE_LIMITED).request('/picks/join', {
+      method: 'POST',
+      body,
+    });
+    equal(limited.status, 429);
+    equal((await limited.json()).error.code, 'RATE_LIMITED');
+  },
+);

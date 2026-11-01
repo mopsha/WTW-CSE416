@@ -106,15 +106,18 @@ exactly: `GET /picks/:id`, `POST /picks/:id/start`, `/refresh` (`{ confirm }`, 4
 - `POST /picks/join`: Bearer user access token; body `{ "code": "K7P2QX" }`. Case and spaces
   are ignored; anything that isn't 6 characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` is
   400 `INVALID_INPUT` (checked before the database). Returns 200 `{ "pickId": "..." }`.
-  404 `JOIN_CODE_NOT_FOUND` for an unknown or expired code; 409 `PICK_CLOSED` once the Pick is
-  past `swiping` (`ranking`, `final_vote`, `completed`, `canceled`). Someone already in the Pick
-  gets 200 with the same `pickId` and no second row, in any state.
+  Since 0014, every failure is the same 404 `JOIN_CODE_NOT_FOUND`: unknown or expired code, a
+  Pick past `swiping`, a locked lobby, a full Pick (30), or a host who blocked you (either way).
+  After 10 failed joins (by code or invite link) in an hour: 429 `RATE_LIMITED`. Someone already
+  in the Pick gets 200 with the same `pickId` and no second row, in any state.
   Code: `_shared/api/join.ts` (validation), `_shared/domain/joinCode.ts` (code rules, shared
   with the app), `api/joinStore.ts` (adapter). Client: `api.joinPick(code)`; the mock accepts
   `WTW234` for a friend's draft Pick.
-- RPC `pick_join(p_code text, p_user_id uuid) returns uuid` (`0006_join_codes.sql`), service role
-  only. Locks the Pick row; the participant insert advances `picks.version` (0002 trigger).
-  PT404 unknown/expired code, PT409 Pick not joinable, PT403 caller has no profile.
+- RPC `pick_join(p_code text, p_user_id uuid) returns jsonb` (`0014_invites_safety.sql`, which
+  replaced 0006's), service role only. `{ ok: true, pickId }` or `{ ok: false, reason: 'invalid'
+  | 'rate_limited' }`. It returns instead of raising so the failed attempt it records in
+  `join_attempts` is committed. Locks the Pick row; the participant insert advances
+  `picks.version` (0002 trigger). PT403 only if the caller has no profile.
 - Codes: `pick_join_codes (code pk, pick_id, expires_at not null, created_at)`. A trigger on
   `picks` issues one for every new Pick (7-day expiry); 0006 backfilled draft/swiping Picks.
   Participants read them through RLS (`queries.getJoinCode`: newest `expires_at` first).
@@ -269,9 +272,111 @@ so a Pick id reveals nothing. 409 `INVALID_PICK_STATE` when the Pick isn't at th
   (Josh's limiter can cover them); a sweep that read targets just before the host moves the time
   can send one stale reminder (rare; accepted).
 
+### Invites and safety (Razin, M4)
+
+`0014_invites_safety.sql`. Clients read only their own `blocks` and `invite_links` rows;
+`join_attempts`, `rate_limit_events` and `reports` have no client access. Every route below
+verifies the token first (401), then 503 if unconfigured. RPC errors: PT400 → 400
+`INVALID_INPUT`, PT403 → 403 `FORBIDDEN`, PT404 → 404, PT409 → 409 `PICK_CLOSED`, PT429 → 429
+`RATE_LIMITED` (`api/rpcErrors.ts`).
+
+- **Participant cap and blocks on every way in.** A trigger on `pick_participants` caps a Pick at
+  30 (PT409, hint `pick_full`) and silently skips adding anyone the host blocked or who blocked
+  the host. So it covers join codes, invite links, #30's `pick_invite`/`pick_add_group` and #32's
+  "Pick again", whichever merge. A bulk add carries on, and a single add reports "0 added", never
+  "blocked".
+- `POST /picks/:id/lock` `{ "locked": true | false }` → `{ locked }`. Host only (403), while
+  draft or swiping (409). A locked lobby admits nobody new by code or link; the host's own
+  invites (#30) still work. The app reads `picks.lobby_locked` (`queries.getLobbyLocked`).
+- `POST /blocks/:userId` / `POST /blocks/:userId/remove` → `{ status: 'ok' }`. 400 for a bad id
+  or yourself, 404 for an unknown user. Idempotent. Blocking deletes any friendship or request
+  either way; unblocking doesn't restore it. Blocked pairs can't friend each other (a
+  `friendships` insert is skipped), join each other's Picks, or be added to the other's group
+  (`group_members` insert skipped when the owner and the new member are blocked either way).
+  Picks and groups they already share are left alone. The blocked person is never told.
+- `POST /reports` `{ kind: 'user' | 'pick' | 'group', targetId, reason }` → 201. Reason 1–500
+  characters, trimmed. A person (not yourself), or a Pick/group you're in; anything else is 404
+  so a report never confirms something exists. 10 per user per day (429). Moderators read
+  `public.reports` with the service role.
+- `POST /invites` `{ kind: 'pick' | 'group', targetId, maxUses?: 1..100 | null }` → 201
+  `{ token, url: "wtw://i/TOKEN", kind, targetId, expiresAt, maxUses }`. Pick: host only, draft or
+  swiping. Group (#30): owner only. 20 per user per day. Tokens are 128 random bits
+  (`gen_random_bytes(16)`), base64url without padding: 22 characters. Links expire after 7 days.
+- `POST /invites/:token/accept` → `{ kind, targetId }`. Every unusable link is the same 404
+  `INVITE_NOT_FOUND`: unknown, malformed, expired, revoked, used up, a closed/locked/full Pick, a
+  full group (25), or a block between you and the link's creator or the Pick's host / group's
+  owner. Failures count toward the same 10-an-hour join limit as codes (429). Someone already in
+  gets 200 without using the link up.
+- `DELETE /invites/:token` → `{ status: 'ok' }`. Creator only (404 otherwise); idempotent.
+  CORS allows `DELETE`.
+- App: Lobby (host) "Share invite link" and "Lock the lobby"; `app/i/[token].tsx` handles
+  `wtw://i/TOKEN` (signed out, the token is parked in `expo-secure-store` under
+  `wtw.pendingInvite` so it survives sign-in and a restart; memory only on web); "…" on everyone
+  else's row in the Lobby and waiting room opens Report / Block (`MemberMenu`).
+- **Tables from open PRs.** Friendships (0008) and groups (0012) are found with `to_regclass` at
+  run time. Their block triggers are attached by `select private.attach_block_guards();`, which
+  0014 runs. 0008 and 0012 are numbered lower, so `db reset`/CI always apply them first. A
+  hosted database that gets 0008 or 0012 *after* 0014 must run that statement once (it is
+  idempotent and returns which tables it attached).
+- **Follow-ups (not built):** a web landing page for invite links (`https://…/i/TOKEN`) and
+  Universal Links / App Links, so a link opens the app or the store when WTW isn't installed;
+  a moderation view for reports; a "Blocked people" list in Profile (the data is readable via
+  RLS today); a list of my invite links with Revoke (the route exists).
+
+### Friend requests: what #24 calls (Razin, M4)
+
+`_shared/api/friendRequests.ts` hardens `POST /friends/requests` (#24, not on main). #24's route
+should be:
+
+```ts
+import { requestFriendSafely } from '../_shared/api/friendRequests.ts';
+import { takeFriendRequestLimit } from './friendRequestLimit.ts';
+
+app.post('/friends/requests', async (c) => {
+  const { user, store } = await friends(c);
+  return c.json(
+    await requestFriendSafely(
+      { takeFriendRequestLimit, request: (u, e) => store.request(u, e) },
+      user.id,
+      await readJsonBody(c),
+    ),
+  );
+});
+```
+
+- The response is always `{ "status": "sent" }`, whether the email has an account, already sent
+  you a request (0008 then accepts it), or blocked you. #24's store may keep throwing its 404
+  `USER_NOT_FOUND`: the helper swallows it. #24's screen should say "If they're on WTW, they'll
+  see your request" and refresh `GET /friends` rather than read a name from the response.
+- 20 per user per day (`rate_limit_take(p_user_id, 'friend_request')`), checked before the
+  lookup, so the limit also caps how many emails one account can test. Over it: 429 `RATE_LIMITED`.
+- Unchanged: a bad email is 400 before anything; your own email is still #24's 400
+  `CANNOT_FRIEND_SELF` (you know your own email, so it reveals nothing).
+
+### Text filter (Razin, M4)
+
+`_shared/domain/textFilter.ts` exports `textFilter(text) → { ok: true } | { ok: false, reason:
+'blocked_word' }` (pure TS: Edge Function, Jest, app). `_shared/api/text.ts` exports
+`requireCleanText(text, field)`, which throws 400 `TEXT_NOT_ALLOWED` ("That {field} isn't
+allowed. Try different words.") and never echoes the word. Call it **after** the route's own
+validation and **before** the store, on the trimmed value:
+
+| Route (PR) | Call |
+| --- | --- |
+| `POST /me` display name (#22, and #29's copy) | `requireCleanText(displayName, 'name')` after `validateDisplayName` |
+| `POST /groups`, `POST /groups/:id/rename` (#30) | `requireCleanText(name, 'group name')` after trimming, before `group_create` / `group_rename` |
+| `POST /picks` custom options (#27, before `pick_create_options`) | `requireCleanText(option.name, 'option')` and, if present, `requireCleanText(option.note, 'note')`, for each option, before the RPC |
+| `POST /hang` (#27) | `requireCleanText(activity, 'activity')` before `hangStore` writes `hang_posts` |
+
+Main has no route yet that stores text other people see (reports are private), so nothing on
+main calls it. The app can call `textFilter` to warn before sending, but the server check is
+the one that counts. It is a word list (whole words, a few slurs matched inside words, phrases;
+case, accents, zero-width characters, l33t, repeated and spaced-out letters), not moderation:
+reports cover the rest. Tests: `tests/domain/textFilter.test.ts`, `tests/text.test.ts`.
+
 Errors: `{ "error": { "code": "...", "message": "..." } }`.
 400 invalid input, 401 invalid/missing token, 403 forbidden, 404 missing resource,
-409 wrong state/concurrent change, 500 unexpected failure, 503 unconfigured backend.
+409 wrong state/concurrent change, 429 rate limited, 500 unexpected failure, 503 unconfigured backend.
 Gateway errors before the function executes are controlled by Supabase.
 To let the handler own authentication/error formatting and public health, `supabase/config.toml`
 sets `[functions.api] verify_jwt = false`.

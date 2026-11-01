@@ -22,6 +22,8 @@ import { createPoolBuilder } from '@shared/places/pool.ts';
 import { MockProvider } from '@shared/places/MockProvider.ts';
 import { handleMockGroups, mockCreateGroupPick, mockInvite } from './groups';
 import {
+  acceptMockInvite,
+  createMockInvite,
   createMockPick,
   decide,
   emit,
@@ -29,10 +31,12 @@ import {
   joinMockPick,
   maybeAutoClose,
   maybeSettleVote,
+  mockBlocks,
   mockPicks,
   mockProfile,
   progressOf,
   resetMockProfile,
+  revokeMockInvite,
   scheduleBots,
   settleVote,
   touch,
@@ -105,10 +109,11 @@ function joinPick(body: unknown): Response {
   if (!code) return fail(400, 'INVALID_INPUT', 'Expected a 6-character join code');
   const result = joinMockPick(code);
   if (result === 'not_found') {
-    return fail(404, 'JOIN_CODE_NOT_FOUND', 'That code is not valid or has expired');
-  }
-  if (result === 'closed') {
-    return fail(409, 'PICK_CLOSED', 'This Pick is no longer accepting people');
+    return fail(
+      404,
+      'JOIN_CODE_NOT_FOUND',
+      'That code isn’t valid, or the Pick isn’t taking new people',
+    );
   }
   return json(200, result);
 }
@@ -292,6 +297,17 @@ const ROUTES: Record<string, Handler> = {
     return json(200, { candidateCount: pick.state === 'swiping' ? pick.candidates.length : 0 });
   }),
 
+  'POST lock': hostOnly((pick, body) => {
+    const locked = (body as { locked?: unknown } | null)?.locked;
+    if (typeof locked !== 'boolean')
+      return fail(400, 'INVALID_INPUT', 'Expected locked: true or false');
+    if (pick.state !== 'draft' && pick.state !== 'swiping') {
+      return fail(409, 'PICK_CLOSED', 'This Pick is no longer accepting people');
+    }
+    pick.lobbyLocked = locked;
+    return json(200, { locked });
+  }),
+
   'POST cancel': hostOnly((pick, body) => {
     const reason =
       typeof body === 'object' && body !== null && 'reason' in body ? body.reason : undefined;
@@ -446,6 +462,64 @@ const ROUTES: Record<string, Handler> = {
   }),
 };
 
+const INVITE_NOT_FOUND = () =>
+  fail(404, 'INVITE_NOT_FOUND', 'That invite link isn’t valid any more. Ask for a new one.');
+
+/** Invites, blocks and reports (0014), or null for any other path. */
+function safetyRoute(method: string, path: string, body: unknown): Response | null {
+  if (method === 'POST' && path === '/invites') {
+    const { kind, targetId } = (body ?? {}) as { kind?: unknown; targetId?: unknown };
+    const pick = typeof targetId === 'string' ? mockPicks.get(targetId) : undefined;
+    if (kind !== 'pick' || !pick) return fail(404, 'NOT_FOUND', 'Pick not found');
+    if (pick.hostId !== MOCK_USER_ID)
+      return fail(403, 'FORBIDDEN', 'Only the host can make invite links');
+    const token = createMockInvite(pick);
+    return json(201, {
+      token,
+      url: `wtw://i/${token}`,
+      kind,
+      targetId: pick.id,
+      expiresAt: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+      maxUses: null,
+    });
+  }
+  const invite = /^\/invites\/([^/]+)(\/accept)?$/.exec(path);
+  if (invite) {
+    const token = decodeURIComponent(invite[1] ?? '');
+    if (method === 'POST' && invite[2]) {
+      const result = acceptMockInvite(token);
+      return result === 'not_found'
+        ? INVITE_NOT_FOUND()
+        : json(200, { kind: 'pick', targetId: result.pickId });
+    }
+    if (method === 'DELETE' && !invite[2]) {
+      return revokeMockInvite(token)
+        ? json(200, { status: 'ok' })
+        : fail(404, 'NOT_FOUND', 'Invite not found');
+    }
+  }
+  const block = /^\/blocks\/([^/]+)(\/remove)?$/.exec(path);
+  if (block && method === 'POST') {
+    const userId = decodeURIComponent(block[1] ?? '');
+    if (userId === MOCK_USER_ID) return fail(400, 'INVALID_INPUT', 'You can’t block yourself');
+    if (block[2]) mockBlocks.delete(userId);
+    else mockBlocks.add(userId);
+    return json(200, { status: 'ok' });
+  }
+  if (method === 'POST' && path === '/reports') {
+    const { kind, targetId, reason } = (body ?? {}) as Record<string, unknown>;
+    const ok =
+      (kind === 'user' || kind === 'pick' || kind === 'group') &&
+      // Mock ids aren't UUIDs, so only the shape is checked.
+      typeof targetId === 'string' &&
+      typeof reason === 'string' &&
+      reason.trim().length >= 1 &&
+      reason.trim().length <= 500;
+    return ok ? json(201, { status: 'ok' }) : fail(400, 'INVALID_INPUT', 'Invalid report');
+  }
+  return null;
+}
+
 export async function mockFetch(url: string, init: RequestInit): Promise<Response> {
   if (LATENCY_MS) await new Promise((r) => setTimeout(r, LATENCY_MS));
   const method = init.method ?? 'GET';
@@ -547,6 +621,8 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     n.readAt ??= new Date().toISOString();
     return json(200, { status: 'ok' });
   }
+  const safety = safetyRoute(method, path, readBody(init));
+  if (safety) return safety;
 
   const match = /^\/picks\/([^/]+)(?:\/([a-z-]+))?$/.exec(path);
   const handler = match ? ROUTES[`${method} ${match[2] ?? ''}`] : undefined;

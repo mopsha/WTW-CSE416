@@ -15,6 +15,7 @@ import { colors } from '@/components/theme';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { ProfileProvider, useProfile } from '@/hooks/useProfile';
 import { configureNotifications, onNotificationTap } from '@/lib/notify';
+import { takePendingInvite } from '@/lib/pendingInvite';
 import { takePendingJoin } from '@/lib/pendingJoin';
 import { registerForPush } from '@/lib/push';
 
@@ -72,7 +73,14 @@ function RootStack() {
   useEffect(() => {
     if (!ready || !inApp) return;
     const code = takePendingJoin();
-    if (code) router.push({ pathname: '/join/[code]', params: { code } });
+    if (code) {
+      router.push({ pathname: '/join/[code]', params: { code } });
+      return;
+    }
+    // Invite links are parked in SecureStore, so they survive a restart during sign-in.
+    void takePendingInvite().then((token) => {
+      if (token) router.push({ pathname: '/i/[token]', params: { token } });
+    });
   }, [ready, inApp]);
 
   // Keep the splash up until the stored session and fonts are loaded. Rendering the
@@ -113,9 +121,10 @@ function RootStack() {
           <Stack.Screen name="pick/[id]/winner" options={{ animation: 'fade' }} />
           <Stack.Screen name="history" />
         </Stack.Protected>
-        {/* Join links open signed in or out; the screen sends you to sign-in if needed.
+        {/* Join and invite links open signed in or out; the screen sends you to sign-in if needed.
             Listed last so it is never the guard's fallback screen. */}
         <Stack.Screen name="join/[code]" options={{ animation: 'fade' }} />
+        <Stack.Screen name="i/[token]" options={{ animation: 'fade' }} />
       </Stack>
     </>
   );

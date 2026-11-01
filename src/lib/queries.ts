@@ -31,6 +31,8 @@ export interface Queries {
   getGroup(groupId: string): Promise<GroupDetail | null>;
   /** My accepted friends (0008's friendships, PR #24); [] until that table exists. */
   listMyFriends(userId: string): Promise<FriendOption[]>;
+  /** picks.lobby_locked (0014): the host stopped new people joining by code or link. */
+  getLobbyLocked(pickId: string): Promise<boolean>;
 }
 
 export interface MyProfile {
@@ -138,6 +140,15 @@ const supabaseQueries: Queries = {
     return (data as { place_id: string } | null)?.place_id ?? null;
   },
 
+  async getLobbyLocked(pickId) {
+    const { data, error } = await getSupabase()
+      .from('picks')
+      .select('lobby_locked')
+      .eq('id', pickId)
+      .maybeSingle();
+    if (error) throw new QueryError(error.message);
+    return (data as { lobby_locked?: boolean } | null)?.lobby_locked === true;
+  },
   async getJoinCode(pickId) {
     const { data, error } = await getSupabase()
       .from('pick_join_codes')

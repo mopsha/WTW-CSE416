@@ -1,11 +1,25 @@
 // Joining a Pick by code (Razin, M3). POST /picks/join { code } -> { pickId }.
-// Which Picks accept new people (draft, swiping) is enforced atomically by
-// pick_join in 0006_join_codes.sql; this layer validates input only.
+// Which Picks accept new people (draft or swiping, not locked, not full, host hasn't blocked
+// you) is enforced atomically by pick_join in 0014_invites_safety.sql; this layer validates
+// input only. Every "no" is the same 404, so codes can't be probed (M4).
 
 import { ApiError } from './errors.ts';
 import { parseJoinCode } from '../domain/joinCode.ts';
 
-/** Database adapter. Rejects unknown/expired codes (404) and closed Picks (409). */
+/** Every way a code can fail: unknown, expired, closed, locked, full or blocked. */
+export const JOIN_CODE_NOT_FOUND = new ApiError(
+  404,
+  'JOIN_CODE_NOT_FOUND',
+  'That code isn’t valid, or the Pick isn’t taking new people',
+);
+/** After 10 failed joins (by code or invite link) in an hour. */
+export const JOIN_RATE_LIMITED = new ApiError(
+  429,
+  'RATE_LIMITED',
+  'Too many tries. Wait a bit before trying another code.',
+);
+
+/** Database adapter. Throws JOIN_CODE_NOT_FOUND or JOIN_RATE_LIMITED. */
 export interface JoinStore {
   joinByCode(code: string, userId: string): Promise<string>;
 }

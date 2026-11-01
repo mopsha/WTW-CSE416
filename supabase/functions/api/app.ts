@@ -54,6 +54,19 @@ import {
   setPlanTime,
   type PlansStore,
 } from '../_shared/api/plans.ts';
+import {
+  blockUser,
+  createReport,
+  setLobbyLocked,
+  unblockUser,
+  type SafetyStore,
+} from '../_shared/api/safety.ts';
+import {
+  acceptInvite,
+  createInvite,
+  revokeInvite,
+  type InviteStore,
+} from '../_shared/api/invites.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
   const raw = await c.req.text();
@@ -77,6 +90,8 @@ export function createApp(
     friendsStore?: FriendsStore;
     profileStore?: ProfileStore;
     groupsStore?: GroupsStore;
+    safetyStore?: SafetyStore;
+    inviteStore?: InviteStore;
     sweepStore?: SweepStore;
     notifyStore?: NotifyStore;
     plansStore?: PlansStore;
@@ -412,6 +427,50 @@ export function createApp(
   app.post('/groups/:id/leave', async (c) => {
     const { user, store } = await groups(c);
     return c.json(await leaveGroup(store, user.id, c.req.param('id')));
+  });
+  // Safety and invites (0014). The user is authenticated before the store is checked.
+  const safety = async (c: { req: { raw: Request } }) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.safetyStore)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Safety tools are not available');
+    return { user, store: deps.safetyStore };
+  };
+  const invites = async (c: { req: { raw: Request } }) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.inviteStore)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Invite links are not available');
+    return { user, store: deps.inviteStore };
+  };
+  app.post('/picks/:id/lock', async (c) => {
+    const { user, store } = await safety(c);
+    const body = await readJsonBody(c);
+    return c.json(await setLobbyLocked(store, c.req.param('id'), user.id, body));
+  });
+  app.post('/blocks/:userId', async (c) => {
+    const { user, store } = await safety(c);
+    return c.json(await blockUser(store, user.id, c.req.param('userId')));
+  });
+  app.post('/blocks/:userId/remove', async (c) => {
+    const { user, store } = await safety(c);
+    return c.json(await unblockUser(store, user.id, c.req.param('userId')));
+  });
+  app.post('/reports', async (c) => {
+    const { user, store } = await safety(c);
+    const body = await readJsonBody(c);
+    return c.json(await createReport(store, user.id, body), 201);
+  });
+  app.post('/invites', async (c) => {
+    const { user, store } = await invites(c);
+    const body = await readJsonBody(c);
+    return c.json(await createInvite(store, user.id, body), 201);
+  });
+  app.post('/invites/:token/accept', async (c) => {
+    const { user, store } = await invites(c);
+    return c.json(await acceptInvite(store, c.req.param('token'), user.id));
+  });
+  app.delete('/invites/:token', async (c) => {
+    const { user, store } = await invites(c);
+    return c.json(await revokeInvite(store, c.req.param('token'), user.id));
   });
   return app;
 }

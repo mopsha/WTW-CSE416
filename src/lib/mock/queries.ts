@@ -13,6 +13,10 @@ const mine = (pickId: string) => {
 };
 
 export const mockQueries: Queries = {
+  async getLobbyLocked(pickId) {
+    await delay();
+    return mine(pickId)?.lobbyLocked === true;
+  },
   async getMyProfile() {
     await delay();
     return { displayName: mockProfile.displayName };
