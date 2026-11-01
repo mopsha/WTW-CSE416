@@ -17,5 +17,16 @@ export function createSweepStore(): SweepStore {
       if (error) throw new Error('Sweep query failed');
       return data ?? [];
     },
+    async reminderTargets(from, until) {
+      const { data, error } = await createServiceClient().rpc('pick_reminder_targets', {
+        p_from: from,
+        p_until: until,
+      });
+      if (error) throw new Error('Reminder query failed');
+      return ((data ?? []) as { pick_id: string; user_ids: string[] }[]).map((r) => ({
+        pickId: r.pick_id,
+        userIds: r.user_ids,
+      }));
+    },
   };
 }

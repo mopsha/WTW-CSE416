@@ -63,8 +63,8 @@ export function createLifecycleStore(): LifecycleStore {
         p_candidates: candidates,
       });
     },
-    async cancel(pickId, userId) {
-      await rpc('pick_cancel', { p_pick_id: pickId, p_user_id: userId });
+    async cancel(pickId, userId, reason) {
+      await rpc('pick_cancel', { p_pick_id: pickId, p_user_id: userId, p_reason: reason });
     },
   };
 }

@@ -185,8 +185,25 @@ describe('cancelPick', () => {
   test('host cancels an unfinished Pick', async () => {
     const store = fixture(pick({ state: 'swiping' }));
     expect(await cancelPick(store, 'pick', 'host')).toEqual({ state: 'canceled' });
-    expect(store.cancel).toHaveBeenCalledWith('pick', 'host');
+    expect(store.cancel).toHaveBeenCalledWith('pick', 'host', null);
   });
+  test('stores a trimmed reason and tells everyone else, reason in the inbox only', async () => {
+    const notifier = jest.fn().mockResolvedValue(undefined);
+    const store = { ...fixture(pick({ state: 'swiping' })), notifier };
+    await cancelPick(store, 'pick', 'host', { reason: '  Rained out  ' });
+    expect(store.cancel).toHaveBeenCalledWith('pick', 'host', 'Rained out');
+    expect(notifier).toHaveBeenCalledWith(['guest'], 'pick_canceled', 'pick', {
+      reason: 'Rained out',
+    });
+  });
+  test.each([[{ reason: 5 }], [{ reason: 'x'.repeat(201) }], [[]], ['text']])(
+    'rejects a bad reason %j before touching the Pick',
+    async (body) => {
+      const store = fixture(pick({ state: 'swiping' }));
+      await expect(cancelPick(store, 'pick', 'host', body)).rejects.toMatchObject({ status: 400 });
+      expect(store.load).not.toHaveBeenCalled();
+    },
+  );
   test('rejects a non-host', async () => {
     const store = fixture(pick({ state: 'swiping' }));
     await expect(cancelPick(store, 'pick', 'guest')).rejects.toMatchObject({ status: 403 });
