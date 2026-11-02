@@ -2,18 +2,26 @@
 // (owner: Alan). The API is the only writer of picks.state; every transition
 // goes through canTransition.
 
+import { priorityCandidates } from '../domain/candidatePriority.ts';
 import { ApiError } from './errors.ts';
+import { requireCleanText } from './text.ts';
+import type { Notifier } from './notify.ts';
 import { canTransition, type PickState } from '../domain/pickState.ts';
 import { shuffleForUser } from '../domain/shuffle.ts';
 import type { LatLng } from '../domain/geo.ts';
-import type { PoolBuilder } from '../places/pool.ts';
+import { candidateSnapshot, NoCandidatesError, type PoolBuilder } from '../places/pool.ts';
+import { validFilters, type PlaceFilters } from '../domain/placeFilters.ts';
 import type { HoursMetadata } from '../places/refreshOpenHours.ts';
-import type { Category } from '../places/types.ts';
+import type { Candidate } from '../places/types.ts';
+import type { PickCategory } from '../domain/createPick.ts';
+import { planProblem, type PlanOptions, type StoredCustomOption } from '../domain/customPlans.ts';
+import { distanceMeters } from '../domain/geo.ts';
+import { matchesFilters } from '../domain/placeFilters.ts';
 
 // Limits mirror Mike's validateCreatePick (_shared/domain/createPick.ts, PR #11, not yet
 // merged): once that lands, replace this parser with his shared validateCreatePick so the
 // app and API check the same function instead of two copies of the same limits.
-const CATEGORIES: readonly Category[] = ['food', 'activities'];
+const CATEGORIES: readonly PickCategory[] = ['food', 'activities', 'custom'];
 export const MIN_RADIUS_M = 200;
 export const MAX_RADIUS_M = 50_000;
 export const MIN_POOL_SIZE = 5;
@@ -26,8 +34,8 @@ export const MIN_DEADLINE_LEAD_MS = 5 * 60_000;
 export const MAX_DEADLINE_LEAD_MS = 7 * 24 * 60 * 60_000;
 export const MIN_PARTICIPANTS_TO_START = 2;
 
-export interface CreatePickInput {
-  category: Category;
+export interface CreatePickInput extends PlaceFilters, PlanOptions {
+  category: PickCategory;
   center: LatLng;
   radiusM: number;
   poolSize: number;
@@ -41,11 +49,15 @@ export interface CandidateSnapshot {
   snapshot: object;
 }
 
-export interface LifecyclePick {
+export interface LifecyclePick extends PlaceFilters {
   id: string;
-  hostId: string;
+  /** Null once the host deleted their account (0017); such a Pick is completed or canceled. */
+  hostId: string | null;
+  includeSaved?: boolean;
+  customOptions?: StoredCustomOption[];
+  mixCategory?: 'food' | 'activities';
   state: PickState;
-  category: Category;
+  category: PickCategory;
   center: LatLng;
   radiusM: number;
   poolSize: number;
@@ -68,7 +80,10 @@ export interface LifecycleStore {
   load(pickId: string, userId: string): Promise<LifecyclePick | null>;
   start(pickId: string, userId: string, candidates: CandidateSnapshot[]): Promise<void>;
   refresh(pickId: string, userId: string, candidates: CandidateSnapshot[]): Promise<void>;
-  cancel(pickId: string, userId: string): Promise<void>;
+  cancel(pickId: string, userId: string, reason: string | null): Promise<void>;
+  savedCandidates?(hostId: string): Promise<Candidate[]>;
+  /** Tells the other participants when the host starts or cancels. Optional in tests. */
+  notifier?: Notifier;
 }
 
 /**
@@ -81,8 +96,8 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
     throw new ApiError(400, 'INVALID_INPUT', 'Expected a Pick object');
   }
   const b = body as Record<string, unknown>;
-  if (typeof b.category !== 'string' || !CATEGORIES.includes(b.category as Category)) {
-    throw new ApiError(400, 'INVALID_INPUT', 'category must be food or activities');
+  if (typeof b.category !== 'string' || !CATEGORIES.includes(b.category as PickCategory)) {
+    throw new ApiError(400, 'INVALID_INPUT', 'category must be food, activities or custom');
   }
   const center = b.center as Partial<LatLng> | undefined;
   if (
@@ -110,19 +125,31 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
       `radiusM must be between ${MIN_RADIUS_M} and ${MAX_RADIUS_M}`,
     );
   }
-  const poolSize = b.poolSize ?? DEFAULT_POOL_SIZE;
+  const planError = planProblem(b);
+  if (planError) throw new ApiError(400, 'INVALID_INPUT', planError);
+  for (const option of (b.customOptions ?? []) as { name: string; note?: string }[]) {
+    requireCleanText(option.name, 'option');
+    if (option.note) requireCleanText(option.note, 'note');
+  }
+  const poolSize =
+    b.poolSize ??
+    (b.category === 'custom' && !b.mixCategory && !b.includeSaved
+      ? (b.customOptions as unknown[]).length
+      : DEFAULT_POOL_SIZE);
   if (
     typeof poolSize !== 'number' ||
     !Number.isInteger(poolSize) ||
-    poolSize < MIN_POOL_SIZE ||
+    poolSize < (b.category === 'custom' ? 2 : MIN_POOL_SIZE) ||
     poolSize > MAX_POOL_SIZE
   ) {
     throw new ApiError(
       400,
       'INVALID_INPUT',
-      `poolSize must be between ${MIN_POOL_SIZE} and ${MAX_POOL_SIZE}`,
+      `poolSize must be between ${b.category === 'custom' ? 2 : MIN_POOL_SIZE} and ${MAX_POOL_SIZE}`,
     );
   }
+  if (Array.isArray(b.customOptions) && poolSize < b.customOptions.length)
+    throw new ApiError(400, 'INVALID_INPUT', 'Pool must fit all typed options');
   const closeThreshold = b.closeThreshold ?? DEFAULT_CLOSE_THRESHOLD;
   if (
     typeof closeThreshold !== 'number' ||
@@ -150,8 +177,19 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
     }
     deadlineAt = new Date(at).toISOString();
   }
+  if (!validFilters(b as PlaceFilters))
+    throw new ApiError(400, 'INVALID_INPUT', 'Invalid priceMax or openNow');
   return {
-    category: b.category as Category,
+    ...(b.includeSaved !== undefined ? { includeSaved: b.includeSaved as boolean } : {}),
+    ...(b.customOptions !== undefined
+      ? { customOptions: b.customOptions as PlanOptions['customOptions'] }
+      : {}),
+    ...(b.mixCategory !== undefined
+      ? { mixCategory: b.mixCategory as PlanOptions['mixCategory'] }
+      : {}),
+    priceMax: b.priceMax as number | null | undefined,
+    openNow: b.openNow as boolean | undefined,
+    category: b.category as PickCategory,
     center: { lat: center.lat, lng: center.lng },
     radiusM,
     poolSize,
@@ -192,15 +230,47 @@ function requireHost(pick: LifecyclePick, userId: string) {
   if (pick.hostId !== userId) throw new ApiError(403, 'FORBIDDEN', 'Only the host can do this');
 }
 
-async function buildCandidates(pool: PoolBuilder, pick: LifecyclePick): Promise<CandidateSnapshot[]> {
-  const candidates = await pool.buildPool({
-    center: pick.center,
-    radiusM: pick.radiusM,
-    category: pick.category,
-    poolSize: pick.poolSize,
-  });
+async function buildCandidates(
+  pool: PoolBuilder,
+  pick: LifecyclePick,
+  store: LifecycleStore,
+): Promise<CandidateSnapshot[]> {
+  const priority: Candidate[] = [...(pick.customOptions ?? [])];
+  if (pick.includeSaved && pick.hostId) {
+    if (!store.savedCandidates)
+      throw new ApiError(503, 'SAVED_PLACES_UNAVAILABLE', 'Saved place resolution is unavailable');
+    const saved = await store.savedCandidates(pick.hostId);
+    priority.push(
+      ...saved.filter(
+        (p) =>
+          (pick.category === 'custom'
+            ? p.category === 'custom' || p.category === pick.mixCategory
+            : p.category === pick.category) &&
+          (p.provider !== 'custom' || p.locationProvided === true) &&
+          distanceMeters(pick.center, p) <= pick.radiusM &&
+          matchesFilters(p, pick, new Date()),
+      ),
+    );
+  }
+  let candidates = priorityCandidates(priority, [], pick.poolSize);
+  const category = pick.category === 'custom' ? pick.mixCategory : pick.category;
+  if (category && candidates.length < pick.poolSize) {
+    try {
+      const found = await pool.buildPool({
+        center: pick.center,
+        radiusM: pick.radiusM,
+        category,
+        poolSize: priority.length ? 30 : pick.poolSize,
+        priceMax: pick.priceMax,
+        openNow: pick.openNow,
+      });
+      candidates = priorityCandidates(priority, found, pick.poolSize);
+    } catch (error) {
+      if (!(error instanceof NoCandidatesError)) throw error;
+    }
+  }
   if (!candidates.length) throw new ApiError(409, 'NO_CANDIDATES', 'No places found for this Pick');
-  return candidates.map((c) => ({ placeId: c.placeId, snapshot: c }));
+  return candidates.map((c) => ({ placeId: c.placeId, snapshot: candidateSnapshot(c) }));
 }
 
 export async function startPick(
@@ -208,6 +278,7 @@ export async function startPick(
   pool: PoolBuilder,
   pickId: string,
   userId: string,
+  beforeBuild?: () => Promise<void>,
 ) {
   const pick = await loadAsParticipant(store, pickId, userId);
   requireHost(pick, userId);
@@ -221,8 +292,10 @@ export async function startPick(
       `A Pick needs at least ${MIN_PARTICIPANTS_TO_START} participants to start`,
     );
   }
-  const candidates = await buildCandidates(pool, pick);
+  await beforeBuild?.();
+  const candidates = await buildCandidates(pool, pick, store);
   await store.start(pickId, userId, candidates);
+  await store.notifier?.(othersThan(pick, userId), 'pick_started', pickId);
   return { state: 'swiping' as const, candidateCount: candidates.length };
 }
 
@@ -232,6 +305,7 @@ export async function refreshPick(
   pickId: string,
   userId: string,
   body: unknown,
+  beforeBuild?: () => Promise<void>,
 ) {
   const confirm = parseRefreshBody(body);
   const pick = await loadAsParticipant(store, pickId, userId);
@@ -246,30 +320,80 @@ export async function refreshPick(
       "Refreshing now clears everyone's answers; pass confirm:true",
     );
   }
-  const candidates = await buildCandidates(pool, pick);
+  await beforeBuild?.();
+  const candidates = await buildCandidates(pool, pick, store);
   await store.refresh(pickId, userId, candidates);
   return { candidateCount: candidates.length };
 }
 
-export async function cancelPick(store: LifecycleStore, pickId: string, userId: string) {
+export const MAX_CANCEL_REASON = 200;
+
+/** POST /picks/:id/cancel body: nothing, or { reason } (trimmed, up to 200 characters). */
+export function parseCancelBody(body: unknown): string | null {
+  if (body === undefined || body === null) return null;
+  if (typeof body !== 'object' || Array.isArray(body)) {
+    throw new ApiError(400, 'INVALID_INPUT', 'Expected an object with an optional reason');
+  }
+  const { reason } = body as Record<string, unknown>;
+  if (reason === undefined || reason === null) return null;
+  if (typeof reason !== 'string' || reason.trim().length > MAX_CANCEL_REASON) {
+    throw new ApiError(
+      400,
+      'INVALID_INPUT',
+      `reason must be text of at most ${MAX_CANCEL_REASON} characters`,
+    );
+  }
+  if (/[\u0000-\u001f\u007f]/.test(reason)) {
+    throw new ApiError(400, 'INVALID_INPUT', 'reason must be one line of text');
+  }
+  const trimmed = reason.trim();
+  // Shown in other people's inboxes, so it goes through the same filter as names.
+  if (trimmed) requireCleanText(trimmed, 'reason');
+  return trimmed || null;
+}
+
+function othersThan(pick: LifecyclePick, userId: string) {
+  return pick.participantIds.filter((id) => id !== userId);
+}
+
+export async function cancelPick(
+  store: LifecycleStore,
+  pickId: string,
+  userId: string,
+  body?: unknown,
+) {
+  const reason = parseCancelBody(body);
   const pick = await loadAsParticipant(store, pickId, userId);
   requireHost(pick, userId);
   if (!canTransition(pick.state, 'canceled', 'host')) {
     throw new ApiError(409, 'INVALID_PICK_STATE', 'This Pick can no longer be canceled');
   }
-  await store.cancel(pickId, userId);
+  await store.cancel(pickId, userId, reason);
+  // The reason is shown in the inbox only; push text stays generic.
+  await store.notifier?.(
+    othersThan(pick, userId),
+    'pick_canceled',
+    pickId,
+    reason ? { reason } : {},
+  );
   return { state: 'canceled' as const };
 }
 
 export async function getPick(
-  store: LifecycleStore, pickId: string, userId: string,
+  store: LifecycleStore,
+  pickId: string,
+  userId: string,
   refreshHours?: (candidates: CandidateSnapshot[]) => Promise<HoursMetadata[]>,
 ) {
   const pick = await loadAsParticipant(store, pickId, userId);
   // Membership is checked before any provider access. Metadata never changes snapshots.
   let candidateHours: HoursMetadata[] = [];
   if (refreshHours && (pick.state === 'completed' || pick.state === 'final_vote')) {
-    try { candidateHours = await refreshHours(pick.candidates); } catch { /* Optional metadata only. */ }
+    try {
+      candidateHours = await refreshHours(pick.candidates);
+    } catch {
+      /* Optional metadata only. */
+    }
   }
   const order = shuffleForUser(
     pick.candidates.map((c) => c.placeId),
@@ -284,9 +408,12 @@ export async function getPick(
     center: pick.center,
     radiusM: pick.radiusM,
     poolSize: pick.poolSize,
+    priceMax: pick.priceMax,
+    openNow: pick.openNow,
     deadlineAt: pick.deadlineAt,
     closeThreshold: pick.closeThreshold,
     isHost: pick.hostId === userId,
+    hostDeleted: pick.hostId === null,
     participantCount: pick.participantIds.length,
     candidates: order.map((placeId) => byId.get(placeId)),
     ...(refreshHours ? { candidateHours } : {}),

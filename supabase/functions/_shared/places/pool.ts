@@ -1,3 +1,4 @@
+import { matchesFilters, validFilters, type PlaceFilters } from '../domain/placeFilters.ts';
 import { distanceMeters, type LatLng } from '../domain/geo.ts';
 import type { Candidate, Category, PlaceProvider } from './types.ts';
 import { validateSearch } from './GoogleProvider.ts';
@@ -12,7 +13,7 @@ import {
 import { ProviderTimeoutError, withTimeout } from './timeout.ts';
 
 /** Structurally identical to Alan's lifecycle branch. */
-export interface PoolRequest {
+export interface PoolRequest extends PlaceFilters {
   center: LatLng;
   radiusM: number;
   category: Category;
@@ -33,7 +34,7 @@ export interface PoolOptions {
 }
 export class NoCandidatesError extends Error {
   readonly code = 'NO_USABLE_CANDIDATES';
-  constructor() {
+  constructor(readonly fallbackAttempted = false) {
     super('No usable nearby places are available from the configured providers');
   }
 }
@@ -81,6 +82,7 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
   return {
     async buildPool(request) {
       validateSearch(request);
+      if (!validFilters(request)) throw new RangeError('Invalid place filters');
       if (!Number.isInteger(request.poolSize) || request.poolSize < 1 || request.poolSize > 30)
         throw new RangeError('poolSize must be 1..30');
       const key = `${mode}:${cacheKey(request)}`,
@@ -94,7 +96,12 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
           isFresh(cached.fetchedAt, now(), SEARCH_TTL_MS)
         ) {
           const candidates = filterPool(cached.candidates, request);
-          if (candidates.length) return structuredClone(candidates.slice(0, request.poolSize));
+          if (candidates.length)
+            return structuredClone(
+              candidates
+                .filter((p) => matchesFilters(p, request, now()))
+                .slice(0, request.poolSize),
+            );
         }
       } catch {
         log('cache_failed');
@@ -121,7 +128,7 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
           log('fallback_failed');
         }
       }
-      if (!found.length) throw new NoCandidatesError();
+      if (!found.length) throw new NoCandidatesError(!!options.fallback);
       const fetchedAt = now().toISOString();
       const candidates = found.map((p) => ({
         ...p,
@@ -140,7 +147,12 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
       } catch {
         log('cache_failed');
       }
-      return structuredClone(candidates.slice(0, request.poolSize));
+      const filtered = candidates
+        .filter((p) => matchesFilters(p, request, now()))
+        .slice(0, request.poolSize);
+      // Preserve the fallback notice even when strict filters remove every fixture.
+      if (!filtered.length && source !== mode) throw new NoCandidatesError(true);
+      return structuredClone(filtered);
     },
   };
 }

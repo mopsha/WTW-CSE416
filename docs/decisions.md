@@ -1,0 +1,136 @@
+# Josh M4 decisions
+
+## Google usage, quotas and budget
+
+Phase 1 behavior is retained. `PLACES_PROVIDER=google` selects the server Google
+provider for Discover; it defaults to mock when unset. `GOOGLE_PLACES_API_KEY` is
+an Edge secret. Every production Google HTTP attempt (nearby search and hours)
+reserves one call atomically through `consume_provider_call` before network access.
+The shared UTC-day cap is `GOOGLE_DAILY_CALL_CAP`, default 100; zero disables paid
+requests. Invalid values and counter-storage failures fail closed. Failed/timeout
+requests still consume a reservation. A two-category Discover request may use two
+calls; a cache of Google IDs cannot supply current display content by itself.
+
+The application cap counts requests, not dollars, and does not cover console or
+other applications using the same Google project. Google bills according to the
+requested fields/SKUs. The project administrator must configure provider-side
+quotas and billing alerts separately. A billing budget alert does not itself stop
+requests or constitute a hard spending cap. No hosted request, quota configuration
+or billing setting was verified or changed by this task.
+
+Google provider failure/cap falls back to owned fixtures within the radius. The
+feed exposes `fallback`/`notice`; fallback can be empty outside fixture coverage.
+It does not populate the Google cache namespace. The frontend public demo key is
+still development-only; release lookups are disabled, and it must never be set in an EAS environment.
+Custom option IDs/names are never sent to the development Google lookup.
+
+References checked for this documentation:
+[Places usage and billing](https://developers.google.com/maps/documentation/places/web-service/usage-and-billing),
+[Cloud billing budgets](https://cloud.google.com/billing/docs/how-to/budgets),
+[Places policies](https://developers.google.com/maps/documentation/places/web-service/policies).
+
+## Retention and sweep cleanup
+
+Keep the existing conservative project policy: owned mock content can be cached;
+Google cache entries retain IDs only, not names, coordinates, ratings, photos or
+hours. Do not weaken Phase 1's snapshot guard to enable mixing. Group lifecycle
+still persists full snapshots and needs approved frozen ranking inputs before
+Google places can join Custom Plans or saved-place pools.
+
+Search TTL is the existing `SEARCH_TTL_MS` (five minutes, exact expiry boundary
+excluded). Seven-day freshness in the hours helper applies to owned mock hours,
+not a Google content retention allowance and not the search-cache TTL.
+
+Migration `0021_josh_cache_discover.sql` adds the service-only `place_cache` and
+atomic `cleanup_place_cache` RPC. Both API pool builders use the durable adapter.
+Owned fixture results are cache-first across isolates, checked against exact query
+identity and the five-minute TTL. Google entries retain IDs only; Google display
+requests still need live calls. This does not claim a Google content cache hit.
+The authenticated Discover endpoint reserves a separate 20-request/user/UTC-day
+quota before profile/provider access (429 when exceeded). Pick quotas remain separate.
+
+The existing every-minute sweep invokes cleanup with its UTC day and TTL cutoff.
+Claiming the day and deleting expired rows share a transaction, so failures can be
+retried. It logs `cache_cleanup`, status and removed count. Later calls the same day
+return ran=false; fresh rows survive. Anonymous/authenticated clients cannot read
+or write the cache, claim days, or invoke cleanup. Google ID-only entries are also
+enforced by a SQL constraint. Daily deletion is housekeeping; every cache read still
+checks freshness, so expired rows are never served while awaiting the next cleanup.
+
+## Saved-place priority and custom locations
+
+`includeSaved` is optional, false by default. It persists with the Pick. At
+start/refresh the API resolves **the host's** saved IDs, filters by radius, matching category (or the explicit Custom Plan mix category), and
+the existing price/open constraints, puts them before provider/cache results, then
+keeps the first representation per ID and caps to the requested deck size. Typed
+custom options come first when present. Overflow is truncated in stable order;
+there is no unbounded deck. A full priority deck makes no provider request.
+
+Owned fixture saves and authorized persisted custom places are resolvable.
+Google saved IDs and unauthorized custom places are not hydrated by guessing
+coordinates or bypassing access checks; those are excluded. Custom options are
+authorized by creator ownership or existing shared-Pick membership. Unlocated
+custom saves are excluded from radius-based inclusion; a neutral ranking point
+is not treated as a verified location. Google saved inclusion
+remains BLOCKED by the Phase 1 hydration/persistence contract. New Pick UI still
+uses the existing geographic center/radius controls.
+
+Custom options have `custom:<uuid>` IDs generated by Postgres, source/provider
+`custom`, and `createdBy`/`places.created_by`. Creation strips untrusted identity
+fields and makes new identities once; refresh preserves them. Name/note and optional
+paired coordinates are validated in shared TS and SQL. API parsing applies Razin's shared text filter to both names and notes before any write.
+
+The unchanged ranking engine requires numeric coordinates. For a custom option
+with no supplied coordinates, the snapshot uses the Pick center as an explicitly
+marked **neutral ranking point**, `locationProvided=false`. The UI hides that
+point and suppresses directions; it does not present an invented venue location.
+All unlocated options therefore have equal distance, leaving existing score/ID
+rules intact. Explicit coordinates use the existing distance tie-break. This
+choice does not grant permission to retain Google-derived coordinates.
+
+## Hang integration (M4, migration 0022)
+
+Reuse 0016's posts/responses, 0012 groups, existing accepted-friend/bidirectional-block
+helpers, the canonical pick_create_options RPC and the existing notifier. Shared
+RLS hides expired/blocked posts; active authors see their own posts, accepted friends
+see all_friends, and current group members see group posts. Response rows are
+readable only by their author and the Hang author, while currently authorized.
+Mutation RPCs are service-only and recheck access under the post lock. Responses
+upsert the existing unique (post_id,user_id) key.
+
+Let's Pick reuses New Pick for category/location/radius/filter/custom options. Hang
+has no geographic settings, so no venue/location is inferred from free text. The
+Pick keeps selected settings, source post association and starts_at as the existing
+plan_at (not a date-options feature). Only currently eligible down users are added.
+The author hosts only if down; otherwise the first eligible down UUID hosts. The
+existing Pick host-block guard applies too. Canonical creation owns custom options
+and saved-place selection under that host, as in every other Pick. The author who
+is not included receives a completion message rather than entering a forbidden lobby.
+
+Zero eligible downs returns 409. Group authors who have left cannot create a group
+Pick. Requests serialize on the post; an unchanged existing draft is reused without
+another creation quota charge. Changed draft membership returns a clear 409 asking
+the host to cancel first; a running Pick prevents another; completed/canceled Picks
+allow a new one. Membership is a snapshot, as with normal Picks, not a live sync.
+Canonical start still requires two participants, including on a one-down draft.
+
+The existing notifier is called with actual included users for both creation and
+retry. Its unique inbox constraint deduplicates notices/pushes. Notification failure
+uses the same best-effort contract as other Pick flows; no second outbox, ranking,
+voting, calendar or notification system was introduced. Picks-tab refresh is focused
+and bounded; mock mode uses the same shared orchestration and current mock graph.
+
+## Production credential verification
+
+The client demo helpers are gated by `__DEV__`; preview/production never call Google
+from those helpers. Every EAS build profile explicitly clears the public demo key.
+Do not put the server key in any EXPO_PUBLIC variable or EAS client environment.
+The server reads GOOGLE_PLACES_API_KEY only in Edge adapters, sends it in request
+headers and sanitizes provider failures. No secret values were inspected or logged.
+A local release export uses a non-secret sentinel to check that the development key
+is eliminated. See [Expo environment variables](https://docs.expo.dev/eas/environment-variables/).
+
+Repository checks do not establish Google Cloud key restrictions, active API allowlists,
+actual Edge secrets, billing alerts or hosted quota configuration. The project owner
+must verify those in the provider console before enabling live production usage.
+The application request cap is independent of provider-side billing controls.

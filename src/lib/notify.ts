@@ -47,12 +47,52 @@ export async function notifyLater(title: string, body: string, url: string, seco
   }
 }
 
-/** Calls `open(url)` when the user taps one of our notifications. Returns an unsubscribe. */
-export function onNotificationTap(open: (url: string) => void): () => void {
+/** Whether the OS currently lets us notify (never prompts). */
+export async function notificationsAllowed(): Promise<boolean> {
+  if (!supported) return false;
+  try {
+    return (await Notifications.getPermissionsAsync()).granted;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The in-app route a notification opens: our local ones carry a `url`; server pushes
+ * (Alan's notify()) carry only a `pickId`, which opens that Pick wherever it is now.
+ */
+export function routeForNotification(data: unknown): string | null {
+  if (typeof data !== 'object' || data === null) return null;
+  const { url, pickId } = data as { url?: unknown; pickId?: unknown };
+  if (typeof url === 'string' && url.startsWith('/')) return url;
+  if (typeof pickId === 'string' && pickId) return `/pick/${encodeURIComponent(pickId)}`;
+  return null;
+}
+
+/** Calls `listener` when a notification arrives while the app is open. Returns an unsubscribe. */
+export function onNotificationReceived(listener: () => void): () => void {
   if (!supported) return () => {};
-  const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-    const url = response.notification.request.content.data?.url;
-    if (typeof url === 'string') open(url);
-  });
+  const sub = Notifications.addNotificationReceivedListener(() => listener());
+  return () => sub.remove();
+}
+
+/**
+ * Calls `open(route)` when the user taps one of our notifications, including the tap that
+ * launched the app from closed. Returns an unsubscribe.
+ */
+export function onNotificationTap(open: (route: string) => void): () => void {
+  if (!supported) return () => {};
+  const handle = (response: Notifications.NotificationResponse | null) => {
+    const route = routeForNotification(response?.notification.request.content.data);
+    if (route) open(route);
+  };
+  try {
+    handle(Notifications.getLastNotificationResponse());
+    // Only once: a later remount must not reopen the same old notification.
+    Notifications.clearLastNotificationResponse();
+  } catch {
+    // Not available on this platform/runtime.
+  }
+  const sub = Notifications.addNotificationResponseReceivedListener(handle);
   return () => sub.remove();
 }

@@ -17,6 +17,7 @@ import {
   GroupAvatars,
   pickStyles,
 } from '@/components/PickParts';
+import { PlanBlock } from '@/components/PlanBlock';
 import { SmallResult, WinnerCard } from '@/components/ResultCards';
 import { colors, fonts } from '@/components/theme';
 import { useSession } from '@/hooks/useAuth';
@@ -42,6 +43,7 @@ const HOW: Record<DecidedBy, { eyebrow: string; title: string; body: string }> =
 };
 
 function openDirections(place: Candidate) {
+  if (place.provider === 'custom' && !place.locationProvided) return;
   haptic.tap();
   void Linking.openURL(directionsUrl(place, Platform.OS)).catch(() => {});
 }
@@ -112,15 +114,21 @@ export default function WinnerScreen() {
           </Animated.View>
 
           <Animated.View entering={FadeInDown.delay(450)} style={{ gap: 10 }}>
-            <GradientButton
-              label="Let’s go 🚗  Get directions"
-              accessibilityHint={`Opens ${Platform.OS === 'ios' ? 'Apple Maps' : 'Google Maps'}`}
-              onPress={() => openDirections(winner)}
-            />
+            {winner.provider !== 'custom' || winner.locationProvided ? (
+              <GradientButton
+                label="Let’s go 🚗  Get directions"
+                accessibilityHint={`Opens ${Platform.OS === 'ios' ? 'Apple Maps' : 'Google Maps'}`}
+                onPress={() => openDirections(winner)}
+              />
+            ) : null}
             <View style={styles.saved} accessible accessibilityLabel="Saved to your history">
               <Ionicons name="checkmark-circle" size={18} color={colors.yes} />
               <Text style={styles.savedText}>Saved to your history</Text>
             </View>
+          </Animated.View>
+
+          <Animated.View entering={FadeInDown.delay(550)}>
+            <PlanBlock pickId={pickId} decidedAt={pick.decidedAt} />
           </Animated.View>
 
           {people.length ? (

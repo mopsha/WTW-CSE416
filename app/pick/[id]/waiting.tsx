@@ -11,6 +11,7 @@ import { ActivityToast } from '@/components/ActivityToast';
 import { Button } from '@/components/Button';
 import { ErrorBanner } from '@/components/ErrorBanner';
 import { GradientButton } from '@/components/GradientButton';
+import { MemberMenu } from '@/components/MemberMenu';
 import {
   FlameOrb,
   goToPicks,
@@ -154,7 +155,11 @@ export default function WaitingScreen() {
           </View>
           {people.map((p) => (
             <Animated.View key={p.userId} layout={LinearTransition}>
-              <ParticipantRow person={p} status={p.done ? 'Done ✓' : 'Swiping…'} />
+              <ParticipantRow
+                person={p}
+                status={p.done ? 'Done ✓' : 'Swiping…'}
+                right={p.isMe ? null : <MemberMenu userId={p.userId} name={p.displayName} />}
+              />
             </Animated.View>
           ))}
         </Animated.View>

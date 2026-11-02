@@ -61,7 +61,7 @@ export function createProgressStore(): ProgressStore {
       }[];
       const row = pick.data as {
         state: PickState;
-        host_id: string;
+        host_id: string | null;
         deadline_at: string | null;
         vote_deadline_at?: string | null;
       };

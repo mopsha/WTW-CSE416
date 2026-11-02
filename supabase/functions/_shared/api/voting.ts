@@ -2,12 +2,13 @@
 // finalists. Spec: docs/design.md#pick-state-machine (owner: Alan). Week 3.
 
 import { ApiError } from './errors.ts';
+import type { Notifier } from './notify.ts';
 import type { PickState } from '../domain/pickState.ts';
 import { voteWinner, type VoteFinalist } from '../domain/ranking.ts';
 
 export interface VoteSnapshot {
   id: string;
-  hostId: string;
+  hostId: string | null;
   state: PickState;
   participantIds: string[];
   finalists: VoteFinalist[];
@@ -22,6 +23,8 @@ export interface VotingStore {
   castVote(pickId: string, userId: string, placeId: string): Promise<void>;
   /** Silently a no-op if the vote already settled (host/everyone-voted/deadline raced). */
   applyVoteClose(pickId: string, winnerPlaceId: string, decidedBy: VoteDecidedBy): Promise<void>;
+  /** Announces the winner; racing settles are deduplicated by the database. */
+  notifier?: Notifier;
 }
 
 /** 'tie_break' when the top vote count was shared and rank order picked the winner. */
@@ -54,6 +57,7 @@ export function parseVote(body: unknown): string {
 async function settleVote(store: VotingStore, pickId: string, snapshot: VoteSnapshot) {
   const { winnerPlaceId, decidedBy } = tallyVotes(snapshot.finalists, snapshot.ballots);
   await store.applyVoteClose(pickId, winnerPlaceId, decidedBy);
+  await store.notifier?.(snapshot.participantIds, 'winner_decided', pickId);
 }
 
 export async function castVote(store: VotingStore, pickId: string, userId: string, body: unknown) {
@@ -73,7 +77,11 @@ export async function castVote(store: VotingStore, pickId: string, userId: strin
   await store.castVote(pickId, userId, placeId);
 
   const after = await store.loadForVote(pickId);
-  if (after && after.state === 'final_vote' && after.ballots.length >= after.participantIds.length) {
+  if (
+    after &&
+    after.state === 'final_vote' &&
+    after.ballots.length >= after.participantIds.length
+  ) {
     await settleVote(store, pickId, after);
   }
   return { status: 'ok' as const };
@@ -83,7 +91,8 @@ export async function castVote(store: VotingStore, pickId: string, userId: strin
 export async function closeVote(store: VotingStore, pickId: string, userId: string) {
   const pick = await store.loadForVote(pickId);
   if (!pick) throw new ApiError(404, 'PICK_NOT_FOUND', 'Pick not found');
-  if (userId !== pick.hostId) throw new ApiError(403, 'FORBIDDEN', 'Only the host can close the vote');
+  if (userId !== pick.hostId)
+    throw new ApiError(403, 'FORBIDDEN', 'Only the host can close the vote');
   if (pick.state !== 'final_vote') {
     if (pick.state === 'completed') return { status: 'ok' as const };
     throw new ApiError(409, 'INVALID_PICK_STATE', 'Voting is not open for this Pick');

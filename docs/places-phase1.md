@@ -1,5 +1,9 @@
 # Places Phase 1 — Josh
 
+**M4 update:** See [Josh M4 Phase 1](m4-josh-phase1.md) for the new Discover API,
+filters, saves, quotas, release-key protection and remaining Google lifecycle blocker.
+The Week 4 implementation notes below describe the earlier baseline.
+
 ## Current Week 4 status
 
 - **IMPLEMENTED:** Google provider, timeout/fallback, cache contracts, runtime

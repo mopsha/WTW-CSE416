@@ -4,10 +4,11 @@
 export { Avatar, AvatarStack } from './Avatar';
 export { Button, type ButtonProps } from './Button';
 export { Card } from './Card';
-export { Chips, type ChipOption } from './Chips';
+export { Chips, MultiChips, type ChipOption } from './Chips';
 export { EmptyState } from './EmptyState';
 export { ErrorState } from './ErrorState';
 export { JoinCodeCard } from './JoinCodeCard';
+export { PreferencesForm } from './PreferencesForm';
 export { ProgressBar } from './ProgressBar';
 export { IconButton, Screen } from './Screen';
 export { colors, flame, fonts, MIN_TARGET, radius, space, type } from './theme';

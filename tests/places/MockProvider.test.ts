@@ -17,7 +17,7 @@ test('the demo pool is the 20 real SBU food places, each with what a card shows'
   }
 });
 test('loads bundled places', async () => {
-  expect(await provider.search({ center, radiusM: 10000 })).toEqual(places);
+  expect(await provider.search({ center, radiusM: 20000 })).toEqual(places);
 });
 test('combines radius and category filters', async () => {
   expect(
@@ -27,7 +27,7 @@ test('combines radius and category filters', async () => {
     (await provider.search({ center, radiusM: 1000, category: 'activities' })).map(
       (p) => p.placeId,
     ),
-  ).toEqual(['placeholder-park']);
+  ).toEqual(['sbu-act-06', 'sbu-act-07', 'sbu-act-10']);
 });
 test('includes exact radius boundary and allows empty results', async () => {
   const first = places[0]!;

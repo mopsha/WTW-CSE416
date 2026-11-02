@@ -1,12 +1,22 @@
 import { closePick, type ClosingStore } from './closing.ts';
 import { ApiError } from './errors.ts';
+import type { NotificationType, Notifier } from './notify.ts';
 import { closeVoteByDeadline, type VotingStore } from './voting.ts';
 
 export type SweepPhase = 'swiping' | 'final_vote';
 export interface SweepStore {
   /** IDs ordered ascending, strictly after the cursor; only deadlines <= cutoff. */
   expiredPage(phase: SweepPhase, cutoff: string, after?: string): Promise<{ id: string }[]>;
+  /** Unfinished participants of swiping Picks whose deadline is in (from, until]. */
+  reminderTargets?(from: string, until: string): Promise<{ pickId: string; userIds: string[] }[]>;
+  /** Plan reminders (1 h before the plan time) and "Did you go?" prompts due at `now`. */
+  planTargets?(
+    now: string,
+  ): Promise<{ pickId: string; kind: 'plan_reminder' | 'did_you_go'; userIds: string[] }[]>;
 }
+
+/** "You haven't finished" goes out when the deadline is this close. */
+export const REMINDER_LEAD_MS = 60 * 60_000;
 
 export function authorizeSweep(provided: string | undefined, expected: string | undefined): void {
   if (!expected) {
@@ -18,8 +28,12 @@ export function authorizeSweep(provided: string | undefined, expected: string | 
 }
 
 /** Selection and orchestration only; canonical closers own all lifecycle decisions. */
-export async function sweepDeadlines(store: SweepStore, closingStore: ClosingStore & VotingStore) {
-  const cutoff = new Date().toISOString();
+export async function sweepDeadlines(
+  store: SweepStore,
+  closingStore: ClosingStore & VotingStore,
+  now: Date = new Date(),
+) {
+  const cutoff = now.toISOString();
   const summary = {
     swiping: { attempted: 0, processed: 0, failed: 0, queryFailed: false },
     final_vote: { attempted: 0, processed: 0, failed: 0, queryFailed: false },
@@ -51,6 +65,52 @@ export async function sweepDeadlines(store: SweepStore, closingStore: ClosingSto
       after = picks[picks.length - 1]!.id;
     }
   }
-  const failed = Object.values(summary).some((counts) => counts.failed || counts.queryFailed);
-  return { status: failed ? ('partial_failure' as const) : ('ok' as const), ...summary };
+  // After the closes, so a slow push service can never delay a deadline.
+  const { reminderTargets, planTargets } = store;
+  const reminders = await sendDue(
+    closingStore.notifier,
+    reminderTargets &&
+      (async () =>
+        (
+          await reminderTargets.call(
+            store,
+            cutoff,
+            new Date(now.getTime() + REMINDER_LEAD_MS).toISOString(),
+          )
+        ).map((t) => ({ ...t, kind: 'reminder' as const }))),
+  );
+  const planEvents = await sendDue(
+    closingStore.notifier,
+    planTargets && (() => planTargets.call(store, cutoff)),
+  );
+  const failed =
+    Object.values(summary).some((counts) => counts.failed || counts.queryFailed) ||
+    reminders.queryFailed ||
+    planEvents.queryFailed;
+  return {
+    status: failed ? ('partial_failure' as const) : ('ok' as const),
+    ...summary,
+    reminders,
+    planEvents,
+  };
+}
+
+type Due = { pickId: string; kind: NotificationType; userIds: string[] };
+
+/** Once per person per Pick: notify_insert's unique index drops repeats. */
+async function sendDue(notifier: Notifier | undefined, load: (() => Promise<Due[]>) | undefined) {
+  const counts = { picks: 0, queryFailed: false };
+  if (!load || !notifier) return counts;
+  let due: Due[];
+  try {
+    due = await load();
+  } catch {
+    counts.queryFailed = true;
+    return counts;
+  }
+  for (const { pickId, kind, userIds } of due) {
+    await notifier(userIds, kind, pickId);
+    counts.picks++;
+  }
+  return counts;
 }

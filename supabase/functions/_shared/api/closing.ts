@@ -2,13 +2,19 @@
 // Spec: docs/design.md#pick-state-machine (owner: Alan). Week 3.
 
 import { ApiError } from './errors.ts';
+import type { Notifier } from './notify.ts';
 import type { LatLng } from '../domain/geo.ts';
 import { canTransition, dueToClose, type PickState } from '../domain/pickState.ts';
-import { answerFromDb, clearWinner, rankCandidates, type RankCandidate } from '../domain/ranking.ts';
+import {
+  answerFromDb,
+  clearWinner,
+  rankCandidates,
+  type RankCandidate,
+} from '../domain/ranking.ts';
 
 export interface ClosingSnapshot {
   id: string;
-  hostId: string;
+  hostId: string | null;
   state: PickState;
   center: LatLng;
   closeThreshold: number;
@@ -53,6 +59,8 @@ export interface ClosingStore {
     actorUserId: string | null,
     ranking: RankingWrite,
   ): Promise<void>;
+  /** Tells everyone in the Pick once it has closed (winner or vote). Optional in tests. */
+  notifier?: Notifier;
 }
 
 function countAnswers(pick: ClosingSnapshot, userId: string): number {
@@ -150,7 +158,8 @@ async function attemptClose(
   const decision = clearWinner(ranked);
   const finalistIds = decision.kind === 'vote' ? decision.finalists.map((c) => c.placeId) : [];
   const targetState = decision.kind === 'winner' ? 'completed' : 'final_vote';
-  if (!canTransition('ranking', targetState, 'system')) throw new Error('Invalid ranking transition');
+  if (!canTransition('ranking', targetState, 'system'))
+    throw new Error('Invalid ranking transition');
 
   try {
     await store.applyClose(pickId, pick.version, actor, actorUserId, {
@@ -163,7 +172,9 @@ async function attemptClose(
       state: targetState,
       winnerPlaceId: decision.kind === 'winner' ? decision.winner.placeId : null,
       voteDeadlineAt:
-        targetState === 'final_vote' ? new Date(now.getTime() + VOTE_WINDOW_MS).toISOString() : null,
+        targetState === 'final_vote'
+          ? new Date(now.getTime() + VOTE_WINDOW_MS).toISOString()
+          : null,
     });
   } catch (error) {
     if (error instanceof ApiError && error.status === 409) {
@@ -176,6 +187,12 @@ async function attemptClose(
     throw error;
   }
 
+  // Only the closer whose write won gets here, so this runs once per Pick.
+  await store.notifier?.(
+    pick.participantIds,
+    targetState === 'completed' ? 'winner_decided' : 'vote_needed',
+    pickId,
+  );
   return {
     state: targetState,
     winnerPlaceId: decision.kind === 'winner' ? decision.winner.placeId : null,

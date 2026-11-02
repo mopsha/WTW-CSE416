@@ -153,10 +153,13 @@ function Details({ place: base, onClose, onAnswer }: { place: Candidate } & Omit
             ) : null}
           </View>
 
+          {place.note ? <Text style={styles.summary}>{place.note}</Text> : null}
           {details?.summary ? <Text style={styles.summary}>{details.summary}</Text> : null}
 
           <View style={styles.buttons}>
-            <LinkButton icon="navigate" label="Directions" onPress={() => open(directions)} />
+            {place.provider !== 'custom' || place.locationProvided ? (
+              <LinkButton icon="navigate" label="Directions" onPress={() => open(directions)} />
+            ) : null}
             {details?.phone ? (
               <LinkButton
                 icon="call"

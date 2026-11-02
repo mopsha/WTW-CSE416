@@ -3,7 +3,13 @@
 import { getAccessToken } from './auth';
 import { API_BASE_URL, USE_MOCK } from './config';
 import { MOCK_API_BASE_URL, mockFetch } from './mock/api';
+import type { NotificationRow } from '@shared/api/notify.ts';
+import type { HistoryItem, PlanSummary, RsvpStatus } from '@shared/api/plans.ts';
 import type { CreatePickInput } from '@shared/domain/createPick.ts';
+import type { FriendsList } from '@shared/api/friends.ts';
+import type { MeResponse } from '@shared/api/profile.ts';
+import type { Preferences } from '@shared/domain/preferences.ts';
+import type { GroupSummary as CreatedGroup } from '@shared/api/groups.ts';
 
 import { candidateFromApi } from './places';
 import type {
@@ -48,6 +54,18 @@ export interface ApiClientOptions {
   baseUrl: string;
   getAccessToken: () => Promise<string | null>;
   fetch: FetchLike;
+}
+
+export type InviteKind = 'pick' | 'group';
+
+/** POST /invites. `url` is the wtw://i/TOKEN deep link. */
+export interface InviteLinkResponse {
+  token: string;
+  url: string;
+  kind: InviteKind;
+  targetId: string;
+  expiresAt: string;
+  maxUses: number | null;
 }
 
 /** GET /health and POST /picks/:id/swipes. */
@@ -107,7 +125,7 @@ export function pickDetailFromApi(raw: RawPickDetail): PickDetail {
 
 export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOptions) {
   async function request<T>(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     { body, auth = true }: { body?: unknown; auth?: boolean } = {},
   ): Promise<T> {
@@ -152,8 +170,51 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
   }
 
   const pickPath = (pickId: string) => `/picks/${encodeURIComponent(pickId)}`;
+  const groupPath = (groupId: string) => `/groups/${encodeURIComponent(groupId)}`;
 
   return {
+    discover: (params: {
+      lat: number;
+      lng: number;
+      radiusM?: number;
+      category?: string;
+      priceMax?: number;
+      openNow?: boolean;
+    }) => {
+      const query = new URLSearchParams(
+        Object.entries(params)
+          .filter(([, v]) => v !== undefined)
+          .map(([k, v]) => [k, String(v)]),
+      );
+      return request<{
+        places: import('@shared/places/types.ts').Candidate[];
+        fallback: boolean;
+        notice: string | null;
+      }>('GET', `/discover?${query}`);
+    },
+    getSaved: () => request<{ places: { placeId: string; createdAt: string }[] }>('GET', '/saved'),
+    savePlace: (placeId: string) =>
+      request<StatusResponse>('POST', `/saved/${encodeURIComponent(placeId)}`),
+    removeSaved: (placeId: string) =>
+      request<StatusResponse>('DELETE', `/saved/${encodeURIComponent(placeId)}`),
+    getHang: () =>
+      request<{
+        posts: import('@shared/api/hang.ts').HangPost[];
+        sharedAvailable: boolean;
+        notice: string;
+      }>('GET', '/hang'),
+    createHang: (input: import('@shared/api/hang.ts').HangInput) =>
+      request<import('@shared/api/hang.ts').HangPost>('POST', '/hang', { body: input }),
+    respondHang: (id: string, status: import('@shared/api/hang.ts').HangStatus) =>
+      request<StatusResponse>('POST', `/hang/${encodeURIComponent(id)}/respond`, {
+        body: { status },
+      }),
+    hangPick: (id: string, input: CreatePickInput) =>
+      request<{ pickId: string; isParticipant: boolean }>(
+        'POST',
+        `/hang/${encodeURIComponent(id)}/pick`,
+        { body: input },
+      ),
     health: () => request<StatusResponse>('GET', '/health', { auth: false }),
     /** Validate with validateCreatePick first; the server rejects bad input with 400 INVALID_INPUT. */
     createPick: (input: CreatePickInput) =>
@@ -167,6 +228,70 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     /** My display name (trimmed, 1–50 characters; 400 INVALID_INPUT otherwise). Only ever mine. */
     updateMe: (displayName: string) =>
       request<{ displayName: string }>('POST', '/me', { body: { displayName } }),
+    /** My name, survey answers and whether onboarding is done (survey answers are API-only). */
+    getMe: () => request<MeResponse>('GET', '/me'),
+    /** Saves the survey (FR-02); even all-empty answers mark onboarding done. */
+    savePreferences: (preferences: Preferences) =>
+      request<{ preferences: Preferences; onboarded: true }>('POST', '/me/preferences', {
+        body: { preferences },
+      }),
+    /** Alan's POST /push-tokens: this device's Expo push token, so Pick events reach it. */
+    registerPushToken: (token: string, platform: 'ios' | 'android') =>
+      request<StatusResponse>('POST', '/push-tokens', { body: { token, platform } }),
+    /** Stop this device getting my pushes (call before signing out). Only ever my own token. */
+    removePushToken: (token: string) =>
+      request<StatusResponse>('POST', '/push-tokens/remove', { body: { token } }),
+    /** Razin's DELETE /me: deletes my account and its data. Sign out afterwards. */
+    deleteMe: () => request<StatusResponse>('DELETE', '/me'),
+
+    // Groups (0012_groups.sql). Reads are RLS queries (queries.listMyGroups / getGroup).
+    /** A draft Pick with everyone in the group already in it. 404 GROUP_NOT_FOUND if I'm not in it. */
+    createGroupPick: (input: CreatePickInput, groupId: string) =>
+      request<CreatePickResponse & { groupId: string; added: number }>('POST', '/picks', {
+        body: { ...input, groupId },
+      }),
+    /** Host only: add friends to a draft or swiping Pick. 403 NOT_FRIENDS for anyone else. */
+    inviteToPick: (pickId: string, userIds: string[]) =>
+      request<{ added: number }>('POST', `${pickPath(pickId)}/invite`, { body: { userIds } }),
+    createGroup: (name: string) => request<CreatedGroup>('POST', '/groups', { body: { name } }),
+    /** Owner only. */
+    renameGroup: (groupId: string, name: string) =>
+      request<StatusResponse>('POST', `${groupPath(groupId)}/rename`, { body: { name } }),
+    /** Owner only. Past Picks and their results stay. */
+    deleteGroup: (groupId: string) =>
+      request<StatusResponse>('POST', `${groupPath(groupId)}/delete`),
+    /** Owner only; accepted friends only (403 NOT_FRIENDS). Already-members are skipped. */
+    addGroupMembers: (groupId: string, userIds: string[]) =>
+      request<{ added: number }>('POST', `${groupPath(groupId)}/members`, { body: { userIds } }),
+    /** Owner only. They keep past Picks; new group Picks won't include them. */
+    removeGroupMember: (groupId: string, userId: string) =>
+      request<StatusResponse>(
+        'POST',
+        `${groupPath(groupId)}/members/${encodeURIComponent(userId)}/remove`,
+      ),
+    /** Anyone but the owner (409 OWNER_CANNOT_LEAVE). */
+    leaveGroup: (groupId: string) => request<StatusResponse>('POST', `${groupPath(groupId)}/leave`),
+    /** Host only: a wtw://i/TOKEN link to share (7 days, unlimited uses unless maxUses). */
+    createInvite: (input: { kind: InviteKind; targetId: string; maxUses?: number | null }) =>
+      request<InviteLinkResponse>('POST', '/invites', { body: input }),
+    /** Every unusable link is 404 INVITE_NOT_FOUND; too many failed joins is 429 RATE_LIMITED. */
+    acceptInvite: (token: string) =>
+      request<{ kind: InviteKind; targetId: string }>(
+        'POST',
+        `/invites/${encodeURIComponent(token)}/accept`,
+      ),
+    revokeInvite: (token: string) =>
+      request<StatusResponse>('DELETE', `/invites/${encodeURIComponent(token)}`),
+    /** Host only: stop (or allow) new people joining by code or link. */
+    setLobbyLocked: (pickId: string, locked: boolean) =>
+      request<{ locked: boolean }>('POST', `${pickPath(pickId)}/lock`, { body: { locked } }),
+    blockUser: (userId: string) =>
+      request<StatusResponse>('POST', `/blocks/${encodeURIComponent(userId)}`),
+    unblockUser: (userId: string) =>
+      request<StatusResponse>('POST', `/blocks/${encodeURIComponent(userId)}/remove`),
+    /** 10 a day; 404 for anything I can't see. */
+    report: (input: { kind: 'user' | 'pick' | 'group'; targetId: string; reason: string }) =>
+      request<StatusResponse>('POST', '/reports', { body: input }),
     submitSwipe: (pickId: string, placeId: string, value: PreferenceValue) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/swipes`, { body: { placeId, value } }),
     /** Host only: closes swiping and ranks. Others get 403 FORBIDDEN. */
@@ -189,8 +314,11 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
       request<{ candidateCount: number }>('POST', `${pickPath(pickId)}/refresh`, {
         body: { confirm },
       }),
-    cancelPick: (pickId: string) =>
-      request<{ state: PickState }>('POST', `${pickPath(pickId)}/cancel`),
+    /** Host only. The reason (optional, up to 200 characters) shows in everyone's inbox. */
+    cancelPick: (pickId: string, reason?: string) =>
+      request<{ state: PickState }>('POST', `${pickPath(pickId)}/cancel`, {
+        body: reason?.trim() ? { reason: reason.trim() } : undefined,
+      }),
     /** Host only: close swiping now (rank -> clear winner or final vote). */
     closePick: (pickId: string) => request<CloseResponse>('POST', `${pickPath(pickId)}/close`),
     /** One changeable ballot among the finalists, while the Pick is in final_vote. */
@@ -199,6 +327,53 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     /** Host only: tally now, before everyone has voted. */
     closeVote: (pickId: string) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/close-vote`),
+
+    /** My friends, requests to me, and requests I sent (names only, never emails). */
+    listFriends: () => request<FriendsList>('GET', '/friends'),
+    /**
+     * Ask someone by the exact email they sign in with. Always { status: 'sent' }, so this can't
+     * reveal who has an account; if they already asked you, you're now friends. 400
+     * CANNOT_FRIEND_SELF for your own email, 429 RATE_LIMITED after 20 a day.
+     */
+    addFriend: (email: string) =>
+      request<{ status: 'sent' }>('POST', '/friends/requests', { body: { email } }),
+    /** Accept their request. 404 REQUEST_NOT_FOUND if it was withdrawn. */
+    acceptFriend: (userId: string) =>
+      request<{ status: 'accepted' }>('POST', `/friends/${encodeURIComponent(userId)}/accept`),
+    /** Decline their request, cancel mine, or unfriend. Idempotent. */
+    removeFriend: (userId: string) =>
+      request<StatusResponse>('POST', `/friends/${encodeURIComponent(userId)}/remove`),
+    /** My newest 50 notifications (the inbox) and how many are unread. */
+    listNotifications: () =>
+      request<{ notifications: NotificationRow[]; unreadCount: number }>('GET', '/notifications'),
+    markNotificationRead: (id: string) =>
+      request<StatusResponse>('POST', `/notifications/${encodeURIComponent(id)}/read`),
+
+    // After the winner (Alan): plan time, RSVP, "Did you go?", reasons, history, Pick again.
+    /** Plan time, RSVP and outcome counts (never who said what), plus my own answers. */
+    getPlan: (pickId: string) => request<PlanSummary>('GET', `${pickPath(pickId)}/plan`),
+    /** One plain-language sentence per finalist, once the Pick has closed. No numbers. */
+    getReasons: (pickId: string) =>
+      request<{ reasons: { placeId: string; rank: number; reason: string }[] }>(
+        'GET',
+        `${pickPath(pickId)}/reasons`,
+      ),
+    /** Host only, completed Picks: when the group is going. Must be within 30 days. */
+    setPlanTime: (pickId: string, planAt: string) =>
+      request<{ planAt: string }>('POST', `${pickPath(pickId)}/plan-time`, { body: { planAt } }),
+    rsvp: (pickId: string, status: RsvpStatus) =>
+      request<StatusResponse>('POST', `${pickPath(pickId)}/rsvp`, { body: { status } }),
+    /** "Did you go?" (and optionally "would you go again?"). Changeable. */
+    recordOutcome: (pickId: string, went: boolean, again: boolean | null = null) =>
+      request<StatusResponse>('POST', `${pickPath(pickId)}/outcome`, { body: { went, again } }),
+    /** A new draft with the same people and settings; I host it. */
+    pickAgain: (pickId: string) => request<CreatePickResponse>('POST', `${pickPath(pickId)}/again`),
+    /** Completed Picks I was in, newest first; with a group id, that group's. */
+    getHistory: (groupId?: string) =>
+      request<{ picks: HistoryItem[] }>(
+        'GET',
+        groupId ? `/groups/${encodeURIComponent(groupId)}/history` : '/history',
+      ),
   };
 }
 

@@ -227,6 +227,12 @@ Float noise is ignored (differences under 1e-9 count as equal), so an exact 10-p
 
 **What users see:** rank only (1st / 2nd / 3rd, or "Clear winner!"). Scores are stored in `ranking_results.score` for tests and debugging and are never sent to the app.
 
+**Reasons (FR-14):** each of the top three gets one plain-language line built from its answer counts (`explainRank` in `_shared/domain/explainRank.ts`, served by `GET /picks/:id/reasons` once the Pick has closed), e.g. "Everyone said yes or maybe" or "Most of the group liked it; one person passed". Words only, never a number (a test checks every answer mix up to 8 people). In groups of **fewer than four**, counts would narrow down who said what, so the reason is based on rank alone ("The group's top match").
+
+**Individual answers are never revealed**, not during the Pick, not after it completes, not in history. The app sees its own answers, progress counts, rank, the reason line, and RSVP/"Did you go?" totals. Nobody, including the host, can see who said what.
+
+**After the winner (M4):** the host sets a plan time; everyone answers Going / Maybe / Can't (counts only); the sweep sends a reminder an hour before and a "Did you go?" prompt 3 hours after (or 24 hours after the decision when no time was set; Picks older than 14 days are left alone; people who said Can't or already answered are skipped). "Did you go?" is the success metric for M5. "Pick again" (host only) makes a new draft with the same people and settings; one open copy per Pick at a time. The host can change the plan time at most 5 times; re-sending the same time changes nothing.
+
 **Input mapping:** `preferences.value` is 0 = No, 1 = Maybe, 2 = Yes; `answerFromDb` converts it before scoring.
 
 **Open question for the team:** the weights (0.70 / 0.20 / 0.10, −15) are a starting hypothesis. M5 user sessions should tell us whether one "No" is penalized enough.
@@ -303,10 +309,10 @@ Status as of M3 (Oct 21). "Screen done" means the app side is built and runs end
 | FR | Requirement | Screen | API route | Table(s) | Owner | Status |
 |---|---|---|---|---|---|---|
 | FR-01 | Create an account, sign in, sign out, and maintain a profile. | Sign in; Profile tab (sign out) | None (Supabase Auth) | `profiles` | Razin (auth), Mike (screens) | Sign-in done; profile editing: Razin |
-| FR-02 | Complete and later edit a short preference profile. | planned | planned | `profiles` | Razin | M4 |
+| FR-02 | Complete and later edit a short preference profile. | Onboarding (survey + permission explainers); Profile → Edit preferences | `GET /me`, `POST /me/preferences` | `profiles.discover_preferences` (0011) | Mike | **Done** (M4) |
 | FR-03 | Send, accept, remove, and block friend relationships. | Friends tab (placeholder) | planned | `friendships` | Razin | M4 |
-| FR-04 | Create, name, and manage a reusable group. | planned | planned | `groups`, `group_members` | Razin | M4 |
-| FR-05 | Create a Pick for selected friends or a saved group. | Create Pick → Lobby | `POST /picks` (PR #12) | `picks`, `pick_participants` | Alan, Mike (screens) | **Done** by join code; friends/groups M4 |
+| FR-04 | Create, name, and manage a reusable group. | Picks tab "Your groups"; `app/groups/` list + detail | `/groups` routes (0012) | `groups`, `group_members` | Razin | **Done** (M4); adding people needs 0008 friends |
+| FR-05 | Create a Pick for selected friends or a saved group. | Group → Start → Create Pick → Lobby | `POST /picks` `{ groupId }`, `POST /picks/:id/invite` | `picks.group_id`, `pick_participants` | Alan, Mike (screens), Razin (groups) | **Done** by join code and group; invite API done, invite screen not yet |
 | FR-06 | Select Food or Activities and optionally refine location, radius, price, and open status. | Create Pick (map pin, search, radius, pool, deadline, close rule) | `POST /picks` | `picks` | Josh, Mike (screen) | **Done**; price/open filters M4 |
 | FR-07 | Retrieve and normalize a bounded nearby candidate pool. | Lobby Start; host "Get new places" | `POST /picks/:id/start`, `/refresh` (PR #12) | `places`, `place_cache`, `pick_candidates` | Josh, Alan | API in review |
 | FR-08 | Join an authorized Pick through the app or invitation link. | Lobby shows code + QR + Share (`wtw://join/CODE`) | `POST /picks/join` (Razin) | `pick_join_codes`, `pick_participants` | Razin, Mike (lobby) | **Done**: code, QR/link (`app/join/[code].tsx`), Picks-tab "Join with code" |
@@ -315,120 +321,102 @@ Status as of M3 (Oct 21). "Screen done" means the app side is built and runs end
 | FR-11 | Hide individual responses until aggregation is complete. | Waiting and Vote show counts and checks only | `GET /picks/:id/progress` (counts only); Realtime on `picks`, `pick_participants` only | `pick_participants.finished_at` | Mike, Razin (RLS) | **Done** |
 | FR-12 | Close responses after all participants finish or according to a documented timeout rule. | Waiting (countdown, host Close now); everyone moves to Results by themselves | `POST /picks/:id/close` (PR #13); deadline sweep (Josh) | `picks` | Alan, Josh | Screens done; API in review |
 | FR-13 | Calculate deterministic group scores and return the top three candidates. | Results (rank only) | close → `ranking_results` | `ranking_results` | Alan | **Done** |
-| FR-14 | Provide a plain-language explanation for each top result (rank + reason, no number). | planned | planned | `ranking_results` | Alan | M4 |
+| FR-14 | Provide a plain-language explanation for each top result (rank + reason, no number). | Results (a line under each top place) | `GET /picks/:id/reasons` | `ranking_results`, `preferences` (counts only) | Alan | **Done** (M4, PR alan/history-rsvp) |
 | FR-15 | Vote once among the three finalists. | Vote (changeable until close; host Close the vote) | `POST /picks/:id/vote`, `/close-vote` (PR #13) | `final_votes` | Mike (screen), Alan | Screen done; API in review |
 | FR-16 | Resolve ties, declare one winner, and save the outcome. | Winner (clear winner / vote / tie-break; Directions; saved) | vote tally (PR #13) | `picks`, `final_votes` | Alan | Screen done; API in review |
 | FR-17 | Browse a bounded individual Discover feed and save interests. | Discover tab (placeholder) | planned | `places`, `saved_places` | Josh | M4 |
-| FR-18 | View completed Pick history for groups they belong to. | Picks tab "History" (decided + canceled) | RLS read of my Picks | `picks` | Razin, Mike | **Done** for my Picks; groups M4 |
+| FR-18 | View completed Pick history for groups they belong to. | Picks tab "History" + `app/history.tsx` (`?groupId=` for a group); Winner: plan time, RSVP, "Did you go?", Pick again | `GET /history`, `GET /groups/:id/history`, `POST /picks/:id/again` | `picks`, `pick_rsvps`, `pick_outcomes` | Alan | **Done** (M4); group history needs Razin's 0012 |
 
 ## Architecture (Josh)
 
 ```mermaid
 flowchart TD
-    App[Expo React Native frontend] --> Auth[Supabase Auth]
-    App -->|snapshot and outcome reads through RLS| DB[(PostgreSQL and RLS)]
-    App -->|authenticated writes and Pick metadata reads| API[Supabase Hono Edge Function: api]
-    API -->|service-role transactional RPCs| DB
-    API --> Domain[Canonical lifecycle, closing and voting]
-    API -->|start and refresh| Pool[PoolBuilder with direct MockProvider]
-    Pool --> Mock[Owned placeholder fixtures]
-    Configured[Configured provider and cache infrastructure] -.->|lifecycle wiring blocked| Pool
-    Configured --> Google[Google Places adapter]
-    API -->|completed or final_vote reads| Hours[Provenance-aware hours refresher]
-    Hours -->|explicit Google provenance only| Google
-    Cron[pg_cron every minute] --> Net[pg_net]
-    Net -->|POST /internal/sweep with x-cron-secret| API
-    CI[GitHub Actions validation and local DB/API tests] -->|successful main push only| CD[wtw-dev migration then api deployment]
-    CD --> DB
-    CD --> API
-    DB -.-> RT[Realtime: planned, not implemented]
-    RT -.-> App
+    App[Expo React Native: Picks, Discover, Custom Plans, hang compose] --> Auth[Supabase Auth]
+    App -->|RLS reads| DB[(Postgres: Picks, snapshots, saves, usage counters, hang posts)]
+    App -->|authenticated requests| API[Single Hono api Edge Function]
+    API -->|Discover| Discover[Bounded feed: filters and individual preference score]
+    Discover --> Providers[Configured Google or mock PoolBuilder]
+    Providers --> Budget[Atomic UTC-day Google call cap]
+    Budget --> Google[Google Places: request-scoped content]
+    Providers --> Cache[Service-only place_cache: owned content or Google IDs]
+    API -->|Discover/create/start/refresh limits| Limits[Atomic user and per-Pick counters]
+    Limits --> DB
+    API --> Lifecycle[Existing canonical create/start/refresh/swipe/close/vote]
+    Saved[Host saved fixtures and authorized custom places] --> Priority[Custom options then saved then provider results; deduplicate]
+    Custom[custom UUID options and creator provenance] --> Priority
+    Mock[Persistable food/activity fixtures] --> Priority
+    Priority --> Lifecycle
+    Lifecycle -->|existing transactional RPCs; same ranking engine| DB
+    Google -.->|group mixing blocked: snapshot retention contract| Priority
+    API --> Hang[Shared active hang posts; response upserts and graph RLS]
+    Hang --> DB
+    Graph[Existing friends, blocks and groups with Hang authorization] --> Hang
+    Invites[Locked Hang Pick wrapper calls canonical creation and notifier] --> Hang
+    Cron[Existing every-minute pg_cron/pg_net] -->|secret-authenticated internal sweep| API
+    API --> Sweep[Canonical deadline closers]
+    API --> Cleanup[Daily UTC cache-cleanup hook and removed-row log]
+    Durable[place_cache and atomic daily cleanup RPC] --> Cleanup
+    Sweep --> Lifecycle
 ```
 
-### Implementation and verification status
+Phase 1 Discover, filters, provider normalization/fallback, saved-ID routes and caps
+are retained. Discover scores after cache retrieval for the caller only and returns
+at most 20 places, without pagination. Google search/hours reserve an atomic daily
+call before HTTP; releases keep the provider key on the backend. Group start/refresh
+still use persistable data, with the Google snapshot guard enforced.
 
-| Status | Current evidence / boundary |
-| --- | --- |
-| **IMPLEMENTED** | Lifecycle create/start/refresh/cancel/read, canonical close/vote paths, deadline sweep, read-time opening-hours integration, provider infrastructure, and main-to-wtw-dev CD workflow. |
-| **CI VERIFIED** | PR `CI / validate` and `CI / Local database and API` pass. Validation includes lint, types, Jest, Android bundle, Deno checks/route tests; integration runs local migrations/seed, pgTAP/RLS and HTTP/database tests. PR deployment correctly skips. Hours integration is covered by CI. |
-| **HOSTED VERIFIED** | No hosted CD, cron delivery, or real backend Google request has been verified for this work. Green CI tests local services/mocks, not hosted wtw-dev behavior. |
-| **BLOCKED/PLANNED** | Google lifecycle persistence/display hydration and durable Places cache await a safe data contract. Realtime subscriptions are planned and not operational. |
+Phase 2 `includeSaved` persists through `POST /picks` and loads only the host's saves
+at start/refresh. Category, radius and price/open constraints apply before saved candidates
+are placed ahead of external results. First ID wins, then the deck is bounded.
+Google saved hydration remains blocked; no Google retention safeguard was relaxed.
 
-Clients use Supabase Auth and RLS-filtered reads. Application writes go through the
-single `api` Edge Function. Alan's canonical `closePick` handles host/system closure;
-auto-close checks run after swipes, and the deadline sweep delegates to the same
-closers. Ranking decisions, voting, and winner selection remain canonical domain
-logic backed by transactional RPCs.
+`0015_custom_plans.sql` extends Pick categories and place source/creator metadata.
+Custom options are validated (2–20; names 1–60; notes up to 200), assigned server UUIDs,
+and passed as ordinary snapshots to the **same** swipe/rank/final-vote engine.
+Refresh retains their IDs. Six one-tap templates and typed names/notes are available
+in New Pick. Unlocated custom options use a marked neutral ranking point at the
+Pick center; the client hides it and suppresses directions. Optional nearby mixing
+uses the existing provider contract; live Google mixing remains blocked by Phase 1.
+API parsing applies Razin's shared text filter to names and notes before writes.
 
-`pg_cron`/`pg_net` scheduling is implemented in migration `0005`. The internal sweep
-uses `deadline_at` for swiping and `vote_deadline_at` for final votes, authenticated
-by a separate server secret rather than a user token. Hosted Edge secret/Vault
-configuration and delivery verification remain required. See
-[cron configuration](api-integration.md#cron-and-wtw-dev-configuration).
+`0016_hang_posts.sql` adds posts/responses; forward migration 0022 wires existing
+social helpers into shared RLS and service-only atomic RPCs. Active authors see their
+own posts; accepted friends/current group members see their audience's posts unless
+blocked. Expired posts are hidden. Responses upsert down/maybe/cant. Let's Pick uses
+the existing New Pick form and canonical pick_create_options, preserves the Hang
+time as plan_at and creates exactly eligible down participants. If the author is
+not down, a down responder hosts; the author is not silently added. An unchanged
+draft is reused; changed responders require canceling that draft before recreation.
+The existing notifier deduplicates added_to_pick events. Swipe/rank/vote are unchanged.
 
-Results/reveal candidate reads retain persisted identities/display snapshots and
-request additional metadata from the existing authenticated `GET /picks/:id`.
-After membership validation, completed/final-vote reads call `refreshOpenHours`.
-Fresh owned mock hours are evaluated; stale/missing hours remain unknown. Explicit
-Google provenance permits request-time hours lookup without persistence. Failures
-never replace candidates or change ranks, winners, votes, or state. The client adds
-optional `openNow`/`closesAt`; this does not add hours labels to the screen layout.
+The existing secret-authenticated deadline sweep is retained. A separate cleanup
+hook takes the UTC day and existing five-minute search TTL cutoff, reports deletion
+counts, and leaves completed deadline work intact on failure. Migration 0021 supplies
+the durable service-only cache and atomic daily claim/delete RPC. Owned fixture
+searches are cache-first across isolates; Google ID-only entries do not provide
+cached Google display content. Discover requests are capped at 20/user/UTC day. See [decisions](decisions.md) for budgets,
+retention, integration contracts and remaining teammate dependencies.
 
-### Real versus mock
-
-| Path | Implemented behavior | Runtime / verification limit |
-| --- | --- | --- |
-| Lifecycle mock | `api/index.ts` directly constructs `createPoolBuilder(new MockProvider())`; start/refresh persist owned candidate snapshots. | Current active lifecycle provider. Bundled placeholders differ from the SBU database demo seed; no hosted lifecycle proof is claimed. |
-| Google provider | Search normalization, request timeouts, hours details, provenance and cache safeguards exist. | Unit/CI tested with synthetic responses; no verified real backend Google request. |
-| Google → mock fallback | Configured pool tries mock on Google failure, timeout or unusable response; fallback does not poison Google cache. | Tested infrastructure, not connected to lifecycle; geographically limited fixtures can also yield no candidates. |
-| `PLACES_PROVIDER` | Configured builder reads `google`/`mock` on each build, defaults to mock, rejects invalid configuration. | Lifecycle bypasses that builder. An env change alone cannot enable Google discovery. |
-| Cache | Bounded in-memory mock cache and Google-ID-only entries; no durable Places cache adapter/table. | Configured cache is not injected into current lifecycle; Google IDs do not substitute for fresh display content. |
-| Whole-app mock | `EXPO_PUBLIC_USE_MOCK` selects frontend simulation. | Separate from server provider selection; not evidence of backend integration. |
-
-Google lifecycle integration is blocked at persistence, not by a missing adapter.
-Start/refresh currently store full candidates in `places.raw` and Pick snapshots;
-closing reads frozen candidate coordinates to calculate distance tie-breaks. Our
-Google candidates are marked request-only. The existing snapshot guard is not yet
-wired into that boundary. ID-only storage plus display hydration would still need
-a permitted stable ranking input. Computing distance locally does not establish
-permission to retain that derived value. Do not weaken the guard or alter Alan's
-ranking to bypass this unresolved contract. See [Places details](places-phase1.md).
-
-The legacy `/rank` route still exists and is used by the current UI when a host
-opens results while the Pick remains swiping. It is not the canonical `/close`
-path; the earlier integration review identified its missing final-vote deadline.
-Coordinate retirement/delegation with Alan and client migration with Mike. Neither
-green sweep tests nor this documentation update resolves that separate path.
-
-### CI/CD and synchronization
-
-The CD job depends on both CI jobs, runs only for pushes to main, checks out the
-validated commit, and serializes wtw-dev deployments without canceling active work.
-A current-main check skips superseded queued commits. It links the hosted project,
-applies pending migrations, then deploys `api`; it never resets/seeds hosted data
-or configures application secrets. Function failure leaves applied migrations in
-place; use compatible migrations and forward-fix recovery. Hosted execution is
-not yet tested. See [deployment setup](api-integration.md#main-to-wtw-dev-deployment).
-
-Realtime is not implemented. The current results screen loads/reloads state through
-reads rather than subscriptions. Future subscription scope and ownership must be
-agreed without exposing private answers or ranking scores.
+Validation is local: Jest/client-domain tests, Deno routes/typecheck, SQL storage/RLS
+checks, lint/types and Android export. No hosted Google request, backend deployment,
+EAS build, friendship integration or notification delivery is claimed here.
 
 ## Stack + why (Josh)
 
-| Technology | Why |
-|---|---|
-| Expo / React Native | One mobile codebase supports iOS and Android with quick device iteration. |
-| TypeScript | Shared types connect the app, API and pure decision engine. |
-| Supabase Auth | Managed identity verifies users without a custom password system. |
-| Supabase Postgres + RLS | Relational constraints and row policies protect shared Pick data. |
-| Supabase Realtime | Planned only; current clients use explicit reads/reloads. |
-| Supabase Edge Functions | A server runtime keeps credentials and privileged operations off phones. |
-| Hono | A small router gives the single API explicit routes and error handling. |
-| Our TypeScript API | One write boundary enforces authorization, state and ranking rules. |
-| PlaceProvider / Google Places abstraction | Stable normalized candidates let mock data become live discovery later. |
-| Jest | Repeatable tests exercise shared logic without a phone or database. |
-| GitHub Actions | PR/main CI validates code, bundle, local database/API; successful main runs are configured to deploy to wtw-dev. Hosted CD is unverified. |
+| Technology | Josh-owned use |
+| --- | --- |
+| Expo SDK 57 / React Native / Expo Router | Existing mobile navigation plus Custom Plan inputs and minimal hang card/compose sheet. |
+| Shared pure TypeScript | Filters, Discover score, typed option validation, stable priority/dedup and shared Hang authorization contracts. |
+| Supabase Auth / Postgres / RLS | Auth-derived owners, saved IDs, custom creator/source provenance, private quota counters and graph-authorized shared Hang storage. |
+| Hono Edge Function | One API for Discover, Picks, saves, hang endpoints and secret-authenticated sweep. |
+| Google Places adapter | Existing search/hours normalization, timeouts, request-only content and fixture fallback; backend-only release credentials. |
+| Atomic SQL counters | Google calls per UTC day, Discover and Pick creates per user/day, start/refresh attempts per Pick. |
+| PoolBuilder and service-only place_cache | Five-minute owned-result TTL and Google ID-only entries; atomic daily cleanup. Google display hydration still requires live calls. |
+| Canonical Pick engine and RPCs | Reused unchanged for custom swipe/rank/final vote; no second decision engine. |
+| pg_cron / pg_net | Existing every-minute deadline sweep; daily atomic expired-cache cleanup and removed-row logging. |
+| Jest / Deno / SQL checks | Exercise custom flow, saved priority, expiry/access contracts, endpoint behavior and storage/RLS. |
+| GitHub Actions | Existing PR/main checks and configured main-only backend deployment; this branch was not merged or deployed. |
+
 ## Security & privacy (Razin)
 
 Code: `supabase/migrations/0001_init.sql` (RLS, grants), `0002`–`0004` (server-only RPCs), `0006_join_codes.sql` (join codes, `pick_join`, `ranking_results` timing). Tests: `supabase/tests/rls_test.sql`, `join_and_security_test.sql` (`supabase db reset && supabase test db`), and the `POST /picks/join` cases in `supabase/functions/api/app_test.ts`.
@@ -448,6 +436,8 @@ Code: `supabase/migrations/0001_init.sql` (RLS, grants), `0002`–`0004` (server
 | participant | `final_votes` | ✓ only my own ballot | ✗ (vote via API) | RLS `user_id = auth.uid()`. Not in Realtime. |
 | participant | `pick_join_codes` | ✓ my Picks' codes (to share) | ✗ | RLS `is_pick_participant(pick_id)`; `select` grant only. |
 | stranger | all of the above | ✗ 0 rows (even with the Pick id) | ✗ | The same RLS policies; tested table by table in `join_and_security_test.sql`. |
+| group member | `groups`, `group_members` | ✓ groups I'm in and everyone in them (+ their `profiles.display_name`) | ✗ (via API) | RLS `private.is_group_member(id)` / `shares_group_with` (0012). A removed member loses the group but keeps Picks they were in (participant RLS). |
+| non-member | `groups`, `group_members` | ✗ 0 rows, even with the id | ✗ | Same policies; RPCs answer 404. Tested in `groups_test.sql`. |
 | `authenticated` | `pick_join` and every `heartbeat_*` / `pick_*` RPC | — | ✗ execute | Executable only by `service_role`; calling one directly fails with 42501. |
 | `service_role` (API) | every table | ✓ | ✓ via RPCs | Bypasses RLS, so the RPCs recheck membership/host, state and version under `SELECT … FOR UPDATE`; PT400/403/404/409 map to HTTP 400/403/404/409. |
 | `service_role` (API) | `pick_join_codes` | ✓ | ✓ via trigger + `pick_join` | Codes are issued by a trigger on every new Pick; `pick_join` is the only way into a Pick. |
@@ -485,6 +475,8 @@ Base URL: `<SUPABASE_URL>/functions/v1/api`. User routes need `Authorization: Be
 | `POST /picks/:id/close-vote` | host | canonical final-vote close | implemented |
 | `GET /picks/:id` | participant | Pick read plus reveal hours metadata | implemented |
 | `POST /internal/sweep` | cron secret | delegate expired Picks to canonical closers | implemented; hosted delivery unverified |
+| `POST /groups`, `/groups/:id/rename`, `/delete`, `/members`, `/members/:userId/remove`, `/leave` | owner (leave: members) | groups; friends-only adds (0012) | implemented |
+| `POST /picks/:id/invite` | host, `draft`/`swiping` | `{ userIds }` of friends | implemented |
 | `PATCH /me` | signed-in user | update display name / avatar | planned |
 
 **Database RPCs used by the API** (service role only, `0002_heartbeat_rpcs.sql`)
