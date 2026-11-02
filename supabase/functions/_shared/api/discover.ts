@@ -3,6 +3,34 @@ import { validFilters } from '../domain/placeFilters.ts';
 import { rankDiscover, type DiscoverPreferences } from '../domain/discoverScore.ts';
 import type { PoolBuilder, PoolRequest } from '../places/pool.ts';
 import { NoCandidatesError } from '../places/pool.ts';
+import type { Candidate } from '../places/types.ts';
+
+export type ResolvePhoto = (name: string) => Promise<string>;
+
+/** Adds each Google place's first photo and its required credit; a failed photo stays emoji. */
+export function withPhotos(places: Candidate[], resolve: ResolvePhoto): Promise<Candidate[]> {
+  return Promise.all(
+    places.map(async (place) => {
+      const photo = place.photos?.[0];
+      if (place.provider !== 'google' || !photo) return place;
+      try {
+        return {
+          ...place,
+          photoUrl: await resolve(photo.name),
+          attributions: [
+            ...(place.attributions ?? []),
+            ...photo.authorAttributions.map((author) => ({
+              provider: author.displayName,
+              providerUri: author.uri,
+            })),
+          ],
+        };
+      } catch {
+        return place;
+      }
+    }),
+  );
+}
 
 export function parseDiscover(params: URLSearchParams): PoolRequest[] {
   const lat = params.get('lat'),

@@ -184,7 +184,7 @@ export class GoogleProvider implements PlaceProvider {
 
   private async request(
     path: string,
-    mask: string,
+    mask: string | null,
     init: RequestInit,
     signal?: AbortSignal,
   ): Promise<unknown> {
@@ -197,7 +197,7 @@ export class GoogleProvider implements PlaceProvider {
             headers: {
               'Content-Type': 'application/json',
               'X-Goog-Api-Key': this.apiKey,
-              'X-Goog-FieldMask': mask,
+              ...(mask ? { 'X-Goog-FieldMask': mask } : {}),
             },
           });
           if (!response.ok) throw new Error();
@@ -247,6 +247,23 @@ export class GoogleProvider implements PlaceProvider {
       const candidate = normalizePlace(value, category, fetchedAt);
       return candidate ? [candidate] : [];
     });
+  }
+
+  /** Short-lived image URL with no key in it. For this response only; never store it. */
+  async photoUrl(name: string, options?: { signal?: AbortSignal }): Promise<string> {
+    if (!/^places\/[^/]+\/photos\/[^/]+$/.test(name)) throw new Error('Invalid photo name');
+    const uri = str(
+      record(
+        await this.request(
+          `${name}/media?maxWidthPx=800&skipHttpRedirect=true`,
+          null,
+          { method: 'GET' },
+          options?.signal,
+        ),
+      ).photoUri,
+    );
+    if (!uri?.startsWith('https://')) throw new Error('Invalid Google photo response');
+    return uri;
   }
 
   async fetchHours(placeId: string, options?: { signal?: AbortSignal }): Promise<HoursRecord> {

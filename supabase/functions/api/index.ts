@@ -19,7 +19,7 @@ import { createNotifier } from '../_shared/api/notify.ts';
 import { refreshCandidateHours } from './hours.ts';
 import { createPoolBuilder } from '../_shared/places/pool.ts';
 import { MockProvider } from '../_shared/places/MockProvider.ts';
-import { placesPoolBuilder } from './places.ts';
+import { placesPoolBuilder, resolveDiscoverPhoto } from './places.ts';
 import { createDiscoverStore } from './discoverStore.ts';
 import { checkUserLimit } from './limits.ts';
 import { createPlaceCache, createCacheCleanupStore } from './placeCacheStore.ts';
@@ -50,6 +50,7 @@ const app = createApp(
     cronSecret: Deno.env.get('CRON_SECRET'),
     poolBuilder,
     discoverPool: placesPoolBuilder,
+    discoverPhoto: resolveDiscoverPhoto,
     discoverStore: createDiscoverStore(),
     checkLimit: checkUserLimit,
     joinStore: createJoinStore(),

@@ -1,6 +1,6 @@
 import { cleanupCache, type CacheCleanupStore } from '../_shared/api/cacheCleanup.ts';
 import { parseHang, respondHang, hangPick, type HangStore } from '../_shared/api/hang.ts';
-import { discover, parseDiscover } from '../_shared/api/discover.ts';
+import { discover, parseDiscover, withPhotos, type ResolvePhoto } from '../_shared/api/discover.ts';
 import type { DiscoverPreferences } from '../_shared/domain/discoverScore.ts';
 import { parseCreatePick } from '../_shared/api/lifecycle.ts';
 import { Hono } from 'hono';
@@ -103,6 +103,7 @@ export function createApp(
     hangStore?: HangStore;
     cronSecret?: string;
     discoverPool?: PoolBuilder;
+    discoverPhoto?: ResolvePhoto;
     discoverStore?: {
       preferences(userId: string): Promise<DiscoverPreferences>;
       saved(userId: string): Promise<{ placeId: string; createdAt: string }[]>;
@@ -225,6 +226,9 @@ export function createApp(
     );
     return c.json({
       ...result,
+      places: deps.discoverPhoto
+        ? await withPhotos(result.places, deps.discoverPhoto)
+        : result.places,
       notice: result.fallback
         ? 'Showing fixture places. Live places may be unavailable or the daily provider limit reached.'
         : null,
