@@ -61,9 +61,10 @@ means a fixture branch was used, including configured mock mode; the notice is
 shown in the tab. Provider failure/cap beyond fixture coverage can return an empty
 feed with a notice. Cache-Control is private/no-store for Discover and saved reads.
 
-The pure score favors matching categories (+4), any matching provider type (+3),
-known price within the profile budget (+2), then bounded rating (0–1) and proximity
-(0–1); ties use the stable place ID. This is individual Discover scoring, entirely
+The pure score adds rating (0–5), any matching provider type (+1), matching
+categories (+1), known price within the profile budget (+1) and proximity (0–1), so
+survey answers nudge the order without burying well-rated places; ties use the
+stable place ID. This is individual Discover scoring, entirely
 separate from group Pick ranking. Preferences are read from the authenticated
 caller's `profiles.discover_preferences` object: `{categories?: string[], types?:
 string[], priceMax?: number}`. Missing/malformed optional fields use neutral defaults.

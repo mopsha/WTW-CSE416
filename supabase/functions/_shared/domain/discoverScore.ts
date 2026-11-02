@@ -13,17 +13,17 @@ export function discoverScore(
   preferences: DiscoverPreferences,
   center: LatLng,
 ): number {
-  const category = preferences.categories?.includes(place.category) ? 4 : 0;
-  const types = (place.types ?? []).some((type) => preferences.types?.includes(type)) ? 3 : 0;
+  const category = preferences.categories?.includes(place.category) ? 1 : 0;
+  const types = (place.types ?? []).some((type) => preferences.types?.includes(type)) ? 1 : 0;
   const price =
     preferences.priceMax != null &&
     place.priceLevel != null &&
     place.priceLevel <= preferences.priceMax
-      ? 2
+      ? 1
       : 0;
   const rating =
     typeof place.rating === 'number' && Number.isFinite(place.rating)
-      ? Math.max(0, Math.min(5, place.rating)) / 5
+      ? Math.max(0, Math.min(5, place.rating))
       : 0;
   return category + types + price + rating + 1 / (1 + distanceMeters(center, place) / 1000);
 }

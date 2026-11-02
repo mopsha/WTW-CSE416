@@ -86,7 +86,7 @@ CI verified; it does not resolve Google candidate creation or full display hydra
 
 ## Google request and normalization
 
-Nearby Search (New) uses POST, `includedTypes`, a circle restriction, DISTANCE rank,
+Nearby Search (New) uses POST, `includedTypes`, a circle restriction, POPULARITY rank,
 and an explicit field mask (no wildcard). Categories use a bounded selection of
 Table A types in `categoryMap.ts`. A transport and clock can be injected; tests use
 only synthetic fixtures. Requests use a key header, never a key-bearing client URL.

@@ -25,7 +25,7 @@ test('Nearby Search uses bounded category request, explicit mask and header-only
   expect(JSON.parse(init.body as string)).toMatchObject({
     includedTypes: categoryMap.food,
     maxResultCount: 20,
-    rankPreference: 'DISTANCE',
+    rankPreference: 'POPULARITY',
   });
   expect(JSON.stringify(results)).not.toContain('test-only');
   expect(results).toHaveLength(1);
