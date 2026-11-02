@@ -90,6 +90,9 @@ Nearby Search (New) uses POST, `includedTypes`, a circle restriction, POPULARITY
 and an explicit field mask (no wildcard). Categories use a bounded selection of
 Table A types in `categoryMap.ts`. A transport and clock can be injected; tests use
 only synthetic fixtures. Requests use a key header, never a key-bearing client URL.
+Discover resolves each result's first photo to Google's short-lived `photoUri` for
+that response only and adds the photo author's credit. Each photo is one billable call
+against `GOOGLE_DAILY_CALL_CAP`; a failed photo leaves that place on its emoji.
 Malformed required fields and known closed businesses are excluded; missing optional
 rating/price/hours remain unknown. Photo names and author/provider attributions are
 returned for request-time use, not cached. Actual photo retrieval/display is not

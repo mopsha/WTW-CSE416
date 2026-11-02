@@ -12,6 +12,8 @@ export interface Candidate extends LatLng {
   priceLevel?: number | null;
   rating?: number | null;
   types?: string[];
+  /** Resolved for one Discover response; never persisted. */
+  photoUrl?: string | null;
   photos?: { name: string; authorAttributions: { displayName: string; uri?: string }[] }[];
   attributions?: { provider: string; providerUri?: string }[];
   googleMapsUri?: string;
