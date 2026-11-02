@@ -661,7 +661,7 @@ Commands execute in this order:
 ```sh
 supabase link --project-ref "$SUPABASE_PROJECT_REF"
 supabase db push --linked --yes
-supabase functions deploy api --project-ref "$SUPABASE_PROJECT_REF"
+supabase functions deploy api --project-ref "$SUPABASE_PROJECT_REF" --yes
 ```
 
 Migrations precede the function because its code may require new schema/RPCs.
