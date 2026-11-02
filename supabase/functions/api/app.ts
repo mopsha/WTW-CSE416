@@ -1,3 +1,5 @@
+import { parseGroupIdea, type GroupIdeasStore } from '../_shared/api/groupIdeas.ts';
+import { parseId } from '../_shared/api/groups.ts';
 import { cleanupCache, type CacheCleanupStore } from '../_shared/api/cacheCleanup.ts';
 import { parseHang, respondHang, hangPick, type HangStore } from '../_shared/api/hang.ts';
 import { discover, parseDiscover, withPhotos, type ResolvePhoto } from '../_shared/api/discover.ts';
@@ -93,6 +95,7 @@ export function createApp(
     friendsStore?: FriendsStore;
     profileStore?: ProfileStore;
     groupsStore?: GroupsStore;
+    groupIdeasStore?: GroupIdeasStore;
     safetyStore?: SafetyStore;
     inviteStore?: InviteStore;
     accountStore?: AccountStore;
@@ -468,6 +471,43 @@ export function createApp(
         deps.lifecycleStore.notifier,
       ),
     );
+  });
+  // Group Ideas use the existing POST mutation convention; the update replaces editable fields.
+  const ideas = async (c: { req: { raw: Request; param(name: string): string } }) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.groupIdeasStore)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Group Ideas are not available');
+    return { user, store: deps.groupIdeasStore, groupId: parseId(c.req.param('id'), 'group id') };
+  };
+  app.get('/groups/:id/ideas', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store, groupId } = await ideas(c);
+    return c.json({ ideas: await store.list(user.id, groupId) });
+  });
+  app.get('/groups/:id/ideas/:ideaId', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store, groupId } = await ideas(c);
+    return c.json(await store.get(user.id, groupId, parseId(c.req.param('ideaId'), 'idea id')));
+  });
+  app.post('/groups/:id/ideas', async (c) => {
+    const { user, store, groupId } = await ideas(c);
+    return c.json(await store.create(user.id, groupId, parseGroupIdea(await readJsonBody(c))), 201);
+  });
+  app.post('/groups/:id/ideas/:ideaId', async (c) => {
+    const { user, store, groupId } = await ideas(c);
+    return c.json(
+      await store.update(
+        user.id,
+        groupId,
+        parseId(c.req.param('ideaId'), 'idea id'),
+        parseGroupIdea(await readJsonBody(c)),
+      ),
+    );
+  });
+  app.delete('/groups/:id/ideas/:ideaId', async (c) => {
+    const { user, store, groupId } = await ideas(c);
+    await store.delete(user.id, groupId, parseId(c.req.param('ideaId'), 'idea id'));
+    return c.json({ status: 'ok' });
   });
   app.post('/groups', async (c) => {
     const { user, store } = await groups(c);

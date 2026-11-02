@@ -134,3 +134,25 @@ Repository checks do not establish Google Cloud key restrictions, active API all
 actual Edge secrets, billing alerts or hosted quota configuration. The project owner
 must verify those in the provider console before enabling live production usage.
 The application request cap is independent of provider-side billing controls.
+
+## Group Ideas: unscheduled group library
+
+Group Ideas are reusable possibilities for one group's future activities or food,
+not scheduled plans, hang posts or automatic Pick candidates. Migration 0023 adds
+`group_ideas` with a group/creator FK and member-only RLS. Creators edit/delete their
+ideas; group owners can delete any idea for moderation. Current membership is always
+required, even for a creator. Membership and mutations share the existing group lock.
+Group and creator deletion cascade library data.
+
+Legacy Custom Plans are per-Pick option snapshots, with no required group and possible
+private notes/locations. Automatically moving them into a shared library could expose
+private data and alter old Picks, so they remain compatible and are not copied.
+The new library reuses the existing API writer model, shared text filter, group
+membership rules and UI kit. It adds no second voting engine or scheduling system.
+Images are deferred because there is no configured storage bucket/upload policy.
+
+Future deck integration must explicitly select eligible group ideas, recheck current
+membership, map the idea category `activity` to the existing Pick category `activities`,
+and snapshot an idea's content/provenance into the canonical candidate contract.
+It must define behavior for edits/deletions after deck creation and ideas without
+coordinates, and preserve Google retention rules. None of those changes are included.

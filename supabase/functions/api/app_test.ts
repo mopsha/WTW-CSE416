@@ -1,3 +1,5 @@
+// Include feature route coverage in the existing CI entry point.
+import './groupIdeas_test.ts';
 import { createApp } from './app.ts';
 import { ApiError } from '../_shared/api/errors.ts';
 import type { HeartbeatStore } from '../_shared/api/heartbeat.ts';

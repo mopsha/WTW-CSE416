@@ -1,3 +1,4 @@
+import { GroupIdeas } from '@/components/GroupIdeas';
 // One group: Start a Pick, members, add friends (owner), recent Picks, rename/delete or leave.
 // Non-members (and removed members) get "not found": RLS returns no row.
 import { Ionicons } from '@expo/vector-icons';
@@ -144,6 +145,8 @@ export default function GroupScreen() {
         }}
         accessibilityHint={`Creates a Pick with everyone in ${group.name}`}
       />
+
+      <GroupIdeas key={`${group.id}:${me}`} group={group} userId={me} />
 
       <Card>
         <Text style={styles.heading} accessibilityRole="header">

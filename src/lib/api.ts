@@ -1,3 +1,4 @@
+import type { GroupIdea, GroupIdeaInput } from '@shared/api/groupIdeas.ts';
 // Typed client for our Edge Function (`${EXPO_PUBLIC_SUPABASE_URL}/functions/v1/api`).
 // Every write goes through here with the user's access token; reads use Supabase + RLS.
 import { getAccessToken } from './auth';
@@ -173,6 +174,26 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
   const groupPath = (groupId: string) => `/groups/${encodeURIComponent(groupId)}`;
 
   return {
+    listGroupIdeas: (groupId: string) =>
+      request<{ ideas: GroupIdea[] }>('GET', `/groups/${encodeURIComponent(groupId)}/ideas`),
+    getGroupIdea: (groupId: string, id: string) =>
+      request<GroupIdea>(
+        'GET',
+        `/groups/${encodeURIComponent(groupId)}/ideas/${encodeURIComponent(id)}`,
+      ),
+    createGroupIdea: (groupId: string, input: GroupIdeaInput) =>
+      request<GroupIdea>('POST', `/groups/${encodeURIComponent(groupId)}/ideas`, { body: input }),
+    updateGroupIdea: (groupId: string, id: string, input: GroupIdeaInput) =>
+      request<GroupIdea>(
+        'POST',
+        `/groups/${encodeURIComponent(groupId)}/ideas/${encodeURIComponent(id)}`,
+        { body: input },
+      ),
+    deleteGroupIdea: (groupId: string, id: string) =>
+      request<StatusResponse>(
+        'DELETE',
+        `/groups/${encodeURIComponent(groupId)}/ideas/${encodeURIComponent(id)}`,
+      ),
     discover: (params: {
       lat: number;
       lng: number;

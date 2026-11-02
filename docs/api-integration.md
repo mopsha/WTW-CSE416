@@ -715,3 +715,32 @@ establishes command completion, not end-to-end cron delivery or live provider he
   remain revoked. Responses are readable only by the responder or Hang author,
   while eligible. Migration 0022 adds the Pick link and group FK without destructive
   cleanup of legacy rows. Existing Pick/swipe/rank/vote RPCs are reused unchanged.
+
+## Group Ideas (0023)
+
+Unscheduled ideas belong to exactly one existing group. The group detail screen uses:
+
+- `GET /groups/:id/ideas` → `{ ideas: GroupIdea[] }`, newest first, UUID tie break.
+- `GET /groups/:id/ideas/:ideaId` → `GroupIdea`.
+- `POST /groups/:id/ideas` → 201 `GroupIdea`.
+- `POST /groups/:id/ideas/:ideaId` → updated `GroupIdea` (full editable-field replacement, following existing POST mutation conventions).
+- `DELETE /groups/:id/ideas/:ideaId` → `{ status: 'ok' }`.
+
+Bodies: `{ name, category: 'activity' | 'food', description?, locationText? }`.
+Name is trimmed, 1–60 Unicode characters; description and location are optional,
+trimmed, at most 200 each; empty values become null. All visible text uses the
+existing text filter before persistence. IDs, creator and timestamps are server-owned.
+Responses add `id`, `groupId`, `createdBy`, `createdAt`, `updatedAt`.
+
+Every operation requires current group membership; missing/nonmember groups and
+cross-group idea IDs return 404. Only the creator edits. The creator or group owner
+may delete, including ideas left by former members. Removed creators lose access.
+RLS permits current-member reads only; clients cannot write or invoke the service-only
+`group_ideas` RPC. The RPC takes the existing group lock before checking membership
+and modifying ideas. Deleting a group or creator cascades ideas. Mock mode follows
+these same rules. Edits use last successful write wins, as existing group renames do.
+
+Deploy migration 0023 before the updated Edge Function/client. No existing custom
+options are converted: `picks.custom_options`, `custom:<uuid>` candidates, Pick Again
+and existing histories keep their contracts. Group Ideas are not in places/cache,
+Discover or Pick pools. No image bucket/upload policy exists, so images are deferred.

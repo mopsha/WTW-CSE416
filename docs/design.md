@@ -12,6 +12,8 @@ erDiagram
     profiles ||--o{ friendships : "has"
     profiles ||--o{ group_members : "belongs to"
     groups ||--o{ group_members : "has"
+    groups ||--o{ group_ideas : "collects unscheduled ideas"
+    profiles ||--o{ group_ideas : "creates"
     groups |o--o{ picks : "started from"
     profiles ||--o{ picks : "hosts"
     picks ||--o{ pick_participants : "has"
@@ -498,3 +500,21 @@ Base URL: `<SUPABASE_URL>/functions/v1/api`. User routes need `Authorization: Be
 | `ranking_results?select=place_id,rank,finalist&pick_id=eq.<id>` | results (never `score`) |
 | `picks?select=state,host_id,winner_place_id,decided_by&id=eq.<id>` | outcome / host check |
 | `pick_join_codes?select=code,expires_at&pick_id=eq.<id>&order=expires_at.desc&limit=1` | Lobby code / QR |
+
+## Group Ideas
+
+The group detail screen includes a member-only library of future possibilities, with
+list/detail/create/edit/delete sheets built from the existing component kit.
+`GroupIdeas.tsx` → typed client helpers → authenticated `/groups/:id/ideas` routes →
+`groupIdeasStore` → service-only `group_ideas` RPC. Current group membership is checked
+inside the same group lock used by membership changes; RLS protects direct reads.
+Mock mode uses the existing mock groups and the same shared input parser.
+
+`group_ideas` stores one group ID, creator ID, name, `activity | food`, optional
+description/location text, and creation/update timestamps. Creator-only editing and
+creator/group-owner deletion provide simple ownership and moderation. There is no
+time, participant RSVP, image upload or automatic candidate inclusion. Legacy
+`picks.custom_options` remains a compatible immutable deck input; existing custom
+Pick creation, ranking, voting, history and Pick Again are unchanged. See
+[API contract](api-integration.md#group-ideas-0023) and
+[decision](decisions.md#group-ideas-unscheduled-group-library).

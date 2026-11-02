@@ -1,3 +1,4 @@
+import { handleMockGroupIdeas } from './groupIdeas';
 // A fake `fetch` for our Edge Function. It mirrors the API contract (docs/api-integration.md):
 // same routes, status codes, error codes and response shapes, returned as real Response
 // objects, so src/lib/api.ts runs the exact same parsing and error handling in both modes.
@@ -27,6 +28,7 @@ import {
   mockCreateGroupPick,
   mockGetGroup,
   mockGroupOfPick,
+  mockGroupIdeas,
   mockInvite,
 } from './groups';
 import {
@@ -602,6 +604,8 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     return json(200, { status: 'ok' });
   }
   // Groups (src/lib/mock/groups.ts): /groups/..., POST /picks with groupId, and invites.
+  const ideasResult = handleMockGroupIdeas(method, path, readBody(init));
+  if (ideasResult) return json(ideasResult.status, ideasResult.body);
   const groupResult = handleMockGroups(method, path, readBody(init));
   if (groupResult) return json(groupResult.status, groupResult.body);
   const groupId = (readBody(init) as { groupId?: unknown } | null)?.groupId;
@@ -629,6 +633,11 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   if (method === 'POST' && path === '/me/preferences') return updatePreferences(readBody(init));
   if (method === 'POST' && path === '/push-tokens') return registerPushToken(readBody(init));
   if (method === 'DELETE' && path === '/me') {
+    // Match creator/group-owner cascades for the new library on account deletion.
+    for (const [id, idea] of mockGroupIdeas) {
+      if (idea.createdBy === MOCK_USER_ID || mockGetGroup(idea.groupId)?.ownerId === MOCK_USER_ID)
+        mockGroupIdeas.delete(id);
+    }
     resetMockProfile();
     return json(200, { status: 'ok' });
   }

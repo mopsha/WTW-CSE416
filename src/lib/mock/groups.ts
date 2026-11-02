@@ -1,3 +1,4 @@
+import type { GroupIdea } from '@shared/api/groupIdeas.ts';
 // Groups for mock mode: the same routes, rules, shapes and error codes as the API's /groups
 // (supabase/functions/_shared/api/groups.ts + 0012_groups.sql), in memory. Ava, Ben and Cam
 // (the Pick-demo bots, same ids as the mock Friends list in PR #24) are my friends. I own
@@ -52,6 +53,8 @@ function initial(): Map<string, MockGroup> {
 }
 
 let groups = initial();
+/** Group-scoped library; intentionally separate from immutable Pick custom options. */
+export const mockGroupIdeas = new Map<string, GroupIdea>();
 /** picks.group_id in mock form. */
 const pickGroup = new Map<string, string>();
 let nextId = 1;
@@ -61,6 +64,7 @@ export const mockGroupOfPick = (pickId: string): string | null => pickGroup.get(
 
 export function resetMockGroups() {
   groups = initial();
+  mockGroupIdeas.clear();
   pickGroup.clear();
 }
 
@@ -178,6 +182,7 @@ export function handleMockGroups(method: string, path: string, body: unknown): R
   }
   if (action === 'delete') {
     groups.delete(g.id);
+    for (const [id, idea] of mockGroupIdeas) if (idea.groupId === g.id) mockGroupIdeas.delete(id);
     for (const [pickId, groupId] of pickGroup) if (groupId === g.id) pickGroup.delete(pickId);
     return ok({ status: 'ok' });
   }
