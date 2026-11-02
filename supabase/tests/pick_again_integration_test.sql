@@ -1,6 +1,6 @@
 -- Standalone TAP, matching custom_plans_hang_test.sql; all fixtures roll back.
 begin;
-select '1..4';
+select '1..5';
 insert into auth.users(id, raw_user_meta_data) values
  ('c1111111-1111-4111-8111-111111111111','{}'),
  ('c2222222-2222-4222-8222-222222222222','{}'),
@@ -24,6 +24,10 @@ begin
  perform public.group_add_members(host, g, array[current_member]);
  result := public.pick_again(old_id::text, host);
  new_id := (result ->> 'id')::uuid;
+ if public.pick_again(old_id::text, host) is distinct from
+   jsonb_build_object('id', new_id, 'addedUserIds', '[]'::jsonb) then
+  raise exception 'Second tap did not reuse the draft without duplicate notifications';
+ end if;
  if not exists(select 1 from public.pick_participants where pick_id=old_id and user_id=former)
  or exists(select 1 from public.pick_participants where pick_id=new_id and user_id=former)
  or not exists(select 1 from public.pick_participants where pick_id=new_id and user_id=current_member)
@@ -66,4 +70,5 @@ begin
  end;
 end $$;
 select 'ok 4 - full Picks allow existing-member retries and reject new members';
+select 'ok 5 - repeated taps reuse the same draft without duplicate notifications';
 rollback;

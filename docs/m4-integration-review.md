@@ -151,9 +151,9 @@ tests/text.test.ts
   Mocks match. Existing historical membership, swipe/rank/vote engines stay intact.
 
 Repeat semantics: a surviving group supplies its current members, with the existing
-block guard. If the host has left that group, the new draft contains only the host
-and has no group label. If the group was deleted (FK set null), ordinary repeat
-semantics apply. Existing host-only, finished-state and duplicate-draft gates remain.
+block guard. If the host has left that group, the new draft retains old participants still
+in the group, and has no group label. If the group was deleted (FK set null), ordinary repeat
+semantics apply. Existing host-only and finished-state gates remain; repeated taps reuse the draft.
 Migration 0020 replaces functions while retaining their existing service-only grants.
 It does not add tables or date/time polling.
 
@@ -192,3 +192,26 @@ It does not add tables or date/time polling.
 Recommendation: do not give an unconditional approval of #35 yet. Review this diff,
 require green full Supabase CI and device checks for the reviewed flows, and agree
 on the documented M4 cuts/partial features.
+
+## Verification after 95ee969
+
+The pushed commit and live origin/integ/m4 matched at 95ee969. PR #35 CI run
+41372183023 passed validate but failed Local database and API during Start local
+Supabase. The workflow hides/removes the startup log, so its precise error is not
+available; database/HTTP test steps never ran. The preceding 88ae18b run passed.
+Two definite integration defects were corrected locally: renumber Josh's duplicate
+0019 migration to 0020, and preserve Alan's repeated-tap draft reuse in pick_again.
+A SQL regression now checks that reuse returns no recipients to notify again.
+Lint, TypeScript, all 667 Jest tests and 23 standalone SQL assertions passed with
+Alan's 0019 followed by 0020. Full Supabase CI must be rerun after these changes
+are reviewed and pushed by the user. These corrections were prepared locally during verification; this follow-up records them.
+
+The requirements-status draft has stale notes: group history is linked now;
+Pick again retains Custom Plan options; Alan's 0019 prevents old-Pick sweep prompts
+and documents intentionally different in-app versus push timing. Shared hang
+responses and Let's Pick remain unavailable. These need an explicit M4 cut or
+completion decision, not a claim that the integrated feature works.
+
+Before pushing, origin advanced to 265bb19 with the equivalent migration/reuse
+fix. The rebase retained that combined SQL implementation, including its host-left
+group behavior, and added the regression assertion and these documentation updates.

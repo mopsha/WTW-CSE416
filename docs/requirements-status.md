@@ -29,7 +29,7 @@ State of `integ/m4` (PR #35) on Nov 1, 2026: **12 done, 10 partial, 0 cut**. Thi
 | FR-15 | Vote among the three finalists | Done | Changeable vote, host close, deadline | | Alan, Mike |
 | FR-16 | Tie-break, one winner, saved | Done | Tally, tie-break by rank, Winner screen | | Alan |
 | FR-17 | Discover feed and saved interests | Partial | `GET /discover` scored by survey answers, filters, save and unsave | No screen lists saved places, no "That's today's 20" end state, and saved Google places are dropped from Picks | Josh, Mike |
-| FR-18 | Completed Pick history | Partial | My history with winner, finalists and who went; Pick again | The group history route exists but nothing links to it. Pick again now preserves filters and custom options (0019) | Alan, Razin |
+| FR-18 | Completed Pick history | Partial | My history with winner, finalists and who went; Pick again | The group history route exists but nothing links to it. Pick again now preserves filters and custom options (0020) | Alan, Razin |
 
 ## New M4 features
 
@@ -37,7 +37,7 @@ State of `integ/m4` (PR #35) on Nov 1, 2026: **12 done, 10 partial, 0 cut**. Thi
 |---|---|---|---|---|
 | RSVP and "Did you go?" | Done | Plan time, RSVP, outcomes, sweep prompts, Winner screen. Known bugs: the first deploy prompts for old Picks, and the app and sweep ask at different times | | Alan |
 | Frictionless invite link | Partial | Revocable, expiring tokens through the API, kept across sign-in; share from the Lobby | Not yet "one tap from iMessage": no web page or Universal Links, no group link in the app, no revoke in the app, and a link can skip the name step | Razin |
-| Custom Plans | Partial | Typed options, templates, mixed with places, text filter, tested through the Pick flow | No location input, so Directions and saved custom options are unreachable; options can't be reported; Pick again drops them | Josh |
+| Custom Plans | Partial | Typed options, templates, mixed with places, text filter, tested through the Pick flow | No location input, so Directions and saved custom options are unreachable; options can't be reported; Pick again retains them (0020) | Josh |
 | "Looking to hang" | Partial | Posting and your own posts | Friends can't see posts, and responding and "Let's pick" return 503. First on the plan's cut list: **Josh to finish it or mark it Cut** | Josh |
 
 ## Sources
