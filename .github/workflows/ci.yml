@@ -39,7 +39,7 @@ jobs:
           node-version: '22'
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 3.0.0
       - name: Check Docker
         run: timeout 30 docker info > /dev/null
       - name: Start local Supabase
@@ -108,7 +108,7 @@ jobs:
           ref: ${{ github.sha }}
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 3.0.0
       - name: Deploy current validated main revision
         shell: bash
         env:
@@ -138,7 +138,7 @@ jobs:
             echo '::error::wtw-dev migration deployment failed; function deployment skipped'
             exit 1
           fi
-          if ! supabase functions deploy api --project-ref "$SUPABASE_PROJECT_REF" > "$RUNNER_TEMP/wtw-dev-deploy.log" 2>&1; then
+          if ! supabase functions deploy api --project-ref "$SUPABASE_PROJECT_REF" --yes > "$RUNNER_TEMP/wtw-dev-deploy.log" 2>&1; then
             echo '::error::wtw-dev function deployment failed; applied migrations remain in place'
             exit 1
           fi
