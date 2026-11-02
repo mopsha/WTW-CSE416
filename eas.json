@@ -7,24 +7,15 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "environment": "development",
-      "env": {
-        "EXPO_PUBLIC_GOOGLE_PLACES_KEY": ""
-      }
+      "environment": "development"
     },
     "preview": {
       "distribution": "internal",
-      "environment": "preview",
-      "env": {
-        "EXPO_PUBLIC_GOOGLE_PLACES_KEY": ""
-      }
+      "environment": "preview"
     },
     "production": {
       "autoIncrement": true,
-      "environment": "production",
-      "env": {
-        "EXPO_PUBLIC_GOOGLE_PLACES_KEY": ""
-      }
+      "environment": "production"
     }
   },
   "submit": {

@@ -21,7 +21,7 @@ or billing setting was verified or changed by this task.
 Google provider failure/cap falls back to owned fixtures within the radius. The
 feed exposes `fallback`/`notice`; fallback can be empty outside fixture coverage.
 It does not populate the Google cache namespace. The frontend public demo key is
-still development-only; release lookups are disabled and EAS profiles clear it.
+still development-only; release lookups are disabled, and it must never be set in an EAS environment.
 Custom option IDs/names are never sent to the development Google lookup.
 
 References checked for this documentation:

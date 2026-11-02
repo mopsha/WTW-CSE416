@@ -48,7 +48,7 @@ request-only Google content and conflict with canonical frozen ranking inputs.
 | POST `/picks`: 20/day                                             | COMPLETE         | Per authenticated user and database UTC day; denied request is HTTP 429.                                                                                                                                               |
 | `/start`, `/refresh`: max 5 per Pick                              | COMPLETE         | Separate lifetime counters, five validated attempts per action per Pick; only host may consume. Invalid host/state/confirmation requests are checked first; HTTP 429 on exhaustion.                                    |
 | Cap/rate/filter/feed/save tests                                   | COMPLETE         | Jest domain/client/provider coverage, Deno route coverage and SQL boundary/RLS tests. Local concurrent reservation experiment did not overshoot.                                                                       |
-| Google key safety and EAS profiles                                | COMPLETE         | Demo lookup key and activation guarded by `__DEV__`; every new EAS profile explicitly clears the public Google key; Android release sentinel scan passed.                                                              |
+| Google key safety and EAS profiles                                | COMPLETE         | Demo lookup key and activation guarded by `__DEV__`; the public Google key stays out of EAS environments; Android release sentinel scan passed.                                                              |
 
 ## API and schema decisions
 
@@ -128,8 +128,9 @@ Keep the existing direct photo/details demo enhancement for local development on
 Both the key expression and enabled flag are gated by `__DEV__`; release lookups
 return null and leave the existing fixture photos/ratings in place. Live Discover
 search uses the backend provider. Production photo galleries/details hydration is
-not newly implemented. All EAS profiles set `EXPO_PUBLIC_GOOGLE_PLACES_KEY` to an
-empty string, including internal distribution builds. Do not put a real key there.
+not newly implemented. EAS rejects an empty `env` value, so profiles can't blank
+`EXPO_PUBLIC_GOOGLE_PLACES_KEY`. Never set it in an EAS environment, including for internal
+distribution builds.
 
 This follows Expo's [environment variable guidance](https://docs.expo.dev/guides/environment-variables/):
 public variables are substituted into client code and are not secrets. The
