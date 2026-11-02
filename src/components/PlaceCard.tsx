@@ -21,6 +21,7 @@ export function describePlace(place: Candidate): string {
   const parts = [place.name];
   if (place.cuisine) parts.push(place.cuisine);
   if (place.note) parts.push(place.note);
+  if (place.rating) parts.push(`rated ${place.rating.toFixed(1)} of 5`);
   const price = formatPriceLevel(place.priceLevel);
   if (price) parts.push(`price ${price.length} of 4`);
   const miles = milesFromCampus(place);
