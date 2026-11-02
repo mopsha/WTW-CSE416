@@ -1858,7 +1858,7 @@ Deno.test(
       ).status,
       503,
     );
-    const response = await app.request('/hang/post/pick', { method: 'POST', headers });
+    const response = await app.request('/hang/post/pick', { method: 'POST', headers, body: '{}' });
     equal(response.status, 503);
     equal((await response.json()).error.code, 'HANG_PICK_HELPER_UNAVAILABLE');
   },
@@ -1980,3 +1980,85 @@ Deno.test('Discover rate limit is checked before profile or provider access', as
   });
   equal((await app.request('/discover?lat=40&lng=-73')).status, 429);
 });
+
+Deno.test(
+  'Hang shared feed and real-capability response/Pick routes preserve auth, settings and notices',
+  async () => {
+    let caller = 'host';
+    const writes: unknown[] = [];
+    const post = {
+      id: 'post',
+      authorId: 'host',
+      activity: 'Game night',
+      audience: 'all_friends' as const,
+      groupId: null,
+      startsAt: new Date(Date.now() + 3600000).toISOString(),
+      expiresAt: new Date(Date.now() + 7200000).toISOString(),
+    };
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async (req) => {
+        if (!req.headers.get('Authorization'))
+          throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+        return { id: caller };
+      },
+      hangStore: {
+        create: async () => post,
+        listOwn: async () => [post],
+        load: async () => post,
+        access: async () => ({ blocked: false, acceptedFriends: true, groupMember: false }),
+        respondAuthorized: async (id, user, status) => {
+          writes.push([id, user, status]);
+        },
+        createPickForDown: async (id, user, input) => {
+          writes.push([id, user, input.category]);
+          return { pickId: 'pick', participantIds: ['b', 'c'], created: true };
+        },
+        notifier: async (ids, type, id) => {
+          writes.push([ids, type, id]);
+        },
+      },
+    });
+    const headers = { Authorization: 'Bearer t' };
+    equal((await app.request('/hang', { headers })).status, 200);
+    equal((await (await app.request('/hang', { headers })).json()).sharedAvailable, true);
+    caller = 'friend';
+    equal(
+      (
+        await app.request('/hang/post/respond', {
+          method: 'POST',
+          headers,
+          body: '{"status":"maybe"}',
+        })
+      ).status,
+      200,
+    );
+    equal(
+      (await app.request('/hang/post/pick', { method: 'POST', headers, body: '{}' })).status,
+      403,
+    );
+    caller = 'host';
+    const response = await app.request('/hang/post/pick', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        category: 'food',
+        center: { lat: 40, lng: -73 },
+        radiusM: 5000,
+        poolSize: 5,
+        deadlineAt: null,
+        closeThreshold: 100,
+      }),
+    });
+    equal(response.status, 200);
+    equal(await response.json(), { pickId: 'pick', isParticipant: false });
+    equal(writes, [
+      ['post', 'friend', 'maybe'],
+      ['post', 'host', 'food'],
+      [['b', 'c'], 'added_to_pick', 'pick'],
+    ]);
+  },
+);

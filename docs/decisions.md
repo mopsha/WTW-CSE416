@@ -88,32 +88,37 @@ All unlocated options therefore have equal distance, leaving existing score/ID
 rules intact. Explicit coordinates use the existing distance tie-break. This
 choice does not grant permission to retain Google-derived coordinates.
 
-## Hang-post dependency boundary
+## Hang integration (M4, migration 0022)
 
-`0016_hang_posts.sql` adds posts, unique per-user responses, expiry and restrictive
-RLS. The backend derives the author from auth; users can compose and list their
-own active all-friends posts. Group composition is unavailable until group
-membership validation exists. Sharing is explicitly shown as unavailable in the
-UI, rather than suggesting anyone was notified. Expired posts are filtered both
-by SQL/API and by a client expiry timer.
+Reuse 0016's posts/responses, 0012 groups, existing accepted-friend/bidirectional-block
+helpers, the canonical pick_create_options RPC and the existing notifier. Shared
+RLS hides expired/blocked posts; active authors see their own posts, accepted friends
+see all_friends, and current group members see group posts. Response rows are
+readable only by their author and the Hang author, while currently authorized.
+Mutation RPCs are service-only and recheck access under the post lock. Responses
+upsert the existing unique (post_id,user_id) key.
 
-The integrated branch now has groups, friendships, blocks, text filtering and backend
-notification helpers. The production HangStore still does not connect them to shared
-reads or response writes. There is no canonical atomic exact-down-responder creation
-helper: createPick inserts the host, and adding everyone later is not equivalent
-when the author did not answer down. Finishing this needs graph-backed RLS, locked
-response authorization, exact participant/host semantics, idempotent creation and
-real notification integration. This is substantial remaining work; recommend an
-explicit M4 deferral/cut rather than claiming completion or duplicating Pick logic.
-The team has not yet marked it Cut in requirements-status. Current routes fail
-closed with 503; own active post composition/listing remains implemented.
+Let's Pick reuses New Pick for category/location/radius/filter/custom options. Hang
+has no geographic settings, so no venue/location is inferred from free text. The
+Pick keeps selected settings, source post association and starts_at as the existing
+plan_at (not a date-options feature). Only currently eligible down users are added.
+The author hosts only if down; otherwise the first eligible down UUID hosts. The
+existing Pick host-block guard applies too. Canonical creation owns custom options
+and saved-place selection under that host, as in every other Pick. The author who
+is not included receives a completion message rather than entering a forbidden lobby.
 
-The HangStore contracts require bidirectional block evidence, accepted friendship
-or group membership, expiry checks, and atomic authorization with response/creation
-writes. Visibility contract tests use supplied evidence; they do not prove real
-friendship integration. `downUserIds` is tested to select exactly two down users
-and exclude maybe/cant without adding the author, but production Pick generation
-from those responses remains BLOCKED. The backend notifier is available, but is not wired to hang-to-Pick creation.
+Zero eligible downs returns 409. Group authors who have left cannot create a group
+Pick. Requests serialize on the post; an unchanged existing draft is reused without
+another creation quota charge. Changed draft membership returns a clear 409 asking
+the host to cancel first; a running Pick prevents another; completed/canceled Picks
+allow a new one. Membership is a snapshot, as with normal Picks, not a live sync.
+Canonical start still requires two participants, including on a one-down draft.
+
+The existing notifier is called with actual included users for both creation and
+retry. Its unique inbox constraint deduplicates notices/pushes. Notification failure
+uses the same best-effort contract as other Pick flows; no second outbox, ranking,
+voting, calendar or notification system was introduced. Picks-tab refresh is focused
+and bounded; mock mode uses the same shared orchestration and current mock graph.
 
 ## Production credential verification
 

@@ -1,5 +1,9 @@
 # Josh M4 Phase 2 handoff
 
+This is the original Phase 2 report. Current Hang integration is completed by
+forward migration 0022; see docs/decisions.md and docs/api-integration.md. Earlier
+BLOCKED dependency statements below describe that original checkout, not integ/m4.
+
 Branch: `josh/custom-hang`, clean at the start, based on completed Phase 1.
 No commit, main merge or hosted deployment was performed. No dependency was added.
 

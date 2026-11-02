@@ -690,3 +690,28 @@ failure; a green local test is not proof that a hosted deployment worked.
 administrator, as described above. CD does not create, rotate, or overwrite them.
 Provider configuration is also outside this deployment workflow. Successful CD
 establishes command completion, not end-to-end cron delivery or live provider health.
+
+### Looking to hang — integration 0022
+
+- POST /hang retains the existing activity/audience/group/start/expiry body; group
+  posts require current group membership. GET /hang now returns up to 20 visible
+  active posts (own, accepted friends, current group members), with myStatus,
+  downCount and pickId. sharedAvailable is true. Both-direction blocks exclude posts.
+- POST /hang/:id/respond {status: down|maybe|cant} rechecks visibility/expiry and
+  upserts one row per user/post. Hidden/missing/expired posts return 404.
+- POST /hang/:id/pick accepts the same settings body as POST /picks; caller must
+  be the Hang author. It calls canonical pick_create_options under the post lock,
+  selecting only current eligible downs. If the author is not down, the first
+  eligible down UUID hosts; no implicit author membership. Returns {pickId,isParticipant}.
+  The existing New Pick form collects location/category/filter/custom settings;
+  Hang startsAt becomes plan_at. Notification recipients are exactly the included
+  participants, using the existing deduplicating notifier.
+- No eligible down: 409 NO_DOWN_RESPONSES. Non-author visible caller: 403; hidden
+  post: 404. Unchanged draft: reuse without spending create quota again. Changed
+  draft participants or running Pick: 409; cancel first. Finished/canceled allows
+  another Pick. Current eligibility is checked again on creation, not inferred
+  from stale responses. Membership thereafter follows normal Pick snapshot rules.
+- Service-only RPCs: hang_create/list/get/access/respond/create_pick. Client writes
+  remain revoked. Responses are readable only by the responder or Hang author,
+  while eligible. Migration 0022 adds the Pick link and group FK without destructive
+  cleanup of legacy rows. Existing Pick/swipe/rank/vote RPCs are reused unchanged.

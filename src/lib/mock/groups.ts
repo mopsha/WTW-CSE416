@@ -272,3 +272,11 @@ export function mockInvite(pickId: string, body: unknown): Result {
   emit(pick.id);
   return ok({ added: fresh.length });
 }
+
+/** Shared participant construction for mock group and Hang Picks. */
+export { participant as mockParticipant };
+
+/** Keep the existing group/history association when another mock flow creates a Pick. */
+export function mockAssociateGroupPick(pickId: string, groupId: string) {
+  pickGroup.set(pickId, groupId);
+}

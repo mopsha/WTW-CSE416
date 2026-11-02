@@ -209,8 +209,12 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
       request<StatusResponse>('POST', `/hang/${encodeURIComponent(id)}/respond`, {
         body: { status },
       }),
-    hangPick: (id: string) =>
-      request<{ pickId: string }>('POST', `/hang/${encodeURIComponent(id)}/pick`),
+    hangPick: (id: string, input: CreatePickInput) =>
+      request<{ pickId: string; isParticipant: boolean }>(
+        'POST',
+        `/hang/${encodeURIComponent(id)}/pick`,
+        { body: input },
+      ),
     health: () => request<StatusResponse>('GET', '/health', { auth: false }),
     /** Validate with validateCreatePick first; the server rejects bad input with 400 INVALID_INPUT. */
     createPick: (input: CreatePickInput) =>

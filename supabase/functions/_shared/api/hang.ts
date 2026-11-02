@@ -1,4 +1,6 @@
 import { ApiError } from './errors.ts';
+import { parseCreatePick, type CreatePickInput } from './lifecycle.ts';
+import type { Notifier } from './notify.ts';
 import { requireCleanText } from './text.ts';
 
 function clean(activity: string): string {
@@ -17,6 +19,10 @@ export interface HangInput {
 export interface HangPost extends HangInput {
   id: string;
   authorId: string;
+  authorName?: string | null;
+  myStatus?: HangStatus | null;
+  downCount?: number;
+  pickId?: string | null;
 }
 export interface HangAccess {
   blocked: boolean;
@@ -26,13 +32,22 @@ export interface HangAccess {
 export interface HangStore {
   create(authorId: string, input: HangInput): Promise<HangPost>;
   listOwn(userId: string, now: string): Promise<HangPost[]>;
-  load(id: string): Promise<HangPost | null>;
+  load(id: string, userId?: string): Promise<HangPost | null>;
   /** Razin's relationship helper must account for blocks in BOTH directions. */
   access?(post: HangPost, userId: string): Promise<HangAccess>;
   /** Must recheck graph, expiry and uniqueness atomically with the write. */
   respondAuthorized?(postId: string, userId: string, status: HangStatus): Promise<void>;
-  /** Alan's helper must select current down responses and create/invite atomically. */
-  createPickForDown?(postId: string, authorId: string): Promise<{ pickId: string }>;
+  /** Select current eligible downs and call canonical Pick creation atomically. */
+  createPickForDown?(
+    postId: string,
+    authorId: string,
+    input: CreatePickInput,
+  ): Promise<{
+    pickId: string;
+    participantIds: string[];
+    created: boolean;
+  }>;
+  notifier?: Notifier;
 }
 
 export function parseHang(body: unknown, now = new Date()): HangInput {
@@ -96,7 +111,7 @@ export async function respondHang(
   const status = (body as { status?: unknown } | null)?.status;
   if (!['down', 'maybe', 'cant'].includes(status as string))
     throw new ApiError(400, 'INVALID_INPUT', 'Choose down, maybe or cant');
-  const post = await store.load(postId);
+  const post = await store.load(postId, userId);
   if (!post || Date.parse(post.expiresAt) <= now.getTime())
     throw new ApiError(404, 'HANG_NOT_FOUND', 'Hang post not found');
   if (!store.access || !store.respondAuthorized)
@@ -110,8 +125,14 @@ export async function respondHang(
   await store.respondAuthorized(postId, userId, status as HangStatus);
   return { status: 'ok' };
 }
-export async function hangPick(store: HangStore, postId: string, userId: string, now = new Date()) {
-  const post = await store.load(postId);
+export async function hangPick(
+  store: HangStore,
+  postId: string,
+  userId: string,
+  now = new Date(),
+  body?: unknown,
+) {
+  const post = await store.load(postId, userId);
   if (!post || Date.parse(post.expiresAt) <= now.getTime())
     throw new ApiError(404, 'HANG_NOT_FOUND', 'Hang post not found');
   if (post.authorId !== userId)
@@ -122,5 +143,8 @@ export async function hangPick(store: HangStore, postId: string, userId: string,
       'HANG_PICK_HELPER_UNAVAILABLE',
       'Creating a Pick from responses is not available yet',
     );
-  return store.createPickForDown(postId, userId);
+  const result = await store.createPickForDown(postId, userId, parseCreatePick(body));
+  // Existing notifier deduplicates inbox/push; retries can repair a lost notice.
+  await store.notifier?.(result.participantIds, 'added_to_pick', result.pickId);
+  return { pickId: result.pickId, isParticipant: result.participantIds.includes(userId) };
 }

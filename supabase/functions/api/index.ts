@@ -38,7 +38,7 @@ const notifier = createNotifier(notifyStore, (url, init) => fetch(url, init));
 const app = createApp(
   {
     getUser,
-    hangStore: createHangStore(),
+    hangStore: createHangStore(notifier),
     store: createStore(),
     progressStore: createProgressStore(),
     lifecycleStore: { ...createLifecycleStore(), notifier },

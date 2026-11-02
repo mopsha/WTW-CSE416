@@ -67,6 +67,8 @@ export interface MockPick extends PlaceFilters {
   joinCode: string;
   /** Host's "lock lobby" (0014): no new people by code or link. */
   lobbyLocked?: boolean;
+  /** Existing plan time supplied by a Hang; used to initialize mock RSVP state. */
+  planAt?: string;
   /** For newest-first ordering; fixtures count down from 0. */
   createdAt: number;
 }
@@ -282,17 +284,18 @@ export const isDone = (pick: MockPick, p: MockParticipant) =>
   pick.candidates.length > 0 && pick.candidates.every((c) => p.answers.has(c.placeId));
 
 let customIdCounter = 0;
-export function createMockPick(input: CreatePickInput): MockPick {
+export function createMockPick(input: CreatePickInput, hostId = MOCK_USER_ID): MockPick {
   const id = `mock-${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`;
   const options = makeCustomOptions(
     input.customOptions ?? [],
-    MOCK_USER_ID,
+    hostId,
     input.center,
     () =>
       `${Date.now().toString(16).slice(-8).padStart(8, '0')}-0000-4000-8000-${(++customIdCounter).toString(16).padStart(12, '0')}`,
   );
   for (const option of options) customPlaces.set(option.placeId, option);
   const pick = base(id, {
+    hostId,
     includeSaved: input.includeSaved,
     customOptions: options,
     mixCategory: input.mixCategory,
@@ -306,7 +309,7 @@ export function createMockPick(input: CreatePickInput): MockPick {
     deadlineAt: input.deadlineAt,
     closeThreshold: input.closeThreshold,
     candidates: [],
-    participants: [me()],
+    participants: [{ ...me(), userId: hostId, name: hostId === MOCK_USER_ID ? 'You' : 'Host' }],
     createdAt: Date.now(),
   });
   mockPicks.set(id, pick);

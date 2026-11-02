@@ -153,8 +153,8 @@ export function createApp(
     c.header('Cache-Control', 'private, no-store');
     return c.json({
       posts: await deps.hangStore.listOwn(user.id, new Date().toISOString()),
-      sharedAvailable: false,
-      notice: 'Sharing and responses are not available yet.',
+      sharedAvailable: true,
+      notice: '',
     });
   });
   app.post('/hang', async (c) => {
@@ -173,7 +173,9 @@ export function createApp(
   app.post('/hang/:id/pick', async (c) => {
     const user = await deps.getUser(c.req.raw);
     if (!deps.hangStore) throw new ApiError(503, 'HANG_UNAVAILABLE', 'Hang posts unavailable');
-    return c.json(await hangPick(deps.hangStore, c.req.param('id'), user.id));
+    return c.json(
+      await hangPick(deps.hangStore, c.req.param('id'), user.id, new Date(), await readJsonBody(c)),
+    );
   });
   app.post('/picks/:id/swipes', async (c) => {
     const user = await deps.getUser(c.req.raw);

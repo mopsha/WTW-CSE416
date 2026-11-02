@@ -348,10 +348,10 @@ flowchart TD
     Priority --> Lifecycle
     Lifecycle -->|existing transactional RPCs; same ranking engine| DB
     Google -.->|group mixing blocked: snapshot retention contract| Priority
-    API --> Hang[Own active hang posts; expiry and restrictive RLS]
+    API --> Hang[Shared active hang posts; response upserts and graph RLS]
     Hang --> DB
-    Graph[Integrated friends, blocks and groups; HangStore not wired] -.-> Hang
-    Invites[Exact-down atomic creation helper missing; notifier available] -.-> Hang
+    Graph[Existing friends, blocks and groups with Hang authorization] --> Hang
+    Invites[Locked Hang Pick wrapper calls canonical creation and notifier] --> Hang
     Cron[Existing every-minute pg_cron/pg_net] -->|secret-authenticated internal sweep| API
     API --> Sweep[Canonical deadline closers]
     API --> Cleanup[Daily UTC cache-cleanup hook and removed-row log]
@@ -379,14 +379,15 @@ Pick center; the client hides it and suppresses directions. Optional nearby mixi
 uses the existing provider contract; live Google mixing remains blocked by Phase 1.
 API parsing applies Razin's shared text filter to names and notes before writes.
 
-`0016_hang_posts.sql` adds posts/responses with audience/status checks, one response
-per user/post, expiry and RLS. The minimal Picks-tab card and compose sheet save/list
-own active posts. Social schemas and backend notifications now exist, but production
-HangStore remains unwired for shared visibility and response authorization. An atomic
-exact-down-responder creation helper is still missing; default createPick inserts
-the host even when the host has not answered down. Responses and Let's Pick remain
-503, with fail-closed RLS. Recommend explicit M4 deferral; this is not a completed
-shared hang feature and the team has not yet marked it Cut.
+`0016_hang_posts.sql` adds posts/responses; forward migration 0022 wires existing
+social helpers into shared RLS and service-only atomic RPCs. Active authors see their
+own posts; accepted friends/current group members see their audience's posts unless
+blocked. Expired posts are hidden. Responses upsert down/maybe/cant. Let's Pick uses
+the existing New Pick form and canonical pick_create_options, preserves the Hang
+time as plan_at and creates exactly eligible down participants. If the author is
+not down, a down responder hosts; the author is not silently added. An unchanged
+draft is reused; changed responders require canceling that draft before recreation.
+The existing notifier deduplicates added_to_pick events. Swipe/rank/vote are unchanged.
 
 The existing secret-authenticated deadline sweep is retained. A separate cleanup
 hook takes the UTC day and existing five-minute search TTL cutoff, reports deletion
@@ -405,8 +406,8 @@ EAS build, friendship integration or notification delivery is claimed here.
 | Technology | Josh-owned use |
 | --- | --- |
 | Expo SDK 57 / React Native / Expo Router | Existing mobile navigation plus Custom Plan inputs and minimal hang card/compose sheet. |
-| Shared pure TypeScript | Filters, Discover score, typed option validation, stable priority/dedup and dependency-aware hang authorization contracts. |
-| Supabase Auth / Postgres / RLS | Auth-derived owners, saved IDs, custom creator/source provenance, private quota counters and fail-closed hang storage. |
+| Shared pure TypeScript | Filters, Discover score, typed option validation, stable priority/dedup and shared Hang authorization contracts. |
+| Supabase Auth / Postgres / RLS | Auth-derived owners, saved IDs, custom creator/source provenance, private quota counters and graph-authorized shared Hang storage. |
 | Hono Edge Function | One API for Discover, Picks, saves, hang endpoints and secret-authenticated sweep. |
 | Google Places adapter | Existing search/hours normalization, timeouts, request-only content and fixture fallback; backend-only release credentials. |
 | Atomic SQL counters | Google calls per UTC day, Discover and Pick creates per user/day, start/refresh attempts per Pick. |

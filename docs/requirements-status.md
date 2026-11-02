@@ -1,6 +1,6 @@
 # Requirements status (M4)
 
-State of `integ/m4` (PR #35) on Nov 1, 2026: **12 done, 10 partial, 0 cut**. This is a draft; owners should correct their rows.
+State of `integ/m4` (PR #35) on Nov 1, 2026: **13 done, 9 partial, 0 cut**. This is a draft; owners should correct their rows.
 
 **Read this first**
 
@@ -38,7 +38,7 @@ State of `integ/m4` (PR #35) on Nov 1, 2026: **12 done, 10 partial, 0 cut**. Thi
 | RSVP and "Did you go?" | Done | Plan time, RSVP, outcomes, sweep prompts, Winner screen. Known bugs: the first deploy prompts for old Picks, and the app and sweep ask at different times | | Alan |
 | Frictionless invite link | Partial | Revocable, expiring tokens through the API, kept across sign-in; share from the Lobby | Not yet "one tap from iMessage": no web page or Universal Links, no group link in the app, no revoke in the app, and a link can skip the name step | Razin |
 | Custom Plans | Partial | Typed options, templates, mixed with places, text filter, tested through the Pick flow | No location input, so Directions and saved custom options are unreachable; options can't be reported; Pick again retains them (0020) | Josh |
-| "Looking to hang" | Partial | Posting and your own posts | Shared visibility, responding and "Let's pick" remain unavailable (503). **Recommend explicit M4 deferral/cut**: graph-backed RLS and atomic exact-down creation are still unwired; team decision pending | Josh |
+| "Looking to hang" | Done | Shared friend/group visibility with blocks/expiry; changeable responses; exact eligible down Pick via existing creation and notifications; unchanged draft reuse (0022) | Local validation passed; deployment/device acceptance pending | Josh |
 
 ## Sources
 
@@ -60,7 +60,7 @@ Local changes below are not pushed/deployed. Apply 0021 before enabling them.
 | Discover cost control and empty fallback notice | Fixed | Separate 20 requests/user/UTC day before provider access; account deletion erases the new counter. Empty filtered fallback still reports fallback. |
 | Client key safety | Fixed | __DEV__ guards retained, and the demo public key must stay out of EAS environments (EAS rejects empty `env` values, so profiles can't clear it); release export sentinel absent. Cloud key restrictions, hosted secrets and billing settings are not verified. |
 | Custom Plans validation/templates/normal engine | Done | 2–20 options, shared text filter, six templates, normal four-option swipe/rank/vote completion retained. |
-| Hang responses / Let's Pick | Deferred (recommended) | Team has not marked Cut. Own active post composition/listing works; shared visibility/response and exact-down creation still fail closed. Needs substantial authorization/RLS/atomic creation integration. No duplicate systems added. |
+| Hang responses / Let's Pick | Done | 0022 supplies shared graph RLS, atomic upserts and exact-down canonical Pick creation/reuse; existing UI/mocks wired. |
 | Architecture, budget and privacy docs | Fixed | Updated decisions/design/privacy for 0021 and currently available teammate helpers. |
 
 Local validation: lint and app TypeScript pass; 71 Jest suites / 672 tests pass;
@@ -70,5 +70,24 @@ Discover quota/account deletion, saved limits, Custom Plans and Pick Again.
 Full pgTAP/Supabase HTTP tests are unavailable locally (Docker/pgTAP absent);
 0007's cron/Vault/net setup was excluded from the isolated PostgreSQL replay.
 Android release export passes, with the non-secret public-key sentinel absent.
-The remaining Google/Hang scope and hosted credential checks prevent a claim that
-all original Josh M4 requirements are complete for unconditional approval.
+The remaining Google scope and hosted credential checks prevent a claim that
+all original Josh M4 requirements are complete for unconditional approval. Hang is now implemented; see 0022 validation below.
+
+### Hang completion (0022)
+
+The team requested completion rather than a cut. Existing creation is retained;
+shared graph-backed visibility, response upserts and exact-down Pick creation are
+implemented, with existing New Pick settings/navigation and canonical notifications.
+No author is implicitly added. A down responder hosts when the author is not down.
+The migration is forward-only; 0016 was not edited. See decisions/API contract for
+reuse and current-membership semantics. Local SQL covers real graph/RLS and normal
+Pick start; mocks/route tests cover orchestration and notification recipients.
+
+Hang validation: lint/app TypeScript and Deno index check pass; all 688 Jest tests
+(73 suites), 70 Deno route tests, and 39 standalone SQL assertions pass, including
+10 Hang test groups with real graph/RLS, exact-two membership, notification dedup,
+removed/blocked responders, expiry and delegated-host normal start. Android export
+and git diff --check pass. Migration replay through 0022 used isolated PostgreSQL
+with an Auth bootstrap; cron/Vault migration 0007 and full pgTAP/HTTP were not run
+locally because their Supabase/Docker/extension prerequisites are unavailable.
+Nothing was committed, pushed or deployed; real-device acceptance remains pending.

@@ -66,8 +66,13 @@ const MAX_MILES = 10;
 
 export default function CreatePickScreen() {
   // From a group (Start a Pick): everyone in it is added when the Pick is created.
-  const { groupId, groupName } = useLocalSearchParams<{ groupId?: string; groupName?: string }>();
-  const [category, setCategory] = useState<PickCategory>('food');
+  const { groupId, groupName, hangId, hangActivity } = useLocalSearchParams<{
+    groupId?: string;
+    groupName?: string;
+    hangId?: string;
+    hangActivity?: string;
+  }>();
+  const [category, setCategory] = useState<PickCategory>(hangId ? 'activities' : 'food');
   const [customOptions, setCustomOptions] = useState<CustomOption[]>([{ name: '' }, { name: '' }]);
   const [includeSaved, setIncludeSaved] = useState(false);
   const [mix, setMix] = useState<'none' | 'food' | 'activities'>('none');
@@ -81,6 +86,7 @@ export default function CreatePickScreen() {
   const [closeThreshold, setCloseThreshold] = useState(100);
   const [problems, setProblems] = useState<Partial<Record<CreatePickField, string>>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [createdForOthers, setCreatedForOthers] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const moveCenter = (next: LatLng, label = 'Dropped pin') => {
@@ -120,6 +126,14 @@ export default function CreatePickScreen() {
     setSubmitting(true);
     setSubmitError(null);
     try {
+      if (hangId) {
+        const result = await api.hangPick(hangId, input);
+        haptic.success();
+        if (result.isParticipant)
+          router.replace({ pathname: '/pick/[id]/lobby', params: { id: result.pickId } });
+        else setCreatedForOthers(true);
+        return;
+      }
       const { pickId } = groupId
         ? await api.createGroupPick(input, groupId)
         : await api.createPick(input);
@@ -133,10 +147,25 @@ export default function CreatePickScreen() {
     }
   };
 
+  if (createdForOthers)
+    return (
+      <Screen title="Pick created">
+        <Text style={{ ...type.body, color: colors.text }}>
+          The Pick is ready for the people who are down. Their host can start it.
+        </Text>
+        <Button label="Back to Picks" onPress={() => router.replace('/')} />
+      </Screen>
+    );
   return (
     <Screen
       title="New Pick"
-      subtitle={groupId ? `For ${groupName ?? 'your group'}` : "Where's the group headed?"}
+      subtitle={
+        hangId
+          ? `For ${hangActivity ?? 'your hang'}`
+          : groupId
+            ? `For ${groupName ?? 'your group'}`
+            : "Where's the group headed?"
+      }
       back
     >
       {groupId ? (
@@ -176,11 +205,17 @@ export default function CreatePickScreen() {
       ) : null}
       <Card>
         <View style={styles.sectionHead}>
-          <Text style={styles.sectionTitle}>Include my saved places</Text>
+          <Text style={styles.sectionTitle}>
+            {hangId ? 'Include the host’s saved places' : 'Include my saved places'}
+          </Text>
           <Switch
             value={includeSaved}
             onValueChange={setIncludeSaved}
-            accessibilityLabel="Include my saved places inside the radius"
+            accessibilityLabel={
+              hangId
+                ? 'Include the Pick host’s saved places inside the radius'
+                : 'Include my saved places inside the radius'
+            }
           />
         </View>
       </Card>

@@ -199,7 +199,7 @@ const againOf = new Map<string, string>();
 function plans(pick: MockPick): MockPlan {
   let plan = mockPlans.get(pick.id);
   if (!plan) {
-    plan = { planAt: null, rsvps: new Map(), outcomes: new Map() };
+    plan = { planAt: pick.planAt ?? null, rsvps: new Map(), outcomes: new Map() };
     mockPlans.set(pick.id, plan);
   }
   return plan;
@@ -555,7 +555,20 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     return fail(503, 'UNAVAILABLE', 'WTW is having trouble right now (mock failure).');
   }
 
-  const hangResponse = mockHang(method, path, readBody(init));
+  const hangResponse = await mockHang(method, path, readBody(init), (ids, pickId) => {
+    if (
+      ids.includes(MOCK_USER_ID) &&
+      !mockNotifications.some((n) => n.pickId === pickId && n.type === 'added_to_pick')
+    )
+      mockNotifications.unshift({
+        id: `hang-${pickId}`,
+        type: 'added_to_pick',
+        pickId,
+        payload: {},
+        createdAt: new Date().toISOString(),
+        readAt: null,
+      });
+  });
   if (hangResponse) return hangResponse;
   if (method === 'GET' && path.startsWith('/discover?')) {
     try {

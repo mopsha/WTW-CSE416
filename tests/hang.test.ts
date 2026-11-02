@@ -94,3 +94,63 @@ test('input validation checks audience, group, times and activity', () => {
   ])
     expect(() => parseHang({ ...post, ...change }, now)).toThrow();
 });
+
+const pickInput = {
+  category: 'food',
+  center: { lat: 40, lng: -73 },
+  radiusM: 5000,
+  poolSize: 5,
+  deadlineAt: null,
+  closeThreshold: 100,
+};
+test('Hang Pick uses the canonical adapter and retries the existing idempotent notifier for exactly included participants', async () => {
+  const notifier = jest.fn();
+  const createPickForDown = jest
+    .fn()
+    .mockResolvedValue({ pickId: 'new', participantIds: ['b', 'c'], created: true });
+  const deps = { ...store(), createPickForDown, notifier };
+  await expect(hangPick(deps, 'post', 'author', now, pickInput)).resolves.toEqual({
+    pickId: 'new',
+    isParticipant: false,
+  });
+  expect(createPickForDown).toHaveBeenCalledWith(
+    'post',
+    'author',
+    expect.objectContaining(pickInput),
+  );
+  expect(notifier).toHaveBeenCalledWith(['b', 'c'], 'added_to_pick', 'new');
+  createPickForDown.mockResolvedValue({
+    pickId: 'new',
+    participantIds: ['b', 'c'],
+    created: false,
+  });
+  await hangPick(deps, 'post', 'author', now, pickInput);
+  expect(notifier).toHaveBeenCalledTimes(2);
+});
+test('invalid settings and nonauthor Pick requests never reach the creation adapter', async () => {
+  const createPickForDown = jest.fn();
+  const deps = { ...store(), createPickForDown };
+  await expect(hangPick(deps, 'post', 'author', now, {})).rejects.toMatchObject({ status: 400 });
+  await expect(hangPick(deps, 'post', 'friend', now, pickInput)).rejects.toMatchObject({
+    status: 403,
+  });
+  expect(createPickForDown).not.toHaveBeenCalled();
+});
+test('authorized response uses the atomic upsert adapter; invalid status never writes', async () => {
+  const respondAuthorized = jest.fn();
+  const deps = {
+    ...store(),
+    access: async () => ({ ...no, acceptedFriends: true }),
+    respondAuthorized,
+  };
+  await respondHang(deps, 'post', 'friend', { status: 'down' }, now);
+  await respondHang(deps, 'post', 'friend', { status: 'maybe' }, now);
+  expect(respondAuthorized.mock.calls).toEqual([
+    ['post', 'friend', 'down'],
+    ['post', 'friend', 'maybe'],
+  ]);
+  await expect(respondHang(deps, 'post', 'friend', { status: 'yes' }, now)).rejects.toMatchObject({
+    status: 400,
+  });
+  expect(respondAuthorized).toHaveBeenCalledTimes(2);
+});
