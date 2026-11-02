@@ -10,17 +10,23 @@ interface AvatarProps {
   /** Profile photo; falls back to initials. */
   uri?: string | null;
   size?: number;
+  neutral?: boolean;
   /** Small green check, e.g. "finished swiping". */
   done?: boolean;
 }
 
 /** A person's photo or initials in a colored circle. */
-export function Avatar({ name, uri, size = 40, done = false }: AvatarProps) {
+export function Avatar({ name, uri, size = 40, done = false, neutral = false }: AvatarProps) {
   return (
     <View
       style={[
         styles.circle,
-        { width: size, height: size, borderRadius: size / 2, backgroundColor: colorForName(name) },
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: neutral ? colors.cardHi : colorForName(name),
+        },
       ]}
       accessible
       accessibilityRole="image"

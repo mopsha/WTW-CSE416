@@ -1,12 +1,23 @@
+import { Ionicons } from '@expo/vector-icons';
+import { ListRow, Sheet } from '@/components/TabUi';
 import { DISPLAY_NAME_MAX, validateDisplayName } from '@shared/api/profile.ts';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Linking, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
 import {
   Avatar,
   Button,
-  Card,
   colors,
   ErrorState,
   fonts,
@@ -33,6 +44,7 @@ export default function ProfileScreen() {
   const { displayName, preferences, saveDisplayName } = useProfile();
   const email = session.user.email ?? 'you';
   const name = displayName || suggestedName(session.user.email) || email;
+  const [panel, setPanel] = useState<'notifications' | 'settings' | null>(null);
   const [draft, setDraft] = useState<string | null>(null);
   const [invalid, setInvalid] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<boolean | null>(null);
@@ -61,6 +73,7 @@ export default function ProfileScreen() {
   }
 
   function cancel() {
+    if (busy) return;
     setDraft(null);
     setInvalid(null);
     clearError();
@@ -102,128 +115,175 @@ export default function ProfileScreen() {
   }
 
   return (
-    <Screen title="Profile" edges={['top', 'left', 'right']}>
-      <Card>
-        <View style={styles.row}>
-          <Avatar name={draft?.trim() || name} size={56} />
-          <View style={styles.who}>
-            <Text style={styles.name}>{name}</Text>
-            <Text style={styles.email}>{email}</Text>
-          </View>
+    <Screen edges={['top', 'left', 'right']} contentStyle={{ flexGrow: 1 }}>
+      <Pressable
+        style={styles.identity}
+        onPress={() => setDraft(displayName ?? suggestedName(session.user.email))}
+        accessibilityRole="button"
+        accessibilityLabel={`Edit profile for ${name}`}
+      >
+        <Avatar name={name} neutral size={84} />
+        <View style={styles.who}>
+          <Text style={styles.name}>{name}</Text>
+          <Text style={styles.email}>{email}</Text>
         </View>
-        {draft === null ? (
-          <Button
-            label={displayName ? 'Edit name' : 'Set your name'}
-            variant="secondary"
-            icon="create-outline"
-            accessibilityHint="Changes the name your friends see in Picks"
-            onPress={() => setDraft(displayName ?? suggestedName(session.user.email))}
-            style={styles.edit}
-          />
-        ) : (
-          <View style={styles.form}>
-            <TextInput
-              style={styles.input}
-              value={draft}
-              onChangeText={(text) => {
-                setDraft(text);
-                setInvalid(null);
-              }}
-              placeholder="Your name"
-              placeholderTextColor={colors.muted}
-              autoCapitalize="words"
-              autoComplete="name"
-              textContentType="name"
-              autoFocus
-              maxLength={DISPLAY_NAME_MAX * 2}
-              returnKeyType="done"
-              onSubmitEditing={() => void save()}
-              accessibilityLabel="Your name"
-              editable={!busy}
-            />
-            {invalid ? (
-              <Text style={styles.invalid} accessibilityLiveRegion="polite">
-                {invalid}
-              </Text>
-            ) : null}
-            <View style={styles.actions}>
-              <Button label="Cancel" variant="link" onPress={cancel} disabled={!!busy} />
-              <Button
-                label="Save"
-                onPress={() => void save()}
-                loading={busy === 'save'}
-                disabled={!draft.trim()}
-                style={styles.save}
-              />
-            </View>
-          </View>
-        )}
-      </Card>
-
-      <Card>
-        <Text style={styles.cardTitle} accessibilityRole="header">
-          Your preferences
-        </Text>
-        <Text style={styles.detail}>{preferencesSummary(preferences)}</Text>
-        <Button
-          label="Edit preferences"
-          variant="secondary"
-          icon="options-outline"
-          accessibilityHint="Changes what Discover and your Picks suggest"
+        <Ionicons name="chevron-forward" size={20} color={colors.muted} />
+      </Pressable>
+      <View style={styles.settings}>
+        <ListRow
+          title="Preferences"
+          subtitle={preferencesSummary(preferences)}
+          leading={<Ionicons name="heart-outline" size={25} color={colors.text} />}
           onPress={() => router.push('/preferences')}
         />
-      </Card>
-
-      {native ? (
-        <Card>
-          <Text style={styles.cardTitle} accessibilityRole="header">
-            Notifications
-          </Text>
-          <Text style={styles.detail}>
-            {notifications === null
-              ? ' '
-              : notifications
-                ? 'On. To turn them off, use your phone’s Settings.'
-                : 'Off. Turn them on to hear when your group is ready.'}
-          </Text>
-          {notifications === false ? (
-            <Button
-              label="Turn on notifications"
-              variant="secondary"
-              icon="notifications-outline"
-              onPress={() => void turnOnNotifications()}
-            />
-          ) : notifications ? (
-            <Button
-              label="Open Settings"
-              variant="link"
-              onPress={() => void Linking.openSettings()}
-            />
-          ) : null}
-        </Card>
-      ) : null}
-
+        <ListRow
+          title="Notifications"
+          leading={<Ionicons name="notifications-outline" size={25} color={colors.text} />}
+          onPress={() => setPanel('notifications')}
+        />
+        <ListRow
+          title="Settings"
+          leading={<Ionicons name="settings-outline" size={25} color={colors.text} />}
+          onPress={() => setPanel('settings')}
+        />
+      </View>
       {error ? <ErrorState message={error} /> : null}
-      <Button
-        label="Sign out"
-        variant="danger"
-        icon="log-out-outline"
-        disabled={!!busy}
-        onPress={() => void unregisterFromPush().finally(() => auth.signOut())}
-      />
-      <Button
-        label="Delete account"
-        variant="link"
-        icon="trash-outline"
-        loading={busy === 'delete'}
-        accessibilityHint="Permanently deletes your account after you confirm"
-        onPress={() => void deleteAccount()}
-      />
+      <View style={styles.footer}>
+        <ListRow
+          title="Sign out"
+          danger
+          disabled={!!busy}
+          leading={<Ionicons name="log-out-outline" size={23} color={colors.primary} />}
+          right={<View />}
+          onPress={() => void unregisterFromPush().finally(() => auth.signOut())}
+        />
+        <ListRow
+          title="Delete account"
+          muted
+          disabled={!!busy}
+          leading={<Ionicons name="trash-outline" size={23} color={colors.muted} />}
+          right={busy === 'delete' ? <ActivityIndicator color={colors.primary} /> : <View />}
+          onPress={() => void deleteAccount()}
+        />
+      </View>
+      <Sheet title="Edit profile" visible={draft !== null} onClose={cancel}>
+        <Text style={styles.detail}>The name your friends see in Picks.</Text>
+        <TextInput
+          style={styles.input}
+          value={draft ?? ''}
+          onChangeText={(text) => {
+            setDraft(text);
+            setInvalid(null);
+          }}
+          placeholder="Your name"
+          placeholderTextColor={colors.muted}
+          autoCapitalize="words"
+          autoComplete="name"
+          textContentType="name"
+          maxLength={DISPLAY_NAME_MAX * 2}
+          returnKeyType="done"
+          onSubmitEditing={() => void save()}
+          accessibilityLabel="Your name"
+          editable={!busy}
+        />
+        {invalid ? (
+          <Text style={styles.invalid} accessibilityLiveRegion="polite">
+            {invalid}
+          </Text>
+        ) : null}
+        {error ? <ErrorState message={error} /> : null}
+        <Button
+          label="Save"
+          onPress={() => void save()}
+          loading={busy === 'save'}
+          disabled={!draft?.trim()}
+        />
+        <Button label="Cancel" variant="link" onPress={cancel} disabled={!!busy} />
+      </Sheet>
+      <Sheet
+        title={panel === 'settings' ? 'Settings' : 'Notifications'}
+        visible={panel !== null}
+        onClose={() => setPanel(null)}
+      >
+        {panel === 'notifications' ? (
+          <>
+            <Button
+              label="Open notification inbox"
+              icon="notifications-outline"
+              variant="secondary"
+              onPress={() => {
+                setPanel(null);
+                router.push('/inbox');
+              }}
+            />
+            {native ? (
+              <>
+                <Text style={styles.detail}>
+                  {notifications === null
+                    ? 'Checking notification permissions…'
+                    : notifications
+                      ? 'Notifications are on. Manage them in your phone’s Settings.'
+                      : 'Notifications are off. Turn them on to hear when your group is ready.'}
+                </Text>
+                {notifications === false ? (
+                  <Button
+                    label="Turn on notifications"
+                    onPress={() => void turnOnNotifications()}
+                  />
+                ) : notifications ? (
+                  <Button
+                    label="Open Settings"
+                    variant="link"
+                    onPress={() => void Linking.openSettings()}
+                  />
+                ) : null}
+              </>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <Button
+              label="History"
+              variant="secondary"
+              icon="time-outline"
+              onPress={() => {
+                setPanel(null);
+                router.push('/history');
+              }}
+            />
+            <Button
+              label="Manage groups"
+              variant="secondary"
+              icon="people-outline"
+              onPress={() => {
+                setPanel(null);
+                router.push('/groups');
+              }}
+            />
+            {native ? (
+              <Button
+                label="Open phone settings"
+                variant="link"
+                onPress={() => void Linking.openSettings()}
+              />
+            ) : null}
+          </>
+        )}
+      </Sheet>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
+  identity: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.lg,
+    paddingTop: space.xxl + space.xl,
+    paddingBottom: space.xl,
+  },
+  settings: { borderTopWidth: 1, borderTopColor: colors.border },
+  footer: { marginTop: 'auto', paddingTop: space.xxl },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.lg },
   who: { flex: 1, gap: 2 },
   name: { ...type.heading, color: colors.text },

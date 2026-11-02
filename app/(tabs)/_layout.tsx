@@ -27,18 +27,18 @@ export default function TabsLayout() {
           minHeight: 58,
           paddingTop: 4,
         },
-        tabBarLabelStyle: { fontFamily: fonts.semibold, fontSize: 11, lineHeight: 16 },
+        tabBarLabelStyle: { fontFamily: fonts.medium, fontSize: 11, lineHeight: 16 },
         sceneStyle: { backgroundColor: colors.bg },
       }}
       screenListeners={{ tabPress: () => haptic.tick() }}
     >
       <Tabs.Screen
         name="index"
-        options={{ title: 'Picks', tabBarIcon: icon('flame', 'flame-outline') }}
+        options={{ title: 'Picks', tabBarIcon: icon('home', 'home-outline') }}
       />
       <Tabs.Screen
         name="discover"
-        options={{ title: 'Discover', tabBarIcon: icon('compass', 'compass-outline') }}
+        options={{ title: 'Discover', tabBarIcon: icon('search', 'search-outline') }}
       />
       <Tabs.Screen
         name="friends"

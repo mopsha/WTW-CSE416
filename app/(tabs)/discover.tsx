@@ -4,6 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   FlatList,
   Linking,
   Modal,
@@ -25,10 +26,9 @@ import { PlaceFilterControls } from '@/components/PlaceFilterControls';
 import { ErrorState } from '@/components/ErrorState';
 import { Button } from '@/components/Button';
 import { Chips as ChipGroup } from '@/components/Chips';
-import { EmptyState } from '@/components/EmptyState';
-import { GradientButton } from '@/components/GradientButton';
+import { QuietEmpty, Sheet } from '@/components/TabUi';
 import { describePlace, PlacePhoto } from '@/components/PlaceCard';
-import { colors, flame, fonts, MIN_TARGET } from '@/components/theme';
+import { colors, fonts, MIN_TARGET, radius, space, surfaces, type } from '@/components/theme';
 import {
   filterDiscover,
   milesLabel,
@@ -42,89 +42,107 @@ import { directionsUrl } from '@/lib/pickUi';
 const EMPTY_PLACES: DiscoverPlace[] = [];
 
 const FILTERS = [
-  { value: 'all' as const, label: 'All' },
-  { value: 'food' as const, label: '🍜 Food' },
-  { value: 'activities' as const, label: '🎳 Activities' },
+  { value: 'all' as const, label: 'For You' },
+  { value: 'food' as const, label: 'Food' },
+  { value: 'activities' as const, label: 'Activities' },
 ];
 
-/** The photo, or (for places without one) the place's emoji on the flame-tinted gradient. */
-function Cover({ place, style, big }: { place: DiscoverPlace; style: object; big?: boolean }) {
-  if (place.photoUrl) return <PlacePhoto uri={place.photoUrl} style={style} />;
+/** Render supplied feed imagery without adding provider requests or invented photos. */
+function Cover({ place, style }: { place: DiscoverPlace; style: object; big?: boolean }) {
   return (
-    <LinearGradient
-      colors={[colors.cardHi, colors.card]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={[style, styles.emojiCover]}
-    >
-      <Text style={{ fontSize: big ? 72 : 32 }} accessible={false}>
-        {place.emoji}
-      </Text>
-    </LinearGradient>
+    <View style={[style, { overflow: 'hidden' }]}>
+      {place.photoUrl ? (
+        <PlacePhoto uri={place.photoUrl} style={StyleSheet.absoluteFill} />
+      ) : (
+        <View style={[StyleSheet.absoluteFill, styles.emojiCover]}>
+          <Ionicons
+            name={place.category === 'food' ? 'restaurant-outline' : 'compass-outline'}
+            size={42}
+            color={colors.muted}
+          />
+        </View>
+      )}
+    </View>
   );
 }
-
-function meta(place: DiscoverPlace) {
-  return [
-    place.kind,
-    formatRating(place.rating),
-    formatPriceLevel(place.priceLevel),
-    milesLabel(place.miles),
-  ]
+function PlaceTile({
+  place,
+  onPress,
+  onSave,
+  saved,
+  busy,
+  ready,
+}: {
+  place: DiscoverPlace;
+  onPress: () => void;
+  onSave: () => void;
+  saved: boolean;
+  busy: boolean;
+  ready: boolean;
+}) {
+  const details = [place.kind, milesLabel(place.miles), formatPriceLevel(place.priceLevel)]
     .filter(Boolean)
     .join(' · ');
-}
-
-function FeaturedCard({ place, onPress }: { place: DiscoverPlace; onPress: () => void }) {
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={describePlace(place)}
-      accessibilityHint="Shows details and directions"
-      style={({ pressed }) => [styles.featured, pressed && styles.pressed]}
-    >
-      <Cover place={place} style={StyleSheet.absoluteFill} />
-      <LinearGradient
-        colors={['transparent', 'rgba(8,6,12,0.92)']}
+    <View style={[styles.tile, !place.photoUrl && { height: 160 }]}>
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={describePlace(place)}
+        accessibilityHint="Shows place details and directions"
         style={StyleSheet.absoluteFill}
-      />
-      <View style={styles.featuredInfo}>
-        <Text style={styles.featuredName} numberOfLines={2}>
-          {place.name}
-        </Text>
-        <Text style={styles.featuredMeta} numberOfLines={1}>
-          {meta(place)}
-        </Text>
-      </View>
-    </Pressable>
+      >
+        <Cover place={place} style={StyleSheet.absoluteFill} />
+        <LinearGradient
+          colors={[colors.transparent, colors.photoShade]}
+          locations={[0.2, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+        <View style={styles.tileInfo}>
+          <Text style={styles.tileName} numberOfLines={2}>
+            {place.name}
+          </Text>
+          <View style={styles.tileMetaRow}>
+            <Text style={styles.tileMeta} numberOfLines={1}>
+              {details}
+            </Text>
+            {place.rating !== null ? (
+              <Text style={styles.tileRating}>{formatRating(place.rating)}</Text>
+            ) : null}
+          </View>
+        </View>
+      </Pressable>
+      <Pressable
+        onPress={onSave}
+        disabled={!ready || busy}
+        accessibilityRole="button"
+        accessibilityLabel={`${saved ? 'Unsave' : 'Save'} ${place.name}`}
+        accessibilityState={{ selected: saved, disabled: !ready || busy, busy }}
+        style={styles.bookmark}
+      >
+        {busy ? (
+          <ActivityIndicator color={colors.photoText} />
+        ) : (
+          <Ionicons
+            name={saved ? 'bookmark' : 'bookmark-outline'}
+            size={23}
+            color={colors.photoText}
+          />
+        )}
+      </Pressable>
+    </View>
   );
 }
 
-function PlaceRow({ place, onPress }: { place: DiscoverPlace; onPress: () => void }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={describePlace(place)}
-      accessibilityHint="Shows details and directions"
-      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-    >
-      <Cover place={place} style={styles.rowCover} />
-      <View style={{ flex: 1, gap: 2 }}>
-        <Text style={styles.rowName} numberOfLines={2}>
-          {place.name}
-        </Text>
-        <Text style={styles.rowMeta} numberOfLines={1}>
-          {meta(place)}
-        </Text>
-      </View>
-      <Ionicons name="chevron-forward" size={20} color={colors.muted} />
-    </Pressable>
-  );
-}
-
-function PlaceSheet({ place, onClose }: { place: DiscoverPlace | null; onClose: () => void }) {
+function PlaceSheet({
+  place,
+  onClose,
+  onSaved,
+}: {
+  place: DiscoverPlace | null;
+  onClose: () => void;
+  onSaved: (id: string, saved: boolean) => void;
+}) {
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -172,10 +190,10 @@ function PlaceSheet({ place, onClose }: { place: DiscoverPlace | null; onClose: 
               ) : null}
               <View style={styles.pills} accessible={false}>
                 {[
-                  `${place.emoji} ${place.kind}`,
+                  place.kind,
                   formatRating(place.rating),
                   formatPriceLevel(place.priceLevel),
-                  `📍 ${milesLabel(place.miles)}`,
+                  milesLabel(place.miles),
                 ]
                   .filter(Boolean)
                   .map((t) => (
@@ -195,13 +213,17 @@ function PlaceSheet({ place, onClose }: { place: DiscoverPlace | null; onClose: 
                   setBusy(true);
                   setError(null);
                   void (saved ? api.removeSaved(place.placeId) : api.savePlace(place.placeId))
-                    .then(() => setSaved(!saved))
+                    .then(() => {
+                      setSaved(!saved);
+                      onSaved(place.placeId, !saved);
+                    })
                     .catch((e) => setError(messageOf(e)))
                     .finally(() => setBusy(false));
                 }}
               />
-              <GradientButton
-                label="Get directions 🚗"
+              <Button
+                label="Get directions"
+                icon="navigate-outline"
                 accessibilityHint={`Opens ${Platform.OS === 'ios' ? 'Apple Maps' : 'Google Maps'}`}
                 onPress={() => {
                   haptic.tap();
@@ -241,6 +263,54 @@ export default function DiscoverScreen() {
   const [filter, setFilter] = useState<DiscoverFilter>('all');
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState<DiscoverPlace | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [draftPrice, setDraftPrice] = useState(-1);
+  const [draftRadius, setDraftRadius] = useState(5000);
+  const [draftOpen, setDraftOpen] = useState(false);
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [savedFor, setSavedFor] = useState<string | undefined>(undefined);
+  const [savedReady, setSavedReady] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    api
+      .getSaved()
+      .then((result) => {
+        if (active) {
+          setSavedIds(new Set(result.places.map((p) => p.placeId)));
+          setSavedReady(true);
+          setSavedFor(userId);
+        }
+      })
+      .catch((e) => {
+        if (active) setSaveError(messageOf(e));
+      });
+    return () => {
+      active = false;
+    };
+  }, [userId, retry]);
+  const updateSaved = (id: string, saved: boolean) =>
+    setSavedIds((ids) => {
+      const next = new Set(ids);
+      if (saved) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  const savePlace = async (place: DiscoverPlace) => {
+    if (saving || !savedReady || savedFor !== userId) return;
+    const wasSaved = savedIds.has(place.placeId);
+    setSaving(place.placeId);
+    setSaveError(null);
+    try {
+      await (wasSaved ? api.removeSaved(place.placeId) : api.savePlace(place.placeId));
+      updateSaved(place.placeId, !wasSaved);
+    } catch (e) {
+      setSaveError(messageOf(e));
+    } finally {
+      setSaving(null);
+    }
+  };
 
   const requestKey = JSON.stringify([filter, radiusM, priceMax, openNow, retry, userId]);
   const current = response?.key === requestKey ? response : null;
@@ -279,15 +349,15 @@ export default function DiscoverScreen() {
     () => filterDiscover(feed, { category: filter, query }),
     [feed, filter, query],
   );
-  // "Near campus": the closest places with photos, only when not searching.
-  const featured = useMemo(
-    () =>
-      filterDiscover(feed, { category: filter })
-        .filter((p) => p.photoUrl)
-        .slice(0, 6),
-    [feed, filter],
-  );
-  const showFeatured = !query.trim() && featured.length > 0;
+  // Preserve the original photo-featured selection, now as full-width cards without duplicates.
+  const displayed = useMemo(() => {
+    if (query.trim()) return places;
+    const featured = filterDiscover(feed, { category: filter })
+      .filter((p) => p.photoUrl)
+      .slice(0, 6);
+    const ids = new Set(featured.map((p) => p.placeId));
+    return [...featured, ...places.filter((p) => !ids.has(p.placeId))];
+  }, [feed, filter, places, query]);
   const show = (p: DiscoverPlace) => {
     haptic.tap();
     setOpen(p);
@@ -296,13 +366,22 @@ export default function DiscoverScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <FlatList
-        data={places}
+        data={displayed}
         keyExtractor={(p) => p.placeId}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         contentContainerStyle={styles.content}
         ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
-        renderItem={({ item }) => <PlaceRow place={item} onPress={() => show(item)} />}
+        renderItem={({ item }) => (
+          <PlaceTile
+            place={item}
+            onPress={() => show(item)}
+            onSave={() => void savePlace(item)}
+            saved={savedFor === userId && savedIds.has(item.placeId)}
+            busy={saving === item.placeId}
+            ready={savedFor === userId && savedReady && saving === null}
+          />
+        )}
         ListHeaderComponent={
           <View style={{ gap: 16, marginBottom: 14 }}>
             <View style={{ gap: 4 }}>
@@ -311,9 +390,7 @@ export default function DiscoverScreen() {
                 Discover
               </Text>
               <Text style={styles.sub}>
-                {loading
-                  ? 'Finding places…'
-                  : `${feed.length} spots near campus to eat, see and do.`}
+                {loading ? 'Finding places…' : 'Find places to eat, hang out, and more.'}
               </Text>
             </View>
 
@@ -322,7 +399,7 @@ export default function DiscoverScreen() {
               <TextInput
                 value={query}
                 onChangeText={setQuery}
-                placeholder="Search tacos, beach, bowling…"
+                placeholder="Search food, activities, places…"
                 placeholderTextColor={colors.muted}
                 style={styles.searchInput}
                 returnKeyType="search"
@@ -334,89 +411,212 @@ export default function DiscoverScreen() {
                   onPress={() => setQuery('')}
                   accessibilityRole="button"
                   accessibilityLabel="Clear search"
-                  hitSlop={10}
+                  hitSlop={4}
+                  style={styles.searchClear}
                 >
                   <Ionicons name="close-circle" size={18} color={colors.muted} />
                 </Pressable>
               ) : null}
             </View>
 
-            <ChipGroup
-              options={FILTERS}
-              value={filter}
-              onChange={setFilter}
-              accessibilityLabel="Show"
-            />
-
-            <PlaceFilterControls
-              priceMax={priceMax}
-              openNow={openNow}
-              onPrice={setPriceMax}
-              onOpen={setOpenNow}
-            />
-            <ChipGroup
-              options={[
-                { value: 1000, label: '1 km' },
-                { value: 5000, label: '5 km' },
-                { value: 16000, label: '16 km' },
-              ]}
-              value={radiusM}
-              onChange={setRadiusM}
-              accessibilityLabel="Search radius"
-            />
+            <View
+              style={styles.categories}
+              accessibilityRole="tablist"
+              accessibilityLabel="Discover category"
+            >
+              {FILTERS.map((f, i) => (
+                <Pressable
+                  key={f.value}
+                  accessibilityRole="tab"
+                  accessibilityLabel={f.label}
+                  accessibilityState={{ selected: filter === f.value }}
+                  onPress={() => setFilter(f.value)}
+                  style={[
+                    styles.categoryControl,
+                    filter === f.value && {
+                      backgroundColor: colors.primary,
+                      borderColor: colors.primary,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name={
+                      i === 0 ? 'sparkles-outline' : i === 1 ? 'restaurant-outline' : 'walk-outline'
+                    }
+                    size={18}
+                    color={colors.text}
+                  />
+                  <Text style={styles.filterText}>{f.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.filterRow}>
+              <Pressable
+                accessibilityRole="switch"
+                accessibilityLabel="Open Now"
+                accessibilityState={{ checked: openNow }}
+                onPress={() => setOpenNow(!openNow)}
+                style={[styles.filterControl, openNow && styles.filterSelected]}
+              >
+                <Ionicons
+                  name="time-outline"
+                  size={19}
+                  color={openNow ? colors.primary : colors.text}
+                />
+                <Text style={styles.filterText}>Open Now</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Filters"
+                onPress={() => {
+                  setDraftPrice(priceMax);
+                  setDraftRadius(radiusM);
+                  setDraftOpen(openNow);
+                  setFiltersOpen(true);
+                }}
+                style={styles.filterControl}
+              >
+                <Ionicons name="options-outline" size={19} color={colors.text} />
+                <Text style={styles.filterText}>
+                  Filters{priceMax >= 0 || radiusM !== 5000 ? ' · On' : ''}
+                </Text>
+              </Pressable>
+            </View>
             {notice ? (
               <Text style={styles.sub}>{notice}</Text>
             ) : current && !error ? (
               <Text style={styles.sub}>Places from Google Maps</Text>
             ) : null}
             {error ? <ErrorState message={error} onRetry={() => setRetry((n) => n + 1)} /> : null}
-            {showFeatured ? (
-              <View style={{ gap: 10 }}>
-                <Text style={styles.section}>Near campus 🔥</Text>
-                <FlatList
-                  horizontal
-                  data={featured}
-                  keyExtractor={(p) => `f-${p.placeId}`}
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={{ gap: 12 }}
-                  renderItem={({ item }) => (
-                    <FeaturedCard place={item} onPress={() => show(item)} />
-                  )}
-                />
-              </View>
-            ) : null}
-
             <Text style={styles.section}>
               {query.trim()
                 ? `${places.length} result${places.length === 1 ? '' : 's'}`
-                : 'Everything nearby'}
+                : 'Near campus'}
             </Text>
           </View>
         }
         ListEmptyComponent={
-          loading || error ? null : (
-            <EmptyState
-              emoji="🧭"
+          loading ? (
+            <ActivityIndicator color={colors.primary} accessibilityLabel="Loading places" />
+          ) : error ? null : (
+            <QuietEmpty
+              icon="search-outline"
               title="Nothing matches"
-              body="Try another word, or switch the filter to All."
+              body="Try another search, or change your filters."
             />
           )
         }
       />
+      {saveError ? (
+        <View style={{ paddingHorizontal: space.xl }}>
+          <ErrorState message={saveError} onRetry={() => setRetry((n) => n + 1)} />
+        </View>
+      ) : null}
+      <Sheet visible={filtersOpen} title="Filters" onClose={() => setFiltersOpen(false)}>
+        <Text style={styles.section}>Price and opening hours</Text>
+        <PlaceFilterControls
+          priceMax={draftPrice}
+          openNow={draftOpen}
+          onPrice={setDraftPrice}
+          onOpen={setDraftOpen}
+        />
+        <Text style={styles.section}>Distance</Text>
+        <ChipGroup
+          options={[
+            { value: 1000, label: '1 km' },
+            { value: 5000, label: '5 km' },
+            { value: 16000, label: '16 km' },
+          ]}
+          value={draftRadius}
+          onChange={setDraftRadius}
+          accessibilityLabel="Search radius"
+        />
+        <Button
+          label="Show places"
+          onPress={() => {
+            setPriceMax(draftPrice);
+            setRadiusM(draftRadius);
+            setOpenNow(draftOpen);
+            setFiltersOpen(false);
+          }}
+        />
+        <Button
+          label="Reset filters"
+          variant="link"
+          onPress={() => {
+            setDraftPrice(-1);
+            setDraftRadius(5000);
+            setDraftOpen(false);
+          }}
+        />
+      </Sheet>
       <PlaceSheet
         key={`${userId}:${open?.placeId}`}
         place={feed.some((p) => p.placeId === open?.placeId) ? open : null}
         onClose={() => setOpen(null)}
+        onSaved={updateSaved}
       />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  categories: { flexDirection: 'row', gap: space.sm },
+  categoryControl: {
+    ...surfaces.control,
+    flex: 1,
+    flexDirection: 'row',
+    gap: space.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: MIN_TARGET,
+    borderRadius: radius.pill,
+  },
+  tile: { height: 180, borderRadius: radius.md, overflow: 'hidden', backgroundColor: colors.card },
+  tileInfo: {
+    position: 'absolute',
+    left: space.lg,
+    right: space.lg,
+    bottom: space.lg,
+    gap: space.xs,
+  },
+  tileName: { ...type.heading, color: colors.photoText },
+  tileMetaRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  tileMeta: { ...type.caption, color: colors.photoMuted, flex: 1 },
+  tileRating: { ...type.caption, color: colors.photoText },
+  bookmark: {
+    position: 'absolute',
+    top: space.sm,
+    right: space.sm,
+    width: MIN_TARGET,
+    height: MIN_TARGET,
+    borderRadius: radius.sm,
+    backgroundColor: colors.scrim,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterRow: { flexDirection: 'row', gap: space.md },
+  filterControl: {
+    ...surfaces.control,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    minHeight: MIN_TARGET,
+    paddingHorizontal: space.lg,
+    borderRadius: radius.pill,
+  },
+  filterSelected: { borderColor: colors.primary },
+  filterText: { ...type.caption, fontFamily: fonts.semibold, color: colors.text },
+  searchClear: {
+    minWidth: MIN_TARGET,
+    minHeight: MIN_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   safe: { flex: 1, backgroundColor: colors.bg },
   content: { padding: 20, paddingBottom: 40 },
-  eyebrow: { fontFamily: fonts.black, fontSize: 13, letterSpacing: 3, color: flame[1] },
-  h1: { fontFamily: fonts.black, fontSize: 30, lineHeight: 36, color: colors.text },
+  eyebrow: { fontFamily: fonts.bold, fontSize: 13, letterSpacing: 2, color: colors.muted },
+  h1: { fontFamily: fonts.bold, fontSize: 32, lineHeight: 40, color: colors.text },
   sub: { fontFamily: fonts.medium, fontSize: 15, color: colors.muted },
   section: { fontFamily: fonts.bold, fontSize: 18, color: colors.text },
   search: {
@@ -437,33 +637,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.text,
   },
-  featured: {
-    width: 200,
-    height: 230,
-    borderRadius: 24,
-    overflow: 'hidden',
-    backgroundColor: colors.card,
-  },
-  featuredInfo: { position: 'absolute', left: 14, right: 14, bottom: 14, gap: 2 },
-  featuredName: { fontFamily: fonts.black, fontSize: 18, lineHeight: 22, color: '#FFFFFF' },
-  featuredMeta: { fontFamily: fonts.medium, fontSize: 13, color: 'rgba(255,255,255,0.85)' },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 10,
-    minHeight: MIN_TARGET + 32,
-    borderRadius: 20,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  rowCover: { width: 64, height: 64, borderRadius: 14, overflow: 'hidden' },
-  rowName: { fontFamily: fonts.bold, fontSize: 16, color: colors.text },
-  rowMeta: { fontFamily: fonts.medium, fontSize: 13, color: colors.muted },
-  emojiCover: { alignItems: 'center', justifyContent: 'center' },
+  emojiCover: { backgroundColor: colors.cardHi, alignItems: 'center', justifyContent: 'center' },
   pressed: { transform: [{ scale: 0.98 }], opacity: 0.9 },
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)' },
+  backdrop: { flex: 1, backgroundColor: colors.scrim },
   sheet: {
     maxHeight: '88%',
     backgroundColor: colors.bg,
@@ -481,7 +657,7 @@ const styles = StyleSheet.create({
     borderRadius: MIN_TARGET / 2,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(14,11,18,0.7)',
+    backgroundColor: colors.scrim,
   },
   sheetBody: { padding: 20, gap: 12 },
   pills: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
@@ -494,6 +670,6 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   pillText: { fontFamily: fonts.semibold, fontSize: 13, color: colors.text },
-  sheetName: { fontFamily: fonts.black, fontSize: 26, lineHeight: 32, color: colors.text },
+  sheetName: { fontFamily: fonts.bold, fontSize: 26, lineHeight: 32, color: colors.text },
   sheetAddress: { fontFamily: fonts.medium, fontSize: 15, color: colors.muted },
 });

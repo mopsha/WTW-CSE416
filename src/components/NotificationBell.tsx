@@ -37,7 +37,7 @@ const styles = StyleSheet.create({
     borderRadius: MIN_TARGET / 2,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.card,
+    backgroundColor: colors.transparent,
   },
   pressed: { opacity: 0.7 },
   badge: {

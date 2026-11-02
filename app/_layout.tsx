@@ -1,4 +1,5 @@
 import {
+  Poppins_400Regular,
   Poppins_500Medium,
   Poppins_600SemiBold,
   Poppins_700Bold,
@@ -38,6 +39,7 @@ function RootStack() {
   const { session, loading } = useAuth();
   const profile = useProfile();
   const [fontsLoaded, fontError] = useFonts({
+    Poppins_400Regular,
     Poppins_500Medium,
     Poppins_600SemiBold,
     Poppins_700Bold,

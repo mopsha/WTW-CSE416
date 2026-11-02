@@ -33,7 +33,7 @@ export function PlacePhoto({ uri, style }: { uri: string | null; style?: StylePr
   return uri ? (
     <Image source={{ uri }} style={[styles.photo, style]} resizeMode="cover" accessible={false} />
   ) : (
-    <LinearGradient colors={['#3A2A4A', '#1B1622']} style={[styles.photo, style]} />
+    <View style={[styles.photo, style]} />
   );
 }
 
