@@ -11,6 +11,7 @@ export type DiscoverCategory = 'food' | 'activities';
 export type DiscoverFilter = 'all' | DiscoverCategory;
 
 export interface DiscoverPlace extends Candidate {
+  providerCredits?: string[];
   category: DiscoverCategory;
   /** e.g. "Vietnamese", "Beach". Same as `cuisine` (which the shared place UI reads). */
   kind: string;

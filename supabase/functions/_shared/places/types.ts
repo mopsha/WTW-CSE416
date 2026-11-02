@@ -7,7 +7,7 @@ export type Category = 'food' | 'activities';
 export interface Candidate extends LatLng {
   placeId: string;
   name: string;
-  category: Category;
+  category: Category | 'custom';
   address?: string;
   priceLevel?: number | null;
   rating?: number | null;
@@ -17,7 +17,11 @@ export interface Candidate extends LatLng {
   googleMapsUri?: string;
   openingHours?: OpeningHours | null;
   timezone?: string;
-  provider?: 'google' | 'mock';
+  provider?: 'google' | 'mock' | 'custom';
+  source?: 'google' | 'mock' | 'custom';
+  createdBy?: string;
+  note?: string;
+  locationProvided?: boolean;
   fetchedAt?: string;
   /** Google content is for this response only; never serialize it into Pick snapshots. */
   retention?: 'request' | 'persistable';

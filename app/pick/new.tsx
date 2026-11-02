@@ -1,7 +1,7 @@
 import Slider from '@react-native-community/slider';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useState, type ReactNode } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Switch, Text, View } from 'react-native';
 
 import {
   Button,
@@ -15,7 +15,10 @@ import {
   type,
   type ChipOption,
 } from '@/components';
+import { CustomPlanEditor } from '@/components/CustomPlanEditor';
+import type { CustomOption } from '@shared/domain/customPlans.ts';
 import { LocationSearch } from '@/components/LocationSearch';
+import { PlaceFilterControls } from '@/components/PlaceFilterControls';
 import { MapPicker } from '@/components/MapPicker';
 import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
@@ -34,6 +37,7 @@ import type { LatLng } from '@shared/domain/geo.ts';
 const CATEGORIES: readonly ChipOption<PickCategory>[] = [
   { value: 'food', label: '🍜 Food' },
   { value: 'activities', label: '🎳 Activities' },
+  { value: 'custom', label: '✨ Custom' },
 ];
 
 const POOL_SIZES: readonly ChipOption<number>[] = [10, 15, 20, 25, 30].map((n) => ({
@@ -61,15 +65,28 @@ const MIN_MILES = 0.5;
 const MAX_MILES = 10;
 
 export default function CreatePickScreen() {
-  const [category, setCategory] = useState<PickCategory>('food');
+  // From a group (Start a Pick): everyone in it is added when the Pick is created.
+  const { groupId, groupName, hangId, hangActivity } = useLocalSearchParams<{
+    groupId?: string;
+    groupName?: string;
+    hangId?: string;
+    hangActivity?: string;
+  }>();
+  const [category, setCategory] = useState<PickCategory>(hangId ? 'activities' : 'food');
+  const [customOptions, setCustomOptions] = useState<CustomOption[]>([{ name: '' }, { name: '' }]);
+  const [includeSaved, setIncludeSaved] = useState(false);
+  const [mix, setMix] = useState<'none' | 'food' | 'activities'>('none');
   const [center, setCenter] = useState<LatLng>(DEFAULT_CENTER);
   const [placeLabel, setPlaceLabel] = useState('SBU Academic Mall');
   const [miles, setMiles] = useState(2);
+  const [priceMax, setPriceMax] = useState(-1);
+  const [openNow, setOpenNow] = useState(false);
   const [poolSize, setPoolSize] = useState(DEFAULT_POOL_SIZE);
   const [deadlineMin, setDeadlineMin] = useState(60);
   const [closeThreshold, setCloseThreshold] = useState(100);
   const [problems, setProblems] = useState<Partial<Record<CreatePickField, string>>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [createdForOthers, setCreatedForOthers] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const moveCenter = (next: LatLng, label = 'Dropped pin') => {
@@ -83,7 +100,18 @@ export default function CreatePickScreen() {
       category,
       center,
       radiusM: milesToMeters(miles),
-      poolSize,
+      priceMax: priceMax < 0 ? null : priceMax,
+      openNow,
+      poolSize:
+        category === 'custom'
+          ? mix === 'none' && !includeSaved
+            ? customOptions.length
+            : Math.max(20, customOptions.length)
+          : poolSize,
+      includeSaved,
+      ...(category === 'custom'
+        ? { customOptions, ...(mix !== 'none' ? { mixCategory: mix } : {}) }
+        : {}),
       // Computed at tap time so "1 hr" means an hour from now, not from when the screen opened.
       deadlineAt: deadlineMin ? new Date(Date.now() + deadlineMin * 60_000).toISOString() : null,
       closeThreshold,
@@ -98,7 +126,17 @@ export default function CreatePickScreen() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const { pickId } = await api.createPick(input);
+      if (hangId) {
+        const result = await api.hangPick(hangId, input);
+        haptic.success();
+        if (result.isParticipant)
+          router.replace({ pathname: '/pick/[id]/lobby', params: { id: result.pickId } });
+        else setCreatedForOthers(true);
+        return;
+      }
+      const { pickId } = groupId
+        ? await api.createGroupPick(input, groupId)
+        : await api.createPick(input);
       haptic.success();
       // Straight to the Lobby, replacing this form so Back goes to Picks.
       router.replace({ pathname: '/pick/[id]/lobby', params: { id: pickId } });
@@ -109,8 +147,34 @@ export default function CreatePickScreen() {
     }
   };
 
+  if (createdForOthers)
+    return (
+      <Screen title="Pick created">
+        <Text style={{ ...type.body, color: colors.text }}>
+          The Pick is ready for the people who are down. Their host can start it.
+        </Text>
+        <Button label="Back to Picks" onPress={() => router.replace('/')} />
+      </Screen>
+    );
   return (
-    <Screen title="New Pick" subtitle="Where's the group headed?" back>
+    <Screen
+      title="New Pick"
+      subtitle={
+        hangId
+          ? `For ${hangActivity ?? 'your hang'}`
+          : groupId
+            ? `For ${groupName ?? 'your group'}`
+            : "Where's the group headed?"
+      }
+      back
+    >
+      {groupId ? (
+        <Card variant="flat">
+          <Text style={styles.hint}>
+            Everyone in {groupName ?? 'the group'} is added as soon as you create it.
+          </Text>
+        </Card>
+      ) : null}
       <Section title="What are we picking?" error={problems.category}>
         <Chips
           options={CATEGORIES}
@@ -120,6 +184,41 @@ export default function CreatePickScreen() {
         />
       </Section>
 
+      {category === 'custom' ? (
+        <Section
+          title="Your options"
+          error={problems.customOptions}
+          hint="Add 2–20 ideas. Everyone swipes and votes as usual."
+        >
+          <CustomPlanEditor options={customOptions} onChange={setCustomOptions} />
+          <Chips
+            options={[
+              { value: 'none' as const, label: 'Only my ideas' },
+              { value: 'food' as const, label: 'Add nearby food' },
+              { value: 'activities' as const, label: 'Add nearby activities' },
+            ]}
+            value={mix}
+            onChange={setMix}
+            accessibilityLabel="Mix nearby places"
+          />
+        </Section>
+      ) : null}
+      <Card>
+        <View style={styles.sectionHead}>
+          <Text style={styles.sectionTitle}>
+            {hangId ? 'Include the host’s saved places' : 'Include my saved places'}
+          </Text>
+          <Switch
+            value={includeSaved}
+            onValueChange={setIncludeSaved}
+            accessibilityLabel={
+              hangId
+                ? 'Include the Pick host’s saved places inside the radius'
+                : 'Include my saved places inside the radius'
+            }
+          />
+        </View>
+      </Card>
       <Section title="Where" error={problems.center}>
         <LocationSearch label={placeLabel} onPick={moveCenter} />
         <MapPicker
@@ -157,17 +256,31 @@ export default function CreatePickScreen() {
       </Section>
 
       <Section
-        title="How many places"
-        hint="Fewer is faster to swipe; more gives more options."
-        error={problems.poolSize}
+        title="Place filters"
+        hint="Unknown prices or hours are excluded when that filter is set."
+        error={problems.priceMax}
       >
-        <Chips
-          options={POOL_SIZES}
-          value={poolSize}
-          onChange={setPoolSize}
-          accessibilityLabel="Pool size"
+        <PlaceFilterControls
+          priceMax={priceMax}
+          openNow={openNow}
+          onPrice={setPriceMax}
+          onOpen={setOpenNow}
         />
       </Section>
+      {category !== 'custom' ? (
+        <Section
+          title="How many places"
+          hint="Fewer is faster to swipe; more gives more options."
+          error={problems.poolSize}
+        >
+          <Chips
+            options={POOL_SIZES}
+            value={poolSize}
+            onChange={setPoolSize}
+            accessibilityLabel="Pool size"
+          />
+        </Section>
+      ) : null}
 
       <Section
         title="Deadline"

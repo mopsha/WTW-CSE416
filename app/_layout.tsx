@@ -15,7 +15,9 @@ import { colors } from '@/components/theme';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { ProfileProvider, useProfile } from '@/hooks/useProfile';
 import { configureNotifications, onNotificationTap } from '@/lib/notify';
+import { takePendingInvite } from '@/lib/pendingInvite';
 import { takePendingJoin } from '@/lib/pendingJoin';
+import { registerForPush } from '@/lib/push';
 
 void SplashScreen.preventAutoHideAsync();
 configureNotifications();
@@ -46,20 +48,40 @@ function RootStack() {
   // First sign-in: ask "what should we call you?" before anything else. If the profile
   // couldn't be read, don't block the app on it; the Profile tab can still set a name.
   const needsName = !!session && !profile.displayName && !profile.failed;
+  // Then the survey and permission explainers, once (FR-02). Same rule: never block on a failed read.
+  const needsOnboarding = !!session && !needsName && !profile.onboarded && !profile.failed;
+  const inApp = !!session && !needsName && !needsOnboarding;
+  const userId = session?.user.id;
 
   useEffect(() => {
     if (ready) void SplashScreen.hideAsync();
   }, [ready]);
 
-  // Tapping a WTW notification opens the screen it points at (e.g. the results).
-  useEffect(() => onNotificationTap((url) => router.push(url as never)), []);
-
-  // A join link that arrived signed out: once signed in (and named), finish joining.
+  // Keep this device's push token current on every start (it can change; Alan's route upserts).
   useEffect(() => {
-    if (!ready || !session || needsName) return;
+    if (ready && inApp && userId) void registerForPush();
+  }, [ready, inApp, userId]);
+
+  // Tapping a WTW notification opens the screen it points at (e.g. the results), including
+  // the tap that launched the app; wait for the signed-in stack so the route exists.
+  useEffect(() => {
+    if (!ready || !inApp) return;
+    return onNotificationTap((route) => router.push(route as never));
+  }, [ready, inApp]);
+
+  // A join link that arrived signed out: once signed in (named and onboarded), finish joining.
+  useEffect(() => {
+    if (!ready || !inApp) return;
     const code = takePendingJoin();
-    if (code) router.push({ pathname: '/join/[code]', params: { code } });
-  }, [ready, session, needsName]);
+    if (code) {
+      router.push({ pathname: '/join/[code]', params: { code } });
+      return;
+    }
+    // Invite links are parked in SecureStore, so they survive a restart during sign-in.
+    void takePendingInvite().then((token) => {
+      if (token) router.push({ pathname: '/i/[token]', params: { token } });
+    });
+  }, [ready, inApp]);
 
   // Keep the splash up until the stored session and fonts are loaded. Rendering the
   // guarded Stack earlier treats a signed-in user as signed out for a moment, which
@@ -83,8 +105,12 @@ function RootStack() {
         <Stack.Protected guard={needsName}>
           <Stack.Screen name="welcome" />
         </Stack.Protected>
-        <Stack.Protected guard={!!session && !needsName}>
+        <Stack.Protected guard={needsOnboarding}>
+          <Stack.Screen name="onboarding" />
+        </Stack.Protected>
+        <Stack.Protected guard={inApp}>
           <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="preferences" />
           <Stack.Screen name="pick/new" />
           <Stack.Screen name="pick/[id]/index" options={{ animation: 'fade' }} />
           <Stack.Screen name="pick/[id]/lobby" />
@@ -93,10 +119,13 @@ function RootStack() {
           <Stack.Screen name="pick/[id]/results" options={{ animation: 'fade' }} />
           <Stack.Screen name="pick/[id]/vote" options={{ animation: 'fade' }} />
           <Stack.Screen name="pick/[id]/winner" options={{ animation: 'fade' }} />
+          <Stack.Screen name="history" />
+          <Stack.Screen name="inbox" />
         </Stack.Protected>
-        {/* Join links open signed in or out; the screen sends you to sign-in if needed.
+        {/* Join and invite links open signed in or out; the screen sends you to sign-in if needed.
             Listed last so it is never the guard's fallback screen. */}
         <Stack.Screen name="join/[code]" options={{ animation: 'fade' }} />
+        <Stack.Screen name="i/[token]" options={{ animation: 'fade' }} />
       </Stack>
     </>
   );

@@ -2,8 +2,11 @@
 // It plays the server's part of the whole loop (lobby -> swipe -> close -> vote -> winner) with
 // three pretend friends, Ava, Ben and Cam, who join, swipe and vote on timers, so the live
 // screens move on their own in a demo. Rules come from the shared domain code, not copies.
+import { makeCustomOptions, type StoredCustomOption } from '@shared/domain/customPlans.ts';
+import { customPlaces } from './saved';
 import type { CreatePickInput } from '@shared/domain/createPick.ts';
 import { dueToClose } from '@shared/domain/pickState.ts';
+import { EMPTY_PREFERENCES, type Preferences } from '@shared/domain/preferences.ts';
 import {
   answerFromDb,
   clearWinner,
@@ -23,6 +26,8 @@ import type {
   PreferenceValue,
   RankedPlace,
 } from '../types';
+import type { PlaceFilters } from '@shared/domain/placeFilters.ts';
+import { mockPool } from './placePool';
 import { MOCK_USER_ID } from './auth';
 import { DEMO_CENTER, MOCK_PLACES, OTHER_PARTICIPANT_ANSWERS, type MockPlace } from './fixtures';
 
@@ -35,11 +40,14 @@ export interface MockParticipant {
   script?: readonly PreferenceValue[];
 }
 
-export interface MockPick {
+export interface MockPick extends PlaceFilters {
   id: string;
   hostId: string;
   state: PickState;
-  category: 'food' | 'activities';
+  category: 'food' | 'activities' | 'custom';
+  includeSaved?: boolean;
+  customOptions?: StoredCustomOption[];
+  mixCategory?: 'food' | 'activities';
   center: { lat: number; lng: number };
   radiusM: number;
   poolSize: number;
@@ -57,9 +65,18 @@ export interface MockPick {
   decidedBy: DecidedBy | null;
   decidedAt: string | null;
   joinCode: string;
+  /** Host's "lock lobby" (0014): no new people by code or link. */
+  lobbyLocked?: boolean;
+  /** Existing plan time supplied by a Hang; used to initialize mock RSVP state. */
+  planAt?: string;
   /** For newest-first ordering; fixtures count down from 0. */
   createdAt: number;
 }
+
+/** People I blocked (0014). Declared before anything runs at load (see bug #7). */
+export const mockBlocks = new Set<string>();
+/** Invite links by token. */
+const mockInvites = new Map<string, { pickId: string; revoked: boolean }>();
 
 // ---------------------------------------------------------------------------
 // Change notifications (stands in for Supabase Realtime in mock mode)
@@ -100,10 +117,25 @@ export function setMockBots(enabled: boolean) {
 }
 
 /**
- * My profile (public.profiles in mock form). Starts without a name, like a new account,
- * so mock mode shows the "what should we call you?" step. Survives resetMockData().
+ * My profile (public.profiles in mock form). Starts without a name or survey, like a new
+ * account, so mock mode shows the name step and onboarding. Survives resetMockData().
  */
-export const mockProfile: { displayName: string | null } = { displayName: null };
+export const mockProfile: {
+  displayName: string | null;
+  preferences: Preferences;
+  onboarded: boolean;
+  pushTokens: string[];
+} = { displayName: null, preferences: EMPTY_PREFERENCES, onboarded: false, pushTokens: [] };
+
+/** Back to a brand-new account (what DELETE /me leaves behind). */
+export function resetMockProfile() {
+  Object.assign(mockProfile, {
+    displayName: null,
+    preferences: EMPTY_PREFERENCES,
+    onboarded: false,
+    pushTokens: [],
+  });
+}
 
 const me = (): MockParticipant => ({
   userId: MOCK_USER_ID,
@@ -171,7 +203,14 @@ function initial(): Map<string, MockPick> {
   picks.push(base('demo-pick', { createdAt: -1 }));
 
   // A friend's Pick: I'm a guest, so no host buttons.
-  picks.push(base('friend-pick', { category: 'activities', hostId: FRIEND_IDS[0], createdAt: -2 }));
+  picks.push(
+    base('friend-pick', {
+      category: 'activities',
+      candidates: mockPool({ category: 'activities', center: DEMO_CENTER, radiusM: 5000 }),
+      hostId: FRIEND_IDS[0],
+      createdAt: -2,
+    }),
+  );
 
   // Already in the final vote: shows the ballot (three finalists, two of them tied at #1).
   const vote = base('vote-pick', {
@@ -232,6 +271,8 @@ export function resetMockData() {
   timers.clear();
   scheduled.clear();
   mockPicks.clear();
+  mockBlocks.clear();
+  mockInvites.clear();
   for (const [id, pick] of initial()) mockPicks.set(id, pick);
   for (const id of listeners.keys()) emit(id);
 }
@@ -242,18 +283,33 @@ export function resetMockData() {
 export const isDone = (pick: MockPick, p: MockParticipant) =>
   pick.candidates.length > 0 && pick.candidates.every((c) => p.answers.has(c.placeId));
 
-export function createMockPick(input: CreatePickInput): MockPick {
+let customIdCounter = 0;
+export function createMockPick(input: CreatePickInput, hostId = MOCK_USER_ID): MockPick {
   const id = `mock-${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`;
+  const options = makeCustomOptions(
+    input.customOptions ?? [],
+    hostId,
+    input.center,
+    () =>
+      `${Date.now().toString(16).slice(-8).padStart(8, '0')}-0000-4000-8000-${(++customIdCounter).toString(16).padStart(12, '0')}`,
+  );
+  for (const option of options) customPlaces.set(option.placeId, option);
   const pick = base(id, {
+    hostId,
+    includeSaved: input.includeSaved,
+    customOptions: options,
+    mixCategory: input.mixCategory,
     state: 'draft',
     category: input.category,
     center: input.center,
     radiusM: input.radiusM,
+    priceMax: input.priceMax,
+    openNow: input.openNow,
     poolSize: input.poolSize,
     deadlineAt: input.deadlineAt,
     closeThreshold: input.closeThreshold,
     candidates: [],
-    participants: [me()],
+    participants: [{ ...me(), userId: hostId, name: hostId === MOCK_USER_ID ? 'You' : 'Host' }],
     createdAt: Date.now(),
   });
   mockPicks.set(id, pick);
@@ -414,15 +470,51 @@ export function progressOf(pick: MockPick): PickProgress {
   };
 }
 
-/** POST /picks/join rules: draft/swiping only; joining twice is a no-op. */
-export function joinMockPick(code: string): { pickId: string } | 'not_found' | 'closed' {
+/** POST /picks/join rules (0014): draft/swiping, unlocked, under 30; twice is a no-op. */
+export function joinMockPick(code: string): { pickId: string } | 'not_found' {
   const pick = [...mockPicks.values()].find((p) => p.joinCode === code);
-  if (!pick) return 'not_found';
+  return pick ? admitMe(pick) : 'not_found';
+}
+
+function admitMe(pick: MockPick): { pickId: string } | 'not_found' {
   if (pick.participants.some((p) => p.userId === MOCK_USER_ID)) return { pickId: pick.id };
-  if (pick.state !== 'draft' && pick.state !== 'swiping') return 'closed';
+  if (
+    (pick.state !== 'draft' && pick.state !== 'swiping') ||
+    pick.lobbyLocked ||
+    pick.participants.length >= 30 ||
+    mockBlocks.has(pick.hostId)
+  ) {
+    return 'not_found';
+  }
   pick.participants.push(me());
   emit(pick.id);
   return { pickId: pick.id };
+}
+
+// ---------------------------------------------------------------------------
+// Invite links and blocks (0014)
+// ---------------------------------------------------------------------------
+const TOKEN_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+export function createMockInvite(pick: MockPick, random: () => number = Math.random): string {
+  let token = '';
+  for (let i = 0; i < 22; i++) token += TOKEN_CHARS[Math.floor(random() * 64)];
+  mockInvites.set(token, { pickId: pick.id, revoked: false });
+  return token;
+}
+
+export function acceptMockInvite(token: string): { pickId: string } | 'not_found' {
+  const invite = mockInvites.get(token);
+  const pick = invite && !invite.revoked ? mockPicks.get(invite.pickId) : undefined;
+  return pick ? admitMe(pick) : 'not_found';
+}
+
+/** Only links I made (in mock mode, every link is mine). */
+export function revokeMockInvite(token: string): boolean {
+  const invite = mockInvites.get(token);
+  if (!invite) return false;
+  invite.revoked = true;
+  return true;
 }
 
 /** Lazily applies the deadline (the real deadline sweep runs every minute) and wakes the bots. */

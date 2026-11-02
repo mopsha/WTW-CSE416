@@ -1,3 +1,4 @@
+import type { PlaceFilters } from '@shared/domain/placeFilters.ts';
 import type { PickState } from '@shared/domain/pickState.ts';
 
 export type { PickState };
@@ -36,6 +37,10 @@ export interface Candidate {
   openNow?: boolean | null;
   /** ISO time it closes today, when known. */
   closesAt?: string | null;
+  note?: string | null;
+  provider?: 'mock' | 'google' | 'custom';
+  createdBy?: string;
+  locationProvided?: boolean;
 }
 
 export interface MyPreference {
@@ -52,8 +57,11 @@ export interface RankedPlace {
 
 export interface PickOutcome {
   state: PickState;
-  /** Only the host may close swiping and rank (POST /picks/:id/rank returns 403 otherwise). */
-  hostId: string;
+  /**
+   * Only the host may close swiping and rank (POST /picks/:id/rank returns 403 otherwise).
+   * Null once the host deleted their account (shown as "Deleted user").
+   */
+  hostId: string | null;
   winnerPlaceId: string | null;
   decidedBy: DecidedBy | null;
 }
@@ -74,16 +82,18 @@ export type RankDecision =
 export type DecidedBy = 'clear_winner' | 'vote' | 'tie_break';
 
 /** GET /picks/:id (Alan's lifecycle route): the Pick, MY candidate order and MY answers. */
-export interface PickDetail {
+export interface PickDetail extends PlaceFilters {
   id: string;
   state: PickState;
-  category: 'food' | 'activities';
+  category: 'food' | 'activities' | 'custom';
   center: { lat: number; lng: number };
   radiusM: number;
   poolSize: number;
   deadlineAt: string | null;
   closeThreshold: number;
   isHost: boolean;
+  /** The host deleted their account. Optional: older backends don't send it. */
+  hostDeleted?: boolean;
   participantCount: number;
   /** Already in this caller's per-person shuffle order. */
   candidates: Candidate[];
@@ -114,4 +124,6 @@ export interface PickProgress {
   doneCount: number;
   votedCount: number;
   total: number;
+  /** The host deleted their account. Optional: older backends don't send it. */
+  hostDeleted?: boolean;
 }

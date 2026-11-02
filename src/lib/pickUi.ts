@@ -2,11 +2,15 @@
 import type { Candidate, PickProgress, PickState } from './types';
 
 export function pickTitle(category: string | null | undefined): string {
-  return category === 'activities' ? 'Activities Pick' : 'Food Pick';
+  return category === 'custom'
+    ? 'Custom Plan'
+    : category === 'activities'
+      ? 'Activities Pick'
+      : 'Food Pick';
 }
 
 export function pickEmoji(category: string | null | undefined): string {
-  return category === 'activities' ? '🎳' : '🍜';
+  return category === 'custom' ? '✨' : category === 'activities' ? '🎳' : '🍜';
 }
 
 export const STATE_LABEL: Record<PickState, string> = {

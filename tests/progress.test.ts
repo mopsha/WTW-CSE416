@@ -82,3 +82,17 @@ test('during the final vote, the deadline is the vote deadline (not the long-pas
   expect(toProgress(s, 'a').deadlineAt).toBe('2026-10-20T10:40:00Z');
   expect(toProgress({ ...s, state: 'swiping' }, 'a').deadlineAt).toBe('2026-10-20T10:00:00Z');
 });
+
+test('a Pick whose host deleted their account has no host and says so', () => {
+  const p = toProgress(
+    snapshot({
+      state: 'canceled',
+      hostId: null,
+      participants: snapshot().participants.slice(0, 2),
+    }),
+    'a',
+  );
+  expect(p.hostDeleted).toBe(true);
+  expect(p.participants.some((x) => x.isHost)).toBe(false);
+  expect(toProgress(snapshot(), 'a').hostDeleted).toBe(false);
+});

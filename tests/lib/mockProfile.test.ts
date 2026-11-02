@@ -5,7 +5,15 @@ import { suggestedName } from '@/hooks/useProfile';
 import { MOCK_ACCESS_TOKEN, MOCK_USER_ID } from '@/lib/mock/auth';
 import { MOCK_API_BASE_URL, mockFetch } from '@/lib/mock/api';
 import { mockQueries } from '@/lib/mock/queries';
-import { mockPicks, mockProfile, progressOf, resetMockData, setMockBots } from '@/lib/mock/store';
+import { EMPTY_PREFERENCES } from '@shared/domain/preferences.ts';
+import {
+  mockPicks,
+  mockProfile,
+  progressOf,
+  resetMockData,
+  resetMockProfile,
+  setMockBots,
+} from '@/lib/mock/store';
 
 const api = createApiClient({
   baseUrl: MOCK_API_BASE_URL,
@@ -16,7 +24,7 @@ const api = createApiClient({
 beforeEach(() => {
   setMockBots(false);
   resetMockData();
-  mockProfile.displayName = null;
+  resetMockProfile();
 });
 
 test('a new mock account has no name, so the app asks for one', async () => {
@@ -43,4 +51,44 @@ test('the name step is prefilled from the email local part', () => {
   expect(suggestedName('jane.doe@stonybrook.edu')).toBe('jane.doe');
   expect(suggestedName('x'.repeat(60) + '@a.b')).toHaveLength(50);
   expect(suggestedName(null)).toBe('');
+});
+
+test('a new mock account has not finished onboarding (GET /me)', async () => {
+  await expect(api.getMe()).resolves.toEqual({
+    displayName: null,
+    preferences: EMPTY_PREFERENCES,
+    onboarded: false,
+  });
+});
+
+test('saving the survey marks onboarding done and reads back', async () => {
+  const preferences = { ...EMPTY_PREFERENCES, categories: ['food' as const], priceMax: 2 };
+  await expect(api.savePreferences(preferences)).resolves.toEqual({ preferences, onboarded: true });
+  await expect(api.getMe()).resolves.toMatchObject({ preferences, onboarded: true });
+});
+
+test('bad survey answers fail with 400 INVALID_INPUT like the server and change nothing', async () => {
+  await expect(api.savePreferences({ ...EMPTY_PREFERENCES, priceMax: 9 })).rejects.toMatchObject({
+    status: 400,
+    code: 'INVALID_INPUT',
+  });
+  expect(mockProfile.onboarded).toBe(false);
+});
+
+test('push tokens are validated and stored once', async () => {
+  await api.registerPushToken('ExponentPushToken[abc]', 'ios');
+  await api.registerPushToken('ExponentPushToken[abc]', 'ios');
+  expect(mockProfile.pushTokens).toEqual(['ExponentPushToken[abc]']);
+  await expect(api.registerPushToken('', 'android')).rejects.toMatchObject({ status: 400 });
+});
+
+test('DELETE /me leaves a brand-new account behind', async () => {
+  await api.updateMe('Mike');
+  await api.savePreferences({ ...EMPTY_PREFERENCES, priceMax: 1 });
+  await api.deleteMe();
+  await expect(api.getMe()).resolves.toEqual({
+    displayName: null,
+    preferences: EMPTY_PREFERENCES,
+    onboarded: false,
+  });
 });

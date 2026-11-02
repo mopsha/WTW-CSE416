@@ -1,10 +1,8 @@
-// Discover (M3): browse real places around Stony Brook. One fixed list (src/lib/discover.ts), the
-// same for everyone, until the real Discover feed (FR-17) lands. Tap a place for details,
-// directions, or to start a Pick.
+// Discover: bounded individual feed; preserve local fixture presentation in mock mode.
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   Linking,
@@ -19,6 +17,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useAuth } from '@/hooks/useAuth';
+import { api } from '@/lib/api';
+import { discoverPlace } from '@/lib/discoverFeed';
+import { messageOf } from '@/lib/errors';
+import { PlaceFilterControls } from '@/components/PlaceFilterControls';
+import { ErrorState } from '@/components/ErrorState';
 import { Button } from '@/components/Button';
 import { Chips as ChipGroup } from '@/components/Chips';
 import { EmptyState } from '@/components/EmptyState';
@@ -26,15 +30,16 @@ import { GradientButton } from '@/components/GradientButton';
 import { describePlace, PlacePhoto } from '@/components/PlaceCard';
 import { colors, flame, fonts, MIN_TARGET } from '@/components/theme';
 import {
-  DISCOVER_PLACES,
   filterDiscover,
   milesLabel,
   type DiscoverFilter,
   type DiscoverPlace,
 } from '@/lib/discover';
 import { haptic } from '@/lib/haptics';
-import { formatPriceLevel } from '@/lib/places';
+import { CAMPUS, formatPriceLevel } from '@/lib/places';
 import { directionsUrl } from '@/lib/pickUi';
+
+const EMPTY_PLACES: DiscoverPlace[] = [];
 
 const FILTERS = [
   { value: 'all' as const, label: 'All' },
@@ -47,7 +52,7 @@ function Cover({ place, style, big }: { place: DiscoverPlace; style: object; big
   if (place.photoUrl) return <PlacePhoto uri={place.photoUrl} style={style} />;
   return (
     <LinearGradient
-      colors={['#3A1E3A', '#24182E']}
+      colors={[colors.cardHi, colors.card]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={[style, styles.emojiCover]}
@@ -115,6 +120,28 @@ function PlaceRow({ place, onPress }: { place: DiscoverPlace; onPress: () => voi
 }
 
 function PlaceSheet({ place, onClose }: { place: DiscoverPlace | null; onClose: () => void }) {
+  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let active = true;
+    if (place)
+      api
+        .getSaved()
+        .then((result) => {
+          if (active) {
+            setSaved(result.places.some((p) => p.placeId === place.placeId));
+            setReady(true);
+          }
+        })
+        .catch((e) => {
+          if (active) setError(messageOf(e));
+        });
+    return () => {
+      active = false;
+    };
+  }, [place]);
   return (
     <Modal visible={!!place} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close details" />
@@ -128,13 +155,16 @@ function PlaceSheet({ place, onClose }: { place: DiscoverPlace | null; onClose: 
               accessibilityLabel="Close"
               style={styles.close}
             >
-              <Ionicons name="close" size={22} color="#FFFFFF" />
+              <Ionicons name="close" size={22} color={colors.primaryText} />
             </Pressable>
             <View style={styles.sheetBody}>
               <Text style={styles.sheetName} accessibilityRole="header">
                 {place.name}
               </Text>
               {place.address ? <Text style={styles.sheetAddress}>{place.address}</Text> : null}
+              {place.providerCredits?.length ? (
+                <Text style={styles.sub}>{[...new Set(place.providerCredits)].join(' · ')}</Text>
+              ) : null}
               <View style={styles.pills} accessible={false}>
                 {[
                   `${place.emoji} ${place.kind}`,
@@ -148,6 +178,22 @@ function PlaceSheet({ place, onClose }: { place: DiscoverPlace | null; onClose: 
                     </View>
                   ))}
               </View>
+              {error ? <ErrorState message={error} /> : null}
+              <Button
+                label={saved ? 'Remove saved place' : 'Save place'}
+                variant="secondary"
+                icon="bookmark-outline"
+                loading={busy}
+                disabled={!ready}
+                onPress={() => {
+                  setBusy(true);
+                  setError(null);
+                  void (saved ? api.removeSaved(place.placeId) : api.savePlace(place.placeId))
+                    .then(() => setSaved(!saved))
+                    .catch((e) => setError(messageOf(e)))
+                    .finally(() => setBusy(false));
+                }}
+              />
               <GradientButton
                 label="Get directions 🚗"
                 accessibilityHint={`Opens ${Platform.OS === 'ios' ? 'Apple Maps' : 'Google Maps'}`}
@@ -174,21 +220,66 @@ function PlaceSheet({ place, onClose }: { place: DiscoverPlace | null; onClose: 
 }
 
 export default function DiscoverScreen() {
+  const { session } = useAuth();
+  const userId = session?.user.id;
+  const [response, setResponse] = useState<{
+    key: string;
+    places: DiscoverPlace[];
+    notice: string | null;
+    error: string | null;
+  } | null>(null);
+  const [retry, setRetry] = useState(0);
+  const [priceMax, setPriceMax] = useState(-1);
+  const [openNow, setOpenNow] = useState(false);
+  const [radiusM, setRadiusM] = useState(5000);
   const [filter, setFilter] = useState<DiscoverFilter>('all');
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState<DiscoverPlace | null>(null);
 
+  const requestKey = JSON.stringify([filter, radiusM, priceMax, openNow, retry, userId]);
+  const current = response?.key === requestKey ? response : null;
+  const feed = current?.places ?? EMPTY_PLACES;
+  const notice = current?.notice ?? null;
+  const error = current?.error ?? null;
+  const loading = !current;
+  useEffect(() => {
+    let active = true;
+    api
+      .discover({
+        ...CAMPUS,
+        category: filter,
+        radiusM,
+        priceMax: priceMax < 0 ? undefined : priceMax,
+        openNow,
+      })
+      .then((result) => {
+        if (active)
+          setResponse({
+            key: requestKey,
+            places: result.places.map((p) => discoverPlace(p, CAMPUS)),
+            notice: result.notice,
+            error: null,
+          });
+      })
+      .catch((e) => {
+        if (active) setResponse({ key: requestKey, places: [], notice: null, error: messageOf(e) });
+      });
+    return () => {
+      active = false;
+    };
+  }, [filter, radiusM, priceMax, openNow, requestKey]);
+
   const places = useMemo(
-    () => filterDiscover(DISCOVER_PLACES, { category: filter, query }),
-    [filter, query],
+    () => filterDiscover(feed, { category: filter, query }),
+    [feed, filter, query],
   );
   // "Near campus": the closest places with photos, only when not searching.
   const featured = useMemo(
     () =>
-      filterDiscover(DISCOVER_PLACES, { category: filter })
+      filterDiscover(feed, { category: filter })
         .filter((p) => p.photoUrl)
         .slice(0, 6),
-    [filter],
+    [feed, filter],
   );
   const showFeatured = !query.trim() && featured.length > 0;
   const show = (p: DiscoverPlace) => {
@@ -214,7 +305,9 @@ export default function DiscoverScreen() {
                 Discover
               </Text>
               <Text style={styles.sub}>
-                {DISCOVER_PLACES.length} spots near campus to eat, see and do.
+                {loading
+                  ? 'Finding places…'
+                  : `${feed.length} spots near campus to eat, see and do.`}
               </Text>
             </View>
 
@@ -249,6 +342,28 @@ export default function DiscoverScreen() {
               accessibilityLabel="Show"
             />
 
+            <PlaceFilterControls
+              priceMax={priceMax}
+              openNow={openNow}
+              onPrice={setPriceMax}
+              onOpen={setOpenNow}
+            />
+            <ChipGroup
+              options={[
+                { value: 1000, label: '1 km' },
+                { value: 5000, label: '5 km' },
+                { value: 16000, label: '16 km' },
+              ]}
+              value={radiusM}
+              onChange={setRadiusM}
+              accessibilityLabel="Search radius"
+            />
+            {notice ? (
+              <Text style={styles.sub}>{notice}</Text>
+            ) : current && !error ? (
+              <Text style={styles.sub}>Places from Google Maps</Text>
+            ) : null}
+            {error ? <ErrorState message={error} onRetry={() => setRetry((n) => n + 1)} /> : null}
             {showFeatured ? (
               <View style={{ gap: 10 }}>
                 <Text style={styles.section}>Near campus 🔥</Text>
@@ -273,14 +388,20 @@ export default function DiscoverScreen() {
           </View>
         }
         ListEmptyComponent={
-          <EmptyState
-            emoji="🧭"
-            title="Nothing matches"
-            body="Try another word, or switch the filter to All."
-          />
+          loading || error ? null : (
+            <EmptyState
+              emoji="🧭"
+              title="Nothing matches"
+              body="Try another word, or switch the filter to All."
+            />
+          )
         }
       />
-      <PlaceSheet place={open} onClose={() => setOpen(null)} />
+      <PlaceSheet
+        key={`${userId}:${open?.placeId}`}
+        place={feed.some((p) => p.placeId === open?.placeId) ? open : null}
+        onClose={() => setOpen(null)}
+      />
     </SafeAreaView>
   );
 }

@@ -20,6 +20,7 @@ import { colors, fonts } from './theme';
 export function describePlace(place: Candidate): string {
   const parts = [place.name];
   if (place.cuisine) parts.push(place.cuisine);
+  if (place.note) parts.push(place.note);
   const price = formatPriceLevel(place.priceLevel);
   if (price) parts.push(`price ${price.length} of 4`);
   const miles = milesFromCampus(place);
@@ -86,6 +87,7 @@ export function PlaceCard({ place: base, onInfo }: { place: Candidate; onInfo?: 
             </View>
           ) : null}
         </Pressable>
+        {place.note ? <Text style={styles.address}>{place.note}</Text> : null}
         {place.address ? (
           <Text style={styles.address} numberOfLines={1}>
             {place.address}

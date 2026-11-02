@@ -1,4 +1,5 @@
 -- Join codes, joining by code, and cross-table security checks (Razin, M3).
+-- Since 0014, pick_join returns { ok, pickId } / { ok: false, reason } instead of raising.
 -- Run: supabase db reset && supabase test db
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -42,22 +43,19 @@ select ok(
 -- ---------------------------------------------------------------- joining (as the API)
 set local role service_role;
 select is(
-  pick_join((select code from codes where name = 'main'), '62222222-2222-4222-8222-222222222222'),
+  (pick_join((select code from codes where name = 'main'), '62222222-2222-4222-8222-222222222222') ->> 'pickId')::uuid,
   (select id from pk where name = 'main'), 'join works with a valid code and returns the Pick id');
 select is(
-  pick_join((select code from codes where name = 'main'), '62222222-2222-4222-8222-222222222222'),
+  (pick_join((select code from codes where name = 'main'), '62222222-2222-4222-8222-222222222222') ->> 'pickId')::uuid,
   (select id from pk where name = 'main'), 'joining twice still succeeds');
 select is(
   (select count(*)::int from pick_participants
    where pick_id = (select id from pk where name = 'main') and user_id = '62222222-2222-4222-8222-222222222222'),
   1, 'joining twice leaves one participant row');
 
-select throws_ok($$select pick_join('ZZZZZZ', '62222222-2222-4222-8222-222222222222')$$,
-  'PT404', null, 'an unknown code is rejected');
-select throws_ok($$select pick_join('not a code', '62222222-2222-4222-8222-222222222222')$$,
-  'PT404', null, 'a malformed code is rejected');
-select throws_ok($$select pick_join(null, '62222222-2222-4222-8222-222222222222')$$,
-  'PT404', null, 'a null code is rejected');
+select is(pick_join('ZZZZZZ', '62222222-2222-4222-8222-222222222222') ->> 'reason', 'invalid', 'an unknown code is rejected');
+select is(pick_join('not a code', '62222222-2222-4222-8222-222222222222') ->> 'reason', 'invalid', 'a malformed code is rejected');
+select is(pick_join(null, '62222222-2222-4222-8222-222222222222') ->> 'reason', 'invalid', 'a null code is rejected');
 reset role;
 
 update pick_join_codes set expires_at = now() - interval '1 second'
@@ -67,20 +65,16 @@ update picks set state = 'completed' where id = (select id from pk where name = 
 update picks set state = 'final_vote' where id = (select id from pk where name = 'final_vote');
 
 set local role service_role;
-select throws_ok(
-  format('select pick_join(%L, %L)', (select code from codes where name = 'expired'), '62222222-2222-4222-8222-222222222222'),
-  'PT404', null, 'an expired code is rejected');
-select throws_ok(
-  format('select pick_join(%L, %L)', (select code from codes where name = 'canceled'), '62222222-2222-4222-8222-222222222222'),
-  'PT409', null, 'a canceled Pick cannot be joined');
-select throws_ok(
-  format('select pick_join(%L, %L)', (select code from codes where name = 'completed'), '62222222-2222-4222-8222-222222222222'),
-  'PT409', null, 'a completed Pick cannot be joined');
-select throws_ok(
-  format('select pick_join(%L, %L)', (select code from codes where name = 'final_vote'), '62222222-2222-4222-8222-222222222222'),
-  'PT409', null, 'a Pick in its final vote cannot be joined');
 select is(
-  pick_join((select code from codes where name = 'completed'), '61111111-1111-4111-8111-111111111111'),
+  pick_join((select code from codes where name = 'expired'), '62222222-2222-4222-8222-222222222222') ->> 'reason', 'invalid', 'an expired code is rejected');
+select is(
+  pick_join((select code from codes where name = 'canceled'), '62222222-2222-4222-8222-222222222222') ->> 'reason', 'invalid', 'a canceled Pick cannot be joined');
+select is(
+  pick_join((select code from codes where name = 'completed'), '62222222-2222-4222-8222-222222222222') ->> 'reason', 'invalid', 'a completed Pick cannot be joined');
+select is(
+  pick_join((select code from codes where name = 'final_vote'), '62222222-2222-4222-8222-222222222222') ->> 'reason', 'invalid', 'a Pick in its final vote cannot be joined');
+select is(
+  (pick_join((select code from codes where name = 'completed'), '61111111-1111-4111-8111-111111111111') ->> 'pickId')::uuid,
   (select id from pk where name = 'completed'), 'an existing participant may reopen a finished Pick by code');
 select is(
   (select count(*)::int from pick_participants
@@ -94,7 +88,7 @@ select pick_start((select id::text from pk where name = 'main'), '61111111-1111-
 create temporary table v_before on commit drop as
   select version from picks where id = (select id from pk where name = 'main');
 select is(
-  pick_join('  ' || lower((select code from codes where name = 'main')) || ' ', '63333333-3333-4333-8333-333333333333'),
+  (pick_join('  ' || lower((select code from codes where name = 'main')) || ' ', '63333333-3333-4333-8333-333333333333') ->> 'pickId')::uuid,
   (select id from pk where name = 'main'), 'a swiping Pick can be joined; case and spaces are ignored');
 select ok(
   (select version from picks where id = (select id from pk where name = 'main')) > (select version from v_before),

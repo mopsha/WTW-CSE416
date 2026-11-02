@@ -1,3 +1,4 @@
+import { HangCard } from '@/components/HangCard';
 // Picks (home), in the live-demo style: the newest active Pick as a photo-collage hero card,
 // other active Picks below, and decided/canceled ones under History (the saved results).
 import { Ionicons } from '@expo/vector-icons';
@@ -26,14 +27,17 @@ import { EmptyState } from '@/components/EmptyState';
 import { ErrorBanner } from '@/components/ErrorBanner';
 import { GradientButton } from '@/components/GradientButton';
 import { JoinCodeCard } from '@/components/JoinCodeCard';
+import { NotificationBell } from '@/components/NotificationBell';
 import { PlacePhoto } from '@/components/PlaceCard';
 import { colors, flame, fonts, MIN_TARGET } from '@/components/theme';
 import { useSession } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { USE_MOCK } from '@/lib/config';
 import { messageOf } from '@/lib/errors';
+import { memberCountLabel, newGroupPickRoute, type GroupSummary } from '@/lib/groups';
 import { haptic } from '@/lib/haptics';
 import { MOCK_PLACES } from '@/lib/mock/fixtures';
+import { resetMockGroups } from '@/lib/mock/groups';
 import { MOCK_INVITE_CODE, resetMockData } from '@/lib/mock/store';
 import { pickEmoji, pickTitle, STATE_LABEL } from '@/lib/pickUi';
 import { queries } from '@/lib/queries';
@@ -154,10 +158,56 @@ function PickRow({ pick }: { pick: PickSummary }) {
   );
 }
 
+/** Start a Pick for a group in one tap (then "Create Pick" opens the Lobby with everyone in). */
+function GroupsShortcut({ groups }: { groups: GroupSummary[] }) {
+  return (
+    <View style={{ gap: 10 }}>
+      <View style={styles.sectionRow}>
+        <Text style={styles.section} accessibilityRole="header">
+          Your groups
+        </Text>
+        <Button
+          label={groups.length ? 'All groups' : 'New group'}
+          variant="link"
+          onPress={() => router.push('/groups')}
+        />
+      </View>
+      {groups.slice(0, 3).map((g) => (
+        <View key={g.id} style={styles.row}>
+          <View style={styles.rowIcon}>
+            <Ionicons name="people" size={22} color={colors.text} />
+          </View>
+          <Pressable
+            style={{ flex: 1, gap: 2, minHeight: MIN_TARGET, justifyContent: 'center' }}
+            onPress={() => router.push({ pathname: '/groups/[id]', params: { id: g.id } })}
+            accessibilityRole="button"
+            accessibilityLabel={`${g.name}, ${memberCountLabel(g.memberCount)}`}
+            accessibilityHint="Opens the group"
+          >
+            <Text style={styles.rowTitle}>{g.name}</Text>
+            <Text style={styles.rowState}>{memberCountLabel(g.memberCount)}</Text>
+          </Pressable>
+          <Button
+            label="Start"
+            icon="flame"
+            variant="secondary"
+            onPress={() => {
+              haptic.tap();
+              router.push(newGroupPickRoute(g));
+            }}
+            accessibilityLabel={`Start a Pick with ${g.name}`}
+          />
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export default function PicksScreen() {
   const session = useSession();
   const { displayName } = useProfile();
   const [picks, setPicks] = useState<PickSummary[] | null>(null);
+  const [groups, setGroups] = useState<GroupSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -168,6 +218,8 @@ export default function PicksScreen() {
     } catch (e) {
       setError(messageOf(e));
     }
+    // Groups are a shortcut here; if they fail to load, Picks still work.
+    setGroups(await queries.listMyGroups(session.user.id).catch(() => []));
   }, [session.user.id]);
 
   // Reload whenever Picks comes back into focus (e.g. after a Pick is decided).
@@ -180,6 +232,7 @@ export default function PicksScreen() {
   const resetDemo = () => {
     haptic.success();
     resetMockData();
+    resetMockGroups();
     void load();
   };
 
@@ -219,14 +272,17 @@ export default function PicksScreen() {
               <Text style={styles.logoText}>wtw</Text>
             </LinearGradient>
           </Pressable>
-          <Pressable
-            onPress={() => router.push('/pick/new')}
-            accessibilityRole="button"
-            accessibilityLabel="Create a Pick"
-            style={styles.iconBtn}
-          >
-            <Ionicons name="add" size={26} color={colors.text} />
-          </Pressable>
+          <View style={styles.headerActions}>
+            <NotificationBell />
+            <Pressable
+              onPress={() => router.push('/pick/new')}
+              accessibilityRole="button"
+              accessibilityLabel="Create a Pick"
+              style={styles.iconBtn}
+            >
+              <Ionicons name="add" size={26} color={colors.text} />
+            </Pressable>
+          </View>
         </View>
 
         <View style={{ gap: 4 }}>
@@ -237,6 +293,8 @@ export default function PicksScreen() {
         </View>
 
         <JoinCodeCard />
+
+        <GroupsShortcut groups={groups} />
 
         {USE_MOCK ? (
           <View style={styles.mock}>
@@ -276,6 +334,7 @@ export default function PicksScreen() {
           <GradientButton label="Start a new Pick 🔥" onPress={() => router.push('/pick/new')} />
         ) : null}
 
+        <HangCard />
         {hero ? <HeroCard pick={hero} /> : null}
         {more.length ? <Text style={styles.section}>More Picks</Text> : null}
         {more.map((p) => (
@@ -285,6 +344,13 @@ export default function PicksScreen() {
         {history.map((p) => (
           <PickRow key={p.id} pick={p} />
         ))}
+        {history.length ? (
+          <Button
+            label="See winners, who went, and Pick again"
+            variant="link"
+            onPress={() => router.push('/history')}
+          />
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -303,6 +369,7 @@ const styles = StyleSheet.create({
     transform: [{ rotate: '-8deg' }],
   },
   logoText: { fontFamily: fonts.black, fontSize: 18, color: '#FFFFFF', letterSpacing: -0.5 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   iconBtn: {
     width: MIN_TARGET,
     height: MIN_TARGET,
@@ -316,6 +383,7 @@ const styles = StyleSheet.create({
   mock: { gap: 8, padding: 12, borderRadius: 18, backgroundColor: colors.infoBg },
   mockText: { fontFamily: fonts.medium, fontSize: 14, color: colors.text },
   section: { fontFamily: fonts.bold, fontSize: 18, color: colors.text, marginTop: 6 },
+  sectionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   pickCard: {
     backgroundColor: colors.card,
     borderRadius: 28,

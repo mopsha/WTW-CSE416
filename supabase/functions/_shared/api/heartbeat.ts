@@ -10,7 +10,7 @@ import type { LatLng } from '../domain/geo.ts';
 
 export interface PickSnapshot {
   id: string;
-  hostId: string;
+  hostId: string | null;
   state: PickState;
   center: LatLng;
   participantIds: string[];
