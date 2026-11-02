@@ -53,20 +53,25 @@ export function mockPickPool(pick: MockPick, rotate = false): MockPlace[] {
     address: null,
     ...p,
   });
+  const category = pick.category === 'custom' ? pick.mixCategory : pick.category;
   const priority: MockPlace[] = (pick.customOptions ?? []).map(display);
   if (pick.includeSaved) {
     const owned = new Map([
-      ...fixtures.map(
-        (p) =>
-          [
-            p.placeId,
-            p.category === 'food'
-              ? (MOCK_PLACES[Number(p.placeId.slice(-2)) - 1] ?? display(p))
-              : display(p),
-          ] as const,
-      ),
-      ...MOCK_PLACES.map((p) => [p.placeId, p] as const),
-      ...[...customPlaces].map(([id, p]) => [id, display(p)] as const),
+      ...fixtures
+        .filter((p) => p.category === category)
+        .map(
+          (p) =>
+            [
+              p.placeId,
+              p.category === 'food'
+                ? (MOCK_PLACES[Number(p.placeId.slice(-2)) - 1] ?? display(p))
+                : display(p),
+            ] as const,
+        ),
+      ...(category === 'food' ? MOCK_PLACES.map((p) => [p.placeId, p] as const) : []),
+      ...[...customPlaces]
+        .filter(() => pick.category === 'custom')
+        .map(([id, p]) => [id, display(p)] as const),
     ]);
     priority.push(
       ...[...savedPlaces.keys()]
@@ -88,7 +93,6 @@ export function mockPickPool(pick: MockPick, rotate = false): MockPlace[] {
         ),
     );
   }
-  const category = pick.category === 'custom' ? pick.mixCategory : pick.category;
   let found = category ? mockPool({ ...pick, category }) : [];
   if (rotate) {
     const shift = Math.floor(found.length / 3);

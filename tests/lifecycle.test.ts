@@ -311,6 +311,7 @@ test('includeSaved loads the host only, filters radius, precedes external candid
       { ...candidate('saved'), name: 'Saved metadata' },
       candidate('saved'),
       { ...candidate('outside'), lat: 10 },
+      { ...candidate('wrong-category'), category: 'activities' as const },
     ]),
   };
   const pool = poolOf([candidate('saved'), candidate('cache'), candidate('google-fixture')]);

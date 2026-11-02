@@ -243,6 +243,9 @@ async function buildCandidates(
     priority.push(
       ...saved.filter(
         (p) =>
+          (pick.category === 'custom'
+            ? p.category === 'custom' || p.category === pick.mixCategory
+            : p.category === pick.category) &&
           (p.provider !== 'custom' || p.locationProvided === true) &&
           distanceMeters(pick.center, p) <= pick.radiusM &&
           matchesFilters(p, pick, new Date()),

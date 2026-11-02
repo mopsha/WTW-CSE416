@@ -110,7 +110,7 @@ export function createApp(
       remove(userId: string, placeId: string): Promise<void>;
     };
     checkLimit?: (
-      scope: 'create' | 'start' | 'refresh',
+      scope: 'create' | 'start' | 'refresh' | 'discover',
       userId: string,
       pickId?: string,
     ) => Promise<void>;
@@ -215,6 +215,7 @@ export function createApp(
     const requests = parseDiscover(new URL(c.req.url).searchParams);
     if (!deps.discoverStore || !deps.discoverPool)
       throw new ApiError(503, 'NOT_CONFIGURED', 'Discover is unavailable');
+    await deps.checkLimit?.('discover', user.id);
     const result = await discover(
       deps.discoverPool,
       requests,

@@ -50,11 +50,12 @@ cascade.
 | Custom places | `places` rows with `source = 'custom'`, `created_by` | Candidates for a Custom Plan | Participants of Picks that use them | With the Picks | Creator stripped; text stays (same decision) |
 | Invite links | `invite_links` (token, kind, target, `created_by`, expiry, uses) | Join by link | The creator (RLS); the server checks tokens | 7 days, then useless | Yes |
 | Join attempts | `join_attempts` (user, code or link, time) | Rate-limiting guesses at codes and links | Nobody but the server | No cleanup job yet | Yes |
-| Rate-limit events | `rate_limit_events` (user, action, time); `rate_limit_counters` (scope, subject = user or Pick id, bucket) | Abuse limits on friend requests, reports, invites, creates, starts | Nobody but the server | No cleanup job yet | Events: yes. Counters: no user FK, kept until the bucket expires |
+| Rate-limit events | `rate_limit_events` (user, action, time); `rate_limit_counters` (scope, subject = user or Pick id, bucket) | Abuse limits on friend requests, reports, invites, creates, starts, refreshes and Discover | Nobody but the server | No cleanup job yet | Events: yes. Per-user create/Discover counters explicitly removed on account deletion; Pick counters are not user-keyed |
 | Blocks | `blocks` (blocker, blocked) | Keeping someone away from you | Only the blocker | Until unblocked | Yes |
 | Reports | `reports` (reporter, target kind and id, reason text) | Moderation | Nobody but the server (Razin reviews in the dashboard) | No retention rule yet | Yes, **which also erases the report**; retention rule still to decide |
 | Hang posts | `hang_posts` (author, activity text, start/expiry, audience, group) | "Looking to hang" | Today only the author (friend/group audience not finished) | Until expired; no cleanup job yet | Yes |
 | Hang responses | `hang_responses` (down / maybe / can't) | Replies to a hang post | The post's author and you | With the post | Yes |
+| Search cache | `place_cache` (search coordinates/radius/category, owned fixture content or Google IDs only) | Reuse owned searches without provider calls | Nobody but the server | Five-minute read TTL; expired rows deleted daily | No user identity stored; global query cache |
 | Google usage | `provider_usage` (provider, day, call count) | Daily cap on Google Places | Nobody but the server | Indefinitely | Not personal data (no user id) |
 | "Did you go?" launch time | `private.feature_launches` | Prompts only Picks decided after launch | Nobody but the server | Indefinitely | Not personal data |
 

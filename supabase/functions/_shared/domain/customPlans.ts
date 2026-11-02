@@ -20,7 +20,7 @@ export interface StoredCustomOption extends Candidate {
   locationProvided: boolean;
 }
 
-/** No teammate text filter exists in this checkout. This validates shape/length only. */
+/** Shape/length validation; API parsing also applies the shared text filter. */
 export function customOptionsProblem(value: unknown): string | null {
   if (!Array.isArray(value) || value.length < 2 || value.length > 20) return 'Enter 2–20 options.';
   for (const option of value) {

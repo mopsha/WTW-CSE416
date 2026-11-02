@@ -1,7 +1,7 @@
 import { SEARCH_TTL_MS } from '../places/cache.ts';
 
 export interface CacheCleanupStore {
-  /** Future durable adapter must atomically claim the UTC day and delete <= cutoff. */
+  /** Atomically claim the UTC day and delete expired rows at or before the cutoff. */
   deleteExpiredOnce(day: string, cutoff: string): Promise<{ removed: number; ran: boolean }>;
 }
 export async function cleanupCache(store?: CacheCleanupStore, now = new Date()) {

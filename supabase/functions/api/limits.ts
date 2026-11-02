@@ -2,7 +2,7 @@ import { ApiError } from '../_shared/api/errors.ts';
 import { budgetedHttp } from '../_shared/places/budget.ts';
 import { createServiceClient } from './serviceClient.ts';
 
-export type LimitScope = 'create' | 'start' | 'refresh';
+export type LimitScope = 'create' | 'start' | 'refresh' | 'discover';
 export async function checkUserLimit(scope: LimitScope, userId: string, pickId?: string) {
   const { data, error } = await createServiceClient().rpc('consume_user_limit', {
     p_scope: scope,

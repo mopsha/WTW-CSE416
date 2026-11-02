@@ -338,8 +338,8 @@ flowchart TD
     Discover --> Providers[Configured Google or mock PoolBuilder]
     Providers --> Budget[Atomic UTC-day Google call cap]
     Budget --> Google[Google Places: request-scoped content]
-    Providers --> Cache[Bounded memory cache: owned content or Google IDs]
-    API -->|create/start/refresh limits| Limits[Atomic user and per-Pick counters]
+    Providers --> Cache[Service-only place_cache: owned content or Google IDs]
+    API -->|Discover/create/start/refresh limits| Limits[Atomic user and per-Pick counters]
     Limits --> DB
     API --> Lifecycle[Existing canonical create/start/refresh/swipe/close/vote]
     Saved[Host saved fixtures and authorized custom places] --> Priority[Custom options then saved then provider results; deduplicate]
@@ -350,12 +350,12 @@ flowchart TD
     Google -.->|group mixing blocked: snapshot retention contract| Priority
     API --> Hang[Own active hang posts; expiry and restrictive RLS]
     Hang --> DB
-    Graph[Razin accepted friends, blocks and group helpers: absent] -.-> Hang
-    Invites[Alan atomic exact-participant create and backend notify: absent] -.-> Hang
+    Graph[Integrated friends, blocks and groups; HangStore not wired] -.-> Hang
+    Invites[Exact-down atomic creation helper missing; notifier available] -.-> Hang
     Cron[Existing every-minute pg_cron/pg_net] -->|secret-authenticated internal sweep| API
     API --> Sweep[Canonical deadline closers]
     API --> Cleanup[Daily UTC cache-cleanup hook and removed-row log]
-    Durable[place_cache schema and atomic cleanup adapter: absent] -.-> Cleanup
+    Durable[place_cache and atomic daily cleanup RPC] --> Cleanup
     Sweep --> Lifecycle
 ```
 
@@ -366,7 +366,7 @@ call before HTTP; releases keep the provider key on the backend. Group start/ref
 still use persistable data, with the Google snapshot guard enforced.
 
 Phase 2 `includeSaved` persists through `POST /picks` and loads only the host's saves
-at start/refresh. Radius and price/open constraints apply before saved candidates
+at start/refresh. Category, radius and price/open constraints apply before saved candidates
 are placed ahead of external results. First ID wins, then the deck is bounded.
 Google saved hydration remains blocked; no Google retention safeguard was relaxed.
 
@@ -377,23 +377,23 @@ Refresh retains their IDs. Six one-tap templates and typed names/notes are avail
 in New Pick. Unlocated custom options use a marked neutral ranking point at the
 Pick center; the client hides it and suppresses directions. Optional nearby mixing
 uses the existing provider contract; live Google mixing remains blocked by Phase 1.
-Razin's optional text filter is absent, so shape/length validation is implemented
-without inventing a replacement moderation system.
+API parsing applies Razin's shared text filter to names and notes before writes.
 
 `0016_hang_posts.sql` adds posts/responses with audience/status checks, one response
 per user/post, expiry and RLS. The minimal Picks-tab card and compose sheet save/list
-own active posts. Accepted-friend/group/block helpers are absent, so shared reads
-and responses fail closed, group composition is unavailable, and shared activity
-is explicitly shown as unavailable. Alan's existing create helper is host-only;
-no exact-responder invite or backend notify helper exists. Creating a Pick from
-down responses is explicitly BLOCKED rather than implemented with extra participants.
-The local device notification helper is not used as a cross-user notification system.
+own active posts. Social schemas and backend notifications now exist, but production
+HangStore remains unwired for shared visibility and response authorization. An atomic
+exact-down-responder creation helper is still missing; default createPick inserts
+the host even when the host has not answered down. Responses and Let's Pick remain
+503, with fail-closed RLS. Recommend explicit M4 deferral; this is not a completed
+shared hang feature and the team has not yet marked it Cut.
 
 The existing secret-authenticated deadline sweep is retained. A separate cleanup
 hook takes the UTC day and existing five-minute search TTL cutoff, reports deletion
-counts, and leaves completed deadline work intact on failure. The durable
-`place_cache` table/adapter is absent; production reports the cleanup as blocked.
-No daily row deletion is claimed. See [decisions](decisions.md) for budgets,
+counts, and leaves completed deadline work intact on failure. Migration 0021 supplies
+the durable service-only cache and atomic daily claim/delete RPC. Owned fixture
+searches are cache-first across isolates; Google ID-only entries do not provide
+cached Google display content. Discover requests are capped at 20/user/UTC day. See [decisions](decisions.md) for budgets,
 retention, integration contracts and remaining teammate dependencies.
 
 Validation is local: Jest/client-domain tests, Deno routes/typecheck, SQL storage/RLS
@@ -409,10 +409,10 @@ EAS build, friendship integration or notification delivery is claimed here.
 | Supabase Auth / Postgres / RLS | Auth-derived owners, saved IDs, custom creator/source provenance, private quota counters and fail-closed hang storage. |
 | Hono Edge Function | One API for Discover, Picks, saves, hang endpoints and secret-authenticated sweep. |
 | Google Places adapter | Existing search/hours normalization, timeouts, request-only content and fixture fallback; backend-only release credentials. |
-| Atomic SQL counters | Google calls per UTC day, Pick creates per user/day, start/refresh attempts per Pick. |
-| PoolBuilder and memory cache | Provider abstraction with five-minute owned-result TTL; Google ID-only entries. Durable cache/cleanup adapter is pending. |
+| Atomic SQL counters | Google calls per UTC day, Discover and Pick creates per user/day, start/refresh attempts per Pick. |
+| PoolBuilder and service-only place_cache | Five-minute owned-result TTL and Google ID-only entries; atomic daily cleanup. Google display hydration still requires live calls. |
 | Canonical Pick engine and RPCs | Reused unchanged for custom swipe/rank/final vote; no second decision engine. |
-| pg_cron / pg_net | Existing every-minute deadline sweep; daily cache-cleanup hook awaits durable storage. |
+| pg_cron / pg_net | Existing every-minute deadline sweep; daily atomic expired-cache cleanup and removed-row logging. |
 | Jest / Deno / SQL checks | Exercise custom flow, saved priority, expiry/access contracts, endpoint behavior and storage/RLS. |
 | GitHub Actions | Existing PR/main checks and configured main-only backend deployment; this branch was not merged or deployed. |
 

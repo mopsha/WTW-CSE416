@@ -44,3 +44,24 @@ test('save is idempotent, list and delete round trip', async () => {
   await api.removeSaved('sbu-act-01');
   expect((await api.getSaved()).places.some((p) => p.placeId === 'sbu-act-01')).toBe(false);
 });
+
+test('saved food never enters an Activities Pick, and saved activities stay deduplicated', async () => {
+  await api.savePlace('sbu-food-01');
+  await api.savePlace('sbu-act-01');
+  const { pickId } = await api.createPick({
+    category: 'activities',
+    center: DEMO_CENTER,
+    radiusM: 16000,
+    poolSize: 10,
+    deadlineAt: null,
+    closeThreshold: 100,
+    includeSaved: true,
+  });
+  const pick = mockPicks.get(pickId)!;
+  pick.participants.push({ userId: 'friend', name: 'Friend', answers: new Map(), vote: null });
+  await api.startPick(pickId);
+  expect(pick.candidates.every((p) => p.placeId.startsWith('sbu-act-'))).toBe(true);
+  expect(new Set(pick.candidates.map((p) => p.placeId)).size).toBe(pick.candidates.length);
+  await api.removeSaved('sbu-food-01');
+  await api.removeSaved('sbu-act-01');
+});

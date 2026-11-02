@@ -118,7 +118,29 @@ test('empty fallback still reports fallback and a failed branch does not hide ot
 
 test('counter storage failure fails closed before paid HTTP', async () => {
   const http = jest.fn();
-  const request = budgetedHttp(async () => {throw new Error('storage unavailable');}, http);
+  const request = budgetedHttp(async () => {
+    throw new Error('storage unavailable');
+  }, http);
   await expect(request('https://example.test', {})).rejects.toThrow('storage unavailable');
   expect(http).not.toHaveBeenCalled();
+});
+
+test('an empty filtered fallback still reports fallback rather than a successful live feed', async () => {
+  const pool = createPoolBuilder(
+    {
+      search: async () => {
+        throw new ProviderCapError();
+      },
+    },
+    {
+      provider: 'google',
+      fallback: { search: async () => [place] },
+    },
+  );
+  const result = await discover(
+    pool,
+    [{ center, category: 'food', radiusM: 1000, poolSize: 20, priceMax: 0 }],
+    {},
+  );
+  expect(result).toMatchObject({ fallback: true, places: [] });
 });

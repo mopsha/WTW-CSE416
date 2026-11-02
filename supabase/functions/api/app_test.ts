@@ -1955,3 +1955,28 @@ Deno.test('text other people see is filtered: POST /me', async () => {
   equal(res.status, 400);
   equal((await res.json()).error.code, 'TEXT_NOT_ALLOWED');
 });
+
+Deno.test('Discover rate limit is checked before profile or provider access', async () => {
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async () => ({ id: ANN }),
+    checkLimit: async (scope, userId) => {
+      equal(scope, 'discover');
+      equal(userId, ANN);
+      throw new ApiError(429, 'RATE_LIMITED', 'Request limit reached');
+    },
+    discoverPool: poolBuilder,
+    discoverStore: {
+      preferences: async () => {
+        throw new Error('Must not read preferences');
+      },
+      saved: async () => [],
+      save: async () => {},
+      remove: async () => {},
+    },
+  });
+  equal((await app.request('/discover?lat=40&lng=-73')).status, 429);
+});

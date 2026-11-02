@@ -147,9 +147,12 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
       } catch {
         log('cache_failed');
       }
-      return structuredClone(
-        candidates.filter((p) => matchesFilters(p, request, now())).slice(0, request.poolSize),
-      );
+      const filtered = candidates
+        .filter((p) => matchesFilters(p, request, now()))
+        .slice(0, request.poolSize);
+      // Preserve the fallback notice even when strict filters remove every fixture.
+      if (!filtered.length && source !== mode) throw new NoCandidatesError(true);
+      return structuredClone(filtered);
     },
   };
 }
