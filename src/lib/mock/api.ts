@@ -23,6 +23,7 @@ import { createPoolBuilder } from '@shared/places/pool.ts';
 import { MockProvider } from '@shared/places/MockProvider.ts';
 import {
   handleMockGroups,
+  mockCopyGroupMembers,
   mockCreateGroupPick,
   mockGetGroup,
   mockGroupOfPick,
@@ -452,20 +453,19 @@ const ROUTES: Record<string, Handler> = {
       poolSize: pick.poolSize,
       deadlineAt: null,
       closeThreshold: pick.closeThreshold,
-    });
-    // Same settings, Custom Plan options included (0019's pick_again).
-    Object.assign(next, {
       priceMax: pick.priceMax,
       openNow: pick.openNow,
       includeSaved: pick.includeSaved,
-      customOptions: pick.customOptions,
       mixCategory: pick.mixCategory,
     });
-    next.participants.push(
-      ...pick.participants
-        .filter((p) => p.userId !== MOCK_USER_ID)
-        .map((p) => ({ ...p, answers: new Map(), vote: null })),
-    );
+    // The host and option identities are unchanged; reuse the persisted snapshots.
+    next.customOptions = pick.customOptions;
+    if (!mockCopyGroupMembers(pick.id, next.id))
+      next.participants.push(
+        ...pick.participants
+          .filter((p) => p.userId !== MOCK_USER_ID && !mockBlocks.has(p.userId))
+          .map((p) => ({ ...p, answers: new Map(), vote: null })),
+      );
     againOf.set(pick.id, next.id);
     return json(201, { pickId: next.id, state: 'draft' });
   }),
@@ -519,7 +519,11 @@ function safetyRoute(method: string, path: string, body: unknown): Response | nu
     const userId = decodeURIComponent(block[1] ?? '');
     if (userId === MOCK_USER_ID) return fail(400, 'INVALID_INPUT', 'You can’t block yourself');
     if (block[2]) mockBlocks.delete(userId);
-    else mockBlocks.add(userId);
+    else {
+      mockBlocks.add(userId);
+      // Like block_user, remove the friendship; unblocking must not restore it.
+      handleMockFriends('POST', `/friends/${encodeURIComponent(userId)}/remove`, {}, null);
+    }
     return json(200, { status: 'ok' });
   }
   if (method === 'POST' && path === '/reports') {

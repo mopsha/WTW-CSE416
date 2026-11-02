@@ -10,7 +10,8 @@ import type { FriendOption, GroupDetail, GroupSummary } from '../groups';
 import { sortMembers } from '../groups';
 import { MOCK_USER_ID } from './auth';
 import { OTHER_PARTICIPANT_ANSWERS } from './fixtures';
-import { createMockPick, emit, mockPicks, summaryOf } from './store';
+import { createMockPick, emit, mockBlocks, mockPicks, summaryOf } from './store';
+import { mockFriendsList } from './friends';
 
 const FRIEND_IDS = FRIENDS.map((f) => `mock-${f.name.toLowerCase()}`);
 const NAMES = new Map<string, string>([
@@ -106,7 +107,7 @@ export function mockGetGroup(id: string): GroupDetail | null {
 }
 
 export function mockListFriends(): FriendOption[] {
-  return FRIEND_IDS.map((userId) => ({ userId, displayName: NAMES.get(userId) ?? null }));
+  return mockFriendsList().friends.map(({ userId, displayName }) => ({ userId, displayName }));
 }
 
 // ---------------------------------------------------------------- writes (the API's rules)
@@ -141,7 +142,8 @@ function validName(body: unknown): string | Result {
   }
 }
 
-const isFriend = (id: string) => id === MOCK_USER_ID || FRIEND_IDS.includes(id);
+const isFriend = (id: string) =>
+  id === MOCK_USER_ID || mockListFriends().some((friend) => friend.userId === id);
 
 /** /groups and /groups/:id/... Returns null for any other path. */
 export function handleMockGroups(method: string, path: string, body: unknown): Result | null {
@@ -213,6 +215,23 @@ function participant(userId: string) {
   };
 }
 
+/** Repeat using today's group, while keeping the original Pick's membership intact. */
+export function mockCopyGroupMembers(sourceId: string, targetId: string): boolean {
+  const groupId = pickGroup.get(sourceId);
+  if (!groupId) return false;
+  const group = mine(groupId);
+  const target = mockPicks.get(targetId)!;
+  if (group) {
+    target.participants.push(
+      ...group.memberIds
+        .filter((id) => id !== MOCK_USER_ID && !mockBlocks.has(id))
+        .map(participant),
+    );
+    pickGroup.set(targetId, groupId);
+  }
+  return true;
+}
+
 /**
  * POST /picks with { groupId }: a draft with everyone in the group now. The draft-state
  * demo bots aren't scheduled, so only the group's members are in it.
@@ -226,7 +245,7 @@ export function mockCreateGroupPick(input: CreatePickInput, groupId: unknown): R
   const g = mine(groupId as string);
   if (!g) return notFound();
   const pick = createMockPick(input);
-  const others = g.memberIds.filter((id) => id !== MOCK_USER_ID);
+  const others = g.memberIds.filter((id) => id !== MOCK_USER_ID && !mockBlocks.has(id));
   pick.participants.push(...others.map(participant));
   pickGroup.set(pick.id, g.id);
   return ok({ pickId: pick.id, state: 'draft', groupId: g.id, added: others.length }, 201);
@@ -246,6 +265,9 @@ export function mockInvite(pickId: string, body: unknown): Result {
   if (!Array.isArray(ids)) return ids;
   if (!ids.every(isFriend)) return notFriends();
   const fresh = ids.filter((id) => !pick.participants.some((p) => p.userId === id));
+  if (pick.participants.length + fresh.length > 30) {
+    return fail(409, 'PICK_FULL', 'This Pick is full');
+  }
   pick.participants.push(...fresh.map(participant));
   emit(pick.id);
   return ok({ added: fresh.length });

@@ -5,6 +5,7 @@ import { addableFriends, groupNameProblem, sortMembers } from '@/lib/groups';
 import { MOCK_ACCESS_TOKEN, MOCK_USER_ID } from '@/lib/mock/auth';
 import { MOCK_API_BASE_URL, mockFetch } from '@/lib/mock/api';
 import { resetMockGroups } from '@/lib/mock/groups';
+import { resetMockFriends } from '@/lib/mock/friends';
 import { mockQueries } from '@/lib/mock/queries';
 import { mockPicks, resetMockData, setMockBots } from '@/lib/mock/store';
 import type { CreatePickInput } from '@shared/domain/createPick.ts';
@@ -35,6 +36,42 @@ beforeEach(() => {
   setMockBots(false);
   resetMockData();
   resetMockGroups();
+  resetMockFriends();
+});
+
+test('group additions and Pick invites follow accepted and removed friendships', async () => {
+  await api.acceptFriend('mock-jordan');
+  await expect(api.addGroupMembers(ROOMMATES, ['mock-jordan'])).resolves.toEqual({ added: 1 });
+  const { pickId } = await api.createPick(draft());
+  await expect(api.inviteToPick(pickId, ['mock-jordan'])).resolves.toEqual({ added: 1 });
+  await api.removeFriend('mock-ava');
+  await expect(api.addGroupMembers(ROOMMATES, ['mock-ava'])).rejects.toMatchObject({
+    code: 'NOT_FRIENDS',
+  });
+  await expect(api.inviteToPick(pickId, ['mock-ava'])).rejects.toMatchObject({
+    code: 'NOT_FRIENDS',
+  });
+});
+
+test('blocking excludes new Pick membership but preserves the group and past Picks', async () => {
+  const old = await api.createGroupPick(draft(), ROOMMATES);
+  await api.blockUser('mock-ava');
+  expect((await mockQueries.listMyFriends(MOCK_USER_ID)).map((f) => f.userId)).not.toContain(
+    'mock-ava',
+  );
+  const next = await api.createGroupPick(draft(), ROOMMATES);
+  expect(people(old.pickId)).toContain('mock-ava');
+  expect(people(next.pickId)).not.toContain('mock-ava');
+  expect((await mockQueries.getGroup(ROOMMATES))!.members.map((m) => m.userId)).toContain(
+    'mock-ava',
+  );
+  await expect(api.inviteToPick(next.pickId, ['mock-ava'])).rejects.toMatchObject({
+    code: 'NOT_FRIENDS',
+  });
+  await api.unblockUser('mock-ava');
+  await expect(api.inviteToPick(next.pickId, ['mock-ava'])).rejects.toMatchObject({
+    code: 'NOT_FRIENDS',
+  });
 });
 
 test('I see the groups I am in, with member names, owner first', async () => {
@@ -87,6 +124,42 @@ test('a removed member keeps the old Pick but is not in the next one', async () 
   expect(second.added).toBe(1);
 });
 
+test('Pick again uses current group members and keeps filters', async () => {
+  const old = await api.createGroupPick({ ...draft(), priceMax: 2, includeSaved: true }, ROOMMATES);
+  mockPicks.get(old.pickId)!.state = 'canceled';
+  await api.removeGroupMember(ROOMMATES, 'mock-ben');
+  await api.addGroupMembers(ROOMMATES, ['mock-cam']);
+  const next = await api.pickAgain(old.pickId);
+  expect(people(old.pickId)).toContain('mock-ben');
+  expect(people(next.pickId)).toEqual([MOCK_USER_ID, 'mock-ava', 'mock-cam'].sort());
+  expect(mockPicks.get(next.pickId)).toMatchObject({ priceMax: 2, includeSaved: true });
+  expect((await mockQueries.getGroup(ROOMMATES))!.picks.map((p) => p.id)).toContain(next.pickId);
+});
+
+test('Pick again retains custom option identities and nearby mixing', async () => {
+  const old = await api.createPick({
+    ...draft(),
+    category: 'custom',
+    mixCategory: 'activities',
+    customOptions: [{ name: 'Cards' }, { name: 'Movie', note: 'Bring snacks' }],
+  });
+  const original = mockPicks.get(old.pickId)!;
+  await api.inviteToPick(old.pickId, ['mock-ava']);
+  original.state = 'canceled';
+  const next = await api.pickAgain(old.pickId);
+  expect(mockPicks.get(next.pickId)).toMatchObject({
+    mixCategory: 'activities',
+    customOptions: original.customOptions,
+  });
+  await api.startPick(next.pickId);
+  expect(
+    mockPicks
+      .get(next.pickId)!
+      .candidates.slice(0, 2)
+      .map((p) => p.placeId),
+  ).toEqual(original.customOptions!.map((p) => p.placeId));
+});
+
 test('leaving hides the group; the owner must delete instead', async () => {
   await expect(api.leaveGroup(ROOMMATES)).rejects.toMatchObject({
     status: 409,
@@ -122,6 +195,25 @@ test('inviting friends to a Pick: host only, friends only, until swiping ends', 
     status: 409,
     code: 'PICK_CLOSED',
   });
+});
+
+test('full Picks reject new invitations but allow an existing-member retry', async () => {
+  const { pickId } = await api.createPick(draft());
+  await api.inviteToPick(pickId, ['mock-ava']);
+  const pick = mockPicks.get(pickId)!;
+  pick.participants.push(
+    ...Array.from({ length: 28 }, (_, i) => ({
+      ...pick.participants[0]!,
+      userId: `filler-${i}`,
+      answers: new Map(),
+    })),
+  );
+  await expect(api.inviteToPick(pickId, ['mock-ava'])).resolves.toEqual({ added: 0 });
+  await expect(api.inviteToPick(pickId, ['mock-ben'])).rejects.toMatchObject({
+    status: 409,
+    code: 'PICK_FULL',
+  });
+  expect(pick.participants).toHaveLength(30);
 });
 
 test('helpers: name rule matches the API, addable friends skip members', () => {

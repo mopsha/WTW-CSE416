@@ -20,6 +20,7 @@ const HINTS: Record<string, ApiError> = {
     'The owner cannot leave; delete the group instead',
   ),
   pick_closed: new ApiError(409, 'PICK_CLOSED', 'This Pick is no longer accepting people'),
+  pick_full: new ApiError(409, 'PICK_FULL', 'This Pick is full'),
 };
 
 function fail(error: { code?: string; hint?: string | null }): never {

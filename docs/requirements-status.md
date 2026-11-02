@@ -15,7 +15,7 @@ State of `integ/m4` (PR #35) on Nov 1, 2026: **12 done, 10 partial, 0 cut**. Thi
 | FR-01 | Account, sign in, sign out, profile | Done | Emailed 6-digit codes on wtw-dev through custom SMTP, name step, profile editing, sign out, account deletion. A new-user sign-up worked on a phone on Nov 1; the email for an existing account isn't tested yet | | Mike |
 | FR-02 | Preference survey, editable later | Done | Onboarding survey, edit from Profile, private to the API | | Mike |
 | FR-03 | Send, accept, remove, block friends | Partial | Add by email, accept, decline, unfriend, block API | Block is only in the Lobby and Waiting room, not on the Friends tab or requests. A sender can't see or cancel a pending request (by design, 0018) | Razin, Mike |
-| FR-04 | Create, name, manage a group | Done | Create, rename, delete, add and remove members, leave. Known bug: Pick again can re-add removed members | | Razin |
+| FR-04 | Create, name, manage a group | Done | Create, rename, delete, add and remove members, leave. Pick again uses current group membership (0019) | | Razin |
 | FR-05 | Pick for selected friends or a saved group | Partial | Group Picks from the Picks tab and group screen | Choosing individual friends: `POST /picks/:id/invite` exists but no screen calls it | Razin |
 | FR-06 | Category, location, radius, price, open status | Partial | Food, Activities, Custom, map pin, radius, price filter | Open now and Free can't match the mock places, so Start fails with no candidates and the draft can't be edited | Josh |
 | FR-07 | Bounded nearby candidate pool | Partial | Pool building, cap and rate limits; Discover can use Google | Picks always use the 36 mock places around Stony Brook, so real places are Discover-only, and wtw-dev's provider setting is unconfirmed. Discover needs a per-user limit before Google is on | Josh |
@@ -29,7 +29,7 @@ State of `integ/m4` (PR #35) on Nov 1, 2026: **12 done, 10 partial, 0 cut**. Thi
 | FR-15 | Vote among the three finalists | Done | Changeable vote, host close, deadline | | Alan, Mike |
 | FR-16 | Tie-break, one winner, saved | Done | Tally, tie-break by rank, Winner screen | | Alan |
 | FR-17 | Discover feed and saved interests | Partial | `GET /discover` scored by survey answers, filters, save and unsave | No screen lists saved places, no "That's today's 20" end state, and saved Google places are dropped from Picks | Josh, Mike |
-| FR-18 | Completed Pick history | Partial | My history with winner, finalists and who went; Pick again | The group history route exists but nothing links to it. Pick again drops filters and custom options | Alan, Razin |
+| FR-18 | Completed Pick history | Partial | My history with winner, finalists and who went; Pick again | The group history route exists but nothing links to it. Pick again now preserves filters and custom options (0019) | Alan, Razin |
 
 ## New M4 features
 

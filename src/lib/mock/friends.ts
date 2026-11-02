@@ -10,6 +10,7 @@ import {
 } from '@shared/api/friends.ts';
 
 import { FRIENDS } from '@/components/theme';
+import { mockBlocks } from './store';
 
 /** Mock mode: emails starting with this have no account (to show the 404). */
 export const MOCK_UNKNOWN_EMAIL_PREFIX = 'nobody@';
@@ -57,7 +58,7 @@ function nameFromEmail(email: string): string {
 }
 
 export function mockFriendsList(): FriendsList {
-  return groupFriends(rows);
+  return groupFriends(rows.filter((row) => !mockBlocks.has(row.userId)));
 }
 
 /**
@@ -89,6 +90,7 @@ export function handleMockFriends(
     }
     const displayName = nameFromEmail(email);
     const userId = `mock-${email}`;
+    if (mockBlocks.has(userId)) return ok({ status: 'sent' });
     const existing = rows.find((r) => r.userId === userId);
     if (existing) {
       if (existing.status === 'pending' && existing.direction === 'in') {
@@ -114,7 +116,7 @@ export function handleMockFriends(
   const row = rows.find((r) => r.userId === userId);
 
   if (match[2] === 'accept') {
-    if (!row || row.direction !== 'in') {
+    if (!row || row.direction !== 'in' || mockBlocks.has(userId)) {
       return fail(404, 'REQUEST_NOT_FOUND', 'That friend request is gone');
     }
     if (row.status === 'pending') {

@@ -68,6 +68,7 @@ test.each([
   ['PT409', 'group_full', 409, 'GROUP_FULL'],
   ['PT409', 'owner_cannot_leave', 409, 'OWNER_CANNOT_LEAVE'],
   ['PT409', 'pick_closed', 409, 'PICK_CLOSED'],
+  ['PT409', 'pick_full', 409, 'PICK_FULL'],
   ['PT403', 'not_host', 403, 'FORBIDDEN'],
   ['PGRST202', null, 503, 'DATABASE_NOT_READY'],
   ['PT403', 'unknown_hint', 500, 'INTERNAL_ERROR'],
