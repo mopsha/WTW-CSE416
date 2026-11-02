@@ -201,14 +201,19 @@ describe('cancelPick', () => {
       reason: 'Rained out',
     });
   });
-  test.each([[{ reason: 5 }], [{ reason: 'x'.repeat(201) }], [[]], ['text']])(
-    'rejects a bad reason %j before touching the Pick',
-    async (body) => {
-      const store = fixture(pick({ state: 'swiping' }));
-      await expect(cancelPick(store, 'pick', 'host', body)).rejects.toMatchObject({ status: 400 });
-      expect(store.load).not.toHaveBeenCalled();
-    },
-  );
+  test.each([
+    [{ reason: 5 }],
+    [{ reason: 'x'.repeat(201) }],
+    [[]],
+    ['text'],
+    [{ reason: 'a\u0000b' }],
+    [{ reason: '\n'.repeat(200) }],
+    [{ reason: 'you fucking idiots' }],
+  ])('rejects a bad reason %j before touching the Pick', async (body) => {
+    const store = fixture(pick({ state: 'swiping' }));
+    await expect(cancelPick(store, 'pick', 'host', body)).rejects.toMatchObject({ status: 400 });
+    expect(store.load).not.toHaveBeenCalled();
+  });
   test('rejects a non-host', async () => {
     const store = fixture(pick({ state: 'swiping' }));
     await expect(cancelPick(store, 'pick', 'guest')).rejects.toMatchObject({ status: 403 });

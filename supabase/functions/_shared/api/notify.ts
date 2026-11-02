@@ -87,6 +87,7 @@ export async function sendPush(
   fetchFn: PushFetch,
   tokens: readonly string[],
   message: { title: string; body: string; data: Record<string, unknown> },
+  log: (...args: unknown[]) => void = console.error,
 ): Promise<string[]> {
   const dead: string[] = [];
   for (let i = 0; i < tokens.length; i += PUSH_BATCH) {
@@ -99,17 +100,25 @@ export async function sendPush(
         // A slow Expo must not hold up the close/cancel/vote that triggered this push.
         signal: AbortSignal.timeout(PUSH_TIMEOUT_MS),
       });
-      if (!res.ok) continue;
+      // Logs carry status and error codes only, never tokens.
+      if (!res.ok) {
+        log('push batch failed', res.status);
+        continue;
+      }
       const tickets = ((await res.json()) as { data?: unknown }).data;
       if (!Array.isArray(tickets)) continue;
+      const errors = new Set<string>();
       tickets.forEach((t: { status?: string; details?: { error?: string } } | null, j) => {
         const token = batch[j];
-        if (token && t?.status === 'error' && t.details?.error === 'DeviceNotRegistered') {
-          dead.push(token);
-        }
+        if (t?.status !== 'error') return;
+        const code = t.details?.error ?? 'unknown';
+        if (token && code === 'DeviceNotRegistered') dead.push(token);
+        else errors.add(code);
       });
-    } catch {
+      if (errors.size) log('push tickets failed', [...errors].join(','));
+    } catch (error) {
       // One failed batch must not stop the rest.
+      log('push batch failed', error instanceof Error ? error.name : 'unknown');
     }
   }
   return dead;
@@ -127,7 +136,12 @@ export function createNotifier(
       if (!fresh.length) return;
       const tokens = await store.tokensFor(fresh);
       if (!tokens.length) return;
-      const dead = await sendPush(fetchFn, tokens, { ...PUSH_TEXT[type], data: { type, pickId } });
+      const dead = await sendPush(
+        fetchFn,
+        tokens,
+        { ...PUSH_TEXT[type], data: { type, pickId } },
+        log,
+      );
       if (dead.length) await store.deleteTokens(dead);
     } catch (error) {
       log('notify failed', type, error instanceof Error ? error.name : 'unknown');

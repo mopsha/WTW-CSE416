@@ -195,7 +195,8 @@ exactly: `GET /picks/:id`, `POST /picks/:id/start`, `/refresh` (`{ confirm }`, 4
 - Events (`notify()` in `_shared/api/notify.ts`): `pick_started` (everyone but the host),
   `vote_needed` / `winner_decided` (everyone, from the canonical closers, so host close,
   auto-close and the sweep all send it), `pick_canceled` (everyone but the host, reason in the
-  payload), `reminder` (the sweep, unfinished participants when the deadline is < 1 hour away).
+  payload), `reminder` (the sweep, unfinished participants when the deadline is < 1 hour away, only for
+  Picks created more than 2 hours before their deadline, so a short Pick never gets it at Start).
   `added_to_pick`, `plan_time_set`, `plan_reminder`, `did_you_go` are reserved for groups/invites
   (Razin) and RSVP (Alan, next PR). Razin/Josh: call `lifecycleStore.notifier` /
   `closingStore.notifier` with `(userIds, type, pickId, payload?)`; it never throws.
@@ -259,9 +260,11 @@ so a Pick id reveals nothing. 409 `INVALID_PICK_STATE` when the Pick isn't at th
 - `GET /picks/:id/reasons`: `{ reasons: [{ placeId, rank, reason }] }` for the top three once
   the Pick is `final_vote` or `completed` (FR-14; words only, rank-only for groups under 4).
 - `POST /picks/:id/again`: 201 `{ pickId, state: "draft" }`. **Host only** (403 otherwise).
-  Same people, category, center, radius, pool size and close rule; no deadline; keeps `group_id`
-  only if the host is still in that group. Works from `completed` or `canceled`; 409 while an
-  earlier copy is still a draft. Notifies the others (`added_to_pick`).
+  Same people, category, center, radius, pool size, close rule, filters and Custom Plan options
+  (0019); no deadline. A group Pick keeps `group_id` only if the host is still in the group, and
+  adds back only people who are still members. Works from `completed` or `canceled`; a second tap
+  while the first copy is still a draft returns that draft (nobody is notified again). Counts
+  against the daily create limit. Notifies the others (`added_to_pick`).
 - `GET /history` and `GET /groups/:id/history` (`no-store`): `{ picks: [{ id, category,
   decidedAt, decidedBy, planAt, groupId, winner: { placeId, name }, finalists: [{ placeId, rank,
   name }], participants: [{ userId, displayName }], wentCount }] }`, completed Picks the caller
@@ -269,7 +272,11 @@ so a Pick id reveals nothing. 409 `INVALID_PICK_STATE` when the Pick isn't at th
   Razin's 0012 is installed) is 404 `GROUP_NOT_FOUND`.
 - Sweep: `planEvents` in the sweep response counts Picks sent a `plan_reminder` (1 h before
   `plan_at`) or `did_you_go` (3 h after `plan_at`, or 24 h after `decided_at` with no time;
-  only Picks decided in the last 14 days; skips "not going" and people who already answered).
+  only Picks decided in the last 14 days and after 0019 shipped; skips "not going" and people
+  who already answered). The Winner screen's "Did you go?" card shows earlier: 1 h after
+  `plan_at`, or 3 h after the decision. Prompts go to everyone who didn't say "not going"
+  (including people who never answered the RSVP), on purpose, so the M5 "went" metric isn't
+  limited to people who RSVP'd.
 - Tables/RPCs (`0013_plans_rsvp.sql`): `picks.plan_at`, `pick_rsvps`, `pick_outcomes`
   (each person reads only their own row via RLS; no client writes), `pick_set_plan_time`, `pick_rsvp`,
   `pick_outcome`, `pick_plan_load`, `pick_history`, `pick_again`, `pick_finalist_counts`,

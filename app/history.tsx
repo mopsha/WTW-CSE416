@@ -87,7 +87,11 @@ export default function HistoryScreen() {
               <Text style={styles.people} numberOfLines={1}>
                 {names(item)}
               </Text>
-              {item.wentCount ? <Text style={styles.went}>{item.wentCount} went</Text> : null}
+              {item.wentCount ? (
+                <Text style={styles.went}>
+                  {item.wentCount} of {item.participants.length} went
+                </Text>
+              ) : null}
             </View>
           </Card>
         ))

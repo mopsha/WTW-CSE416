@@ -74,8 +74,13 @@ describe('createNotifier', () => {
         ]),
       )
       .mockResolvedValueOnce(new Response('down', { status: 500 }));
-    await createNotifier(store, fetchFn)(['a'], 'winner_decided', 'p1');
+    const log = jest.fn();
+    await createNotifier(store, fetchFn, log)(['a'], 'winner_decided', 'p1');
     expect(fetchFn).toHaveBeenCalledTimes(2);
+    // Failures are visible (status and error codes) without logging any token.
+    expect(log).toHaveBeenCalledWith('push tickets failed', 'MessageRateExceeded');
+    expect(log).toHaveBeenCalledWith('push batch failed', 500);
+    expect(JSON.stringify(log.mock.calls)).not.toContain('PushToken');
     expect(JSON.parse(fetchFn.mock.calls[0][1].body)).toHaveLength(100);
     expect(JSON.parse(fetchFn.mock.calls[1][1].body)).toHaveLength(50);
     expect(store.deleteTokens).toHaveBeenCalledWith([TOKEN(1)]);
@@ -89,9 +94,10 @@ describe('createNotifier', () => {
     );
     expect(log).toHaveBeenCalledWith('notify failed', 'pick_started', 'TypeError');
     const offline = jest.fn().mockRejectedValue(new Error('offline'));
-    await expect(createNotifier(notifyStore(), offline)(['a'], 'pick_started', 'p1')).resolves.toBe(
-      undefined,
-    );
+    await expect(
+      createNotifier(notifyStore(), offline, log)(['a'], 'pick_started', 'p1'),
+    ).resolves.toBe(undefined);
+    expect(log).toHaveBeenCalledWith('push batch failed', 'Error');
   });
 
   test('nobody to tell does nothing', async () => {

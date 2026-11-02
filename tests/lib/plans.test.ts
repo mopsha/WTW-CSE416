@@ -52,6 +52,10 @@ describe('shouldAskDidYouGo', () => {
     expect(shouldAskDidYouGo({ ...base, planAt: '2026-10-30T13:00:00.000Z' }, null, now)).toBe(
       false,
     );
+    // Not as it starts: nobody should answer "Didn't happen" at 8:00 for an 8:00 plan.
+    expect(shouldAskDidYouGo({ ...base, planAt: '2026-10-30T11:30:00.000Z' }, null, now)).toBe(
+      false,
+    );
   });
   test('3 hours after the decision when there is no time', () => {
     expect(shouldAskDidYouGo(base, '2026-10-30T08:00:00.000Z', now)).toBe(true);

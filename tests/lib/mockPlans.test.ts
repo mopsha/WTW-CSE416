@@ -66,7 +66,8 @@ test('history lists completed Picks I was in; Pick again copies people and setti
     old.participants.map((p) => p.userId).sort(),
   );
   expect(next.participants.every((p) => p.answers.size === 0)).toBe(true);
-  await expect(api.pickAgain('done-pick')).rejects.toMatchObject({ status: 409 });
+  // A second tap goes to the same draft instead of making another.
+  expect((await api.pickAgain('done-pick')).pickId).toBe(pickId);
   await expect(api.getHistory('0f8fad5b-d9cb-469f-a165-70867728950e')).rejects.toMatchObject({
     status: 404,
   });

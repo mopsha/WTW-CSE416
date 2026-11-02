@@ -16,6 +16,8 @@ import { ErrorBanner } from './ErrorBanner';
 import { pickStyles } from './PickParts';
 import { colors, fonts } from './theme';
 
+const PLAN_REFRESH_MS = 30_000;
+
 const RSVP_OPTIONS = [
   { value: 'going', label: 'Going' },
   { value: 'maybe', label: 'Maybe' },
@@ -36,7 +38,12 @@ export function PlanBlock({ pickId, decidedAt }: { pickId: string; decidedAt: st
       () => {},
     );
   }, [pickId]);
-  useEffect(load, [load]);
+  // Others' RSVPs and a moved time show up without leaving the screen.
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, PLAN_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [load]);
 
   // One action at a time: a second tap while one is in flight is ignored.
   const act = (name: string, fn: () => Promise<unknown>) => {

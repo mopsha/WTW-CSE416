@@ -46,14 +46,18 @@ export function planTimeOptions(now: Date = new Date()): { label: string; value:
   return options.map((o) => ({ label: o.label, value: o.at.toISOString() }));
 }
 
-/** Ask once the plan time has passed, or 3 hours after the decision when no time was set. */
+/**
+ * Ask an hour after the plan time (so nobody answers "Didn't happen" as it starts), or 3 hours
+ * after the decision when no time was set. The push (pick_plan_targets) is a later nudge for
+ * people who haven't opened the Pick: 3 h after the plan, or 24 h after the decision.
+ */
 export function shouldAskDidYouGo(
   plan: Pick<PlanSummary, 'planAt' | 'myOutcome' | 'myRsvp'>,
   decidedAt: string | null,
   now: Date = new Date(),
 ): boolean {
   if (plan.myOutcome || plan.myRsvp === 'not_going') return false;
-  if (plan.planAt) return now.getTime() >= Date.parse(plan.planAt);
+  if (plan.planAt) return now.getTime() - Date.parse(plan.planAt) >= 60 * 60_000;
   return decidedAt !== null && now.getTime() - Date.parse(decidedAt) >= 3 * 60 * 60_000;
 }
 

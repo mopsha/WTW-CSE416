@@ -2,7 +2,10 @@ import { ApiError, type ErrorStatus } from '../_shared/api/errors.ts';
 import type { HistoryItem, PlanSummary, PlansStore } from '../_shared/api/plans.ts';
 import { createServiceClient } from './serviceClient.ts';
 
-function mapRpcError(error: { code: string }, notFound = 'PICK_NOT_FOUND'): never {
+function mapRpcError(
+  error: { code: string; message?: string },
+  notFound = 'PICK_NOT_FOUND',
+): never {
   if (error.code === 'PGRST202') {
     throw new ApiError(503, 'DATABASE_NOT_READY', 'Plans and history are not installed');
   }
@@ -10,7 +13,8 @@ function mapRpcError(error: { code: string }, notFound = 'PICK_NOT_FOUND'): neve
     PT400: [400, 'INVALID_INPUT', 'Invalid request'],
     PT403: [403, 'FORBIDDEN', 'Only the host can do this'],
     PT404: [404, notFound, notFound === 'GROUP_NOT_FOUND' ? 'Group not found' : 'Pick not found'],
-    PT409: [409, 'INVALID_PICK_STATE', 'This Pick is not at that step'],
+    // Our own RPC messages ("changed too many times", "still going"), safe to show.
+    PT409: [409, 'INVALID_PICK_STATE', error.message || 'This Pick is not at that step'],
   };
   const hit = known[error.code];
   if (hit) throw new ApiError(...hit);

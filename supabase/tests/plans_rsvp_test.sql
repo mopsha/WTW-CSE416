@@ -182,10 +182,10 @@ create temporary table again on commit drop as
 select is(
   (select host_id from picks where id = (select (r ->> 'id')::uuid from again)),
   'a1111111-1111-4111-8111-111111111111'::uuid, 'the host hosts the new Pick');
-select throws_ok(
-  format($$select pick_again(%L, 'a1111111-1111-4111-8111-111111111111')$$,
-    (select id from pk where name = 'done')),
-  'PT409', null, 'no second copy while the first is still a draft');
+select is(
+  pick_again((select id from pk where name = 'done')::text,
+    'a1111111-1111-4111-8111-111111111111') ->> 'id',
+  (select r ->> 'id' from again), 'a second tap returns the draft the first one made');
 select is(
   (select count(*)::int from pick_participants where pick_id = (select (r ->> 'id')::uuid from again)),
   3, 'the new Pick has the same three people');

@@ -406,6 +406,8 @@ export function createApp(
   });
   app.post('/picks/:id/again', async (c) => {
     const user = await deps.getUser(c.req.raw);
+    // A new draft, so it counts against the same daily create limit as POST /picks.
+    await deps.checkLimit?.('create', user.id);
     return c.json(await pickAgain(requirePlans(), c.req.param('id'), user.id), 201);
   });
   app.get('/history', async (c) => {

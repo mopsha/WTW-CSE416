@@ -340,7 +340,13 @@ export function parseCancelBody(body: unknown): string | null {
       `reason must be text of at most ${MAX_CANCEL_REASON} characters`,
     );
   }
-  return reason.trim() || null;
+  if (/[\u0000-\u001f\u007f]/.test(reason)) {
+    throw new ApiError(400, 'INVALID_INPUT', 'reason must be one line of text');
+  }
+  const trimmed = reason.trim();
+  // Shown in other people's inboxes, so it goes through the same filter as names.
+  if (trimmed) requireCleanText(trimmed, 'reason');
+  return trimmed || null;
 }
 
 function othersThan(pick: LifecyclePick, userId: string) {

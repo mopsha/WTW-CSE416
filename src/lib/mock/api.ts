@@ -436,9 +436,9 @@ const ROUTES: Record<string, Handler> = {
     if (pick.state !== 'completed' && pick.state !== 'canceled') {
       return wrongState('This Pick is still going');
     }
-    if (mockPicks.get(againOf.get(pick.id) ?? '')?.state === 'draft') {
-      return wrongState('There is already a new draft for this Pick');
-    }
+    // A second tap goes to the draft the first one made.
+    const draft = mockPicks.get(againOf.get(pick.id) ?? '');
+    if (draft?.state === 'draft') return json(201, { pickId: draft.id, state: 'draft' });
     const next = createMockPick({
       category: pick.category,
       center: pick.center,
@@ -446,6 +446,14 @@ const ROUTES: Record<string, Handler> = {
       poolSize: pick.poolSize,
       deadlineAt: null,
       closeThreshold: pick.closeThreshold,
+    });
+    // Same settings, Custom Plan options included (0019's pick_again).
+    Object.assign(next, {
+      priceMax: pick.priceMax,
+      openNow: pick.openNow,
+      includeSaved: pick.includeSaved,
+      customOptions: pick.customOptions,
+      mixCategory: pick.mixCategory,
     });
     next.participants.push(
       ...pick.participants

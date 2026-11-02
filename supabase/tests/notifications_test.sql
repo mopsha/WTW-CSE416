@@ -109,7 +109,9 @@ select is((select count(*)::int from push_tokens where token = 'ExponentPushToke
 
 -- ---------------------------------------------------------------- reminders
 reset role;
-update picks set state = 'swiping', deadline_at = now() + interval '30 minutes'
+-- Created 3 hours ago, so it has been open long enough for "one hour left" (0019).
+update picks set state = 'swiping', deadline_at = now() + interval '30 minutes',
+  created_at = now() - interval '3 hours'
   where id = (select id from pk where name = 'soon');
 update picks set state = 'swiping', deadline_at = now() + interval '3 hours'
   where id = (select id from pk where name = 'later');
