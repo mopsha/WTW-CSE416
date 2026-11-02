@@ -262,7 +262,7 @@ so a Pick id reveals nothing. 409 `INVALID_PICK_STATE` when the Pick isn't at th
 - `POST /picks/:id/again`: 201 `{ pickId, state: "draft" }`. **Host only** (403 otherwise).
   Same people, category, center, radius, pool size, close rule, filters and Custom Plan options
   (0019); no deadline. A group Pick keeps `group_id` only if the host is still in the group, and
-  adds back only people who are still members. Works from `completed` or `canceled`; a second tap
+  adds everyone in the group today (0020). If the host left, it adds old participants still in the group. Works from `completed` or `canceled`; a second tap
   while the first copy is still a draft returns that draft (nobody is notified again). Counts
   against the daily create limit. Notifies the others (`added_to_pick`).
 - `GET /history` and `GET /groups/:id/history` (`no-store`): `{ picks: [{ id, category,

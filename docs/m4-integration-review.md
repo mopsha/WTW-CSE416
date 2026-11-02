@@ -143,10 +143,10 @@ tests/text.test.ts
   host/member authorization, lobby lock, bidirectional blocks, private reports,
   friend-request enumeration protection, text filtering and notification integration.
   Confirmed full-Pick guard rejected even duplicate membership inserts before
-  ON CONFLICT; 0019 skips the cap for existing members. The Groups adapter now maps
+  ON CONFLICT; 0020 skips the cap for existing members. The Groups adapter now maps
   `pick_full` to 409 PICK_FULL rather than 500. Mock invitations enforce the cap too.
 - Integration/history: Pick again copied historical group members and dropped
-  filters/custom options. Migration 0019 preserves M4 settings and custom snapshot
+  filters/custom options. Migration 0020 preserves M4 settings and custom snapshot
   identities and uses canonical pick_add_group for current group membership.
   Mocks match. Existing historical membership, swipe/rank/vote engines stay intact.
 
@@ -154,7 +154,7 @@ Repeat semantics: a surviving group supplies its current members, with the exist
 block guard. If the host has left that group, the new draft contains only the host
 and has no group label. If the group was deleted (FK set null), ordinary repeat
 semantics apply. Existing host-only, finished-state and duplicate-draft gates remain.
-Migration 0019 replaces functions while retaining their existing service-only grants.
+Migration 0020 replaces functions while retaining their existing service-only grants.
 It does not add tables or date/time polling.
 
 ## Validation

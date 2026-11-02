@@ -1,4 +1,6 @@
--- Preserve M4 settings and current group membership when repeating a Pick.
+-- Pick again after 0019 (Josh, Alan, M4): 0019's second tap returns the draft and its settings
+-- stay. A group Pick now adds everyone in the group today, through pick_add_group, so former
+-- members stay out and people who joined since come along.
 create or replace function public.pick_again(p_pick_id text, p_user_id uuid)
 returns jsonb
 language plpgsql
@@ -8,8 +10,6 @@ declare
   v_old public.picks%rowtype := private.lock_pick_as_participant(p_pick_id, p_user_id);
   v_new uuid;
   v_added uuid[];
-  v_group uuid := (to_jsonb(v_old) ->> 'group_id')::uuid;
-  v_member boolean := false;
 begin
   if v_old.host_id is distinct from p_user_id then
     raise exception using errcode = 'PT403', message = 'Only the host can pick again';
@@ -17,33 +17,39 @@ begin
   if v_old.state not in ('completed', 'canceled') then
     raise exception using errcode = 'PT409', message = 'This Pick is still going';
   end if;
-  if exists (select 1 from public.picks where again_of = v_old.id and state = 'draft') then
-    raise exception using errcode = 'PT409', message = 'There is already a new draft for this Pick';
+  select id into v_new from public.picks where again_of = v_old.id and state = 'draft' limit 1;
+  if found then
+    return jsonb_build_object('id', v_new, 'addedUserIds', '[]'::jsonb);
   end if;
+
   v_new := (public.pick_create(p_user_id, v_old.category, v_old.center_lat, v_old.center_lng,
     v_old.radius_m, v_old.pool_size, null, v_old.close_threshold) ->> 'id')::uuid;
-  update public.picks set again_of = v_old.id, price_max = v_old.price_max,
-    open_now = v_old.open_now, include_saved = v_old.include_saved,
-    custom_options = v_old.custom_options, mix_category = v_old.mix_category
+  update public.picks set
+    again_of = v_old.id,
+    price_max = v_old.price_max,
+    open_now = v_old.open_now,
+    include_saved = v_old.include_saved,
+    custom_options = v_old.custom_options,
+    mix_category = v_old.mix_category
   where id = v_new;
 
-  -- Preserve the historical Pick, but never invite former group members back.
-  if v_group is not null then
-    select exists (select 1 from public.group_members
-      where group_id = v_group and user_id = p_user_id) into v_member;
-    if v_member then
-      perform public.pick_add_group(v_new, p_user_id, v_group);
-    end if;
+  if v_old.group_id is not null and exists (
+    select 1 from public.group_members where group_id = v_old.group_id and user_id = p_user_id
+  ) then
+    perform public.pick_add_group(v_new, p_user_id, v_old.group_id);
+  else
+    -- No group, or the host left it: the old people, minus anyone no longer in that group.
+    insert into public.pick_participants (pick_id, user_id)
+    select v_new, pp.user_id from public.pick_participants pp
+    where pp.pick_id = v_old.id and pp.user_id <> p_user_id
+      and (v_old.group_id is null or exists (
+        select 1 from public.group_members m
+        where m.group_id = v_old.group_id and m.user_id = pp.user_id))
+    on conflict do nothing;
   end if;
 
-  if v_group is null then
-    insert into public.pick_participants (pick_id, user_id)
-      select v_new, user_id from public.pick_participants
-      where pick_id = v_old.id and user_id <> p_user_id
-      on conflict do nothing;
-  end if;
   select coalesce(array_agg(user_id order by user_id), '{}') into v_added
-    from public.pick_participants where pick_id = v_new and user_id <> p_user_id;
+  from public.pick_participants where pick_id = v_new and user_id <> p_user_id;
 
   return jsonb_build_object('id', v_new, 'addedUserIds', to_jsonb(v_added));
 end;
