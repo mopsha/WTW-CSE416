@@ -225,7 +225,7 @@ export class GoogleProvider implements PlaceProvider {
           body: JSON.stringify({
             includedTypes: types,
             maxResultCount: 20,
-            rankPreference: 'DISTANCE',
+            rankPreference: 'POPULARITY',
             locationRestriction: {
               circle: {
                 center: { latitude: query.center.lat, longitude: query.center.lng },

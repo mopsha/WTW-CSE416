@@ -18,6 +18,23 @@ test('caller preferences affect the individual score only', () => {
     discoverScore(place, {}, center),
   );
 });
+test('a well-rated place outranks a poorly rated one that only matches the survey', () => {
+  const liked = { ...place, placeId: 'liked', rating: 2.5 };
+  const better = { ...place, placeId: 'better', category: 'activities' as const, types: ['park'] };
+  better.rating = 4.8;
+  expect(
+    rankDiscover(
+      [liked, better],
+      { categories: ['food'], types: ['cafe'], priceMax: 2 },
+      center,
+    )[0]!.placeId,
+  ).toBe('better');
+});
+test('unrated places sort below rated ones', () => {
+  const unrated = { ...place, placeId: 'unrated', rating: null };
+  const rated = { ...place, placeId: 'rated', rating: 3.5 };
+  expect(rankDiscover([unrated, rated], {}, center)[0]!.placeId).toBe('rated');
+});
 test('bounded, deduplicated, deterministic and does not mutate input', () => {
   const places = Array.from({ length: 25 }, (_, i) => ({
     ...place,
