@@ -63,6 +63,11 @@ export function formatPriceLevel(level: number | null): string | null {
   return '$'.repeat(Math.min(4, Math.round(level)));
 }
 
+/** 4.63 -> "★ 4.6", or null for places with no rating yet. */
+export function formatRating(rating: number | null): string | null {
+  return rating !== null && rating > 0 ? `★ ${rating.toFixed(1)}` : null;
+}
+
 /** 1 -> "1st", 2 -> "2nd", 3 -> "3rd", 11 -> "11th". */
 export function ordinal(n: number): string {
   const mod100 = n % 100;

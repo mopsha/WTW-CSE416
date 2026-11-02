@@ -36,7 +36,7 @@ import {
   type DiscoverPlace,
 } from '@/lib/discover';
 import { haptic } from '@/lib/haptics';
-import { CAMPUS, formatPriceLevel } from '@/lib/places';
+import { CAMPUS, formatPriceLevel, formatRating } from '@/lib/places';
 import { directionsUrl } from '@/lib/pickUi';
 
 const EMPTY_PLACES: DiscoverPlace[] = [];
@@ -65,7 +65,12 @@ function Cover({ place, style, big }: { place: DiscoverPlace; style: object; big
 }
 
 function meta(place: DiscoverPlace) {
-  return [place.kind, formatPriceLevel(place.priceLevel), milesLabel(place.miles)]
+  return [
+    place.kind,
+    formatRating(place.rating),
+    formatPriceLevel(place.priceLevel),
+    milesLabel(place.miles),
+  ]
     .filter(Boolean)
     .join(' · ');
 }
@@ -168,6 +173,7 @@ function PlaceSheet({ place, onClose }: { place: DiscoverPlace | null; onClose: 
               <View style={styles.pills} accessible={false}>
                 {[
                   `${place.emoji} ${place.kind}`,
+                  formatRating(place.rating),
                   formatPriceLevel(place.priceLevel),
                   `📍 ${milesLabel(place.miles)}`,
                 ]
