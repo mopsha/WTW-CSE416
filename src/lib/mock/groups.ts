@@ -55,6 +55,9 @@ let groups = initial();
 const pickGroup = new Map<string, string>();
 let nextId = 1;
 
+/** The group a mock Pick was made for, if any (picks.group_id). */
+export const mockGroupOfPick = (pickId: string): string | null => pickGroup.get(pickId) ?? null;
+
 export function resetMockGroups() {
   groups = initial();
   pickGroup.clear();

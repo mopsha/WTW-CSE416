@@ -238,14 +238,15 @@ export default function GroupScreen() {
               <Ionicons name="chevron-forward" size={20} color={colors.muted} />
             </Pressable>
           ))}
-          <Button
-            label="See group history"
-            variant="link"
-            onPress={() => router.push({ pathname: '/history', params: { groupId: group.id } })}
-            accessibilityHint={`Every finished Pick in ${group.name}`}
-          />
         </Card>
       ) : null}
+
+      <Button
+        label="See group history"
+        variant="link"
+        onPress={() => router.push({ pathname: '/history', params: { groupId: group.id } })}
+        accessibilityHint={`Every finished Pick in ${group.name}`}
+      />
 
       {isOwner ? (
         <Card>

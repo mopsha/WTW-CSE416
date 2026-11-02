@@ -21,7 +21,13 @@ import { discover, parseDiscover } from '@shared/api/discover.ts';
 import { errorResponse } from '@shared/api/errors.ts';
 import { createPoolBuilder } from '@shared/places/pool.ts';
 import { MockProvider } from '@shared/places/MockProvider.ts';
-import { handleMockGroups, mockCreateGroupPick, mockInvite } from './groups';
+import {
+  handleMockGroups,
+  mockCreateGroupPick,
+  mockGetGroup,
+  mockGroupOfPick,
+  mockInvite,
+} from './groups';
 import {
   acceptMockInvite,
   createMockInvite,
@@ -235,7 +241,7 @@ function historyOf(): HistoryItem[] {
       decidedAt: p.decidedAt ?? new Date(0).toISOString(),
       decidedBy: p.decidedBy ?? 'clear_winner',
       planAt: plans(p).planAt,
-      groupId: null,
+      groupId: mockGroupOfPick(p.id),
       winner: p.winnerPlaceId ? { placeId: p.winnerPlaceId, name: name(p, p.winnerPlaceId) } : null,
       finalists: p.ranking
         .filter((r) => r.rank <= 3)
@@ -616,9 +622,11 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     return result ? json(result.status, result.body) : fail(404, 'NOT_FOUND', 'Route not found');
   }
   if (method === 'GET' && path === '/history') return json(200, { picks: historyOf() });
-  // Groups aren't in mock mode yet: every group id is unknown.
-  if (method === 'GET' && /^\/groups\/[^/]+\/history$/.test(path)) {
-    return fail(404, 'GROUP_NOT_FOUND', 'Group not found');
+  const groupHistory = method === 'GET' && /^\/groups\/([^/]+)\/history$/.exec(path);
+  if (groupHistory) {
+    const id = decodeURIComponent(groupHistory[1] ?? '');
+    if (!mockGetGroup(id)) return fail(404, 'GROUP_NOT_FOUND', 'Group not found');
+    return json(200, { picks: historyOf().filter((p) => p.groupId === id) });
   }
   if (method === 'GET' && path === '/notifications') {
     return json(200, {
