@@ -10,7 +10,7 @@ import { Card } from './Card';
 import { colors, fonts, MIN_TARGET, space, type } from './theme';
 
 /** "Join with code" on the Picks tab: type a friend's 6-character code, land in their Pick. */
-export function JoinCodeCard() {
+export function JoinCodeCard({ onJoined }: { onJoined?: () => void } = {}) {
   const [code, setCode] = useState('');
   const { busy, error, join, clearError } = useJoinPick();
 
@@ -19,6 +19,7 @@ export function JoinCodeCard() {
     const pickId = await join(code);
     if (!pickId) return;
     setCode('');
+    onJoined?.();
     router.push({ pathname: '/pick/[id]', params: { id: pickId } });
   };
 

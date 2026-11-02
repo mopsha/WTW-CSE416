@@ -1,16 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
 import { haptic } from '@/lib/haptics';
 
-import { colors, flame, fonts, MIN_TARGET, radius } from './theme';
+import { colors, fonts, MIN_TARGET, radius } from './theme';
 
 export interface ButtonProps {
   label: string;
   onPress: () => void;
   /**
-   * primary: flame gradient (one per screen) · secondary: outlined surface ·
+   * primary: solid coral (one per screen) · secondary: outlined surface ·
    * link: text only · danger: destructive actions (Cancel Pick, Sign out)
    */
   variant?: 'primary' | 'secondary' | 'link' | 'danger';
@@ -45,12 +44,13 @@ export function Button({
           ? colors.primary
           : colors.text;
 
+  const iconOnly = !label && !!icon;
   const content = loading ? (
     <ActivityIndicator color={textColor} />
   ) : (
     <View style={styles.row}>
       {icon ? <Ionicons name={icon} size={18} color={textColor} /> : null}
-      <Text style={[styles.label, { color: textColor }]}>{label}</Text>
+      {!iconOnly ? <Text style={[styles.label, { color: textColor }]}>{label}</Text> : null}
     </View>
   );
 
@@ -75,18 +75,9 @@ export function Button({
         style,
       ]}
     >
-      {variant === 'primary' ? (
-        <LinearGradient
-          colors={flame}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.fill}
-        >
-          {content}
-        </LinearGradient>
-      ) : (
-        <View style={styles.fill}>{content}</View>
-      )}
+      <View style={[styles.fill, iconOnly && { paddingHorizontal: 0, minWidth: MIN_TARGET }]}>
+        {content}
+      </View>
     </Pressable>
   );
 }
@@ -101,14 +92,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  label: { fontFamily: fonts.bold, fontSize: 16, letterSpacing: 0.2 },
-  primaryShadow: {
-    shadowColor: '#FF3D71',
-    shadowOpacity: 0.4,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
-  },
+  label: { fontFamily: fonts.semibold, fontSize: 16 },
+  primaryShadow: { backgroundColor: colors.primary },
   secondary: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
   danger: { backgroundColor: colors.dangerBg },
   disabled: { opacity: 0.4 },
