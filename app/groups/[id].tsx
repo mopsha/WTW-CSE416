@@ -1,3 +1,4 @@
+import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import { GroupChat } from '@/components/GroupChat';
 import { Segments } from '@/components/TabUi';
 import type { GroupInvitation } from '@shared/api/groupInvitations.ts';
@@ -5,8 +6,8 @@ import { GroupIdeas } from '@/components/GroupIdeas';
 // One group: Start a Pick, members, add friends (owner), recent Picks, rename/delete or leave.
 // Non-members (and removed members) get "not found": RLS returns no row.
 import { Ionicons } from '@expo/vector-icons';
-import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
@@ -59,25 +60,64 @@ export default function GroupScreen() {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState('');
 
-  const load = useCallback(async () => {
+  const latest = useRef(0);
+  const auxiliaryLoaded = useRef(false);
+  const memberKey = useRef<string | null>(null);
+  const clear = useCallback(() => {
+    latest.current++;
+    auxiliaryLoaded.current = false;
+    setGroup(undefined);
+    setFriends([]);
+    setPendingInvites([]);
+    setEditing(false);
+    setName('');
     setError(null);
+  }, []);
+  const load = useCallback(async () => {
+    const request = ++latest.current;
     try {
-      const [g, f] = await Promise.all([queries.getGroup(id), queries.listMyFriends(me)]);
+      const g = await queries.getGroup(id);
+      if (request !== latest.current) return;
       setGroup(g);
-      setFriends(f);
-      setPendingInvites(
-        g?.ownerId === me ? (await api.listPendingGroupInvitations(id)).invitations : [],
-      );
+      setError(null);
+      if (!g) {
+        auxiliaryLoaded.current = false;
+        setFriends([]);
+        setPendingInvites([]);
+        setEditing(false);
+        setName('');
+        return;
+      }
+      const key = g.members
+        .map((m) => m.userId)
+        .sort()
+        .join(',');
+      if (!auxiliaryLoaded.current || memberKey.current !== key) {
+        const [f, invites] = await Promise.all([
+          queries.listMyFriends(me),
+          g.ownerId === me
+            ? api.listPendingGroupInvitations(id)
+            : Promise.resolve({ invitations: [] }),
+        ]);
+        if (request !== latest.current) return;
+        setFriends(f);
+        setPendingInvites(invites.invitations);
+        auxiliaryLoaded.current = true;
+        memberKey.current = key;
+      }
     } catch (e) {
-      setError(messageOf(e));
+      if (request === latest.current) {
+        auxiliaryLoaded.current = false;
+        setGroup(undefined);
+        setFriends([]);
+        setPendingInvites([]);
+        setEditing(false);
+        setName('');
+        setError(messageOf(e));
+      }
     }
   }, [id, me]);
-
-  useFocusEffect(
-    useCallback(() => {
-      void load();
-    }, [load]),
-  );
+  usePrivateRefresh(load, clear);
 
   /** Run a write, then reload; `key` marks which button shows a spinner. */
   const run = async (key: string, write: () => Promise<unknown>, after?: () => void) => {
@@ -87,7 +127,10 @@ export default function GroupScreen() {
       await write();
       haptic.success();
       if (after) after();
-      else await load();
+      else {
+        auxiliaryLoaded.current = false;
+        await load();
+      }
     } catch (e) {
       setError(messageOf(e));
     } finally {
@@ -147,7 +190,10 @@ export default function GroupScreen() {
       title={group.name}
       subtitle={`${group.members.length} ${group.members.length === 1 ? 'person' : 'people'}`}
       back
-      onRefresh={() => void load()}
+      onRefresh={() => {
+        auxiliaryLoaded.current = false;
+        void load();
+      }}
     >
       {error ? <ErrorState message={error} /> : null}
 

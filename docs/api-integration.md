@@ -1123,3 +1123,23 @@ Photos are deferred: no configured bucket, upload/picker pipeline, signed media 
 or photo ownership model exists. The stable Pick ID is the extension point for a future
 attachment model after upload limits, access/deletion policy and provider restrictions are
 reviewed. No fake media controls, empty photo grids or public feed were added.
+
+### Branch integration corrections (0031)
+
+Migration 0031 keeps legacy nullable usernames but rejects clearing an established username
+through metadata/privacy updates (400). Normal rename/uniqueness semantics and service-only
+RPC permissions remain. The client and mock apply the same rule; no endpoint shape changes.
+
+Groups now share the root required-identity guard. Auth restoration yields to newer auth events;
+late profile writes cannot update another account's context. Group details, Ideas, invitations,
+friend profiles and Past Moves revalidate every five seconds only while focused/foreground,
+clear on blur/background or failed authorization, and ignore superseded reads. Group detail
+polls avoid repeatedly loading the friend picker when membership has not changed. PlanBlock
+keeps its 30-second interval but pauses off-screen/background and clears on authorization denial.
+Chat ignores obsolete pre-background errors so foreground revalidation can recover. Server-side
+revocation remains immediate; remote UI changes appear on the next foreground check. Mock
+account deletion now cascades owned groups/current memberships and linked group content while
+preserving historical Pick associations for surviving groups.
+
+Shared Screen Back uses the existing stack when available and otherwise replaces with Picks,
+so a cold-start group/profile/message/settings/history route has a working exit.

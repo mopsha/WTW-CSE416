@@ -47,7 +47,7 @@ export function useLiveMessages<S extends { messages: Message[] }>(
             setUnavailable(false);
           }
         } catch (e) {
-          if (active) {
+          if (active && foreground && requestEpoch === epoch) {
             // Never retain private chat content after access cannot be verified.
             setData(null);
             setError(messageOf(e));

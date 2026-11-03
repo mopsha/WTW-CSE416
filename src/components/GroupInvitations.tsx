@@ -1,5 +1,5 @@
 import type { GroupInvitation } from '@shared/api/groupInvitations.ts';
-import { useFocusEffect } from 'expo-router';
+import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
 import { Button, Card, ErrorState, colors, space, type } from '@/components';
@@ -20,21 +20,32 @@ export function GroupInvitations({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const pending = useRef(false);
-  const load = useCallback(async () => {
-    try {
-      setInvitations((await api.listGroupInvitations()).invitations);
-      setError(null);
-    } catch (e) {
-      setError(messageOf(e));
-    } finally {
-      setLoading(false);
-    }
+  const latest = useRef(0);
+  const clear = useCallback(() => {
+    latest.current++;
+    setInvitations([]);
+    setLoading(true);
+    setError(null);
   }, []);
-  useFocusEffect(
-    useCallback(() => {
-      if (!refreshing) void load();
-    }, [load, refreshing]),
-  );
+  const load = useCallback(async () => {
+    if (refreshing) return;
+    const request = ++latest.current;
+    try {
+      const result = await api.listGroupInvitations();
+      if (request === latest.current) {
+        setInvitations(result.invitations);
+        setError(null);
+      }
+    } catch (e) {
+      if (request === latest.current) {
+        setInvitations([]);
+        setError(messageOf(e));
+      }
+    } finally {
+      if (request === latest.current) setLoading(false);
+    }
+  }, [refreshing]);
+  usePrivateRefresh(load, clear);
   const respond = async (invite: GroupInvitation, decision: 'accepted' | 'declined') => {
     if (pending.current) return;
     pending.current = true;

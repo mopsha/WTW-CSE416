@@ -51,12 +51,10 @@ test('hidden profiles render no memory content or cards', async () => {
   await act(async () => tree.unmount());
 });
 test('frozen memories render without photos or participant data and expand within the bounded list', async () => {
-  jest
-    .mocked(api.getUserPastMoves)
-    .mockResolvedValue({
-      visible: true,
-      pastMoves: Array.from({ length: 6 }, (_, i) => ({ ...move, pickId: `pick-${i}` })),
-    });
+  jest.mocked(api.getUserPastMoves).mockResolvedValue({
+    visible: true,
+    pastMoves: Array.from({ length: 6 }, (_, i) => ({ ...move, pickId: `pick-${i}` })),
+  });
   let tree!: Tree;
   await act(async () => {
     tree = create(<PastMoves userId="friend" />);
@@ -67,4 +65,22 @@ test('frozen memories render without photos or participant data and expand withi
   await act(async () => tree.root.findAllByType('test-button')[0]!.props.onPress());
   expect(tree.root.findAllByType('test-card')).toHaveLength(6);
   await act(async () => tree.unmount());
+});
+
+test('focused privacy revocation removes already rendered memory content', async () => {
+  jest.useFakeTimers();
+  jest.mocked(api.getUserPastMoves).mockResolvedValue({ visible: true, pastMoves: [move] });
+  let tree!: Tree;
+  await act(async () => {
+    tree = create(<PastMoves userId="friend" />);
+  });
+  expect(tree.root.findAllByType('test-card')).toHaveLength(1);
+  jest.mocked(api.getUserPastMoves).mockResolvedValue({ visible: false, pastMoves: [] });
+  await act(async () => {
+    jest.advanceTimersByTime(5000);
+  });
+  expect(tree.root.findAllByType('test-card')).toHaveLength(0);
+  await act(async () => tree.unmount());
+  jest.clearAllTimers();
+  jest.useRealTimers();
 });

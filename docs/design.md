@@ -665,3 +665,9 @@ friend projections omit participant identities/counts and outcome receipt times.
 and account/group deletion cascades remain unchanged. The service-only projection is installed
 by migration 0030 alongside an attended-outcome index. Photos await a real storage/upload and
 media privacy/deletion design. No Google lookup is needed to render a Past Move.
+
+Integration audit: Groups is registered under the same root identity guard as the tabs.
+`usePrivateRefresh` coalesces focused/foreground projection reads and invalidates caches on
+blur/background; it is shared by group/profile/Ideas/invitation/Past Moves views, with the
+existing 30-second period for PlanBlock. Auth/profile writes and private reads guard against
+stale asynchronous results. Migration 0031 preserves established identity during metadata edits.

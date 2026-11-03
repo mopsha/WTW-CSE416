@@ -1,7 +1,8 @@
+import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import { PastMoves } from '@/components/PastMoves';
 import { MessageFriendButton } from '@/components/MessageFriendButton';
 import type { UserProfile } from '@shared/api/userProfiles.ts';
-import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
 import { Avatar, Screen, ErrorState, colors, space, type } from '@/components';
@@ -16,26 +17,26 @@ export default function UserProfileScreen() {
   const latest = useRef(0);
   const load = useCallback(async () => {
     const request = ++latest.current;
-    setLoading(true);
-    setProfile(null);
     setError(null);
     try {
       const value = await api.getUserProfile(id);
       if (request === latest.current) setProfile(value);
     } catch (e) {
-      if (request === latest.current) setError(messageOf(e));
+      if (request === latest.current) {
+        setProfile(null);
+        setError(messageOf(e));
+      }
     } finally {
       if (request === latest.current) setLoading(false);
     }
   }, [id]);
-  useFocusEffect(
-    useCallback(() => {
-      void load();
-      return () => {
-        latest.current++;
-      };
-    }, [load]),
-  );
+  const clear = useCallback(() => {
+    latest.current++;
+    setProfile(null);
+    setLoading(true);
+    setError(null);
+  }, []);
+  usePrivateRefresh(load, clear);
   return (
     <Screen title="Profile" back onRefresh={() => void load()}>
       {loading ? (

@@ -82,6 +82,8 @@ export function handleMockUserProfiles(method: string, path: string, body: unkno
     const input = identity
       ? { ...(mockUserProfiles.get(MOCK_USER_ID) ?? empty()), username: identity.username }
       : parseProfileDetails(body);
+    if (mockUserProfiles.get(MOCK_USER_ID)?.username && !input.username)
+      throw new ApiError(400, 'INVALID_INPUT', 'Username is required');
     if (
       input.username &&
       (mockUsernameTaken(input.username) ||

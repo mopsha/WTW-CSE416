@@ -119,6 +119,7 @@ function RootStack() {
         </Stack.Protected>
         <Stack.Protected guard={inApp}>
           <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="groups" />
           <Stack.Screen name="onboarding" />
           <Stack.Screen name="preferences" />
           <Stack.Screen name="settings/index" />

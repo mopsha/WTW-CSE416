@@ -1,4 +1,4 @@
-import { useFocusEffect } from 'expo-router';
+import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import type { GroupIdea, GroupIdeaInput } from '@shared/api/groupIdeas.ts';
 import { parseGroupIdea } from '@shared/api/groupIdeas.ts';
 import { useCallback, useRef, useState } from 'react';
@@ -24,25 +24,44 @@ export function GroupIdeas({ group, userId }: { group: GroupDetail; userId: stri
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
-  const load = useCallback(async () => {
-    setLoading(true);
+  const latest = useRef(0);
+  const loaded = useRef(false);
+  const clear = useCallback(() => {
+    latest.current++;
+    loaded.current = false;
+    setIdeas([]);
+    setSelected(null);
+    setEditing(false);
+    setForm(blank);
+    setFormError(null);
     setError(null);
+    setLoading(true);
+  }, []);
+  const load = useCallback(async () => {
+    const request = ++latest.current;
+    if (!loaded.current) setLoading(true);
     try {
-      setIdeas((await api.listGroupIdeas(groupId)).ideas);
+      const result = await api.listGroupIdeas(groupId);
+      if (request === latest.current) {
+        loaded.current = true;
+        setIdeas(result.ideas);
+        setError(null);
+      }
     } catch (e) {
-      setIdeas([]);
-      setSelected(null);
-      setEditing(false);
-      setError(messageOf(e));
+      if (request === latest.current) {
+        loaded.current = false;
+        setIdeas([]);
+        setSelected(null);
+        setEditing(false);
+        setForm(blank);
+        setFormError(null);
+        setError(messageOf(e));
+      }
     } finally {
-      setLoading(false);
+      if (request === latest.current) setLoading(false);
     }
   }, [groupId]);
-  useFocusEffect(
-    useCallback(() => {
-      if (group.members.some((member) => member.userId === userId)) void load();
-    }, [load, group, userId]),
-  );
+  usePrivateRefresh(load, clear);
   const close = () => {
     if (!pending.current) {
       setSelected(null);

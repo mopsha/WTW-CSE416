@@ -1,8 +1,9 @@
+import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import { attendanceDue } from '@shared/domain/pastMoves.ts';
 // The Winner screen's "after" part (Alan): when we're going, who's in (counts only), "Did you
 // go?", and "Pick again". Everything here is changeable; the server rechecks who may do what.
 import { router } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { PlanSummary, RsvpStatus } from '@shared/api/plans.ts';
@@ -34,23 +35,36 @@ export function PlanBlock({ pickId, decidedAt }: { pickId: string; decidedAt: st
 
   const load = useCallback(() => {
     const request = ++latest.current;
-    api.getPlan(pickId).then(
-      (next) => request === latest.current && setPlan(next),
-      // Keep the last good plan on a failed reload; before the first load the block stays hidden.
-      () => {},
+    return api.getPlan(pickId).then(
+      (next) => {
+        if (request === latest.current) setPlan(next);
+      },
+      // Keep offline data, but never retain a plan after authorization is denied.
+      (error: unknown) => {
+        if (
+          request === latest.current &&
+          typeof error === 'object' &&
+          error !== null &&
+          'status' in error &&
+          [401, 403, 404].includes(Number(error.status))
+        )
+          setPlan(null);
+      },
     );
   }, [pickId]);
-  // Others' RSVPs and a moved time show up without leaving the screen.
-  useEffect(() => {
-    load();
-    const timer = setInterval(load, PLAN_REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [load]);
+  const clear = useCallback(() => {
+    latest.current++;
+    setPlan(null);
+    setEditingAttendance(false);
+  }, []);
+  usePrivateRefresh(load, clear, PLAN_REFRESH_MS);
 
   // One action at a time: a second tap while one is in flight is ignored.
   const act = (name: string, fn: () => Promise<unknown>) => {
     if (action.busy) return;
-    void action.run(name, fn).then((ok) => ok && load());
+    void action.run(name, fn).then((ok) => {
+      if (ok) return load();
+    });
   };
 
   const again = () =>

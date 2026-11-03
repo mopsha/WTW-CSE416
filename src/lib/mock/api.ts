@@ -33,6 +33,7 @@ import { createPoolBuilder } from '@shared/places/pool.ts';
 import { MockProvider } from '@shared/places/MockProvider.ts';
 import {
   handleMockGroups,
+  deleteMockGroupAccount,
   mockCopyGroupMembers,
   mockCreateGroupPick,
   mockGetGroup,
@@ -746,6 +747,7 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
       if (idea.createdBy === MOCK_USER_ID || mockGetGroup(idea.groupId)?.ownerId === MOCK_USER_ID)
         mockGroupIdeas.delete(id);
     }
+    deleteMockGroupAccount(MOCK_USER_ID);
     resetMockProfile();
     return json(200, { status: 'ok' });
   }

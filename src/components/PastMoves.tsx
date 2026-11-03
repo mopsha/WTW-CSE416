@@ -1,5 +1,6 @@
+import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import type { PastMove, PastMovesResult } from '@shared/api/pastMoves.ts';
-import { router, useFocusEffect } from 'expo-router';
+import { router } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { Button, Card, colors, ErrorState, space, type } from '@/components';
@@ -37,25 +38,23 @@ export function PastMoves({ userId }: { userId: string }) {
   const latest = useRef(0);
   const load = useCallback(async () => {
     const request = ++latest.current;
-    setData(null);
     setError(null);
     try {
       const value = await api.getUserPastMoves(userId);
       if (request === latest.current) setData(value);
     } catch (e) {
-      if (request === latest.current) setError(messageOf(e));
+      if (request === latest.current) {
+        setData(null);
+        setError(messageOf(e));
+      }
     }
   }, [userId]);
-  useFocusEffect(
-    useCallback(() => {
-      void load();
-      return () => {
-        latest.current++;
-        setData(null);
-        setError(null);
-      };
-    }, [load]),
-  );
+  const clear = useCallback(() => {
+    latest.current++;
+    setData(null);
+    setError(null);
+  }, []);
+  usePrivateRefresh(load, clear);
   return (
     <View style={{ gap: space.md }}>
       <Text style={s.heading} accessibilityRole="header">

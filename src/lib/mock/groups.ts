@@ -87,6 +87,24 @@ export function resetMockGroups() {
   pickGroup.clear();
 }
 
+function deleteMockGroup(groupId: string) {
+  groups.delete(groupId);
+  for (const [id, message] of mockGroupMessages)
+    if (message.groupId === groupId) mockGroupMessages.delete(id);
+  for (const [id, invite] of mockGroupInvitations)
+    if (invite.groupId === groupId) mockGroupInvitations.delete(id);
+  for (const [id, idea] of mockGroupIdeas) if (idea.groupId === groupId) mockGroupIdeas.delete(id);
+  for (const [pickId, linkedGroup] of pickGroup)
+    if (linkedGroup === groupId) pickGroup.delete(pickId);
+}
+/** Match group/member FK cascades on account deletion without changing historical Picks. */
+export function deleteMockGroupAccount(userId: string) {
+  for (const group of [...groups.values()]) {
+    if (group.ownerId === userId) deleteMockGroup(group.id);
+    else group.memberIds = group.memberIds.filter((id) => id !== userId);
+  }
+}
+
 // ---------------------------------------------------------------- reads (RLS: members only)
 const mine = (id: string) => {
   const g = groups.get(id);
@@ -200,13 +218,7 @@ export function handleMockGroups(method: string, path: string, body: unknown): R
     return ok({ status: 'ok' });
   }
   if (action === 'delete') {
-    groups.delete(g.id);
-    for (const [id, message] of mockGroupMessages)
-      if (message.groupId === g.id) mockGroupMessages.delete(id);
-    for (const [id, invite] of mockGroupInvitations)
-      if (invite.groupId === g.id) mockGroupInvitations.delete(id);
-    for (const [id, idea] of mockGroupIdeas) if (idea.groupId === g.id) mockGroupIdeas.delete(id);
-    for (const [pickId, groupId] of pickGroup) if (groupId === g.id) pickGroup.delete(pickId);
+    deleteMockGroup(g.id);
     return ok({ status: 'ok' });
   }
   if (memberId !== undefined) {

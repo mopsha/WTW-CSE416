@@ -76,8 +76,9 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       };
     }
     // Like useAuth: an unreachable backend must not leave the app on a blank screen.
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('timeout')), 4000),
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>(
+      (_, reject) => (timer = setTimeout(() => reject(new Error('timeout')), 4000)),
     );
     Promise.race([api.getMe(), timeout])
       .then((me) => active && setState({ userId, ...me, failed: false }))
@@ -93,9 +94,11 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
             onboarded: false,
             failed: true,
           }),
-      );
+      )
+      .finally(() => clearTimeout(timer));
     return () => {
       active = false;
+      clearTimeout(timer);
     };
   }, [userId, attempt]);
 
@@ -119,15 +122,21 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     await api.finishOptionalSetup();
     setState((s) => (s.userId !== userId ? s : { ...s, optionalSetupPending: false }));
   }, [userId]);
-  const saveDisplayName = useCallback(async (name: string) => {
-    const { displayName } = await api.updateMe(name);
-    setState((s) => ({ ...s, displayName, failed: false }));
-  }, []);
+  const saveDisplayName = useCallback(
+    async (name: string) => {
+      const { displayName } = await api.updateMe(name);
+      setState((s) => (s.userId !== userId ? s : { ...s, displayName, failed: false }));
+    },
+    [userId],
+  );
 
-  const savePreferences = useCallback(async (next: Preferences) => {
-    const { preferences, onboarded } = await api.savePreferences(next);
-    setState((s) => ({ ...s, preferences, onboarded }));
-  }, []);
+  const savePreferences = useCallback(
+    async (next: Preferences) => {
+      const { preferences, onboarded } = await api.savePreferences(next);
+      setState((s) => (s.userId !== userId ? s : { ...s, preferences, onboarded }));
+    },
+    [userId],
+  );
 
   const current = state.userId === userId;
   const value: ProfileState = {

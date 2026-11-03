@@ -377,3 +377,14 @@ retaining valid shared completed Picks and their snapshots for remaining partici
 are deferred because there is no configured upload/storage system. A future attachment model
 can key by Pick ID after ownership, signed access, limits and deletion rules are designed;
 there are no placeholder photo controls in this implementation.
+
+## Integrated branch corrections
+
+A forward migration (0031) prevents metadata edits from erasing an established required
+username while retaining legacy incomplete profiles. No historical migrations were rewritten.
+Private projection screens use bounded, focused foreground revalidation and clear cached
+content when backgrounded, blurred or denied. Request generations prevent old responses from
+restoring revoked content. Plan polling retains its existing 30-second cadence. Auth events
+supersede startup reads, and profile saves remain scoped to the initiating account. These fixes
+preserve existing ranking, frozen snapshots, attendance, provider retention and notification
+semantics; they do not introduce product features or new audience rules.

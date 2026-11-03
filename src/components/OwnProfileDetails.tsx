@@ -35,7 +35,9 @@ export function OwnProfileDetails({
     setBusy(true);
     setError(null);
     try {
-      const updated = await api.updateProfileDetails(parseProfileDetails(draft));
+      const input = parseProfileDetails(draft);
+      if (profile.username && !input.username) throw new Error('Username is required');
+      const updated = await api.updateProfileDetails(input);
       onSaved(updated);
       setOpen(false);
     } catch (e) {

@@ -105,3 +105,22 @@ test('offline errors clear cached chat and a later poll recovers', async () => {
   expect(result.messages).toEqual([message]);
   expect(result.error).toBeNull();
 });
+
+test('an error from an obsolete foreground request cannot revoke a newly queued refresh', async () => {
+  let reject!: (error: Error) => void;
+  jest.mocked(api.listGroupMessages).mockReturnValueOnce(
+    new Promise((_resolve, r) => {
+      reject = r;
+    }),
+  );
+  await act(async () => change());
+  await act(async () => state('background'));
+  jest
+    .mocked(api.listGroupMessages)
+    .mockResolvedValue({ messages: [{ ...message, body: 'Revalidated' }] });
+  await act(async () => state('active'));
+  await act(async () => reject(Object.assign(new Error('Old denied response'), { status: 404 })));
+  expect(result.messages[0]!.body).toBe('Revalidated');
+  expect(result.unavailable).toBe(false);
+  expect(result.error).toBeNull();
+});
