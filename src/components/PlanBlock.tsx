@@ -1,7 +1,9 @@
+import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
+import { attendanceDue } from '@shared/domain/pastMoves.ts';
 // The Winner screen's "after" part (Alan): when we're going, who's in (counts only), "Did you
 // go?", and "Pick again". Everything here is changeable; the server rechecks who may do what.
 import { router } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { PlanSummary, RsvpStatus } from '@shared/api/plans.ts';
@@ -27,28 +29,42 @@ const RSVP_OPTIONS = [
 export function PlanBlock({ pickId, decidedAt }: { pickId: string; decidedAt: string | null }) {
   const [plan, setPlan] = useState<PlanSummary | null>(null);
   const action = useAction();
+  const [editingAttendance, setEditingAttendance] = useState(false);
   // Only the newest reload may update the block, so quick taps can't show a stale answer.
   const latest = useRef(0);
 
   const load = useCallback(() => {
     const request = ++latest.current;
-    api.getPlan(pickId).then(
-      (next) => request === latest.current && setPlan(next),
-      // Keep the last good plan on a failed reload; before the first load the block stays hidden.
-      () => {},
+    return api.getPlan(pickId).then(
+      (next) => {
+        if (request === latest.current) setPlan(next);
+      },
+      // Keep offline data, but never retain a plan after authorization is denied.
+      (error: unknown) => {
+        if (
+          request === latest.current &&
+          typeof error === 'object' &&
+          error !== null &&
+          'status' in error &&
+          [401, 403, 404].includes(Number(error.status))
+        )
+          setPlan(null);
+      },
     );
   }, [pickId]);
-  // Others' RSVPs and a moved time show up without leaving the screen.
-  useEffect(() => {
-    load();
-    const timer = setInterval(load, PLAN_REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [load]);
+  const clear = useCallback(() => {
+    latest.current++;
+    setPlan(null);
+    setEditingAttendance(false);
+  }, []);
+  usePrivateRefresh(load, clear, PLAN_REFRESH_MS);
 
   // One action at a time: a second tap while one is in flight is ignored.
   const act = (name: string, fn: () => Promise<unknown>) => {
     if (action.busy) return;
-    void action.run(name, fn).then((ok) => ok && load());
+    void action.run(name, fn).then((ok) => {
+      if (ok) return load();
+    });
   };
 
   const again = () =>
@@ -97,21 +113,32 @@ export function PlanBlock({ pickId, decidedAt }: { pickId: string; decidedAt: st
           : 'Nobody has answered yet.'}
       </Text>
 
-      {shouldAskDidYouGo(plan, decidedAt) ? (
+      {shouldAskDidYouGo(plan, decidedAt) ||
+      (editingAttendance && attendanceDue(plan.planAt, decidedAt)) ? (
         <View style={styles.ask}>
           <Text style={pickStyles.section}>Did you go? 👀</Text>
           <View style={styles.row}>
             <Button
-              label="We went 🎉"
+              label="I went 🎉"
               variant="secondary"
               loading={action.busy === 'went'}
-              onPress={() => act('went', () => api.recordOutcome(pickId, true))}
+              onPress={() =>
+                act('went', async () => {
+                  await api.recordOutcome(pickId, true);
+                  setEditingAttendance(false);
+                })
+              }
             />
             <Button
-              label="Didn’t happen"
+              label="I didn’t go"
               variant="secondary"
               loading={action.busy === 'didnt'}
-              onPress={() => act('didnt', () => api.recordOutcome(pickId, false))}
+              onPress={() =>
+                act('didnt', async () => {
+                  await api.recordOutcome(pickId, false);
+                  setEditingAttendance(false);
+                })
+              }
             />
           </View>
         </View>
@@ -132,6 +159,17 @@ export function PlanBlock({ pickId, decidedAt }: { pickId: string; decidedAt: st
             onPress={() => act('again-no', () => api.recordOutcome(pickId, true, false))}
           />
         </View>
+      ) : null}
+      {(plan.myOutcome || plan.myRsvp === 'not_going') && attendanceDue(plan.planAt, decidedAt) ? (
+        <>
+          {plan.myOutcome?.went ? <Text style={styles.went}>Saved to your Past Moves.</Text> : null}
+          <Button
+            label={plan.myOutcome ? 'Update my attendance' : 'Record my attendance'}
+            variant="link"
+            disabled={!!action.busy}
+            onPress={() => setEditingAttendance((v) => !v)}
+          />
+        </>
       ) : null}
       {summary ? <Text style={styles.went}>{summary}</Text> : null}
 

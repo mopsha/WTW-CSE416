@@ -63,6 +63,17 @@ export async function notificationsAllowed(): Promise<boolean> {
  */
 export function routeForNotification(data: unknown): string | null {
   if (typeof data !== 'object' || data === null) return null;
+  if ((data as { type?: unknown }).type === 'direct_message') {
+    const id = (data as { conversationId?: unknown }).conversationId;
+    return typeof id === 'string' && id ? `/messages/${encodeURIComponent(id)}` : null;
+  }
+  if ((data as { type?: unknown }).type === 'group_message') {
+    const groupId = (data as { groupId?: unknown }).groupId;
+    return typeof groupId === 'string' && groupId
+      ? `/groups/${encodeURIComponent(groupId)}?section=chat`
+      : null;
+  }
+  if ((data as { type?: unknown }).type === 'group_invite') return '/friends';
   const { url, pickId } = data as { url?: unknown; pickId?: unknown };
   if (typeof url === 'string' && url.startsWith('/')) return url;
   if (typeof pickId === 'string' && pickId) return `/pick/${encodeURIComponent(pickId)}`;

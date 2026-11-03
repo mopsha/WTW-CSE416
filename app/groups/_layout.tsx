@@ -1,6 +1,6 @@
 // Groups screens (list, detail). Full-screen Stack screens outside (tabs), like the Pick flow.
-// The root Stack lists its protected screens by name; rather than edit it, this layout keeps
-// the same guard: signed out, go to sign-in.
+// The root Stack protects this navigator with the same required-identity guard as the tabs.
+// Keep the local signed-out guard as a defensive fallback.
 import { Redirect, Stack } from 'expo-router';
 
 import { colors } from '@/components/theme';

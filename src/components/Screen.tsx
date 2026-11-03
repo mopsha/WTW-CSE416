@@ -23,7 +23,7 @@ interface Props {
   title?: string;
   /** Small line above the title (e.g. "Hey Mike 👋"). */
   subtitle?: string;
-  /** Shows a back chevron that calls router.back(). */
+  /** Shows a back chevron; falls back to Picks when a cold-start route has no history. */
   back?: boolean;
   /** Something on the right of the header row (e.g. an icon button). */
   right?: ReactNode;
@@ -57,7 +57,10 @@ export function Screen({
           <View style={styles.headerRow}>
             {back ? (
               <Pressable
-                onPress={() => router.back()}
+                onPress={() => {
+                  if (router.canGoBack()) router.back();
+                  else router.replace('/');
+                }}
                 accessibilityRole="button"
                 accessibilityLabel="Back"
                 style={styles.iconButton}

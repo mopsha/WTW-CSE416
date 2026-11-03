@@ -6,7 +6,7 @@ import { planProblem, type PlanOptions } from './customPlans.ts';
 import { validFilters, type PlaceFilters } from './placeFilters.ts';
 import type { LatLng } from './geo.ts';
 
-export const PICK_CATEGORIES = ['food', 'activities', 'custom'] as const;
+export const PICK_CATEGORIES = ['food', 'activities', 'both', 'custom'] as const;
 export type PickCategory = (typeof PICK_CATEGORIES)[number];
 
 /** picks.radius_m: > 0 and <= 50 km. The app's slider stays well inside this. */
@@ -27,6 +27,8 @@ export const MIN_DEADLINE_LEAD_MS = 5 * 60_000;
 export const MAX_DEADLINE_LEAD_MS = 7 * 24 * 60 * 60_000;
 
 export interface CreatePickInput extends PlaceFilters, PlanOptions {
+  includeGroupIdeas?: boolean;
+  groupId?: string | null;
   category: PickCategory;
   center: LatLng;
   radiusM: number;
@@ -60,7 +62,7 @@ export function validateCreatePick(input: unknown, now: number = Date.now()): Cr
   >;
 
   if (!PICK_CATEGORIES.includes(body.category as PickCategory)) {
-    add('category', 'Choose food, activities or a custom plan.');
+    add('category', 'Choose food, activities, both or a custom plan.');
   }
 
   const center = body.center as Partial<LatLng> | undefined;
@@ -107,6 +109,17 @@ export function validateCreatePick(input: unknown, now: number = Date.now()): Cr
 
   if (!validFilters(body as PlaceFilters))
     add('priceMax', 'Choose a price from 0 to 4 and a valid open-now filter.');
+  if (body.includeGroupIdeas !== undefined && typeof body.includeGroupIdeas !== 'boolean')
+    add('includeGroupIdeas', 'Choose whether to include Group Ideas.');
+  if (body.includeGroupIdeas === true && (typeof body.groupId !== 'string' || !body.groupId.trim()))
+    add('includeGroupIdeas', 'Group Ideas require a selected group.');
+  if (
+    body.includeGroupIdeas === true &&
+    Array.isArray(body.customOptions) &&
+    isInt(body.poolSize) &&
+    body.poolSize <= body.customOptions.length
+  )
+    add('includeGroupIdeas', 'Leave at least one deck slot for Group Ideas.');
   const planError = planProblem(body);
   if (planError) add('customOptions', planError);
   if (

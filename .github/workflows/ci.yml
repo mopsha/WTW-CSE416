@@ -63,6 +63,9 @@ jobs:
       - name: Run existing pgTAP and RLS tests
         timeout-minutes: 3
         run: timeout 120 supabase test db
+      - name: Check concurrent polling and message quotas
+        timeout-minutes: 2
+        run: timeout 60 python3 tests/db/pr42_concurrency.py --dsn 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
       - name: Serve API and wait for readiness
         timeout-minutes: 3
         shell: bash

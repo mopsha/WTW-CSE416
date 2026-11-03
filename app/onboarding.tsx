@@ -1,131 +1,172 @@
-import { EMPTY_PREFERENCES, type Preferences } from '@shared/domain/preferences.ts';
 import * as Location from 'expo-location';
-import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-
+import { router } from 'expo-router';
+import { useRef, useState } from 'react';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
+import { parseProfileDetails } from '@shared/api/userProfiles.ts';
 import {
   Button,
   colors,
   EmptyState,
   ErrorState,
-  PreferencesForm,
-  ProgressBar,
+  MIN_TARGET,
+  radius,
   Screen,
   space,
   type,
 } from '@/components';
-import { useAction } from '@/hooks/useAction';
 import { useProfile } from '@/hooks/useProfile';
+import { api } from '@/lib/api';
+import { messageOf } from '@/lib/errors';
 import { ensureNotificationPermission } from '@/lib/notify';
 import { registerForPush } from '@/lib/push';
 
-type Step = 'survey' | 'location' | 'notifications';
-const STEPS: Step[] = ['survey', 'location', 'notifications'];
-
-// First-run onboarding, after the name step: the preference survey (FR-02), then a location
-// explainer and a notifications explainer shown BEFORE each system prompt. Every step can be
-// skipped and saying no keeps the app fully usable (App Store 5.1.2). Saving at the end marks
-// onboarding done, which flips the root layout's guard to the tabs.
+// Optional routes are part of the signed-in stack: neither permissions nor this offer gate Picks.
 export default function OnboardingScreen() {
-  const { savePreferences } = useProfile();
-  const [step, setStep] = useState<Step>('survey');
-  const [answers, setAnswers] = useState<Preferences>(EMPTY_PREFERENCES);
-  const { busy, error, run } = useAction();
-  const index = STEPS.indexOf(step);
-
-  async function finish() {
-    await run('finish', () => savePreferences(answers));
-  }
-
-  async function allowLocation() {
+  const { finishOptionalSetup } = useProfile();
+  const [step, setStep] = useState<'favorites' | 'location' | 'notifications'>('favorites');
+  const [cuisine, setCuisine] = useState('');
+  const [activity, setActivity] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pending = useRef(false);
+  async function act(work: () => Promise<void>) {
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setError(null);
     try {
-      await Location.requestForegroundPermissionsAsync();
-    } catch {
-      // Location services off or unsupported: a dropped pin still works everywhere.
+      await work();
+    } catch (e) {
+      setError(messageOf(e));
+    } finally {
+      pending.current = false;
+      setBusy(false);
     }
-    setStep('notifications');
   }
-
-  async function allowNotifications() {
-    if (await ensureNotificationPermission()) void registerForPush();
-    await finish();
+  async function finish() {
+    // Leave immediately; persisting the dismissal must not hold up entry when offline.
+    router.replace('/');
+    try {
+      await finishOptionalSetup();
+    } catch {
+      /* Offered again on next start if unavailable. */
+    }
   }
-
-  const progress = (
-    <ProgressBar
-      value={index + 1}
-      total={STEPS.length}
-      showCount={false}
-      accessibilityLabel="setup steps"
-    />
-  );
-
-  if (step === 'survey') {
-    return (
-      <Screen
-        title="What are you into?"
-        subtitle={`Step ${index + 1} of ${STEPS.length}`}
-        edges={['top', 'left', 'right', 'bottom']}
-      >
-        {progress}
-        <Text style={styles.lede}>
-          This shapes Discover and your Pick suggestions. Only you can see it.
-        </Text>
-        <PreferencesForm value={answers} onChange={setAnswers} />
-        <Button label="Next" onPress={() => setStep('location')} />
-        <Button
-          label="Skip for now"
-          variant="link"
-          accessibilityHint="Skips the questions; you can answer them later on the Profile tab"
-          onPress={() => {
-            setAnswers(EMPTY_PREFERENCES);
-            setStep('location');
-          }}
-        />
-      </Screen>
+  async function favorites() {
+    const current = await api.getMyUserProfile();
+    await api.updateProfileDetails(
+      parseProfileDetails({
+        username: current.username,
+        shareMetadata: current.shareMetadata ?? false,
+        favoriteCuisine: cuisine.trim() || current.favoriteCuisine,
+        favoriteActivity: activity.trim() || current.favoriteActivity,
+      }),
     );
+    setStep('location');
   }
-
+  async function permission() {
+    if (step === 'location') {
+      try {
+        await Location.requestForegroundPermissionsAsync();
+      } catch {
+        /* A pin still works. */
+      }
+      setStep('notifications');
+    } else {
+      try {
+        if (await ensureNotificationPermission()) void registerForPush();
+      } catch {
+        /* Unsupported/denied permissions never block entry. */
+      }
+      await finish();
+    }
+  }
   const location = step === 'location';
   return (
-    <Screen subtitle={`Step ${index + 1} of ${STEPS.length}`}>
-      {progress}
-      <View style={styles.explainer}>
-        {location ? (
-          <EmptyState
-            emoji="📍"
-            title="Find places near you"
-            body="WTW uses your location only while the app is open, to center a Pick where you are and show what's nearby in Discover. You can always drop a pin instead."
+    <Screen
+      title={step === 'favorites' ? 'A few favorites?' : 'Make WTW work for you'}
+      subtitle="Optional · you can change these in Settings"
+    >
+      {error ? <ErrorState variant="banner" message={error} /> : null}
+      {step === 'favorites' ? (
+        <>
+          <Text style={s.body}>
+            Add a favorite cuisine and activity to your profile. Your current privacy setting stays
+            the same; new profiles keep metadata private.
+          </Text>
+          <TextInput
+            style={s.input}
+            value={cuisine}
+            onChangeText={setCuisine}
+            maxLength={60}
+            placeholder="Favorite cuisine, e.g. Japanese"
+            placeholderTextColor={colors.muted}
+            accessibilityLabel="Favorite cuisine"
+            editable={!busy}
           />
-        ) : (
-          <EmptyState
-            emoji="🔔"
-            title="Know when your group is ready"
-            body="We'll tell you when a Pick starts, when it's time to vote, and when there's a winner. Notifications never show anyone's answers."
+          <TextInput
+            style={s.input}
+            value={activity}
+            onChangeText={setActivity}
+            maxLength={60}
+            placeholder="Favorite activity, e.g. Basketball"
+            placeholderTextColor={colors.muted}
+            accessibilityLabel="Favorite activity"
+            editable={!busy}
           />
-        )}
-      </View>
-      {error ? <ErrorState message={error} /> : null}
+          <Button label="Save & continue" loading={busy} onPress={() => void act(favorites)} />
+          <Button
+            label="Skip favorites"
+            variant="secondary"
+            disabled={busy}
+            onPress={() => setStep('location')}
+          />
+        </>
+      ) : (
+        <>
+          <View style={{ paddingVertical: space.xl }}>
+            <EmptyState
+              emoji={location ? '📍' : '🔔'}
+              title={location ? 'Find places near you' : 'Know when your group is ready'}
+              body={
+                location
+                  ? 'WTW uses location while the app is open to find nearby places. You can drop a pin instead, and manage permission in Settings.'
+                  : 'Get Pick updates when your group starts, votes or has a winner. Permission is optional and can be managed in Settings.'
+              }
+            />
+          </View>
+          <Button
+            label={location ? 'Allow location' : 'Turn on notifications'}
+            loading={busy}
+            onPress={() => void act(permission)}
+          />
+          <Button
+            label="Not now"
+            variant="secondary"
+            disabled={busy}
+            onPress={() => (location ? setStep('notifications') : void act(finish))}
+          />
+        </>
+      )}
       <Button
-        label={location ? 'Allow location' : 'Turn on notifications'}
-        icon={location ? 'location-outline' : 'notifications-outline'}
-        loading={busy === 'finish'}
-        onPress={() => void (location ? allowLocation() : allowNotifications())}
-        accessibilityHint="Shows your phone's permission prompt"
-      />
-      <Button
-        label="Not now"
+        label="Skip setup & enter WTW"
         variant="link"
-        disabled={!!busy}
-        onPress={() => (location ? setStep('notifications') : void finish())}
-        accessibilityHint="You can turn this on later in Settings"
+        disabled={busy}
+        onPress={() => void act(finish)}
       />
     </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  lede: { ...type.body, color: colors.muted },
-  // Scrolls rather than clips at large text sizes.
-  explainer: { paddingVertical: space.xxl },
+const s = StyleSheet.create({
+  body: { ...type.body, color: colors.muted },
+  input: {
+    ...type.body,
+    color: colors.text,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: space.md,
+    minHeight: MIN_TARGET,
+  },
 });

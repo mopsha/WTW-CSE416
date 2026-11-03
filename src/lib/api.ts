@@ -1,3 +1,9 @@
+import type { PastMovesResult } from '@shared/api/pastMoves.ts';
+import type { DirectConversation, DirectMessage, DirectHistory } from '@shared/api/directChat.ts';
+import type { GroupMessage, GroupMessageInput } from '@shared/api/groupChat.ts';
+import type { UserProfile, ProfileDetailsInput } from '@shared/api/userProfiles.ts';
+import type { GroupInvitation } from '@shared/api/groupInvitations.ts';
+import type { GroupIdea, GroupIdeaInput } from '@shared/api/groupIdeas.ts';
 // Typed client for our Edge Function (`${EXPO_PUBLIC_SUPABASE_URL}/functions/v1/api`).
 // Every write goes through here with the user's access token; reads use Supabase + RLS.
 import { getAccessToken } from './auth';
@@ -173,6 +179,51 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
   const groupPath = (groupId: string) => `/groups/${encodeURIComponent(groupId)}`;
 
   return {
+    getUserProfile: (id: string) =>
+      request<UserProfile>('GET', `/users/${encodeURIComponent(id)}/profile`),
+    getMyUserProfile: () => request<UserProfile>('GET', '/me/details'),
+    updateProfileDetails: (input: ProfileDetailsInput) =>
+      request<UserProfile>('POST', '/me/details', { body: input }),
+    listGroupInvitations: () =>
+      request<{ invitations: GroupInvitation[] }>('GET', '/group-invitations'),
+    listPendingGroupInvitations: (groupId: string) =>
+      request<{ invitations: GroupInvitation[] }>('GET', `${groupPath(groupId)}/invitations`),
+    respondGroupInvitation: (id: string, decision: 'accepted' | 'declined') =>
+      request<GroupInvitation>('POST', `/group-invitations/${encodeURIComponent(id)}/respond`, {
+        body: { decision },
+      }),
+    openDirectConversation: (userId: string) =>
+      request<DirectConversation>('POST', '/conversations', { body: { userId } }),
+    listDirectMessages: (id: string) =>
+      request<DirectHistory>('GET', `/conversations/${encodeURIComponent(id)}/messages`),
+    sendDirectMessage: (id: string, input: GroupMessageInput) =>
+      request<DirectMessage>('POST', `/conversations/${encodeURIComponent(id)}/messages`, {
+        body: input,
+      }),
+    listGroupMessages: (groupId: string) =>
+      request<{ messages: GroupMessage[] }>('GET', `${groupPath(groupId)}/messages`),
+    sendGroupMessage: (groupId: string, input: GroupMessageInput) =>
+      request<GroupMessage>('POST', `${groupPath(groupId)}/messages`, { body: input }),
+    listGroupIdeas: (groupId: string) =>
+      request<{ ideas: GroupIdea[] }>('GET', `/groups/${encodeURIComponent(groupId)}/ideas`),
+    getGroupIdea: (groupId: string, id: string) =>
+      request<GroupIdea>(
+        'GET',
+        `/groups/${encodeURIComponent(groupId)}/ideas/${encodeURIComponent(id)}`,
+      ),
+    createGroupIdea: (groupId: string, input: GroupIdeaInput) =>
+      request<GroupIdea>('POST', `/groups/${encodeURIComponent(groupId)}/ideas`, { body: input }),
+    updateGroupIdea: (groupId: string, id: string, input: GroupIdeaInput) =>
+      request<GroupIdea>(
+        'POST',
+        `/groups/${encodeURIComponent(groupId)}/ideas/${encodeURIComponent(id)}`,
+        { body: input },
+      ),
+    deleteGroupIdea: (groupId: string, id: string) =>
+      request<StatusResponse>(
+        'DELETE',
+        `/groups/${encodeURIComponent(groupId)}/ideas/${encodeURIComponent(id)}`,
+      ),
     discover: (params: {
       lat: number;
       lng: number;
@@ -229,6 +280,10 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     updateMe: (displayName: string) =>
       request<{ displayName: string }>('POST', '/me', { body: { displayName } }),
     /** My name, survey answers and whether onboarding is done (survey answers are API-only). */
+    completeIdentity: (displayName: string, username: string) =>
+      request<UserProfile>('POST', '/me/identity', { body: { displayName, username } }),
+    finishOptionalSetup: () =>
+      request<{ optionalSetupPending: false }>('POST', '/me/optional-setup', { body: {} }),
     getMe: () => request<MeResponse>('GET', '/me'),
     /** Saves the survey (FR-02); even all-empty answers mark onboarding done. */
     savePreferences: (preferences: Preferences) =>
@@ -262,7 +317,9 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
       request<StatusResponse>('POST', `${groupPath(groupId)}/delete`),
     /** Owner only; accepted friends only (403 NOT_FRIENDS). Already-members are skipped. */
     addGroupMembers: (groupId: string, userIds: string[]) =>
-      request<{ added: number }>('POST', `${groupPath(groupId)}/members`, { body: { userIds } }),
+      request<{ invited: number; added: 0 }>('POST', `${groupPath(groupId)}/members`, {
+        body: { userIds },
+      }),
     /** Owner only. They keep past Picks; new group Picks won't include them. */
     removeGroupMember: (groupId: string, userId: string) =>
       request<StatusResponse>(
@@ -285,6 +342,8 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     /** Host only: stop (or allow) new people joining by code or link. */
     setLobbyLocked: (pickId: string, locked: boolean) =>
       request<{ locked: boolean }>('POST', `${pickPath(pickId)}/lock`, { body: { locked } }),
+    listBlockedUsers: () =>
+      request<{ users: import('@shared/api/safety.ts').BlockedUser[] }>('GET', '/blocks'),
     blockUser: (userId: string) =>
       request<StatusResponse>('POST', `/blocks/${encodeURIComponent(userId)}`),
     unblockUser: (userId: string) =>
@@ -343,9 +402,13 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     /** Decline their request, cancel mine, or unfriend. Idempotent. */
     removeFriend: (userId: string) =>
       request<StatusResponse>('POST', `/friends/${encodeURIComponent(userId)}/remove`),
-    /** My newest 50 notifications (the inbox) and how many are unread. */
-    listNotifications: () =>
-      request<{ notifications: NotificationRow[]; unreadCount: number }>('GET', '/notifications'),
+    /** A page of notifications, newest first. Older builds may omit nextCursor. */
+    listNotifications: (before?: string) =>
+      request<{
+        notifications: NotificationRow[];
+        unreadCount: number;
+        nextCursor?: string | null;
+      }>('GET', `/notifications${before ? `?before=${encodeURIComponent(before)}` : ''}`),
     markNotificationRead: (id: string) =>
       request<StatusResponse>('POST', `/notifications/${encodeURIComponent(id)}/read`),
 
@@ -369,6 +432,13 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     /** A new draft with the same people and settings; I host it. */
     pickAgain: (pickId: string) => request<CreatePickResponse>('POST', `${pickPath(pickId)}/again`),
     /** Completed Picks I was in, newest first; with a group id, that group's. */
+    getMyPastMoves: (groupId?: string) =>
+      request<PastMovesResult>(
+        'GET',
+        `/me/past-moves${groupId ? `?groupId=${encodeURIComponent(groupId)}` : ''}`,
+      ),
+    getUserPastMoves: (userId: string) =>
+      request<PastMovesResult>('GET', `/users/${encodeURIComponent(userId)}/past-moves`),
     getHistory: (groupId?: string) =>
       request<{ picks: HistoryItem[] }>(
         'GET',

@@ -61,9 +61,10 @@ nothing to outsiders.
 - `POST /groups` `{ "name" }` → 201 `{ id, name, ownerId }`. Names are trimmed, 1–50 characters.
 - `POST /groups/:id/rename` `{ "name" }`, `POST /groups/:id/delete` → `{ status: "ok" }`. Owner
   only (403 `FORBIDDEN`). Deleting keeps every past Pick and result (`picks.group_id` → null).
-- `POST /groups/:id/members` `{ "userIds": [...] }` (1–25) → `{ added }`. Owner only; every id
-  must be the owner's **accepted** friend, all or nothing (403 `NOT_FRIENDS`); members are
-  skipped; 409 `GROUP_FULL` past 25 people.
+- `POST /groups/:id/members` `{ "userIds": [...] }` (1–25) → `{ invited, added: 0 }`.
+  Owner only; accepted friends only, all or nothing. Migration 0025 makes these pending
+  recipient requests; this call never adds membership. Members and duplicate pending
+  requests are skipped. Acceptance enforces the 25-member cap.
 - `POST /groups/:id/members/:userId/remove` → `{ status: "ok" }`. Owner only; idempotent; 409
   `OWNER_CANNOT_LEAVE` for the owner. `POST /groups/:id/leave`: anyone but the owner (same 409).
 - `POST /picks` accepts an optional `"groupId"`. The caller must be a member (404
@@ -715,3 +716,430 @@ establishes command completion, not end-to-end cron delivery or live provider he
   remain revoked. Responses are readable only by the responder or Hang author,
   while eligible. Migration 0022 adds the Pick link and group FK without destructive
   cleanup of legacy rows. Existing Pick/swipe/rank/vote RPCs are reused unchanged.
+
+## Group Ideas (0023)
+
+Unscheduled ideas belong to exactly one existing group. The group detail screen uses:
+
+- `GET /groups/:id/ideas` → `{ ideas: GroupIdea[] }`, newest first, UUID tie break.
+- `GET /groups/:id/ideas/:ideaId` → `GroupIdea`.
+- `POST /groups/:id/ideas` → 201 `GroupIdea`.
+- `POST /groups/:id/ideas/:ideaId` → updated `GroupIdea` (full editable-field replacement, following existing POST mutation conventions).
+- `DELETE /groups/:id/ideas/:ideaId` → `{ status: 'ok' }`.
+
+Bodies: `{ name, category: 'activity' | 'food', description?, locationText? }`.
+Name is trimmed, 1–60 Unicode characters; description and location are optional,
+trimmed, at most 200 each; empty values become null. All visible text uses the
+existing text filter before persistence. IDs, creator and timestamps are server-owned.
+Responses add `id`, `groupId`, `createdBy`, `createdAt`, `updatedAt`.
+
+Every operation requires current group membership; missing/nonmember groups and
+cross-group idea IDs return 404. Only the creator edits. The creator or group owner
+may delete, including ideas left by former members. Removed creators lose access.
+RLS permits current-member reads only; clients cannot write or invoke the service-only
+`group_ideas` RPC. The RPC takes the existing group lock before checking membership
+and modifying ideas. Deleting a group or creator cascades ideas. Mock mode follows
+these same rules. Edits use last successful write wins, as existing group renames do.
+
+Deploy migration 0023 before the updated Edge Function/client. No existing custom
+options are converted: `picks.custom_options`, `custom:<uuid>` candidates, Pick Again
+and existing histories keep their contracts. Group Ideas stay outside provider caches
+and the Discover feed. Pick inclusion is
+explicitly opt-in; see the deck contract below. No image bucket/upload policy exists, so images are deferred.
+
+
+## Group Ideas in Pick decks (0024)
+
+The group creation form has a default-off **Include Group Ideas** switch beside saved
+places and discovery filters. `POST /picks` accepts `includeGroupIdeas?: boolean`;
+true requires a valid `groupId` and current host membership. `picks.include_group_ideas`
+defaults false for old/new Picks. `GET /picks/:id` returns `includeGroupIdeas` and
+`groupId`. Non-group Pick configuration cannot enable this option.
+
+The form also offers `category: 'both'` (Food + activities). Existing Food, Activities
+and Custom contracts remain supported. Both calls the existing food and activity
+provider searches separately (and therefore can consume two capped provider calls),
+round-robins their results and keeps each place's actual category in storage.
+
+Decks are built at **start**, not draft creation. OFF never retrieves ideas. ON
+resolves current group ideas via the member-authorized store, generates the ordinary
+provider pool with the same filters, then mixes matching ideas into that pool.
+Food matches `food`, Activities matches library `activity`, Both allows both. Legacy
+Custom uses its mix category, or both idea types when no provider mix is selected.
+Radius, price and Open Now apply to provider/saved-provider places, not group ideas:
+ideas have no provider prices/hours/coordinates. No library idea enters Discover.
+
+The configured `poolSize` remains the total deck bound (maximum 30). Typed options
+retain their slots. Remaining slots alternate ideas and ordinary candidates, starting
+with an idea; the library is ordered newest first then UUID. Not every idea fits a
+large library. Custom opt-in creation uses a 30-card capacity; API callers must leave
+at least one free slot beyond typed options. Zero matching ideas leaves the public
+pool intact. If public results are empty, eligible ideas can still form the deck;
+if everything is empty, the existing 409 NO_CANDIDATES applies.
+
+Snapshots use `custom:<fresh uuid>` per build, `provider/source: 'custom'`,
+`origin: 'group_idea'`, `groupIdeaId`, `groupId`, creator, frozen name, description
+(`note`) and location text (`address`). These are explicit provenance fields, not
+name parsing. No live FK to the library is added. New IDs prevent a refresh or a
+new Pick from overwriting historical places/snapshots. Clients preserve provenance
+and show **Our Idea** on swipe/finalist/winner cards. Google enrichment is skipped.
+
+Coordinate-free ideas reuse the legacy custom contract: numeric center coordinates
+satisfy canonical DB/ranking inputs, with `locationProvided: false`. The app exposes
+null coordinates, no distance and no Directions. The existing ranking algorithm is
+unchanged, including its custom neutral-point (zero-distance) tie-break behavior;
+these internal coordinates never claim an actual idea location.
+
+Start/refresh rechecks host membership and idea/group/category provenance under the
+same group lock before committing the deck. A library entry deleted between lookup
+and commit fails safely (400); retry rebuilds from the current library. Edits/deletion
+**after** deck commit do not affect swipes, votes, winners or history. Explicit refresh
+replaces the deck using current library content and the existing answer-reset/confirm
+rules. Pick Again carries the opt-in and current membership, reuses an existing draft,
+and resolves current ideas at its own start. If the host left or the group disappeared,
+the new Pick disables idea inclusion. Existing account-deletion redaction still applies.
+
+Apply migration 0024 before deploying the API/client. The migration wraps canonical
+lifecycle/Pick Again functions and adds authorization checks; ranking, voting,
+notifications and provider retention restrictions are unchanged. Service-only helpers
+stay in the private schema. Mock mode uses the same category, snapshot and mixing
+helpers and existing group graph.
+
+
+## Direct group invitations (0025)
+
+Direct requests now require recipient consent. Existing groups/members are unchanged.
+`group_invitations` stores UUID id/group/inviter/invitee, pending/accepted/declined
+status and created/resolved timestamps. A partial unique index allows one pending
+invite per group/recipient. Group and inviter/invitee deletion cascade these rows.
+There is no new auth system and no link-token storage duplicated in this table:
+`invite_links` remains the separate bearer join mechanism.
+
+- `POST /groups/:id/members { userIds }` creates pending invitations, never members.
+  `{ invited, added: 0 }` reports newly created rows; repeat sends reuse pending IDs
+  and return zero newly invited. Existing client helper `addGroupMembers` and SQL
+  `group_add_members` remain compatibility names with the new consent semantics.
+- `GET /group-invitations` → `{ invitations }`, only the authenticated recipient's
+  currently eligible pending requests, with group/inviter display names.
+- `GET /groups/:id/invitations` → `{ invitations }`, current owner only, pending
+  outgoing requests. Ordinary members cannot browse other people's invitations.
+- `POST /group-invitations/:id/respond { decision: 'accepted' | 'declined' }`
+  → resolved invitation. Body user IDs are ignored; the recipient is always the
+  verified caller. Unknown/foreign/ineligible requests return 404.
+
+The owner remains the only inviter (the model has owner/member roles, no admins).
+Inviter and invitee must still be accepted friends and unblocked in either direction.
+The API and RLS hide invitations after a block, friendship removal or invalid group.
+Only relevant recipient/owner rows are readable; clients cannot write or call service
+RPCs. All invitation writes lock the group before the invite, serializing concurrent
+sends, capacity checks, membership changes and duplicate response taps.
+
+Acceptance rechecks eligibility and capacity, inserts only the caller if not already
+present, and marks accepted/resolved atomically. Already joined through a bearer link
+is an idempotent no-extra-membership case. Decline records declined/resolved without
+inserting or removing membership. Repeating the same successful decision returns its
+existing result; an opposite decision returns 409 INVITE_RESOLVED. An old accepted
+invite cannot re-add someone after they leave/are removed (409). A full group returns
+409 GROUP_FULL and retains pending status; acceptance may be retried when room opens.
+Pending requests do not reserve seats. A new invitation may be sent after decline;
+it has a new ID. No expiry/revocation dashboard is introduced.
+
+Friends displays Group invitations above the Friends/Groups content, using existing
+request cards and Accept/Decline buttons. Owner group detail says Invite/Pending and
+shows an outstanding count. Existing notify()/push transport sends a generic
+`group_invite` event with only `{ inviteId }` in the inbox payload. Names are fetched
+from the protected invitation list, never embedded in lock-screen text. A per-invite
+unique index deduplicates inbox rows/pushes, including resend retries. Responding marks
+the corresponding notice read. Notice taps open Friends; stale notices have no power
+to grant membership. Pending requests remain visible if push delivery fails.
+
+Pick six-character codes and POST /picks/:id/invite are unchanged. Existing
+`wtw://i/TOKEN` bearer links still request their established join/accept path when opened;
+group links can add the opener immediately after authentication, subject to their
+existing expiry/use limits/blocking checks. This deliberate bearer-link behavior is
+distinct from sending a direct recipient invitation. Receiving a direct request never
+runs that path. Group Ideas and new group Picks remain member-only until acceptance;
+acceptance does not retroactively add anyone to existing Picks.
+
+Deploy 0025 before the updated API/client. The API calls the new `group_invite_members`
+RPC so a missing migration returns 503 rather than falling back to old immediate-add
+behavior. Mock mode shares these decisions, current graph checks, retries/capacity and
+cascades; its Weekend crew fixture demonstrates an invitation before membership.
+
+## Friend profiles and metadata privacy (0026)
+
+`GET /users/:id/profile` returns a fixed, authenticated projection of a user profile.
+Only the owner or an accepted, unblocked friend may read it. Pending requests,
+unrelated users, deleted profiles and blocks in either direction return the same
+404 PROFILE_NOT_FOUND, including when users share a group or old Pick.
+
+`GET /me/details` reads the caller's own full projection. `POST /me/details` replaces
+only `{ username, favoriteCuisine, favoriteActivity, shareMetadata }` for the verified
+caller. Body IDs, avatar, counts, preferences and privilege fields cannot change the
+update target. The legacy GET/POST /me, preference survey and onboarding are unchanged.
+
+Response fields: `id`, `displayName`, `username`, `avatarUrl`, `isOwner`,
+`metadataVisible`, `friendsCount`, `groupsCount`, `favoriteCuisine`, `favoriteActivity`,
+`mutualGroups: [{id,name}]`. Only the owner also receives `shareMetadata`.
+Email, Discover preferences, hidden metadata and non-mutual group names are never
+included in the friend-profile projection. Hidden scalar metadata is null, mutual
+lists are empty; zero counts remain zero. Responses are private/no-store.
+
+Migration 0026 adds nullable username/favorites and a default-false metadata sharing
+flag to profiles. New fields have no authenticated/anonymous direct SELECT grant;
+service-only RPCs explicitly check the current graph and whitelist fields. Existing
+basic-identity RLS/column grants for friend requests/groups/Pick history stay intact.
+The existing avatar_url is reused read-only; no upload/storage infrastructure or
+arbitrary image URL setter is introduced. Missing photos use the current Avatar fallback.
+
+Usernames are optional for compatibility: no email-derived backfill or new onboarding.
+Updates trim, remove one leading @ and lowercase; valid usernames are 3–24 ASCII
+letters/digits/underscores. A database unique index on lower(username) enforces races
+and case-insensitive uniqueness; collisions return 409 USERNAME_TAKEN. Clearing a
+username or deleting the account releases it. Favorites are optional one-line text,
+up to 60 Unicode characters. The existing text filter moderates all edited text.
+
+One **Share profile metadata with friends** switch controls both counts, both
+favorites and mutual groups together. Default off: friends see only name, username
+and available avatar. Owners always see their own full data. Counts use accepted,
+unblocked friendships and current group_members rows (pending invitations do not
+count). Enabling sharing explicitly shares the aggregate group count, including groups
+not shared with the viewer; their names/IDs remain private. Mutual groups require both
+users to be current members and are hidden with the rest of metadata when sharing is off.
+Existing account deletion cascades profile data; auth/provider behavior is unchanged.
+
+Friends rows open `/users/[id]`, with their existing secondary action kept separate.
+The current Profile tab displays the same avatar/username/counts/favorites and adds a
+small details/privacy sheet; the existing name editor and settings remain. There is
+no public directory, username lookup, messaging or profile feed. Mock mode uses the
+same parser/projection shape, accepted friendships, current group membership and blocks.
+Its third-party friend counts reflect only known mock friendship edges, not invented
+friend lists. Apply migration 0026 before the updated API/client.
+
+## Settings and blocked-user list
+
+The authenticated `/settings` Stack page replaces Profile's partial Settings sheet.
+`/settings/profile` reuses the existing display-name API/context and metadata/privacy
+editor; `/settings/blocked` lists and unblocks users. Existing Profile shortcuts stay
+available. Display name and metadata have separate save actions, with no new profile
+schema or multi-field atomic-save claim.
+
+`GET /blocks` → `{ users: [{ userId, displayName }] }`, private/no-store, authenticates
+before reading. The service adapter filters blocks by the verified caller's blocker_id
+then resolves only those IDs' basic display names. It never returns reverse blocks,
+email, usernames, favorites or other private profile metadata. No client-supplied user
+ID selects the list. Existing POST /blocks/:userId/remove handles unblock idempotently;
+unblocking does not recreate friendships, group membership or access to friend profiles.
+No migration or RLS grant change is needed; blocks already has owner-only reads and
+service writes. Mock GET/list/unblock follows the same caller-owned shape and semantics.
+
+Notification settings expose the real inbox, permission state, explicit permission
+request/device registration, and native system-settings link. There is no server
+per-category preference model and no fake toggle. Permission granted is distinguished
+from successful push registration; failed/unavailable registration points to the inbox.
+Location shows foreground permission status, never asks permission or reads coordinates
+on entry, and offers a native settings link. Status refreshes on focus/foreground.
+Web offers informational guidance, with no unsupported native permission actions.
+
+Profile and Settings share accountActions: logout attempts push-token cleanup then uses
+the existing auth service; account deletion confirms, awaits DELETE /me, then signs out.
+Cancellation/failure never signs the user out prematurely. Duplicate actions serialize;
+SDK signout errors are surfaced. Auth changes continue through useAuth and protected
+routes. No deletion backend or auth-provider behavior was redesigned.
+
+Contacts integration, password auth, published Terms and Privacy Policy do not exist
+in this repo and are omitted. Help is local usage guidance, not a feedback submission
+service. Data & privacy information is an explicitly informational summary of the
+current inventory/controls, not fabricated legal policy. Device permission/push and
+account actions still need a native smoke test; no schema migration is required.
+
+### Auth identity and optional setup (0027)
+
+Deploy `0027_auth_identity_setup.sql` before the updated API/client. GET `/me` adds
+`username: string|null` and `optionalSetupPending: boolean`; legacy `onboarded` retains
+its Discover-survey meaning and no longer gates navigation.
+
+- POST `/me/identity` `{displayName, username}` validates existing text rules and saves
+  both atomically for the verified caller. Username normalization/uniqueness reuse 0026.
+  Returns the caller's full UserProfile; 409 `USERNAME_TAKEN` leaves both fields unchanged.
+- POST `/me/optional-setup` dismisses the optional offer, returning
+  `{optionalSetupPending:false}`. Repeated calls are harmless; this is independent of
+  identity access and does not change preferences or permission settings.
+- Existing `/me`, `/me/details`, `/me/preferences`, logout and account deletion contracts
+  remain available. Optional favorites use existing `/me/details` fields and preserve
+  username/privacy. New RPC execution remains service-role only; no RLS/grants weakened.
+
+Email Log In disallows account creation; Sign Up explicitly permits it. Hosted email
+provider/SMTP and an OTP email template containing the token must be configured and tested
+for actual delivery. The app still verifies email codes, without password or OAuth UI.
+See `decisions.md` for deferred provider setup and legal publication requirements.
+
+### Group chat (0028)
+
+Deploy `0028_group_chat.sql` before the API/client. `group_messages` contains UUID id,
+group_id, sender_id, body (1–1000 code points), created_at, and an opaque client_id for
+retry deduplication. The unique `(sender_id, client_id)` index makes retries safe. All
+writes use the service-only `group_chat` RPC, sharing the membership-mutation group lock.
+Client table reads have member/block-aware RLS; clients have no write grants/RPC access.
+
+- GET `/groups/:id/messages` → `{messages: GroupMessage[]}`. Latest 50 visible messages,
+  chronological `(created_at,id)` order, private/no-store; older-page navigation is omitted.
+- POST `/groups/:id/messages` `{body,clientId}` → 201 `GroupMessage`, including on a
+  successful retry. clientId is 8–100 ASCII letters/digits/underscores/hyphens and must be
+  reused for a network retry. Different content/group under the same sender/clientId gets
+  409 `MESSAGE_CONFLICT`. Sender/group fields in the body convey no authority.
+- Body is trimmed, validated, and passed through the existing text filter. API responses
+  include basic sender identity/avatar, never profile counts, favorites or privacy fields.
+- Nonmembers, pending invitees and removed members get 404 `GROUP_NOT_FOUND`. Historical
+  messages survive leaving/removal. Blocking does not eject existing shared group members;
+  instead messages/notifications between the blocked pair are suppressed in both directions.
+- Group deletion cascades messages. Account deletion removes that sender's messages; owner
+  deletion also cascades the owned group. Linked chat inbox rows cascade with message deletion.
+
+The existing `notify()` writes inbox rows and delivers generic Expo pushes. Chat adds a
+`group_message` type, per-message/per-recipient uniqueness and a FK to its message. The
+notification RPC rechecks current membership/blocking, excludes the sender and stores only
+message/group IDs. Existing generic notices may remain after removal/blocking; opening them
+never bypasses chat authorization. Existing OS notification permissions and registered-token
+behavior apply; there is no per-group mute setting. Delivery is best effort, like Pick events;
+no new outbox or push infrastructure was introduced. Inbox/push taps open the group's Chat.
+
+`0028` adds messages to an existing `supabase_realtime` publication. Chat listens for INSERTs,
+then rereads the authenticated API. A 5-second foreground/focused poll also verifies current
+membership/blocking and recovers when Realtime is unavailable. No requests run in background;
+blur/background clear displayed chat. Failed reads clear cached messages; 401/403/404 disable
+sending until explicit retry/reentry. Test hosted publication/RLS, socket reconnect and push
+with two signed-in devices; standalone SQL verifies policy/publication wiring, not delivery.
+
+Mock chat uses the same parsers, member checks, history bound/order, blocking and retry rules.
+Its emitter invalidates history without a network connection; simulated other-member sends
+produce deduplicated inbox notices for the fixture user. Group reset/delete and account-delete
+cleanup cover chat, while leaving/removal preserve history. Mock data remains in-memory.
+
+### Friend direct messages (0029)
+
+Deploy `0029_direct_messages.sql` before the API/client. `direct_conversations` holds exactly
+one ordered UUID pair (`user_low < user_high`, unique pair), and `direct_messages` holds
+conversation_id, sender_id, body, created_at and the same client retry ID used by Group Chat.
+Indexes cover recent messages, pair lookup, sender deletion and notification cascades.
+
+- POST `/conversations` `{userId: friendId}` opens/reuses the canonical pair and returns
+  `{id,createdAt,peer:{id,displayName,username,avatarUrl}}` (200 for new or existing).
+- GET `/conversations/:id/messages` returns `{conversation,messages}` with the latest 50
+  messages in chronological `(created_at,id)` order and private/no-store cache headers.
+- POST `/conversations/:id/messages` `{body,clientId}` returns the message (201, including
+  successful retry). The existing trimmed 1–1000-code-point validation/text filter is shared
+  with Group Chat. Changed content/conversation under the same sender/clientId returns
+  409 `MESSAGE_CONFLICT`; sender IDs in a body are ignored.
+
+All actions recheck pair participation, two available profile rows, accepted friendship and
+both block directions. Profile key-share locks and a friendship row lock serialize DM actions
+with account deletion and the existing unfriend/block writers. Clients have read-only RLS
+access and cannot invoke the service RPC. Outsiders, pending requests, missing accounts,
+unfriended pairs and blocked pairs receive 404 `CONVERSATION_UNAVAILABLE`, without disclosing
+which eligibility condition failed. Basic peer identity is returned, never private favorites,
+counts or mutual groups.
+
+Unfriend/block retain messages but revoke all read/send access. Unblocking does not restore
+friendship. A newly accepted friendship can reopen the same conversation and retained history;
+a pending re-request cannot. Hard account deletion cascades the entire two-person conversation
+and its messages/notices, including the surviving participant's messages in that conversation,
+so no conversation with a deleted participant or orphaned access remains.
+
+`direct_message` notifications reuse notify/inbox/Expo push: only the other participant is
+notified; the notification RPC rechecks friendship/blocking and deduplicates per message.
+Payloads contain conversation/message IDs only, and push text is generic. Inbox and push taps
+open `/messages/:id`. Old generic inbox rows may remain after unfriend/block, but opening them
+still requires current eligibility. Current device/OS permission and token behavior applies;
+no new mute/preferences infrastructure is implied. Delivery remains best effort.
+
+Group Chat and DMs now share only validation, the thread/composer UI, and the Realtime/polling
+lifecycle. Existing Group Chat exports and behavior remain compatible. INSERT invalidations
+reread the API, with five-second focused foreground checks for friendship/block changes and
+fallback recovery. Blur/background/error clear private history/peer data. A known authorization
+failure disables sending until retry/reentry; DMs also wait for an authorized initial history
+read before enabling the composer. The migration joins an existing Realtime publication.
+
+Friends rows keep their profile tap and remove action, adding a separate Message icon. Eligible
+friend profiles have a Message button; own profiles do not. Existing inbox DM notifications
+provide conversation reentry; no separate conversations dashboard was added. Mock mode uses
+current accepted fixture friendships/blocking, canonical pair reuse, retries, bounded history,
+an invalidation emitter, recipient notices and deletion cleanup. It remains an in-memory
+single-user fixture environment. Verify two-device delivery/revocation/reconnect and keyboard
+behavior in development/store builds; standalone SQL cannot validate hosted sockets or push.
+
+### Past Moves from existing plans (0030)
+
+Past Moves are a bounded read projection of existing `picks`, `pick_candidates`,
+`pick_participants` and per-user `pick_outcomes`. There is no post table, duplicated history,
+new attendance flag or upload model. Deploy `0030_past_moves.sql` before the API/client: it
+adds the service-only `profile_past_moves(viewer,target,group)` projection and a partial
+attended-outcome index. Existing outcome RLS remains own-row-only; no table grants weaken.
+
+- GET `/me/past-moves?groupId=…` reads the caller's eligible records, optionally using the
+  same current-group-member filtering rule as group History.
+- GET `/users/:id/past-moves` returns `{visible,pastMoves}` for a profile. Every route derives
+  the viewer from authentication and uses private/no-store caching. Nonfriends/blocked or
+  missing profiles return 404; a friend's hidden metadata returns `{visible:false,pastMoves:[]}`.
+- A record requires a completed Pick with a frozen winner, subject participation, an explicit
+  `went=true` outcome for that subject, and the existing UI delay: at least one hour after
+  `plan_at`, or three hours after `decided_at` for an untimed Pick. A decided winner or another
+  participant's confirmation alone never creates a personal memory. Early API answers remain
+  valid under the existing outcome contract but do not qualify until this delay passes.
+- The latest 50 are ordered by stored occurrence time descending, then Pick ID. `occurredAt`
+  is plan time or untimed decision time, not proof of an exact physical completion time.
+  `confirmedAt` is the caller's last outcome-answer timestamp; it is null for friend projections.
+  Existing plan-time changes can move eligibility/date; these derived views do not create an
+  immutable schedule copy. Existing RSVP, outcome updates, Pick Again and reminders are preserved.
+
+Owner views ignore the profile-sharing flag and include remaining participant/confirmed counts.
+Friend views require accepted friendship, no block in either direction, the existing
+`share_profile_metadata` opt-in AND original participation in that same Pick. Thus sharing
+metadata never gives a friend access to a new/private plan. Friend cards omit participant
+identities, counts and response timestamps. Group ID/name appear only if the viewer is a
+current member; otherwise they are null, including after group deletion. The privacy-control
+explanation now explicitly includes confirmed Past Moves from shared Picks.
+
+Winner name/address/provenance are read from the frozen candidate, never a live Group Idea,
+place lookup or Google request. Group Idea edits/deletion therefore do not rename past events.
+Legacy Google/request-only snapshots are reduced to ID plus a generic UI title: no retained
+Google name, address or photo is displayed/hydrated by this feature. The existing conservative
+provider retention boundary remains unchanged.
+
+History keeps one card per completed Pick and adds a personal Past Move badge/date when eligible.
+A Past Moves API failure does not break normal History. Profiles show five cards initially,
+expandable within the 50-row bound. Cards open the existing Pick route, already authorized by
+original participation. `Did you go?` wording is explicitly personal, with an attendance-update
+control; an RSVP of not-going does not prevent an explicit later attendance correction.
+
+Deletion follows existing FK/trigger behavior: user attendance/profile visibility disappear;
+completed shared Picks and frozen custom/idea content survive for remaining participants.
+Group deletion clears `picks.group_id` and retains Pick history without a group label. Counts
+reflect surviving records, matching existing History. No additional attendance is inferred.
+Mock mode mirrors eligibility, projection/privacy, frozen winners, updates and own-attendance
+cleanup; its plan state remains in-memory like existing demo data.
+
+Photos are deferred: no configured bucket, upload/picker pipeline, signed media access policy
+or photo ownership model exists. The stable Pick ID is the extension point for a future
+attachment model after upload limits, access/deletion policy and provider restrictions are
+reviewed. No fake media controls, empty photo grids or public feed were added.
+
+### Branch integration corrections (0031)
+
+Migration 0031 keeps legacy nullable usernames but rejects clearing an established username
+through metadata/privacy updates (400). Normal rename/uniqueness semantics and service-only
+RPC permissions remain. The client and mock apply the same rule; no endpoint shape changes.
+
+Groups now share the root required-identity guard. Auth restoration yields to newer auth events;
+late profile writes cannot update another account's context. Group details, Ideas, invitations,
+friend profiles and Past Moves revalidate every five seconds only while focused/foreground,
+clear on blur/background or failed authorization, and ignore superseded reads. Group detail
+polls avoid repeatedly loading the friend picker when membership has not changed. PlanBlock
+keeps its 30-second interval but pauses off-screen/background and clears on authorization denial.
+Chat ignores obsolete pre-background errors so foreground revalidation can recover. Server-side
+revocation remains immediate; remote UI changes appear on the next foreground check. Mock
+account deletion now cascades owned groups/current memberships and linked group content while
+preserving historical Pick associations for surviving groups.
+
+Shared Screen Back uses the existing stack when available and otherwise replaces with Picks,
+so a cold-start group/profile/message/settings/history route has a working exit.

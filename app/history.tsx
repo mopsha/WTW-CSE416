@@ -1,8 +1,9 @@
+import type { PastMove } from '@shared/api/pastMoves.ts';
 // History (FR-18, Alan): completed Picks I was in, newest first, with the winner, the top three
 // by rank (never scores or anyone's answers), who was there, and how many went. With
 // ?groupId=… it shows that group's Picks (Razin's group screen links here).
-import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { useCallback, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { HistoryItem } from '@shared/api/plans.ts';
@@ -24,6 +25,8 @@ function names(item: HistoryItem): string {
 export default function HistoryScreen() {
   const { groupId } = useLocalSearchParams<{ groupId?: string }>();
   const [picks, setPicks] = useState<HistoryItem[]>([]);
+  const [pastMoves, setPastMoves] = useState<PastMove[]>([]);
+  const [memoryError, setMemoryError] = useState<string | null>(null);
   const [load, setLoad] = useState<Load>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
 
@@ -31,18 +34,32 @@ export default function HistoryScreen() {
   const latest = useRef(0);
   const fetchHistory = useCallback(() => {
     const request = ++latest.current;
-    return api.getHistory(groupId).then(
-      (r) => {
+    return Promise.allSettled([api.getHistory(groupId), api.getMyPastMoves(groupId)]).then(
+      ([history, memories]) => {
         if (request !== latest.current) return;
-        setPicks(r.picks);
-        setLoad({ status: 'ready' });
-      },
-      (e: unknown) => {
-        if (request === latest.current) setLoad({ status: 'error', message: messageOf(e) });
+        if (history.status === 'fulfilled') {
+          setPicks(history.value.picks);
+          setLoad({ status: 'ready' });
+        } else setLoad({ status: 'error', message: messageOf(history.reason) });
+        if (memories.status === 'fulfilled') {
+          setPastMoves(memories.value.pastMoves);
+          setMemoryError(null);
+        } else {
+          setPastMoves([]);
+          setMemoryError(messageOf(memories.reason));
+        }
       },
     );
   }, [groupId]);
-  useEffect(() => void fetchHistory(), [fetchHistory]);
+  useFocusEffect(
+    useCallback(() => {
+      void fetchHistory();
+      return () => {
+        latest.current++;
+        setPastMoves([]);
+      };
+    }, [fetchHistory]),
+  );
 
   const refresh = () => {
     setRefreshing(true);
@@ -57,7 +74,10 @@ export default function HistoryScreen() {
       onRefresh={refresh}
       refreshing={refreshing}
     >
-      {/* A failed refresh keeps the list it already has. */}
+      {memoryError ? (
+        <ErrorState variant="banner" message={`Past Moves: ${memoryError}`} onRetry={refresh} />
+      ) : null}
+      {/* A failed refresh keeps the existing History list. */}
       {load.status === 'error' && picks.length === 0 ? (
         <ErrorState message={load.message} onRetry={refresh} />
       ) : load.status === 'ready' && picks.length === 0 ? (
@@ -67,34 +87,42 @@ export default function HistoryScreen() {
           body="When a Pick lands on a winner, it shows up here."
         />
       ) : (
-        picks.map((item) => (
-          <Card
-            key={item.id}
-            onPress={() => router.push(`/pick/${item.id}`)}
-            accessibilityLabel={`${item.winner?.name ?? 'Pick'}, decided ${formatPlanTime(item.decidedAt)}`}
-            accessibilityHint="Opens the result"
-          >
-            <Text style={styles.date}>{formatPlanTime(item.decidedAt)}</Text>
-            <Text style={styles.winner}>👑 {item.winner?.name ?? 'Winner'}</Text>
-            {item.finalists
-              .filter((f) => f.placeId !== item.winner?.placeId)
-              .map((f) => (
-                <Text key={f.placeId} style={styles.finalist}>
-                  #{f.rank} {f.name ?? ''}
-                </Text>
-              ))}
-            <View style={styles.footer}>
-              <Text style={styles.people} numberOfLines={1}>
-                {names(item)}
-              </Text>
-              {item.wentCount ? (
+        picks.map((item) => {
+          const memory = pastMoves.find((move) => move.pickId === item.id);
+          return (
+            <Card
+              key={item.id}
+              onPress={() => router.push(`/pick/${item.id}`)}
+              accessibilityLabel={`${memory ? 'Past Move' : 'Pick'}, ${item.winner?.name ?? 'Winner'}, decided ${formatPlanTime(item.decidedAt)}`}
+              accessibilityHint="Opens the result"
+            >
+              <Text style={styles.date}>{formatPlanTime(item.decidedAt)}</Text>
+              {memory ? (
                 <Text style={styles.went}>
-                  {item.wentCount} of {item.participants.length} went
+                  Past Move · {formatPlanTime(memory.occurredAt)} · You confirmed attendance
                 </Text>
               ) : null}
-            </View>
-          </Card>
-        ))
+              <Text style={styles.winner}>👑 {item.winner?.name ?? 'Winner'}</Text>
+              {item.finalists
+                .filter((f) => f.placeId !== item.winner?.placeId)
+                .map((f) => (
+                  <Text key={f.placeId} style={styles.finalist}>
+                    #{f.rank} {f.name ?? ''}
+                  </Text>
+                ))}
+              <View style={styles.footer}>
+                <Text style={styles.people} numberOfLines={1}>
+                  {names(item)}
+                </Text>
+                {item.wentCount ? (
+                  <Text style={styles.went}>
+                    {item.wentCount} of {item.participants.length} went
+                  </Text>
+                ) : null}
+              </View>
+            </Card>
+          );
+        })
       )}
     </Screen>
   );

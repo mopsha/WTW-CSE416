@@ -44,7 +44,8 @@ export interface MockPick extends PlaceFilters {
   id: string;
   hostId: string;
   state: PickState;
-  category: 'food' | 'activities' | 'custom';
+  category: 'food' | 'activities' | 'both' | 'custom';
+  includeGroupIdeas?: boolean;
   includeSaved?: boolean;
   customOptions?: StoredCustomOption[];
   mixCategory?: 'food' | 'activities';
@@ -124,8 +125,15 @@ export const mockProfile: {
   displayName: string | null;
   preferences: Preferences;
   onboarded: boolean;
+  optionalSetupPending: boolean;
   pushTokens: string[];
-} = { displayName: null, preferences: EMPTY_PREFERENCES, onboarded: false, pushTokens: [] };
+} = {
+  optionalSetupPending: true,
+  displayName: null,
+  preferences: EMPTY_PREFERENCES,
+  onboarded: false,
+  pushTokens: [],
+};
 
 /** Back to a brand-new account (what DELETE /me leaves behind). */
 export function resetMockProfile() {
@@ -133,6 +141,7 @@ export function resetMockProfile() {
     displayName: null,
     preferences: EMPTY_PREFERENCES,
     onboarded: false,
+    optionalSetupPending: true,
     pushTokens: [],
   });
 }
@@ -296,6 +305,7 @@ export function createMockPick(input: CreatePickInput, hostId = MOCK_USER_ID): M
   for (const option of options) customPlaces.set(option.placeId, option);
   const pick = base(id, {
     hostId,
+    includeGroupIdeas: input.includeGroupIdeas,
     includeSaved: input.includeSaved,
     customOptions: options,
     mixCategory: input.mixCategory,

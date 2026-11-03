@@ -134,3 +134,257 @@ Repository checks do not establish Google Cloud key restrictions, active API all
 actual Edge secrets, billing alerts or hosted quota configuration. The project owner
 must verify those in the provider console before enabling live production usage.
 The application request cap is independent of provider-side billing controls.
+
+## Group Ideas: unscheduled group library
+
+Group Ideas are reusable possibilities for one group's future activities or food,
+not scheduled plans, hang posts or automatic Pick candidates. Migration 0023 adds
+`group_ideas` with a group/creator FK and member-only RLS. Creators edit/delete their
+ideas; group owners can delete any idea for moderation. Current membership is always
+required, even for a creator. Membership and mutations share the existing group lock.
+Group and creator deletion cascade library data.
+
+Legacy Custom Plans are per-Pick option snapshots, with no required group and possible
+private notes/locations. Automatically moving them into a shared library could expose
+private data and alter old Picks, so they remain compatible and are not copied.
+The new library reuses the existing API writer model, shared text filter, group
+membership rules and UI kit. It adds no second voting engine or scheduling system.
+Images are deferred because there is no configured storage bucket/upload policy.
+
+## Opt-in Group Idea candidate integration
+
+Migration 0024 persists a default-false per-Pick flag and wraps existing canonical
+creation/load/start/refresh/Pick Again RPCs. It adds no voting or ranking engine.
+The group create form offers Include Group Ideas beside existing configuration;
+Food + activities is supported explicitly, using the two existing provider searches.
+The normal Discover feed remains provider-only.
+
+Ideas are resolved only when enabled, using current host membership, the Pick group
+and selected type. Provider distance/price/opening-hours filters do not apply to
+user-authored ideas. The deck retains its pool-size limit, preserves typed Custom
+options, and alternates ideas/public candidates in remaining slots. Both providers
+are queried normally for Both, through the existing quota/retention boundary.
+
+Each built idea gets a fresh custom candidate ID and explicit origin/library/group
+metadata. Snapshot content is copied at start/refresh; it never references mutable
+library content during swipe/vote/history reads. The database rechecks membership
+and idea provenance at deck commit, including when the library is empty. A deleted
+entry between lookup/commit is rejected safely. Edits/deletion after commit leave
+history intact. Pick Again retains opt-in/current group and normal repeated-tap reuse,
+then uses current library entries when started; it disables inclusion if group access
+was lost. Account-deletion privacy redaction remains authoritative.
+
+Coordinate-free candidates use the established Custom Plan numeric neutral center
+and locationProvided=false. Client coordinates are null, distance/directions are
+hidden and Google enrichment is skipped. Ranking keeps its existing custom neutral
+zero-distance tie-break convention; no inferred/geocoded location is introduced.
+Images/uploads remain deferred. See the API contract for exact capacity/type rules.
+
+
+## Direct group invitations require consent
+
+The old owner Add action inserted group membership immediately. Migration 0025 changes
+that existing endpoint into a pending request and adds recipient Accept/Decline.
+`invite_links` is retained for shareable bearer joins; its reusable token/use-count
+model cannot represent an individually addressed request with a resolved decision.
+The new table supplies that missing state without duplicating the join-link model.
+
+Owner-only accepted-friend permissions stay unchanged. Blocked/unfriended requests
+are hidden and cannot be accepted. Accept serializes on the group and invitation,
+checks the 25-member cap, inserts exactly the recipient and resolves atomically.
+Successful retries never add another membership; a resolved accepted request cannot
+re-add a removed member. Decline never adds/removes a member. Pending requests do not
+reserve seats; capacity failures keep them pending. No expiry/revoke management UI
+is included. Group/account deletion cascades requests; existing members/Picks/history
+are untouched. An old pending request may become eligible again after friendship is
+restored; the recipient still must explicitly accept it.
+
+The API calls a newly named request RPC, so deploying it before 0025 fails closed
+instead of executing a legacy immediate-add function. Legacy group_add_members is
+also redirected for old callers. The existing notifier carries only the invite ID,
+keeps names private to the protected list, and deduplicates repeated sends. Pending
+cards live on Friends; owners see Pending in group detail. Bearer-link opens and Pick
+codes retain their existing explicit join-request behavior and caps. No Pick/swipe,
+Group Idea, auth or ranking change is part of this feature.
+
+## Friend profiles use a private projection
+
+Profiles already stored display names, avatar URLs and private Discover preferences,
+but had no username or friend-profile API. Migration 0026 adds optional normalized,
+case-insensitively unique usernames, optional favorites and one default-off sharing
+flag. Existing accounts/auth/onboarding need no changes. Existing avatar references
+are displayed; photo uploads/editing are outside this task.
+
+The new service-only projection requires self or current accepted friendship and no
+block in either direction, regardless of shared groups/Picks. Metadata never gets
+new direct client grants. One simple friends/hidden toggle covers counts, favorites
+and mutual groups; owners always get their full profile. Discover preferences are
+never reused as implicitly shared favorites. Enabling sharing opts into aggregate
+counts, while mutual group names/IDs are returned only for actual shared memberships.
+Existing basic-identity RLS for session/group/request compatibility is unchanged.
+
+Friends rows navigate to a protected `/users/[id]` page. The Profile tab retains its
+name/preferences/settings flows and adds details/privacy editing. Username uniqueness
+is enforced by PostgreSQL, with 409 conflicts and no availability enumeration endpoint.
+Nullable handles preserve compatibility, and clearing/deleting releases a handle.
+No messaging, birthdays, onboarding, follower system or photo feed is introduced.
+
+## Settings surfaces existing capabilities honestly
+
+Settings uses a protected Stack page reached from Profile, reusing existing name and
+metadata/privacy editing, notification inbox, permission APIs, unblock and account
+mutations. The only backend extension is a caller-owned blocked-list read; it returns
+basic display labels for managing one's own blocks, never private profile metadata or
+reverse blocks. No schema/RLS migration is needed.
+
+Notification permission is distinct from push registration. Both are exposed through
+real actions, with no unsupported category toggles. Location is read-only on Settings
+entry; permission requests stay attached to explicit current-location actions elsewhere.
+Foreground refresh updates permission status after returning from system settings.
+The shared account helper prevents overlapping actions, confirms deletion, preserves
+the session on failed deletion and uses the existing auth change lifecycle on signout.
+Supabase signout errors now surface rather than silently reporting success.
+
+There is no contacts integration, password-based auth, feedback backend or published
+legal text. Those controls are omitted; local Help and clearly labeled data information
+reuse existing product behavior and inventory facts. No photo editing/upload, messaging,
+onboarding or new auth mechanism is part of Settings.
+
+## Explicit email auth and lightweight identity setup
+
+WTW retains email OTP instead of adding password login. A complete password flow needs
+recovery, email confirmation and verified hosted password policies, none of which the
+current app implements. Log In sends OTP with `shouldCreateUser: false` (also the helper's
+safe default); only Sign Up uses `true`. Signing up with an existing email may authenticate
+that existing account through Supabase; it does not reset its profile. OTP expiry,
+resend limits and encrypted native/web session persistence remain unchanged.
+
+Identity setup now requires display name and the existing unique username. The atomic
+service-only `user_identity_update` RPC preserves favorites/privacy and relies on the
+existing username index; conflict returns 409 without partially changing the name.
+Required navigation is derived from identity, never survey or permission completion.
+Migration 0027 sets `optional_setup_pending=false` for existing profiles and defaults it
+to true for newly inserted profiles. This private offer/dismiss marker resumes optional
+setup after a restart; it is not an authorization or onboarding-complete flag.
+Legacy users complete only missing identity. New users may save existing favorite fields,
+then explicitly request location/notification permission, or skip everything. No prompt
+runs on screen mount. Denials/errors do not block app access. Failed dismissal persistence
+may show the offer again on restart. Existing Discover preferences remain separate and
+editable through Preferences; optional favorites do not claim to tune recommendations.
+
+Google/Apple are intentionally absent from the auth UI: local Apple is disabled, Google
+is not configured, hosted settings are unverified, and there is no OAuth callback flow.
+Before exposing them:
+
+- Google: create a Google OAuth web client and consent screen; authorize the project's
+  Supabase Auth callback (`https://<project-ref>.supabase.co/auth/v1/callback`); enable
+  Google in hosted Supabase with its client ID/secret. Keep the secret server-side.
+- Apple: configure Sign in with Apple in the Apple developer account, Services ID,
+  verified domain/return URL, Team ID, Key ID and signing key; enable the corresponding
+  hosted Supabase provider and arrange secret rotation. Native Apple login additionally
+  needs the Expo Apple Authentication module/plugin, entitlement and a new signed build.
+- Choose and implement one supported Expo/Supabase OAuth strategy, including a signed-out
+  callback route, PKCE/session exchange, cancellation/error handling and nonce validation
+  where needed. Allowlist its exact app redirect (the app scheme is `wtw`) and web URLs
+  in hosted Supabase. Test development/store builds on both platforms and web before
+  showing provider buttons. No OAuth credentials or placeholder implementations ship here.
+
+References: [Supabase OTP](https://supabase.com/docs/reference/javascript/auth-signinwithotp),
+[Google](https://supabase.com/docs/guides/auth/social-login/auth-google),
+[Apple](https://supabase.com/docs/guides/auth/social-login/auth-apple),
+[Expo auth](https://docs.expo.dev/guides/authentication/).
+
+Published Terms and Privacy Policy remain a release requirement. Signup honestly states
+that they are unavailable; it does not link to internal notes or record fictional legal
+consent. Birthday, photo upload, contacts and phone auth remain deferred: none is needed
+for this identity flow and no existing supported implementation is extended by adding them.
+Mock auth uses code `123456`: Log In with `demo@wtw.test` exercises a returning account;
+Sign Up with another email exercises new identity and optional setup. Per-email profile
+snapshots survive logout/login during that mock runtime; a cold reload resets in-memory
+mock data, as before. The fixture user ID and social/Pick fixture graph stay unchanged.
+
+## Group-only chat
+
+Chat lives in each existing group detail page alongside Plans (existing Picks/history), Ideas,
+and Members (existing invitations/settings). No direct messages or new social graph were added.
+Messages are plain text, capped at 1000 code points with the current text filter; history is a
+bounded latest-50 window. No edits/deletes, reactions, threads, attachments, read receipts,
+search or typing state are modeled. A send-attempt key supports retries without duplicate rows
+or pushes. Removed members lose server access immediately, while their history stays. Auth
+account deletion erases authored messages and linked notices, matching existing deletion policy.
+
+Realtime is reused from the Pick architecture, with INSERT events as invalidations. A focused,
+foreground five-second poll is retained even when connected: membership removal and blocking
+need not insert a message. Blur/background clear displayed content; failed reads do not leave
+private cached chat visible. Both RLS and service RPCs enforce current membership; blocked pairs
+cannot read each other's messages or receive new notifications from one another. Shared group
+membership itself is unchanged. Pending direct invitations never authorize chat access.
+
+Notifications reuse notify/inbox/Expo push, with generic lock-screen text and message-ID
+uniqueness. No per-chat notification preference is implied; current device/OS permissions apply.
+Push remains best effort and needs signed development/store build testing. Hosted Realtime
+publication and two-device revocation/reconnect tests remain deployment checks. A dedicated
+notification outbox, older-history pagination and per-group mute controls are deferred.
+
+## Accepted-friend direct messages
+
+Direct conversations use one canonical ordered pair with database uniqueness, rather than a
+second friendship or general participant system. Only current accepted, unblocked friends can
+open/read/send; pending requests and shared group membership confer no DM access. The server
+and RLS enforce this independently of UI actions. Profile/friendship locks protect sends and
+notification insertion against deletion/unfriend/block races using existing writer semantics.
+
+Unfriend/block retain history but make it inaccessible to both users. Unblock does not restore
+the removed friendship; accepting a new friendship restores access to the original pair's
+history. Account deletion removes the whole conversation and linked messages/notices, avoiding
+an unavailable participant/orphan path. Existing generic notices need not disappear on unfriend
+or block because they contain no sender name or message text and their routes reauthorize.
+
+The group composer, text validation and live-message lifecycle are extracted narrowly and
+reused by DMs, preserving existing Group Chat exports/tests. Both use a latest-50 window,
+1000-code-point limit, retry IDs and existing content filtering. Realtime uses current RLS;
+five-second foreground checks detect eligibility changes even without an INSERT. No messaging
+abstractions beyond these shared mechanics, conversation dashboard, read receipts, attachments,
+replies, search, typing or reactions are introduced. Existing inbox notices and friend/profile
+Message actions provide entry points. Push continues through existing device controls with
+generic text, deduplication and best-effort delivery; device/hosted validation is still needed.
+
+## Past Moves / Memories
+
+Reuse per-user `pick_outcomes`, not a new social-post system or group-level attendance flag.
+Completed currently means the Pick chose a winner, so it is insufficient alone: a personal
+Past Move also needs explicit `went=true` and the existing attendance-prompt delay (one hour
+past a timed plan; three hours past an untimed decision). The existing API's outcome upsert
+contract and reminder schedule remain intact. Personal wording and correction controls avoid
+suggesting that one participant can mark everyone attended.
+
+History annotates its existing cards rather than duplicating plans into another history.
+Profiles use a separate protected read projection of those same rows, with no independent
+memory persistence. Sharing reuses the existing metadata opt-in AND limits friends to Picks
+they already participated in; it does not reveal unknown private plans. Group names require
+current membership, and friend projections exclude participant identities/counts and response
+receipt timestamps. Owner records remain visible with sharing off. Privacy text names this
+extension explicitly. Relationship/block authorization is checked on every API read.
+
+Frozen winner snapshots support Group Ideas/custom options and owned provider fixtures after
+library/place edits. No Google hydration or new retention permission is introduced; restricted
+legacy Google display data is omitted. Dates use stored plan/decision time, with the owner's
+last confirmation timestamp separately available. Rescheduling may change the derived date
+or temporarily hide a future plan; there is no additional immutable scheduling model.
+
+Existing account/group deletion semantics apply: remove personal attendance/visibility while
+retaining valid shared completed Picks and their snapshots for remaining participants. Photos
+are deferred because there is no configured upload/storage system. A future attachment model
+can key by Pick ID after ownership, signed access, limits and deletion rules are designed;
+there are no placeholder photo controls in this implementation.
+
+## Integrated branch corrections
+
+A forward migration (0031) prevents metadata edits from erasing an established required
+username while retaining legacy incomplete profiles. No historical migrations were rewritten.
+Private projection screens use bounded, focused foreground revalidation and clear cached
+content when backgrounded, blurred or denied. Request generations prevent old responses from
+restoring revoked content. Plan polling retains its existing 30-second cadence. Auth events
+supersede startup reads, and profile saves remain scoped to the initiating account. These fixes
+preserve existing ranking, frozen snapshots, attendance, provider retention and notification
+semantics; they do not introduce product features or new audience rules.

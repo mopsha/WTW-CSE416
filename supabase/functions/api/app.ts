@@ -1,3 +1,17 @@
+import type { PastMovesStore } from '../_shared/api/pastMoves.ts';
+import { sendDirectMessage, type DirectChatStore } from '../_shared/api/directChat.ts';
+import { sendGroupMessage, type GroupChatStore } from '../_shared/api/groupChat.ts';
+import {
+  parseIdentity,
+  parseProfileDetails,
+  type UserProfilesStore,
+} from '../_shared/api/userProfiles.ts';
+import {
+  parseGroupInvitationDecision,
+  type GroupInvitationsStore,
+} from '../_shared/api/groupInvitations.ts';
+import { parseGroupIdea, type GroupIdeasStore } from '../_shared/api/groupIdeas.ts';
+import { parseId } from '../_shared/api/groups.ts';
 import { cleanupCache, type CacheCleanupStore } from '../_shared/api/cacheCleanup.ts';
 import { parseHang, respondHang, hangPick, type HangStore } from '../_shared/api/hang.ts';
 import { discover, parseDiscover, withPhotos, type ResolvePhoto } from '../_shared/api/discover.ts';
@@ -92,13 +106,19 @@ export function createApp(
     joinStore?: JoinStore;
     friendsStore?: FriendsStore;
     profileStore?: ProfileStore;
+    userProfilesStore?: UserProfilesStore;
     groupsStore?: GroupsStore;
+    groupInvitationsStore?: GroupInvitationsStore;
+    groupIdeasStore?: GroupIdeasStore;
+    groupChatStore?: GroupChatStore;
+    directChatStore?: DirectChatStore;
     safetyStore?: SafetyStore;
     inviteStore?: InviteStore;
     accountStore?: AccountStore;
     sweepStore?: SweepStore;
     notifyStore?: NotifyStore;
     plansStore?: PlansStore;
+    pastMovesStore?: PastMovesStore;
     cacheCleanupStore?: CacheCleanupStore;
     hangStore?: HangStore;
     cronSecret?: string;
@@ -365,11 +385,11 @@ export function createApp(
     if (!deps.profileStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Profiles are not available');
     return c.json(await updateMe(deps.profileStore, user.id, body));
   });
-  // My inbox (newest 50) and push registration. Always the verified caller's own rows.
+  // My paginated inbox (newest 50 per page) and push registration. Always the verified caller's own rows.
   app.get('/notifications', async (c) => {
     c.header('Cache-Control', 'private, no-store');
     const user = await deps.getUser(c.req.raw);
-    return c.json(await listNotifications(requireNotify(), user.id));
+    return c.json(await listNotifications(requireNotify(), user.id, c.req.query('before')));
   });
   app.post('/notifications/:id/read', async (c) => {
     const user = await deps.getUser(c.req.raw);
@@ -417,6 +437,28 @@ export function createApp(
     await deps.checkLimit?.('create', user.id);
     return c.json(await pickAgain(requirePlans(), c.req.param('id'), user.id), 201);
   });
+  const pastMoves = async (
+    c: { req: { raw: Request; query(name: string): string | undefined } },
+    targetId?: string,
+  ) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.pastMovesStore)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Past Moves are unavailable');
+    const group = c.req.query('groupId');
+    return deps.pastMovesStore.list(
+      user.id,
+      targetId ? parseId(targetId, 'user id') : user.id,
+      group ? parseId(group, 'group id') : null,
+    );
+  };
+  app.get('/me/past-moves', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    return c.json(await pastMoves(c));
+  });
+  app.get('/users/:id/past-moves', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    return c.json(await pastMoves(c, c.req.param('id')));
+  });
   app.get('/history', async (c) => {
     c.header('Cache-Control', 'private, no-store');
     const user = await deps.getUser(c.req.raw);
@@ -440,6 +482,7 @@ export function createApp(
   // My name, survey answers and whether onboarding is done. Preferences are private
   // (no client column grant), so the app reads them here rather than through RLS.
   app.get('/me', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
     const user = await deps.getUser(c.req.raw);
     if (!deps.profileStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Profiles are not available');
     return c.json(await getMe(deps.profileStore, user.id));
@@ -469,6 +512,157 @@ export function createApp(
       ),
     );
   });
+  // Group Ideas use the existing POST mutation convention; the update replaces editable fields.
+  const ideas = async (c: { req: { raw: Request; param(name: string): string } }) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.groupIdeasStore)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Group Ideas are not available');
+    return { user, store: deps.groupIdeasStore, groupId: parseId(c.req.param('id'), 'group id') };
+  };
+  app.get('/groups/:id/ideas', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store, groupId } = await ideas(c);
+    return c.json({ ideas: await store.list(user.id, groupId) });
+  });
+  app.get('/groups/:id/ideas/:ideaId', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store, groupId } = await ideas(c);
+    return c.json(await store.get(user.id, groupId, parseId(c.req.param('ideaId'), 'idea id')));
+  });
+  app.post('/groups/:id/ideas', async (c) => {
+    const { user, store, groupId } = await ideas(c);
+    return c.json(await store.create(user.id, groupId, parseGroupIdea(await readJsonBody(c))), 201);
+  });
+  app.post('/groups/:id/ideas/:ideaId', async (c) => {
+    const { user, store, groupId } = await ideas(c);
+    return c.json(
+      await store.update(
+        user.id,
+        groupId,
+        parseId(c.req.param('ideaId'), 'idea id'),
+        parseGroupIdea(await readJsonBody(c)),
+      ),
+    );
+  });
+  app.delete('/groups/:id/ideas/:ideaId', async (c) => {
+    const { user, store, groupId } = await ideas(c);
+    await store.delete(user.id, groupId, parseId(c.req.param('ideaId'), 'idea id'));
+    return c.json({ status: 'ok' });
+  });
+  const groupInvitations = async (c: { req: { raw: Request } }) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.groupInvitationsStore)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Group invitations are unavailable');
+    return { user, store: deps.groupInvitationsStore };
+  };
+  app.get('/group-invitations', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await groupInvitations(c);
+    return c.json({ invitations: await store.list(user.id) });
+  });
+  app.get('/groups/:id/invitations', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await groupInvitations(c);
+    return c.json({
+      invitations: await store.list(user.id, parseId(c.req.param('id'), 'group id')),
+    });
+  });
+  app.post('/group-invitations/:id/respond', async (c) => {
+    const { user, store } = await groupInvitations(c);
+    return c.json(
+      await store.resolve(
+        user.id,
+        parseId(c.req.param('id'), 'invitation id'),
+        parseGroupInvitationDecision(await readJsonBody(c)),
+      ),
+    );
+  });
+  const userProfiles = async (c: { req: { raw: Request } }) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.userProfilesStore)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Profile details are unavailable');
+    return { user, store: deps.userProfilesStore };
+  };
+  const chat = async (c: { req: { raw: Request; param(name: string): string } }) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.groupChatStore)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Group chat is unavailable');
+    return { user, store: deps.groupChatStore, groupId: parseId(c.req.param('id'), 'group id') };
+  };
+  const direct = async (c: { req: { raw: Request } }) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.directChatStore)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Direct messages are unavailable');
+    return { user, store: deps.directChatStore };
+  };
+  app.post('/conversations', async (c) => {
+    const { user, store } = await direct(c);
+    const body = (await readJsonBody(c)) as { userId?: unknown } | null;
+    return c.json(await store.open(user.id, parseId(body?.userId, 'friend id')));
+  });
+  app.get('/conversations/:id/messages', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await direct(c);
+    return c.json(await store.list(user.id, parseId(c.req.param('id'), 'conversation id')));
+  });
+  app.post('/conversations/:id/messages', async (c) => {
+    const { user, store } = await direct(c);
+    return c.json(
+      await sendDirectMessage(
+        store,
+        deps.lifecycleStore.notifier,
+        user.id,
+        parseId(c.req.param('id'), 'conversation id'),
+        await readJsonBody(c),
+      ),
+      201,
+    );
+  });
+  app.get('/groups/:id/messages', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store, groupId } = await chat(c);
+    return c.json({ messages: await store.list(user.id, groupId) });
+  });
+  app.post('/groups/:id/messages', async (c) => {
+    const { user, store, groupId } = await chat(c);
+    return c.json(
+      await sendGroupMessage(
+        store,
+        deps.lifecycleStore.notifier,
+        user.id,
+        groupId,
+        await readJsonBody(c),
+      ),
+      201,
+    );
+  });
+  app.get('/me/details', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await userProfiles(c);
+    return c.json(await store.get(user.id, user.id));
+  });
+  app.post('/me/identity', async (c) => {
+    const { user, store } = await userProfiles(c);
+    if (!store.completeIdentity)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Identity setup is unavailable');
+    return c.json(await store.completeIdentity(user.id, parseIdentity(await readJsonBody(c))));
+  });
+  app.post('/me/optional-setup', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.profileStore?.finishOptionalSetup)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Setup is unavailable');
+    await deps.profileStore.finishOptionalSetup(user.id);
+    return c.json({ optionalSetupPending: false });
+  });
+  app.post('/me/details', async (c) => {
+    const { user, store } = await userProfiles(c);
+    return c.json(await store.update(user.id, parseProfileDetails(await readJsonBody(c))));
+  });
+  app.get('/users/:id/profile', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await userProfiles(c);
+    return c.json(await store.get(user.id, parseId(c.req.param('id'), 'user id')));
+  });
   app.post('/groups', async (c) => {
     const { user, store } = await groups(c);
     return c.json(await createGroup(store, user.id, await readJsonBody(c)), 201);
@@ -483,7 +677,16 @@ export function createApp(
   });
   app.post('/groups/:id/members', async (c) => {
     const { user, store } = await groups(c);
-    return c.json(await addGroupMembers(store, user.id, c.req.param('id'), await readJsonBody(c)));
+    return c.json(
+      await addGroupMembers(
+        store,
+        user.id,
+        c.req.param('id'),
+        await readJsonBody(c),
+        deps.groupInvitationsStore,
+        deps.lifecycleStore.notifier,
+      ),
+    );
   });
   app.post('/groups/:id/members/:userId/remove', async (c) => {
     const { user, store } = await groups(c);
@@ -512,6 +715,13 @@ export function createApp(
     const { user, store } = await safety(c);
     const body = await readJsonBody(c);
     return c.json(await setLobbyLocked(store, c.req.param('id'), user.id, body));
+  });
+  app.get('/blocks', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await safety(c);
+    if (!store.listBlocks)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Blocked-user listing is unavailable');
+    return c.json({ users: await store.listBlocks(user.id) });
   });
   app.post('/blocks/:userId', async (c) => {
     const { user, store } = await safety(c);

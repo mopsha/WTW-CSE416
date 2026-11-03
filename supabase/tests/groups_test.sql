@@ -80,7 +80,12 @@ select lives_ok($$select group_create('71111111-1111-4111-8111-111111111111', re
 -- ---------------------------------------------------------------- only friends can be added
 select is(group_add_members('71111111-1111-4111-8111-111111111111', (select id from g),
   array['72222222-2222-4222-8222-222222222222', '73333333-3333-4333-8333-333333333333']::uuid[]), 2,
-  'the owner adds two accepted friends (either direction)');
+  'the owner invites two accepted friends (either direction), without adding members');
+do $$ declare i public.group_invitations; begin
+ if (select count(*) from public.group_members where group_id=(select id from g))<>1 then raise exception 'Invitation auto-added members'; end if;
+ for i in select * from public.group_invitations where group_id=(select id from g) and status='pending' loop
+  perform public.group_invitation_resolve(i.invitee_id,i.id,'accepted');
+ end loop; end $$;
 select throws_ok(format($$select group_add_members('71111111-1111-4111-8111-111111111111', %L,
   array['75555555-5555-4555-8555-555555555555']::uuid[])$$, (select id from g)), 'PT403', null,
   'a stranger cannot be added');

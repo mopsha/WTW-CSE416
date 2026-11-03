@@ -1,3 +1,9 @@
+import { createPastMovesStore } from './pastMovesStore.ts';
+import { createDirectChatStore } from './directChatStore.ts';
+import { createGroupChatStore } from './groupChatStore.ts';
+import { createUserProfilesStore } from './userProfilesStore.ts';
+import { createGroupInvitationsStore } from './groupInvitationsStore.ts';
+import { createGroupIdeasStore } from './groupIdeasStore.ts';
 import { createHangStore } from './hangStore.ts';
 import { createApp } from './app.ts';
 import { getUser } from './auth.ts';
@@ -47,6 +53,7 @@ const app = createApp(
     cacheCleanupStore: createCacheCleanupStore(),
     notifyStore,
     plansStore: { ...createPlansStore(), notifier },
+    pastMovesStore: createPastMovesStore(),
     cronSecret: Deno.env.get('CRON_SECRET'),
     poolBuilder,
     discoverPool: placesPoolBuilder,
@@ -56,7 +63,12 @@ const app = createApp(
     joinStore: createJoinStore(),
     friendsStore: createFriendsStore(),
     profileStore: createProfileStore(),
+    userProfilesStore: createUserProfilesStore(),
     groupsStore: createGroupsStore(),
+    groupInvitationsStore: createGroupInvitationsStore(),
+    groupIdeasStore: createGroupIdeasStore(),
+    groupChatStore: createGroupChatStore(),
+    directChatStore: createDirectChatStore(),
     safetyStore: createSafetyStore(),
     inviteStore: createInviteStore(),
     accountStore: createAccountStore(),

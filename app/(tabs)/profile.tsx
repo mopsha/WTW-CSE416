@@ -1,19 +1,12 @@
+import { PastMoves } from '@/components/PastMoves';
+import type { UserProfile } from '@shared/api/userProfiles.ts';
+import { OwnProfileDetails } from '@/components/OwnProfileDetails';
 import { Ionicons } from '@expo/vector-icons';
 import { ListRow, Sheet } from '@/components/TabUi';
 import { DISPLAY_NAME_MAX, validateDisplayName } from '@shared/api/profile.ts';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Linking,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
   Avatar,
@@ -30,12 +23,9 @@ import {
 import { useAction } from '@/hooks/useAction';
 import { useSession } from '@/hooks/useAuth';
 import { suggestedName, useProfile } from '@/hooks/useProfile';
-import { api, ApiError } from '@/lib/api';
-import { auth } from '@/lib/auth';
-import { confirmAction } from '@/lib/confirm';
-import { ensureNotificationPermission, notificationsAllowed } from '@/lib/notify';
+import { api } from '@/lib/api';
+import { accountActions } from '@/lib/accountActions';
 import { preferencesSummary } from '@/lib/preferences';
-import { registerForPush, unregisterFromPush } from '@/lib/push';
 
 // My name (what friends see in Picks), my email, preferences, notifications, sign-out, and
 // account deletion (App Store 5.1.1(v): reachable from here in two taps).
@@ -44,22 +34,25 @@ export default function ProfileScreen() {
   const { displayName, preferences, saveDisplayName } = useProfile();
   const email = session.user.email ?? 'you';
   const name = displayName || suggestedName(session.user.email) || email;
-  const [panel, setPanel] = useState<'notifications' | 'settings' | null>(null);
+  const [details, setDetails] = useState<UserProfile | null>(null);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
   const [draft, setDraft] = useState<string | null>(null);
   const [invalid, setInvalid] = useState<string | null>(null);
-  const [notifications, setNotifications] = useState<boolean | null>(null);
   const { busy, error, run, clearError } = useAction();
-  const native = Platform.OS !== 'web';
 
-  // Re-check when the tab comes back into view: the user may have changed it in Settings.
+  const loadDetails = useCallback(async () => {
+    try {
+      setDetails(await api.getMyUserProfile());
+      setDetailsError(null);
+    } catch (e) {
+      setDetails(null);
+      setDetailsError(e instanceof Error ? e.message : 'Could not load profile details');
+    }
+  }, []);
   useFocusEffect(
     useCallback(() => {
-      let active = true;
-      void notificationsAllowed().then((on) => active && setNotifications(on));
-      return () => {
-        active = false;
-      };
-    }, []),
+      void loadDetails();
+    }, [loadDetails]),
   );
 
   async function save() {
@@ -79,39 +72,8 @@ export default function ProfileScreen() {
     clearError();
   }
 
-  async function turnOnNotifications() {
-    if (await ensureNotificationPermission()) {
-      setNotifications(true);
-      void registerForPush();
-    } else {
-      // Already declined once: only Settings can turn them on now.
-      void Linking.openSettings();
-    }
-  }
-
   async function deleteAccount() {
-    const ok = await confirmAction({
-      title: 'Delete your account?',
-      message:
-        'This permanently deletes your account and everything in it: your name, your preferences and your saved places. It can’t be undone.',
-      confirmLabel: 'Delete account',
-      destructive: true,
-    });
-    if (!ok) return;
-    const deleted = await run('delete', async () => {
-      try {
-        await api.deleteMe();
-      } catch (e) {
-        // Razin's DELETE /me isn't on every backend yet.
-        if (e instanceof ApiError && e.status === 404) {
-          throw new Error('Account deletion isn’t available yet. Please try again later.');
-        }
-        throw e;
-      }
-    });
-    if (!deleted) return;
-    if (native) Alert.alert('Your account was deleted', 'Thanks for trying WTW.');
-    await auth.signOut();
+    await run('delete', () => accountActions.deleteAccount());
   }
 
   return (
@@ -122,13 +84,19 @@ export default function ProfileScreen() {
         accessibilityRole="button"
         accessibilityLabel={`Edit profile for ${name}`}
       >
-        <Avatar name={name} neutral size={84} />
+        <Avatar name={name} uri={details?.avatarUrl} neutral size={84} />
         <View style={styles.who}>
           <Text style={styles.name}>{name}</Text>
+          {details?.username ? <Text style={styles.email}>@{details.username}</Text> : null}
           <Text style={styles.email}>{email}</Text>
         </View>
         <Ionicons name="chevron-forward" size={20} color={colors.muted} />
       </Pressable>
+      {detailsError ? (
+        <ErrorState message={detailsError} onRetry={() => void loadDetails()} />
+      ) : null}
+      {details ? <OwnProfileDetails profile={details} onSaved={setDetails} /> : null}
+      <PastMoves key={session.user.id} userId={session.user.id} />
       <View style={styles.settings}>
         <ListRow
           title="Preferences"
@@ -139,12 +107,14 @@ export default function ProfileScreen() {
         <ListRow
           title="Notifications"
           leading={<Ionicons name="notifications-outline" size={25} color={colors.text} />}
-          onPress={() => setPanel('notifications')}
+          onPress={() =>
+            router.push({ pathname: '/settings', params: { section: 'notifications' } })
+          }
         />
         <ListRow
           title="Settings"
           leading={<Ionicons name="settings-outline" size={25} color={colors.text} />}
-          onPress={() => setPanel('settings')}
+          onPress={() => router.push('/settings')}
         />
       </View>
       {error ? <ErrorState message={error} /> : null}
@@ -155,7 +125,7 @@ export default function ProfileScreen() {
           disabled={!!busy}
           leading={<Ionicons name="log-out-outline" size={23} color={colors.primary} />}
           right={<View />}
-          onPress={() => void unregisterFromPush().finally(() => auth.signOut())}
+          onPress={() => void run('logout', () => accountActions.logOut())}
         />
         <ListRow
           title="Delete account"
@@ -199,76 +169,6 @@ export default function ProfileScreen() {
           disabled={!draft?.trim()}
         />
         <Button label="Cancel" variant="link" onPress={cancel} disabled={!!busy} />
-      </Sheet>
-      <Sheet
-        title={panel === 'settings' ? 'Settings' : 'Notifications'}
-        visible={panel !== null}
-        onClose={() => setPanel(null)}
-      >
-        {panel === 'notifications' ? (
-          <>
-            <Button
-              label="Open notification inbox"
-              icon="notifications-outline"
-              variant="secondary"
-              onPress={() => {
-                setPanel(null);
-                router.push('/inbox');
-              }}
-            />
-            {native ? (
-              <>
-                <Text style={styles.detail}>
-                  {notifications === null
-                    ? 'Checking notification permissions…'
-                    : notifications
-                      ? 'Notifications are on. Manage them in your phone’s Settings.'
-                      : 'Notifications are off. Turn them on to hear when your group is ready.'}
-                </Text>
-                {notifications === false ? (
-                  <Button
-                    label="Turn on notifications"
-                    onPress={() => void turnOnNotifications()}
-                  />
-                ) : notifications ? (
-                  <Button
-                    label="Open Settings"
-                    variant="link"
-                    onPress={() => void Linking.openSettings()}
-                  />
-                ) : null}
-              </>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <Button
-              label="History"
-              variant="secondary"
-              icon="time-outline"
-              onPress={() => {
-                setPanel(null);
-                router.push('/history');
-              }}
-            />
-            <Button
-              label="Manage groups"
-              variant="secondary"
-              icon="people-outline"
-              onPress={() => {
-                setPanel(null);
-                router.push('/groups');
-              }}
-            />
-            {native ? (
-              <Button
-                label="Open phone settings"
-                variant="link"
-                onPress={() => void Linking.openSettings()}
-              />
-            ) : null}
-          </>
-        )}
       </Sheet>
     </Screen>
   );

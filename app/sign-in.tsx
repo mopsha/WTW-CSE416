@@ -16,6 +16,7 @@ import { Button } from '@/components/Button';
 import { ErrorBanner } from '@/components/ErrorBanner';
 import { GradientButton } from '@/components/GradientButton';
 import { colors, flame, fonts, MIN_TARGET } from '@/components/theme';
+import type { AuthMode } from '@/lib/authTypes';
 import { auth, AuthError } from '@/lib/auth';
 import { USE_MOCK } from '@/lib/config';
 import { messageOf } from '@/lib/errors';
@@ -26,6 +27,7 @@ const RESEND_SECONDS = 60;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function SignInScreen() {
+  const [mode, setMode] = useState<AuthMode>('login');
   const [step, setStep] = useState<'email' | 'code'>('email');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -33,6 +35,7 @@ export default function SignInScreen() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(0);
+  const pending = useRef(false);
   const codeInput = useRef<TextInput>(null);
 
   useEffect(() => {
@@ -44,15 +47,17 @@ export default function SignInScreen() {
   const trimmedEmail = email.trim().toLowerCase();
 
   async function sendCode(isResend: boolean) {
+    if (pending.current) return;
     setError(null);
     setNotice(null);
     if (!EMAIL_RE.test(trimmedEmail)) {
       setError('Enter a valid email address.');
       return;
     }
+    pending.current = true;
     setBusy(true);
     try {
-      await auth.sendCode(trimmedEmail);
+      await auth.sendCode(trimmedEmail, mode);
       setStep('code');
       setCode('');
       setCooldown(RESEND_SECONDS);
@@ -61,6 +66,7 @@ export default function SignInScreen() {
     } catch (e) {
       setError(messageOf(e));
     } finally {
+      pending.current = false;
       setBusy(false);
     }
   }
@@ -79,9 +85,10 @@ export default function SignInScreen() {
   }
 
   async function verify(value = code) {
-    if (value.length !== 6 || busy) return;
+    if (value.length !== 6 || pending.current) return;
     setError(null);
     setNotice(null);
+    pending.current = true;
     setBusy(true);
     try {
       await auth.verifyCode(trimmedEmail, value);
@@ -95,6 +102,7 @@ export default function SignInScreen() {
       setCode('');
       codeInput.current?.focus();
     } finally {
+      pending.current = false;
       setBusy(false);
     }
   }
@@ -108,7 +116,7 @@ export default function SignInScreen() {
   return (
     <View style={styles.root}>
       <LinearGradient
-        colors={['#3B0F24', colors.bg, colors.bg]}
+        colors={[colors.card, colors.bg, colors.bg]}
         locations={[0, 0.55, 1]}
         style={StyleSheet.absoluteFill}
       />
@@ -134,13 +142,39 @@ export default function SignInScreen() {
             </View>
 
             {USE_MOCK ? (
-              <Text style={styles.mock}>Demo mode · any email · code {MOCK_CODE}</Text>
+              <Text style={styles.mock}>
+                Demo · Log in with demo@wtw.test or sign up · code {MOCK_CODE}
+              </Text>
             ) : null}
 
             {step === 'email' ? (
               <View style={styles.form}>
+                <View style={styles.row}>
+                  <Button
+                    label="Log In"
+                    variant={mode === 'login' ? 'secondary' : 'link'}
+                    disabled={busy}
+                    onPress={() => {
+                      setMode('login');
+                      setError(null);
+                    }}
+                  />
+                  <Button
+                    label="Sign Up"
+                    variant={mode === 'signup' ? 'secondary' : 'link'}
+                    disabled={busy}
+                    onPress={() => {
+                      setMode('signup');
+                      setError(null);
+                    }}
+                  />
+                </View>
+                <Text style={styles.body}>
+                  {mode === 'login' ? 'Welcome back' : 'Create your WTW account'}
+                </Text>
                 <TextInput
                   style={styles.input}
+                  editable={!busy}
                   value={email}
                   onChangeText={setEmail}
                   placeholder="you@stonybrook.edu"
@@ -155,17 +189,24 @@ export default function SignInScreen() {
                   accessibilityLabel="Email"
                 />
                 <GradientButton
-                  label="Send me a code"
+                  label={mode === 'login' ? 'Email login code' : 'Email signup code'}
                   onPress={() => void sendCode(false)}
                   loading={busy}
                 />
                 <Text style={styles.fine}>No passwords. We email you a 6-digit code.</Text>
+                {mode === 'signup' ? (
+                  <Text style={styles.fine}>
+                    Creating an account saves your email and profile details in WTW. Terms and
+                    Privacy Policy have not been published for this build yet.
+                  </Text>
+                ) : null}
                 {/* For a code you got another way (e.g. from the host on wtw-dev, where the
                     email can't carry the code yet), or when sending just hit a limit. */}
                 <Button
                   label="I already have a code"
                   variant="link"
                   accessibilityHint="Skips sending an email and goes to the code boxes"
+                  disabled={busy}
                   onPress={enterCode}
                 />
               </View>
@@ -223,6 +264,7 @@ export default function SignInScreen() {
                     disabled={cooldown > 0 || busy}
                   />
                   <Button
+                    disabled={busy}
                     label="Change email"
                     variant="link"
                     onPress={() => {

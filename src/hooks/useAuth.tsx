@@ -16,21 +16,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let active = true;
     let unsubscribe = () => {};
+    let authChanged = false;
+    let timer: ReturnType<typeof setTimeout>;
     // If the backend is unreachable, refreshing a stored session can hang for a long time.
     // Don't sit on a blank screen: after 4 s treat it as signed out (the listener below
     // still updates us if the session resolves later).
-    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000));
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), 4000);
+    });
     Promise.race([auth.getSession(), timeout])
-      .then((session) => active && setState({ session, loading: false }))
+      .then((session) => active && !authChanged && setState({ session, loading: false }))
       // Misconfigured env (no Supabase URL): fall through to sign-in, which shows the error.
-      .catch(() => active && setState({ session: null, loading: false }));
+      .catch(() => active && !authChanged && setState({ session: null, loading: false }))
+      .finally(() => clearTimeout(timer));
     try {
-      unsubscribe = auth.onChange((session) => setState({ session, loading: false }));
+      unsubscribe = auth.onChange((session) => {
+        authChanged = true;
+        if (active) setState({ session, loading: false });
+      });
     } catch {
       // Same as above: no client to subscribe to.
     }
     return () => {
       active = false;
+      clearTimeout(timer);
       unsubscribe();
     };
   }, []);

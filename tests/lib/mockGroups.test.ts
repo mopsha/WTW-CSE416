@@ -1,3 +1,4 @@
+import { listMockGroupInvitations, resolveMockGroupInvitation } from '@/lib/mock/groupInvitations';
 // The mock's /groups routes follow 0012_groups.sql's rules through the real API client,
 // so mock mode shows the same errors the app gets from the server.
 import { createApiClient } from '@/lib/api';
@@ -41,7 +42,10 @@ beforeEach(() => {
 
 test('group additions and Pick invites follow accepted and removed friendships', async () => {
   await api.acceptFriend('mock-jordan');
-  await expect(api.addGroupMembers(ROOMMATES, ['mock-jordan'])).resolves.toEqual({ added: 1 });
+  await expect(api.addGroupMembers(ROOMMATES, ['mock-jordan'])).resolves.toEqual({
+    invited: 1,
+    added: 0,
+  });
   const { pickId } = await api.createPick(draft());
   await expect(api.inviteToPick(pickId, ['mock-jordan'])).resolves.toEqual({ added: 1 });
   await api.removeFriend('mock-ava');
@@ -106,7 +110,8 @@ test('only friends can be added, and only by the owner', async () => {
     code: 'NOT_FRIENDS',
   });
   await expect(api.addGroupMembers(ROOMMATES, ['mock-cam', 'mock-cam'])).resolves.toEqual({
-    added: 1,
+    invited: 1,
+    added: 0,
   });
   await expect(api.addGroupMembers(CLIMBING, ['mock-ben'])).rejects.toMatchObject({
     status: 403,
@@ -129,6 +134,10 @@ test('Pick again uses current group members and keeps filters', async () => {
   mockPicks.get(old.pickId)!.state = 'canceled';
   await api.removeGroupMember(ROOMMATES, 'mock-ben');
   await api.addGroupMembers(ROOMMATES, ['mock-cam']);
+  const pending = listMockGroupInvitations(MOCK_USER_ID, ROOMMATES).find(
+    (i) => i.inviteeId === 'mock-cam',
+  )!;
+  resolveMockGroupInvitation('mock-cam', pending.id, 'accepted');
   const next = await api.pickAgain(old.pickId);
   expect(people(old.pickId)).toContain('mock-ben');
   expect(people(next.pickId)).toEqual([MOCK_USER_ID, 'mock-ava', 'mock-cam'].sort());

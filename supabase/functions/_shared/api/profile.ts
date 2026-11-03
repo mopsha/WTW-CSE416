@@ -14,9 +14,12 @@ export const DISPLAY_NAME_MAX = 50;
 
 /** Database adapter for the caller's profile row. */
 export interface ProfileStore {
+  finishOptionalSetup?(userId: string): Promise<void>;
   setDisplayName(userId: string, displayName: string): Promise<void>;
   /** null when the row doesn't exist. preferences is the raw stored jsonb. */
   getProfile(userId: string): Promise<{
+    username?: string | null;
+    optionalSetupPending?: boolean;
     displayName: string | null;
     preferences: unknown;
     preferencesUpdatedAt: string | null;
@@ -26,6 +29,8 @@ export interface ProfileStore {
 }
 
 export interface MeResponse {
+  username: string | null;
+  optionalSetupPending: boolean;
   displayName: string | null;
   preferences: Preferences;
   /** True once the survey was saved or skipped. */
@@ -70,6 +75,8 @@ export async function updateMe(store: ProfileStore, userId: string, body: unknow
 export async function getMe(store: ProfileStore, userId: string): Promise<MeResponse> {
   const row = await store.getProfile(userId);
   return {
+    username: row?.username ?? null,
+    optionalSetupPending: row?.optionalSetupPending ?? false,
     displayName: row?.displayName?.trim() || null,
     preferences: readPreferences(row?.preferences),
     onboarded: !!row?.preferencesUpdatedAt,

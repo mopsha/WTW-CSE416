@@ -4,6 +4,7 @@ import { createApiClient } from '@/lib/api';
 import { suggestedName } from '@/hooks/useProfile';
 import { MOCK_ACCESS_TOKEN, MOCK_USER_ID } from '@/lib/mock/auth';
 import { MOCK_API_BASE_URL, mockFetch } from '@/lib/mock/api';
+import { resetOwnMockUserProfile } from '@/lib/mock/userProfiles';
 import { mockQueries } from '@/lib/mock/queries';
 import { EMPTY_PREFERENCES } from '@shared/domain/preferences.ts';
 import {
@@ -25,6 +26,7 @@ beforeEach(() => {
   setMockBots(false);
   resetMockData();
   resetMockProfile();
+  resetOwnMockUserProfile();
 });
 
 test('a new mock account has no name, so the app asks for one', async () => {
@@ -55,6 +57,8 @@ test('the name step is prefilled from the email local part', () => {
 
 test('a new mock account has not finished onboarding (GET /me)', async () => {
   await expect(api.getMe()).resolves.toEqual({
+    username: null,
+    optionalSetupPending: true,
     displayName: null,
     preferences: EMPTY_PREFERENCES,
     onboarded: false,
@@ -87,6 +91,8 @@ test('DELETE /me leaves a brand-new account behind', async () => {
   await api.savePreferences({ ...EMPTY_PREFERENCES, priceMax: 1 });
   await api.deleteMe();
   await expect(api.getMe()).resolves.toEqual({
+    username: null,
+    optionalSetupPending: true,
     displayName: null,
     preferences: EMPTY_PREFERENCES,
     onboarded: false,

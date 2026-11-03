@@ -6,6 +6,9 @@
 import { ApiError } from './errors.ts';
 
 export const NOTIFICATION_TYPES = [
+  'direct_message',
+  'group_message',
+  'group_invite',
   'added_to_pick',
   'pick_started',
   'reminder',
@@ -23,6 +26,18 @@ export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
  * reasons. Details are in the in-app inbox, which only the owner can read.
  */
 export const PUSH_TEXT: Readonly<Record<NotificationType, { title: string; body: string }>> = {
+  direct_message: {
+    title: 'New message',
+    body: 'A friend sent you a message. Open WTW to read it.',
+  },
+  group_message: {
+    title: 'New group message',
+    body: 'There’s a new message in your group. Open WTW to read it.',
+  },
+  group_invite: {
+    title: 'Group invitation',
+    body: 'Someone invited you to a group. Open WTW to respond.',
+  },
   added_to_pick: { title: 'You’re in a Pick', body: 'Someone added you to a Pick.' },
   pick_started: { title: 'Time to swipe', body: 'Your Pick has started.' },
   reminder: { title: 'One hour left', body: 'You haven’t finished swiping yet.' },
@@ -43,6 +58,11 @@ export interface NotificationRow {
   readAt: string | null;
 }
 
+export interface NotificationCursor {
+  createdAt: string;
+  id: string;
+}
+
 /** Database adapter (service role). */
 export interface NotifyStore {
   /** Returns the users who got a new row; repeats of a once-per-Pick event return none. */
@@ -54,7 +74,7 @@ export interface NotifyStore {
   ): Promise<string[]>;
   tokensFor(userIds: string[]): Promise<string[]>;
   deleteTokens(tokens: string[]): Promise<void>;
-  list(userId: string, limit: number): Promise<NotificationRow[]>;
+  list(userId: string, limit: number, before?: NotificationCursor): Promise<NotificationRow[]>;
   /** Rejects (404) a notification that isn't the caller's. */
   markRead(id: string, userId: string): Promise<void>;
   registerToken(userId: string, token: string, platform: 'ios' | 'android'): Promise<void>;
@@ -139,7 +159,15 @@ export function createNotifier(
       const dead = await sendPush(
         fetchFn,
         tokens,
-        { ...PUSH_TEXT[type], data: { type, pickId } },
+        {
+          ...PUSH_TEXT[type],
+          data: {
+            type,
+            pickId,
+            ...(type === 'group_message' ? { groupId: payload.groupId } : {}),
+            ...(type === 'direct_message' ? { conversationId: payload.conversationId } : {}),
+          },
+        },
         log,
       );
       if (dead.length) await store.deleteTokens(dead);
@@ -185,10 +213,34 @@ export async function unregisterPushToken(store: NotifyStore, userId: string, bo
 
 export const INBOX_LIMIT = 50;
 
-/** GET /notifications: my latest notifications, newest first. */
-export async function listNotifications(store: NotifyStore, userId: string) {
-  const notifications = await store.list(userId, INBOX_LIMIT);
-  return { notifications, unreadCount: notifications.filter((n) => !n.readAt).length };
+/** Keep database timestamp precision; Date.toISOString would truncate microseconds. */
+export function parseNotificationCursor(value?: string): NotificationCursor | undefined {
+  if (value === undefined) return undefined;
+  const [createdAt, id, extra] = value.split('|');
+  if (
+    extra !== undefined ||
+    !createdAt ||
+    !id ||
+    !UUID_RE.test(id) ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(createdAt) ||
+    !Number.isFinite(Date.parse(createdAt))
+  )
+    throw new ApiError(400, 'INVALID_INPUT', 'Invalid notification cursor');
+  return { createdAt, id };
+}
+
+/** GET /notifications: same newest-first inbox, with an optional older-page cursor.
+ * unreadCount keeps its existing meaning: unread rows on the returned page.
+ */
+export async function listNotifications(store: NotifyStore, userId: string, before?: string) {
+  const page = await store.list(userId, INBOX_LIMIT + 1, parseNotificationCursor(before));
+  const notifications = page.slice(0, INBOX_LIMIT);
+  const last = notifications[notifications.length - 1];
+  return {
+    notifications,
+    unreadCount: notifications.filter((n) => !n.readAt).length,
+    nextCursor: page.length > INBOX_LIMIT && last ? `${last.createdAt}|${last.id}` : null,
+  };
 }
 
 /** POST /notifications/:id/read. Someone else's id is a 404, same as an unknown one. */

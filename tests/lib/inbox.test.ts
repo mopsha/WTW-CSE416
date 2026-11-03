@@ -83,3 +83,16 @@ test('marking a mock notification read lowers the unread count, and repeats are 
     unreadCount: before.unreadCount - 1,
   });
 });
+
+test('group invitations open request cards and keep private names out of generic notices', () => {
+  const invitation = row({
+    type: 'group_invite',
+    pickId: null,
+    payload: { inviteId: 'private-id' },
+  });
+  expect(inboxRoute(invitation)).toBe('/friends');
+  expect(inboxText(invitation)).toEqual({
+    title: 'Group invitation',
+    body: 'Someone invited you to a group. Open WTW to respond.',
+  });
+});

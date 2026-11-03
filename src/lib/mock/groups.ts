@@ -1,3 +1,10 @@
+import { mockGroupMessages, resetMockGroupChat } from './groupChat';
+import {
+  inviteMockGroupMembers,
+  mockGroupInvitations,
+  resetMockGroupInvitations,
+} from './groupInvitations';
+import type { GroupIdea } from '@shared/api/groupIdeas.ts';
 // Groups for mock mode: the same routes, rules, shapes and error codes as the API's /groups
 // (supabase/functions/_shared/api/groups.ts + 0012_groups.sql), in memory. Ava, Ben and Cam
 // (the Pick-demo bots, same ids as the mock Friends list in PR #24) are my friends. I own
@@ -18,7 +25,6 @@ const NAMES = new Map<string, string>([
   [MOCK_USER_ID, 'You'],
   ...FRIENDS.map((f, i) => [FRIEND_IDS[i]!, f.name] as [string, string]),
 ]);
-const MAX_MEMBERS = 25;
 
 interface MockGroup {
   id: string;
@@ -30,6 +36,15 @@ interface MockGroup {
 
 function initial(): Map<string, MockGroup> {
   return new Map([
+    [
+      'mock-group-weekend',
+      {
+        id: 'mock-group-weekend',
+        name: 'Weekend crew',
+        ownerId: FRIEND_IDS[0]!,
+        memberIds: [FRIEND_IDS[0]!],
+      },
+    ],
     [
       'mock-group-roommates',
       {
@@ -52,6 +67,11 @@ function initial(): Map<string, MockGroup> {
 }
 
 let groups = initial();
+export const mockAllGroupRecords = () => [...groups.values()];
+export const mockGroupRecord = (id: string) => groups.get(id);
+export const mockGroupPersonName = (id: string) => NAMES.get(id) ?? null;
+/** Group-scoped library; intentionally separate from immutable Pick custom options. */
+export const mockGroupIdeas = new Map<string, GroupIdea>();
 /** picks.group_id in mock form. */
 const pickGroup = new Map<string, string>();
 let nextId = 1;
@@ -61,7 +81,28 @@ export const mockGroupOfPick = (pickId: string): string | null => pickGroup.get(
 
 export function resetMockGroups() {
   groups = initial();
+  resetMockGroupInvitations();
+  mockGroupIdeas.clear();
+  resetMockGroupChat();
   pickGroup.clear();
+}
+
+function deleteMockGroup(groupId: string) {
+  groups.delete(groupId);
+  for (const [id, message] of mockGroupMessages)
+    if (message.groupId === groupId) mockGroupMessages.delete(id);
+  for (const [id, invite] of mockGroupInvitations)
+    if (invite.groupId === groupId) mockGroupInvitations.delete(id);
+  for (const [id, idea] of mockGroupIdeas) if (idea.groupId === groupId) mockGroupIdeas.delete(id);
+  for (const [pickId, linkedGroup] of pickGroup)
+    if (linkedGroup === groupId) pickGroup.delete(pickId);
+}
+/** Match group/member FK cascades on account deletion without changing historical Picks. */
+export function deleteMockGroupAccount(userId: string) {
+  for (const group of [...groups.values()]) {
+    if (group.ownerId === userId) deleteMockGroup(group.id);
+    else group.memberIds = group.memberIds.filter((id) => id !== userId);
+  }
 }
 
 // ---------------------------------------------------------------- reads (RLS: members only)
@@ -177,8 +218,7 @@ export function handleMockGroups(method: string, path: string, body: unknown): R
     return ok({ status: 'ok' });
   }
   if (action === 'delete') {
-    groups.delete(g.id);
-    for (const [pickId, groupId] of pickGroup) if (groupId === g.id) pickGroup.delete(pickId);
+    deleteMockGroup(g.id);
     return ok({ status: 'ok' });
   }
   if (memberId !== undefined) {
@@ -190,18 +230,27 @@ export function handleMockGroups(method: string, path: string, body: unknown): R
         'The owner cannot be removed; delete the group instead',
       );
     }
+    for (const invite of mockGroupInvitations.values()) {
+      if (invite.groupId === g.id && invite.inviteeId === who && invite.status === 'pending') {
+        invite.status = 'declined';
+        invite.resolvedAt = new Date().toISOString();
+      }
+    }
     g.memberIds = g.memberIds.filter((id) => id !== who);
     return ok({ status: 'ok' });
   }
   const ids = validIds(body);
   if (!Array.isArray(ids)) return ids;
   if (!ids.every(isFriend)) return notFriends();
-  const fresh = ids.filter((id) => !g.memberIds.includes(id));
-  if (g.memberIds.length + fresh.length > MAX_MEMBERS) {
-    return fail(409, 'GROUP_FULL', `A group can have up to ${MAX_MEMBERS} people`);
+  try {
+    return ok({ invited: inviteMockGroupMembers(MOCK_USER_ID, g.id, ids), added: 0 });
+  } catch (e) {
+    return fail(
+      (e as { status: number }).status,
+      (e as { code: string }).code,
+      (e as Error).message,
+    );
   }
-  g.memberIds.push(...fresh);
-  return ok({ added: fresh.length });
 }
 
 function participant(userId: string) {

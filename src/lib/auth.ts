@@ -40,11 +40,17 @@ const supabaseAuth: AuthService = {
     });
     return () => data.subscription.unsubscribe();
   },
-  async sendCode(email) {
+  async sendCode(email, mode = 'login') {
     const { error } = await getSupabase().auth.signInWithOtp({
       email,
-      options: { shouldCreateUser: true },
+      options: { shouldCreateUser: mode === 'signup' },
     });
+    if (error?.code === 'signup_disabled' && mode === 'login') {
+      throw new AuthError(
+        'unknown',
+        'Could not send a login code. Check your email or choose Sign Up.',
+      );
+    }
     if (error) throw toAuthError(error);
   },
   async verifyCode(email, code) {
@@ -59,7 +65,8 @@ const supabaseAuth: AuthService = {
     return session;
   },
   async signOut() {
-    await getSupabase().auth.signOut();
+    const { error } = await getSupabase().auth.signOut();
+    if (error) throw new AuthError('unknown', 'Could not sign out. Please try again.');
   },
 };
 

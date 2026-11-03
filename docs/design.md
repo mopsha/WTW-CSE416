@@ -12,6 +12,10 @@ erDiagram
     profiles ||--o{ friendships : "has"
     profiles ||--o{ group_members : "belongs to"
     groups ||--o{ group_members : "has"
+    groups ||--o{ group_invitations : "invites with consent"
+    profiles ||--o{ group_invitations : "sends or receives"
+    groups ||--o{ group_ideas : "collects unscheduled ideas"
+    profiles ||--o{ group_ideas : "creates"
     groups |o--o{ picks : "started from"
     profiles ||--o{ picks : "hosts"
     picks ||--o{ pick_participants : "has"
@@ -498,3 +502,172 @@ Base URL: `<SUPABASE_URL>/functions/v1/api`. User routes need `Authorization: Be
 | `ranking_results?select=place_id,rank,finalist&pick_id=eq.<id>` | results (never `score`) |
 | `picks?select=state,host_id,winner_place_id,decided_by&id=eq.<id>` | outcome / host check |
 | `pick_join_codes?select=code,expires_at&pick_id=eq.<id>&order=expires_at.desc&limit=1` | Lobby code / QR |
+
+## Group Ideas
+
+The group detail screen includes a member-only library of future possibilities, with
+list/detail/create/edit/delete sheets built from the existing component kit.
+`GroupIdeas.tsx` → typed client helpers → authenticated `/groups/:id/ideas` routes →
+`groupIdeasStore` → service-only `group_ideas` RPC. Current group membership is checked
+inside the same group lock used by membership changes; RLS protects direct reads.
+Mock mode uses the existing mock groups and the same shared input parser.
+
+`group_ideas` stores one group ID, creator ID, name, `activity | food`, optional
+description/location text, and creation/update timestamps. Creator-only editing and
+creator/group-owner deletion provide simple ownership and moderation. There is no
+time, participant RSVP, image upload or automatic candidate inclusion. Legacy
+`picks.custom_options` remains a compatible immutable deck input; existing custom
+Pick creation, ranking, voting, history and Pick Again are unchanged. See
+[API contract](api-integration.md#group-ideas-0023) and
+[decision](decisions.md#group-ideas-unscheduled-group-library).
+
+
+## Group Idea candidate integration
+
+The group Pick configuration now has an explicit default-off Include Group Ideas
+switch. `include_group_ideas` is persisted in `picks`; normal lifecycle reads expose
+it alongside `groupId`. Food, Activities and Food + activities are supported; legacy
+Custom options remain compatible. Both searches the existing provider categories
+separately and interleaves results, without changing Discover or provider filters.
+
+At start/refresh, `_shared/api/lifecycle.ts` resolves eligible group entries through
+`groupIdeasStore`, with category/snapshot/mixing helpers in
+`_shared/domain/groupIdeaCandidates.ts`. The same helpers drive mock decks. A bounded
+mixed pool uses the ordinary custom-candidate snapshot contract with additional
+explicit `origin`, `groupIdeaId`, and group metadata. Fresh snapshot IDs and frozen
+content make library edits/deletions independent of existing Picks/history. Library
+membership and provenance are rechecked atomically at commit by migration 0024.
+
+The current swipe, ranking, finalist vote, winner and Pick Again systems handle these
+candidates. Cards add Our Idea through shared place metadata rendering; coordinate-free
+ideas display no distance/directions and request no Google enrichment. Legacy numeric
+neutral-center ranking semantics remain unchanged. Pick Again retains opt-in/current
+group, reuses drafts and builds from current ideas when started. See
+[deck contract](api-integration.md#group-ideas-in-pick-decks-0024) for filter/capacity,
+snapshot and account-deletion details.
+
+
+## Recipient-controlled group invitations
+
+Direct group invites use `group_invitations` (0025) with a unique pending group/invitee
+pair and recipient-only Accept/Decline. The existing members endpoint now requests an
+invitation; existing membership rows remain intact. The API uses the service-only
+`group_invite_members`, `group_invitations_list` and `group_invitation_resolve` RPCs.
+Legacy `group_add_members` delegates to the same request implementation. Group locks
+serialize creation/acceptance and membership capacity checks; RLS permits only relevant
+owner/recipient reads and never client writes. Existing friends/block/account deletion
+rules are reused, with cascades for deleted groups or either party.
+
+The Friends tab shows incoming request cards; group detail shows outgoing Pending
+labels for owners. The existing notification transport adds a generic `group_invite`
+event, deduplicated by invitation ID, and opens Friends. No second inbox, messaging,
+roles or membership system is introduced. Accepted requests feed the existing group
+membership table, so Group Ideas and future group Picks work unchanged. Codes/bearer
+links retain their current join behavior; Pick invitations are unchanged. See the
+[direct invitation contract](api-integration.md#direct-group-invitations-0025).
+
+## Friend profile navigation and privacy
+
+Friends rows open the authenticated Stack route `users/[id]`, keeping secondary friend
+actions separate. Existing Profile-tab identity/settings remain; username, favorites
+and the simple sharing toggle use a small sheet. Avatar reads reuse profiles.avatar_url.
+
+`GET /users/:id/profile` and `GET/POST /me/details` use UserProfilesStore and service-only
+`user_profile_get` / `user_profile_update` RPCs from migration 0026. No private metadata
+is added to direct client grants or the public friendship list. A fixed projection
+checks owner/accepted friendship/blocks and hides counts/favorites/mutual groups unless
+sharing is enabled; owners always receive full data. Mutual groups are an intersection
+of current memberships, never a target user's private group list. Usernames use a
+normalized database unique index; existing name/survey/onboarding APIs stay compatible.
+The same client types/parser and mock graph back mock profiles. See the
+[profile contract](api-integration.md#friend-profiles-and-metadata-privacy-0026).
+
+## Settings navigation
+
+Profile's Settings row opens the protected Stack route `settings/index`, with small
+`settings/profile` and `settings/blocked` subpages. Existing component-kit rows/cards,
+sheets and profile editor are reused; no tab or social-flow redesign is introduced.
+Permission reads are isolated from explicit permission requests and system-settings
+actions. Shared accountActions preserves push cleanup, destructive confirmation and
+the existing auth-session guard lifecycle for Profile and Settings.
+
+GET /blocks filters caller-owned blocks in the existing safety adapter and returns
+only basic blocked-user identifiers/names; unblock uses the existing mutation. No
+new table, metadata grant or deletion behavior is needed. Contacts/password controls
+and unprovided legal policies are omitted. Local help/data information explains real
+features without introducing feedback transport or legal claims. See the
+[Settings contract](api-integration.md#settings-and-blocked-user-list).
+
+### Auth entry and optional new-account setup
+
+Email OTP has explicit Log In / Sign Up modes. Existing encrypted native session storage,
+web persistence and Supabase auth-state navigation are retained. Required setup collects
+display name + the existing unique username through one atomic API/RPC operation.
+The root guard checks identity only. Existing users with identity enter tabs immediately;
+legacy accounts fill missing identity only. New accounts are offered a skippable route
+for favorites, foreground location and notifications. Permission prompts require taps.
+The route lives in the signed-in stack so optional setup cannot gate Picks or voting.
+A private new-account offer marker survives real-backend restarts; no duplicate identity,
+username, recommendation-preference or onboarding-complete model was added.
+
+### Group chat
+
+The existing group detail route has Chat / Plans / Ideas / Members sections. Plans retains
+Pick creation and history; Members retains invitations, rename/delete and leave/remove.
+`GroupChat` uses the current component kit, basic sender avatars/names, timestamps and a
+plain-text composer. `useGroupChat` rereads a bounded history through the API on Realtime
+INSERT invalidations and every five seconds while focused/foreground. It clears content
+on access/read failure, blur or background; authorization always comes from current membership.
+
+```mermaid
+flowchart LR
+  UI[Group detail / Chat] --> API[GET / POST group messages]
+  API --> RPC[Member-authorized group_chat RPC]
+  RPC --> DB[(group_messages + RLS)]
+  DB --> RT[Existing Supabase Realtime]
+  RT --> UI
+  API --> Notify[Existing notify / inbox / Expo push]
+```
+
+Postgres stores messages with group/sender FKs and retry uniqueness; the Edge Function derives
+sender IDs and applies existing text filtering. Membership writers and chat share the group
+lock. RLS and API reads filter blocked pairs. Group/account deletion cascade messages and
+linked inbox rows; member departure preserves history. No changes to Pick ranking, Group
+Ideas, auth or profile privacy are required. See API integration docs for deployment/testing.
+
+### Direct conversations between friends
+
+A separate Message action on accepted friend rows/profiles opens `/messages/:id`, while friend
+row taps still open profiles. The dedicated screen shows basic peer identity and the same
+`MessageThread` presentation/composer as Group Chat. Inbox notifications link back to DMs.
+`useLiveMessages` and `createMessageLive` share only focused/foreground Realtime invalidation,
+polling, private-state cleanup and retry presentation mechanics; group-specific APIs remain.
+
+Postgres `direct_conversations` uses one unique ordered pair and participant FKs;
+`direct_messages` uses a conversation FK, authenticated sender, body, timestamp and retry key.
+Service-only `direct_chat` RPCs enforce current accepted friendship, blocking and account
+availability, with matching RLS for reads/Realtime. Unfriending blocks access but retains history;
+newly accepted friendship restores it. Deleting either account cascades the conversation and
+all linked content. Notification delivery reuses notify/inbox/Expo push, with per-message
+uniqueness and generic ID-only payloads. No Group Ideas, Pick, auth or profile privacy changes.
+
+### Past Moves (derived memories)
+
+`profile_past_moves` projects attended completed Picks using frozen winner snapshots and the
+existing per-user outcome row. No posts table, global completion flag or media subsystem is
+added. `GET /me/past-moves` and `/users/:id/past-moves` serve bounded private projections.
+History annotates the original card; profile sections show eligible cards with name/date,
+permitted location/group context and owner-only counts. Existing Pick routes open details.
+
+Owner access is independent of sharing. A friend needs accepted/unblocked status, the metadata
+sharing opt-in AND participation in that Pick. Only current group members see the group label;
+friend projections omit participant identities/counts and outcome receipt times. Existing RLS
+and account/group deletion cascades remain unchanged. The service-only projection is installed
+by migration 0030 alongside an attended-outcome index. Photos await a real storage/upload and
+media privacy/deletion design. No Google lookup is needed to render a Past Move.
+
+Integration audit: Groups is registered under the same root identity guard as the tabs.
+`usePrivateRefresh` coalesces focused/foreground projection reads and invalidates caches on
+blur/background; it is shared by group/profile/Ideas/invitation/Past Moves views, with the
+existing 30-second period for PlanBlock. Auth/profile writes and private reads guard against
+stale asynchronous results. Migration 0031 preserves established identity during metadata edits.

@@ -7,6 +7,13 @@ import { createServiceClient } from './serviceClient.ts';
  */
 export function createProfileStore(): ProfileStore {
   return {
+    async finishOptionalSetup(userId) {
+      const { error } = await createServiceClient()
+        .from('profiles')
+        .update({ optional_setup_pending: false })
+        .eq('id', userId);
+      if (error) throw new Error('Could not save optional setup');
+    },
     async setDisplayName(userId, displayName) {
       // Upsert: handle_new_user normally creates the row at sign-up, but an account made
       // before that trigger existed would otherwise be silently left without a name.
@@ -22,18 +29,24 @@ export function createProfileStore(): ProfileStore {
     async getProfile(userId) {
       const { data, error } = await createServiceClient()
         .from('profiles')
-        .select('display_name, discover_preferences, preferences_updated_at')
+        .select(
+          'display_name, username, optional_setup_pending, discover_preferences, preferences_updated_at',
+        )
         .eq('id', userId)
         .maybeSingle();
       if (error) throw new Error('Database operation failed');
       if (!data) return null;
       const row = data as {
+        username: string | null;
+        optional_setup_pending: boolean;
         display_name: string | null;
         discover_preferences: unknown;
         preferences_updated_at: string | null;
       };
       return {
         displayName: row.display_name,
+        username: row.username,
+        optionalSetupPending: row.optional_setup_pending,
         preferences: row.discover_preferences,
         preferencesUpdatedAt: row.preferences_updated_at,
       };

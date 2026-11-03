@@ -2,6 +2,7 @@
 import type { Candidate, PickProgress, PickState } from './types';
 
 export function pickTitle(category: string | null | undefined): string {
+  if (category === 'both') return 'Food + Activities Pick';
   return category === 'custom'
     ? 'Custom Plan'
     : category === 'activities'
@@ -10,6 +11,7 @@ export function pickTitle(category: string | null | undefined): string {
 }
 
 export function pickEmoji(category: string | null | undefined): string {
+  if (category === 'both') return '🎲';
   return category === 'custom' ? '✨' : category === 'activities' ? '🎳' : '🍜';
 }
 

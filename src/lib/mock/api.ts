@@ -1,3 +1,13 @@
+import { handleMockPastMoves } from './pastMoves';
+import { handleMockDirectChat, mockDirectNotices, resetMockDirectChat } from './directChat';
+import { handleMockGroupChat, mockGroupMessages, mockGroupChatNotices } from './groupChat';
+import {
+  getMockUserProfile,
+  handleMockUserProfiles,
+  resetOwnMockUserProfile,
+} from './userProfiles';
+import { handleMockGroupInvitations, mockGroupInvitations } from './groupInvitations';
+import { handleMockGroupIdeas } from './groupIdeas';
 // A fake `fetch` for our Edge Function. It mirrors the API contract (docs/api-integration.md):
 // same routes, status codes, error codes and response shapes, returned as real Response
 // objects, so src/lib/api.ts runs the exact same parsing and error handling in both modes.
@@ -11,7 +21,7 @@ import { validatePreferences } from '@shared/domain/preferences.ts';
 
 import { MOCK_FAIL_RATE } from '../config';
 import type { PreferenceValue } from '../types';
-import { MOCK_ACCESS_TOKEN, MOCK_USER_ID, mockAuth } from './auth';
+import { MOCK_ACCESS_TOKEN, MOCK_USER_ID, mockAuth, forgetMockAccount } from './auth';
 import { handleMockFriends } from './friends';
 import { mockPickPool } from './placePool';
 import { mockHang } from './hang';
@@ -23,10 +33,13 @@ import { createPoolBuilder } from '@shared/places/pool.ts';
 import { MockProvider } from '@shared/places/MockProvider.ts';
 import {
   handleMockGroups,
+  deleteMockGroupAccount,
   mockCopyGroupMembers,
   mockCreateGroupPick,
   mockGetGroup,
+  mockGroupPersonName,
   mockGroupOfPick,
+  mockGroupIdeas,
   mockInvite,
 } from './groups';
 import {
@@ -55,6 +68,14 @@ export const MOCK_API_BASE_URL = 'https://mock.wtw.local/functions/v1/api';
 
 /** A seeded inbox for the fixture Picks, so the inbox has something to show in mock mode. */
 export const mockNotifications: NotificationRow[] = [
+  {
+    id: 'mock-invitation-notice',
+    type: 'group_invite',
+    pickId: null,
+    payload: { inviteId: 'mock-group-invite-weekend' },
+    createdAt: new Date().toISOString(),
+    readAt: null,
+  },
   {
     id: 'mock-n-vote',
     type: 'vote_needed',
@@ -169,6 +190,8 @@ function getPick(pick: MockPick) {
     category: pick.category,
     center: pick.center,
     radiusM: pick.radiusM,
+    includeGroupIdeas: pick.includeGroupIdeas ?? false,
+    groupId: mockGroupOfPick(pick.id),
     includeSaved: pick.includeSaved,
     customOptions: pick.customOptions,
     mixCategory: pick.mixCategory,
@@ -191,9 +214,23 @@ function getPick(pick: MockPick) {
 interface MockPlan {
   planAt: string | null;
   rsvps: Map<string, RsvpStatus>;
-  outcomes: Map<string, { went: boolean; again: boolean | null }>;
+  outcomes: Map<string, { went: boolean; again: boolean | null; answeredAt?: string }>;
 }
 const mockPlans = new Map<string, MockPlan>();
+export function resetMockPlanState() {
+  mockPlans.clear();
+}
+export function recordMockOutcome(
+  pickId: string,
+  userId: string,
+  went: boolean,
+  again: boolean | null = null,
+) {
+  const pick = mockPicks.get(pickId);
+  if (!pick || pick.state !== 'completed' || !pick.participants.some((p) => p.userId === userId))
+    throw new Error('Outcome requires a completed Pick participant');
+  plans(pick).outcomes.set(userId, { went, again, answeredAt: new Date().toISOString() });
+}
 /** Pick again: source Pick id -> its newest copy (one open draft at a time). */
 const againOf = new Map<string, string>();
 function plans(pick: MockPick): MockPlan {
@@ -225,7 +262,12 @@ function planOf(pick: MockPick): PlanSummary {
       didNotGo: outcomes.filter((o) => !o.went).length,
       again: outcomes.filter((o) => o.again).length,
     },
-    myOutcome: plan.outcomes.get(MOCK_USER_ID) ?? null,
+    myOutcome: plan.outcomes.has(MOCK_USER_ID)
+      ? {
+          went: plan.outcomes.get(MOCK_USER_ID)!.went,
+          again: plan.outcomes.get(MOCK_USER_ID)!.again,
+        }
+      : null,
   };
 }
 
@@ -273,7 +315,13 @@ const ROUTES: Record<string, Handler> = {
     if (pick.participants.length < 2) {
       return fail(409, 'NOT_ENOUGH_PARTICIPANTS', 'A Pick needs at least 2 participants to start');
     }
-    const candidates = mockPickPool(pick);
+    let candidates;
+    try {
+      candidates = mockPickPool(pick);
+    } catch (e) {
+      const error = errorResponse(e);
+      return json(error.status, error.body);
+    }
     if (!candidates.length) return fail(409, 'NO_CANDIDATES', 'No places match these filters');
     pick.candidates = candidates;
     pick.state = 'swiping';
@@ -297,7 +345,13 @@ const ROUTES: Record<string, Handler> = {
       );
     }
     // A "new" pool: the same places, rotated, so the deck visibly changes.
-    const pool = mockPickPool(pick, true);
+    let pool;
+    try {
+      pool = mockPickPool(pick, true);
+    } catch (e) {
+      const error = errorResponse(e);
+      return json(error.status, error.body);
+    }
     if (!pool.length) return fail(409, 'NO_CANDIDATES', 'No places match these filters');
     const rotated = pool;
     if (pick.state === 'swiping') pick.candidates = rotated.slice(0, pick.poolSize);
@@ -432,10 +486,7 @@ const ROUTES: Record<string, Handler> = {
       return fail(400, 'INVALID_INPUT', 'went must be true or false');
     }
     if (pick.state !== 'completed') return wrongState('The Pick has no winner yet');
-    plans(pick).outcomes.set(MOCK_USER_ID, {
-      went,
-      again: typeof again === 'boolean' ? again : null,
-    });
+    recordMockOutcome(pick.id, MOCK_USER_ID, went, typeof again === 'boolean' ? again : null);
     return json(200, { status: 'ok' });
   },
 
@@ -466,6 +517,7 @@ const ROUTES: Record<string, Handler> = {
           .filter((p) => p.userId !== MOCK_USER_ID && !mockBlocks.has(p.userId))
           .map((p) => ({ ...p, answers: new Map(), vote: null })),
       );
+    next.includeGroupIdeas = !!pick.includeGroupIdeas && !!mockGroupOfPick(next.id);
     againOf.set(pick.id, next.id);
     return json(201, { pickId: next.id, state: 'draft' });
   }),
@@ -514,6 +566,13 @@ function safetyRoute(method: string, path: string, body: unknown): Response | nu
         : fail(404, 'NOT_FOUND', 'Invite not found');
     }
   }
+  if (method === 'GET' && path === '/blocks')
+    return json(200, {
+      users: [...mockBlocks].map((userId) => ({
+        userId,
+        displayName: mockGroupPersonName(userId),
+      })),
+    });
   const block = /^\/blocks\/([^/]+)(\/remove)?$/.exec(path);
   if (block && method === 'POST') {
     const userId = decodeURIComponent(block[1] ?? '');
@@ -602,6 +661,34 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     return json(200, { status: 'ok' });
   }
   // Groups (src/lib/mock/groups.ts): /groups/..., POST /picks with groupId, and invites.
+  const ideasResult = handleMockGroupIdeas(method, path, readBody(init));
+  if (ideasResult) return json(ideasResult.status, ideasResult.body);
+  try {
+    const invitations = handleMockGroupInvitations(method, path, readBody(init));
+    if (invitations) {
+      if (method === 'POST' && 'id' in invitations)
+        for (const notice of mockNotifications)
+          if (notice.type === 'group_invite' && notice.payload.inviteId === invitations.id)
+            notice.readAt ??= new Date().toISOString();
+      return json(200, invitations);
+    }
+  } catch (e) {
+    const error = errorResponse(e);
+    return json(error.status, error.body);
+  }
+  try {
+    const profile = handleMockUserProfiles(method, path, readBody(init));
+    if (profile) return json(200, profile);
+  } catch (e) {
+    const error = errorResponse(e);
+    return json(error.status, error.body);
+  }
+  const memories = handleMockPastMoves(method, path, new URL(url).searchParams, plans);
+  if (memories) return json(memories.status, memories.body);
+  const directResult = handleMockDirectChat(method, path, readBody(init));
+  if (directResult) return json(directResult.status, directResult.body);
+  const chatResult = handleMockGroupChat(method, path, readBody(init));
+  if (chatResult) return json(chatResult.status, chatResult.body);
   const groupResult = handleMockGroups(method, path, readBody(init));
   if (groupResult) return json(groupResult.status, groupResult.body);
   const groupId = (readBody(init) as { groupId?: unknown } | null)?.groupId;
@@ -622,13 +709,45 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   if (method === 'POST' && path === '/picks') return createPick(readBody(init));
   if (method === 'POST' && path === '/picks/join') return joinPick(readBody(init));
   if (method === 'POST' && path === '/me') return updateMe(readBody(init));
+  if (method === 'POST' && path === '/me/optional-setup') {
+    mockProfile.optionalSetupPending = false;
+    return json(200, { optionalSetupPending: false });
+  }
   if (method === 'GET' && path === '/me') {
     const { displayName, preferences, onboarded } = mockProfile;
-    return json(200, { displayName, preferences, onboarded });
+    return json(200, {
+      displayName,
+      preferences,
+      onboarded,
+      username: getMockUserProfile(MOCK_USER_ID).username,
+      optionalSetupPending: mockProfile.optionalSetupPending,
+    });
   }
   if (method === 'POST' && path === '/me/preferences') return updatePreferences(readBody(init));
   if (method === 'POST' && path === '/push-tokens') return registerPushToken(readBody(init));
   if (method === 'DELETE' && path === '/me') {
+    forgetMockAccount();
+    resetMockDirectChat();
+    for (const plan of mockPlans.values()) {
+      plan.outcomes.delete(MOCK_USER_ID);
+      plan.rsvps.delete(MOCK_USER_ID);
+    }
+    for (const [id, message] of mockGroupMessages)
+      if (
+        message.senderId === MOCK_USER_ID ||
+        mockGetGroup(message.groupId)?.ownerId === MOCK_USER_ID
+      )
+        mockGroupMessages.delete(id);
+    resetOwnMockUserProfile();
+    for (const [id, invite] of mockGroupInvitations)
+      if (invite.inviterId === MOCK_USER_ID || invite.inviteeId === MOCK_USER_ID)
+        mockGroupInvitations.delete(id);
+    // Match creator/group-owner cascades for the new library on account deletion.
+    for (const [id, idea] of mockGroupIdeas) {
+      if (idea.createdBy === MOCK_USER_ID || mockGetGroup(idea.groupId)?.ownerId === MOCK_USER_ID)
+        mockGroupIdeas.delete(id);
+    }
+    deleteMockGroupAccount(MOCK_USER_ID);
     resetMockProfile();
     return json(200, { status: 'ok' });
   }
@@ -645,15 +764,25 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     if (!mockGetGroup(id)) return fail(404, 'GROUP_NOT_FOUND', 'Group not found');
     return json(200, { picks: historyOf().filter((p) => p.groupId === id) });
   }
-  if (method === 'GET' && path === '/notifications') {
+  if (method === 'GET' && path.split('?')[0] === '/notifications') {
+    const cursor = new URL(url).searchParams.get('before');
+    const [stamp, id] = cursor?.split('|') ?? [];
+    const all = [...mockNotifications, ...mockGroupChatNotices(), ...mockDirectNotices()]
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
+      .filter((n) => !stamp || !id || n.createdAt < stamp || (n.createdAt === stamp && n.id < id));
+    const notifications = all.slice(0, 50);
+    const last = notifications[notifications.length - 1];
     return json(200, {
-      notifications: mockNotifications,
-      unreadCount: mockNotifications.filter((n) => !n.readAt).length,
+      notifications,
+      unreadCount: notifications.filter((n) => !n.readAt).length,
+      nextCursor: all.length > 50 && last ? `${last.createdAt}|${last.id}` : null,
     });
   }
   const read = method === 'POST' && /^\/notifications\/([^/]+)\/read$/.exec(path);
   if (read) {
-    const n = mockNotifications.find((x) => x.id === decodeURIComponent(read[1] ?? ''));
+    const n = [...mockNotifications, ...mockGroupChatNotices(), ...mockDirectNotices()].find(
+      (x) => x.id === decodeURIComponent(read[1] ?? ''),
+    );
     if (!n) return fail(404, 'NOTIFICATION_NOT_FOUND', 'Notification not found');
     n.readAt ??= new Date().toISOString();
     return json(200, { status: 'ok' });

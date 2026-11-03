@@ -1,3 +1,8 @@
+import './pastMoves_test.ts';
+import './directChat_test.ts';
+import './groupChat_test.ts';
+// Include feature route coverage in the existing CI entry point.
+import './groupIdeas_test.ts';
 import { createApp } from './app.ts';
 import { ApiError } from '../_shared/api/errors.ts';
 import type { HeartbeatStore } from '../_shared/api/heartbeat.ts';
@@ -901,7 +906,7 @@ Deno.test('notifications: always the verified caller, never a body-supplied user
   const inbox = await app.request('/notifications');
   equal(inbox.status, 200);
   equal(inbox.headers.get('cache-control'), 'private, no-store');
-  equal(await inbox.json(), { notifications: [], unreadCount: 0 });
+  equal(await inbox.json(), { notifications: [], unreadCount: 0, nextCursor: null });
   const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
   equal((await app.request(`/notifications/${id}/read`, { method: 'POST' })).status, 200);
   const token = await app.request('/push-tokens', {
@@ -1131,6 +1136,8 @@ Deno.test('GET /me: my name, preferences and onboarding flag, never someone else
   const result = await profileApp(rows).request('/me?userId=other');
   equal(result.status, 200);
   equal(await result.json(), {
+    username: null,
+    optionalSetupPending: false,
     displayName: 'Ava',
     preferences: {
       categories: [],
@@ -1215,6 +1222,7 @@ const PICK = 'b0000000-0000-4000-8000-000000000001';
 const DRAFT_BODY = { category: 'food', center: { lat: 1, lng: 2 }, radiusM: 500 };
 
 function groupsWorld() {
+  const pending = new Set<string>();
   const friends = new Set([AVA, BEN]); // the owner's accepted friends
   const members = new Map<string, Set<string>>([[GROUP, new Set([OWNER])]]);
   const picks = new Map<string, { hostId: string; participants: Set<string>; canceled: boolean }>();
@@ -1238,9 +1246,9 @@ function groupsWorld() {
       if (ids.some((id) => id !== userId && !friends.has(id))) {
         throw new ApiError(403, 'NOT_FRIENDS', 'You can only add your friends');
       }
-      const before = m.size;
-      ids.forEach((id) => m.add(id));
-      return m.size - before;
+      const before = pending.size;
+      ids.filter((id) => !m.has(id)).forEach((id) => pending.add(id));
+      return pending.size - before;
     },
     removeMember: async (userId, groupId, memberId) =>
       void asOwner(userId, groupId).delete(memberId),
@@ -1302,7 +1310,10 @@ function groupsWorld() {
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-  return { post, members, picks, groupsStore };
+  const accept = (...ids: string[]) => {
+    for (const id of ids) if (pending.delete(id)) members.get(GROUP)!.add(id);
+  };
+  return { post, members, picks, groupsStore, accept };
 }
 
 Deno.test('POST /groups: 401 without a token, 400 for a bad name, 201 trimmed', async () => {
@@ -1332,22 +1343,27 @@ Deno.test('group routes: 503 when groups are not configured, after authenticatin
   }
 });
 
-Deno.test('only friends can be added to a group, and only by the owner', async () => {
-  const { post, members } = groupsWorld();
-  const stranger = await post(`/groups/${GROUP}/members`, OWNER, { userIds: [STRANGER] });
-  equal(stranger.status, 403);
-  equal((await stranger.json()).error.code, 'NOT_FRIENDS');
-  const mixed = await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA, STRANGER] });
-  equal(mixed.status, 403);
-  equal([...members.get(GROUP)!], [OWNER]); // all or nothing
-  const ok = await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA, BEN, AVA] });
-  equal(await ok.json(), { added: 2 });
-  equal((await post(`/groups/${GROUP}/members`, AVA, { userIds: [BEN] })).status, 403);
-  for (const userIds of [[], ['not-a-uuid'], undefined, Array(26).fill(AVA)]) {
-    equal((await post(`/groups/${GROUP}/members`, OWNER, { userIds })).status, 400);
-  }
-  equal((await post('/groups/not-a-uuid/members', OWNER, { userIds: [AVA] })).status, 400);
-});
+Deno.test(
+  'only owners can invite accepted friends; direct invitations do not add members',
+  async () => {
+    const { post, members, accept } = groupsWorld();
+    const stranger = await post(`/groups/${GROUP}/members`, OWNER, { userIds: [STRANGER] });
+    equal(stranger.status, 403);
+    equal((await stranger.json()).error.code, 'NOT_FRIENDS');
+    const mixed = await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA, STRANGER] });
+    equal(mixed.status, 403);
+    equal([...members.get(GROUP)!], [OWNER]); // all or nothing
+    const ok = await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA, BEN, AVA] });
+    equal(await ok.json(), { invited: 2, added: 0 });
+    equal([...members.get(GROUP)!], [OWNER]);
+    accept(AVA, BEN);
+    equal((await post(`/groups/${GROUP}/members`, AVA, { userIds: [BEN] })).status, 403);
+    for (const userIds of [[], ['not-a-uuid'], undefined, Array(26).fill(AVA)]) {
+      equal((await post(`/groups/${GROUP}/members`, OWNER, { userIds })).status, 400);
+    }
+    equal((await post('/groups/not-a-uuid/members', OWNER, { userIds: [AVA] })).status, 400);
+  },
+);
 
 Deno.test('a non-member cannot see or change a group (404, not 403)', async () => {
   const { post } = groupsWorld();
@@ -1366,8 +1382,9 @@ Deno.test('a non-member cannot see or change a group (404, not 403)', async () =
 });
 
 Deno.test('POST /picks with groupId adds every member; without it, nothing changes', async () => {
-  const { post, picks } = groupsWorld();
+  const { post, picks, accept } = groupsWorld();
   await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA, BEN] });
+  accept(AVA, BEN);
   const res = await post('/picks', OWNER, { ...DRAFT_BODY, groupId: GROUP.toUpperCase() });
   equal(res.status, 201);
   equal(await res.json(), { pickId: PICK, state: 'draft', groupId: GROUP, added: 2 });
@@ -1383,8 +1400,9 @@ Deno.test('POST /picks with groupId adds every member; without it, nothing chang
 });
 
 Deno.test('a removed member keeps past Picks but is not added to new ones', async () => {
-  const { post, picks } = groupsWorld();
+  const { post, picks, accept } = groupsWorld();
   await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA, BEN] });
+  accept(AVA, BEN);
   const first = await (await post('/picks', OWNER, { ...DRAFT_BODY, groupId: GROUP })).json();
   equal((await post(`/groups/${GROUP}/members/${BEN}/remove`, OWNER)).status, 200);
   equal(picks.get(first.pickId)!.participants.has(BEN), true);
@@ -1409,8 +1427,9 @@ Deno.test(
 );
 
 Deno.test('leave: members can, the owner cannot', async () => {
-  const { post, members } = groupsWorld();
+  const { post, members, accept } = groupsWorld();
   await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA] });
+  accept(AVA);
   equal(await (await post(`/groups/${GROUP}/leave`, AVA)).json(), { status: 'ok' });
   equal(members.get(GROUP)!.has(AVA), false);
   const owner = await post(`/groups/${GROUP}/leave`, OWNER);
@@ -2060,5 +2079,510 @@ Deno.test(
       ['post', 'host', 'food'],
       [['b', 'c'], 'added_to_pick', 'pick'],
     ]);
+  },
+);
+
+Deno.test(
+  'group Idea opt-in persists through POST/GET and uses the normal start pool and snapshots',
+  async () => {
+    const host = 'c1111111-1111-4111-8111-111111111111';
+    const groupId = 'c0000000-1111-4111-8111-111111111111';
+    let createdInput: unknown;
+    let committed: unknown;
+    let lookups = 0;
+    let providerCalls = 0;
+    const pick = {
+      id: 'c9999999-1111-4111-8111-111111111111',
+      hostId: host,
+      groupId,
+      includeGroupIdeas: true,
+      state: 'draft' as const,
+      category: 'food' as const,
+      center: { lat: 40, lng: -73 },
+      radiusM: 5000,
+      poolSize: 5,
+      deadlineAt: null,
+      closeThreshold: 100,
+      participantIds: [host, 'guest'],
+      candidates: [],
+      hasAnswers: false,
+      myAnswers: {},
+      winnerPlaceId: null,
+      decidedAt: null,
+      decidedBy: null,
+      version: '1',
+    };
+    const app = createApp({
+      getUser: async () => ({ id: host }),
+      store,
+      closingStore,
+      lifecycleStore: {
+        ...lifecycleStore,
+        createPick: async (_u, input) => {
+          createdInput = input;
+          return { id: pick.id };
+        },
+        load: async () => pick,
+        groupIdeas: async (g, u) => {
+          equal([g, u], [groupId, host]);
+          lookups++;
+          return [
+            {
+              id: 'c8888888-1111-4111-8111-111111111111',
+              groupId,
+              createdBy: host,
+              name: 'Cook together',
+              category: 'food',
+              description: null,
+              locationText: 'Our kitchen',
+              createdAt: 'now',
+              updatedAt: 'now',
+            },
+          ];
+        },
+        candidateUuid: () => 'c7777777-1111-4111-8111-111111111111',
+        start: async (_p, _u, candidates) => {
+          committed = candidates;
+        },
+      },
+      groupsStore: {
+        isMember: async () => true,
+        addGroupToPick: async () => 1,
+      } as unknown as GroupsStore,
+      poolBuilder: {
+        buildPool: async () => {
+          providerCalls++;
+          return [{ placeId: 'public', name: 'Cafe', category: 'food', lat: 40, lng: -73 }];
+        },
+      },
+    });
+    const body = {
+      category: 'food',
+      center: pick.center,
+      radiusM: 5000,
+      poolSize: 5,
+      deadlineAt: null,
+      closeThreshold: 100,
+      includeGroupIdeas: true,
+      groupId,
+    };
+    const created = await app.request('/picks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    equal(created.status, 201);
+    equal((createdInput as { includeGroupIdeas: boolean }).includeGroupIdeas, true);
+    equal((createdInput as { groupId: string }).groupId, groupId);
+    equal(lookups, 0); // deck built at start, not while creating draft
+    const started = await app.request(`/picks/${pick.id}/start`, { method: 'POST' });
+    equal(started.status, 200);
+    equal(providerCalls, 1);
+    equal(lookups, 1);
+    const candidates = committed as { snapshot: { origin?: string; groupIdeaId?: string } }[];
+    equal(candidates.length, 2);
+    equal(candidates[0].snapshot.origin, 'group_idea');
+    const detail = await (await app.request(`/picks/${pick.id}`)).json();
+    equal(detail.includeGroupIdeas, true);
+    equal(detail.groupId, groupId);
+    const invalid = await app.request('/picks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, groupId: undefined }),
+    });
+    equal(invalid.status, 400);
+  },
+);
+
+Deno.test(
+  'group invitation routes derive recipient from auth, validate decisions and keep private lists uncached',
+  async () => {
+    const id = 'd1111111-1111-4111-8111-111111111111';
+    const calls: unknown[][] = [];
+    const invitation = {
+      id,
+      groupId: GROUP,
+      inviterId: OWNER,
+      inviteeId: AVA,
+      status: 'pending' as const,
+      createdAt: 'now',
+      resolvedAt: null,
+      groupName: 'Crew',
+      inviterName: 'Josh',
+      inviteeName: 'Ava',
+    };
+    const invitationStore = {
+      list: async (...args: [string, string?]) => {
+        calls.push(['list', ...args]);
+        return [invitation];
+      },
+      resolve: async (...args: [string, string, 'accepted' | 'declined']) => {
+        calls.push(['resolve', ...args]);
+        return { ...invitation, status: args[2], resolvedAt: 'resolved' };
+      },
+    };
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      groupInvitationsStore: invitationStore,
+      getUser: async () => ({ id: AVA }),
+    });
+    const list = await app.request('/group-invitations');
+    equal(list.headers.get('Cache-Control'), 'private, no-store');
+    equal(list.status, 200);
+    equal(calls[0], ['list', AVA]);
+    const outgoing = await app.request(`/groups/${GROUP}/invitations`);
+    equal(outgoing.status, 200);
+    equal(calls[1], ['list', AVA, GROUP]);
+    for (const decision of ['accepted', 'declined'] as const) {
+      const res = await app.request(`/group-invitations/${id}/respond`, {
+        method: 'POST',
+        body: JSON.stringify({ decision, userId: OWNER, inviteeId: OWNER }),
+      });
+      equal(res.status, 200);
+      equal(calls.at(-1), ['resolve', AVA, id, decision]);
+    }
+    const before = calls.length;
+    for (const body of [{}, { decision: 'yes' }, null])
+      equal(
+        (
+          await app.request(`/group-invitations/${id}/respond`, {
+            method: 'POST',
+            body: JSON.stringify(body),
+          })
+        ).status,
+        400,
+      );
+    equal(
+      (
+        await app.request('/group-invitations/bad/respond', {
+          method: 'POST',
+          body: '{"decision":"accepted"}',
+        })
+      ).status,
+      400,
+    );
+    equal(calls.length, before);
+  },
+);
+Deno.test(
+  'group invitation routes preserve missing/forbidden/resolved/capacity errors and authenticate first',
+  async () => {
+    for (const status of [404, 409] as const) {
+      const app = createApp({
+        store,
+        lifecycleStore,
+        poolBuilder,
+        closingStore,
+        getUser: async () => ({ id: AVA }),
+        groupInvitationsStore: {
+          list: async () => [],
+          resolve: async () => {
+            throw new ApiError(status, 'EXPECTED', 'Unavailable');
+          },
+        },
+      });
+      equal(
+        (
+          await app.request(`/group-invitations/${GROUP}/respond`, {
+            method: 'POST',
+            body: '{"decision":"accepted"}',
+          })
+        ).status,
+        status,
+      );
+    }
+    const anon = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => {
+        throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+      },
+    });
+    for (const [path, method] of [
+      ['/group-invitations', 'GET'],
+      [`/groups/${GROUP}/invitations`, 'GET'],
+      [`/group-invitations/${GROUP}/respond`, 'POST'],
+    ])
+      equal(
+        (await anon.request(path, { method, body: method === 'POST' ? '{}' : undefined })).status,
+        401,
+      );
+  },
+);
+Deno.test(
+  'direct invite sends reuse existing notifier with invite IDs and never report added membership',
+  async () => {
+    const id = 'd1111111-1111-4111-8111-111111111111';
+    const notices: unknown[][] = [];
+    const app = createApp({
+      store,
+      poolBuilder,
+      closingStore,
+      getUser: async () => ({ id: OWNER }),
+      lifecycleStore: {
+        ...lifecycleStore,
+        notifier: async (...args) => {
+          notices.push(args);
+        },
+      },
+      groupsStore: {
+        addMembers: async (user: string, group: string, ids: string[]) => {
+          equal([user, group, ids], [OWNER, GROUP, [AVA]]);
+          return 1;
+        },
+      } as unknown as GroupsStore,
+      groupInvitationsStore: {
+        list: async () => [
+          {
+            id,
+            groupId: GROUP,
+            inviterId: OWNER,
+            inviteeId: AVA,
+            status: 'pending',
+            createdAt: 'now',
+            resolvedAt: null,
+            groupName: 'Crew',
+            inviterName: 'Josh',
+            inviteeName: 'Ava',
+          },
+        ],
+        resolve: async () => {
+          throw new Error('Unexpected resolve');
+        },
+      },
+    });
+    const response = await app.request(`/groups/${GROUP}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ userIds: [AVA] }),
+    });
+    equal(await response.json(), { invited: 1, added: 0 });
+    equal(notices, [[[AVA], 'group_invite', null, { inviteId: id }]]);
+  },
+);
+
+Deno.test(
+  'user profiles authenticate, derive owner identity, validate targets/updates and expose only store projections',
+  async () => {
+    const calls: unknown[][] = [];
+    const profile = {
+      id: AVA,
+      displayName: 'Ava',
+      username: 'ava',
+      avatarUrl: null,
+      isOwner: false,
+      metadataVisible: false,
+      friendsCount: null,
+      groupsCount: null,
+      favoriteCuisine: null,
+      favoriteActivity: null,
+      mutualGroups: [],
+    };
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => ({ id: OWNER }),
+      userProfilesStore: {
+        get: async (...args) => {
+          calls.push(['get', ...args]);
+          return profile;
+        },
+        update: async (...args) => {
+          calls.push(['update', ...args]);
+          return { ...profile, id: OWNER, isOwner: true };
+        },
+      },
+    });
+    const friend = await app.request(`/users/${AVA}/profile`);
+    equal(friend.status, 200);
+    equal(friend.headers.get('Cache-Control'), 'private, no-store');
+    equal(await friend.json(), profile);
+    equal(calls.at(-1), ['get', OWNER, AVA]);
+    equal((await app.request('/me/details')).status, 200);
+    equal(calls.at(-1), ['get', OWNER, OWNER]);
+    const saved = await app.request('/me/details', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: '@Josh',
+        shareMetadata: false,
+        userId: AVA,
+        favoriteCuisine: 'Japanese',
+      }),
+    });
+    equal(saved.status, 200);
+    equal(calls.at(-1), [
+      'update',
+      OWNER,
+      {
+        username: 'josh',
+        favoriteCuisine: 'Japanese',
+        favoriteActivity: null,
+        shareMetadata: false,
+      },
+    ]);
+    const before = calls.length;
+    equal((await app.request('/users/bad/profile')).status, 400);
+    equal(
+      (
+        await app.request('/me/details', {
+          method: 'POST',
+          body: '{"username":"ab","shareMetadata":true}',
+        })
+      ).status,
+      400,
+    );
+    equal(calls.length, before);
+    const anon = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => {
+        throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+      },
+    });
+    equal((await anon.request('/me/details')).status, 401);
+    equal((await anon.request(`/users/${AVA}/profile`)).status, 401);
+  },
+);
+Deno.test(
+  'profile endpoints preserve privacy 404s and username conflicts without extra reads',
+  async () => {
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => ({ id: OWNER }),
+      userProfilesStore: {
+        get: async () => {
+          throw new ApiError(404, 'PROFILE_NOT_FOUND', 'Profile not found');
+        },
+        update: async () => {
+          throw new ApiError(409, 'USERNAME_TAKEN', 'Taken');
+        },
+      },
+    });
+    equal((await app.request(`/users/${AVA}/profile`)).status, 404);
+    equal(
+      (
+        await app.request('/me/details', {
+          method: 'POST',
+          body: '{"username":"josh","shareMetadata":false}',
+        })
+      ).status,
+      409,
+    );
+  },
+);
+
+Deno.test(
+  'GET /blocks authenticates and lists only caller-owned basic identifiers without caching',
+  async () => {
+    const calls: string[] = [];
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => ({ id: OWNER }),
+      safetyStore: {
+        listBlocks: async (user: string) => {
+          calls.push(user);
+          return [{ userId: AVA, displayName: 'Ava' }];
+        },
+      } as unknown as SafetyStore,
+    });
+    const res = await app.request(`/blocks?userId=${AVA}`);
+    equal(res.status, 200);
+    equal(res.headers.get('Cache-Control'), 'private, no-store');
+    equal(await res.json(), { users: [{ userId: AVA, displayName: 'Ava' }] });
+    equal(calls, [OWNER]);
+    const anon = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => {
+        throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+      },
+    });
+    equal((await anon.request('/blocks')).status, 401);
+  },
+);
+
+Deno.test(
+  'identity setup authenticates, normalizes, preserves 409, and never trusts a body user ID',
+  async () => {
+    const OWNER = '11111111-1111-4111-8111-111111111111';
+    const AVA = '22222222-2222-4222-8222-222222222222';
+    const calls: unknown[] = [];
+    const profile = {
+      id: OWNER,
+      displayName: 'Josh',
+      username: 'josh',
+      avatarUrl: null,
+      isOwner: true,
+      metadataVisible: true,
+      friendsCount: 0,
+      groupsCount: 0,
+      favoriteCuisine: null,
+      favoriteActivity: null,
+      mutualGroups: [],
+    };
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => ({ id: OWNER }),
+      userProfilesStore: {
+        get: async () => profile,
+        update: async () => profile,
+        completeIdentity: async (id, input) => {
+          calls.push([id, input]);
+          if (input.username === 'taken')
+            throw new ApiError(409, 'USERNAME_TAKEN', 'That username is already taken');
+          return profile;
+        },
+      },
+      profileStore: {
+        getProfile: async () => null,
+        setDisplayName: async () => {},
+        setPreferences: async () => {},
+        finishOptionalSetup: async (id) => {
+          calls.push(['finish', id]);
+        },
+      },
+    });
+    const post = (body: unknown) =>
+      app.request('/me/identity', { method: 'POST', body: JSON.stringify(body) });
+    equal((await post({ displayName: ' Josh ', username: '@JOSH', userId: AVA })).status, 200);
+    equal(calls[0], [OWNER, { displayName: 'Josh', username: 'josh' }]);
+    equal((await post({ displayName: 'Josh', username: 'taken' })).status, 409);
+    equal((await post({ displayName: 'Josh' })).status, 400);
+    equal(calls.length, 2);
+    equal((await app.request('/me/optional-setup', { method: 'POST', body: '{}' })).status, 200);
+    equal(calls.at(-1), ['finish', OWNER]);
+    const unauthenticated = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => {
+        throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+      },
+    });
+    equal(
+      (await unauthenticated.request('/me/identity', { method: 'POST', body: '{}' })).status,
+      401,
+    );
+    equal((await unauthenticated.request('/me/optional-setup', { method: 'POST' })).status, 401);
   },
 );
