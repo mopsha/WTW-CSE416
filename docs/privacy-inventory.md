@@ -59,6 +59,28 @@ cascade.
 | Google usage | `provider_usage` (provider, day, call count) | Daily cap on Google Places | Nobody but the server | Indefinitely | Not personal data (no user id) |
 | "Did you go?" launch time | `private.feature_launches` | Prompts only Picks decided after launch | Nobody but the server | Indefinitely | Not personal data |
 
+## Group Ideas release candidate additions (0023–0031)
+
+These rows extend/supersede the older feature-state descriptions above. They are
+an implementation inventory, not published legal text. Use
+[release-readiness.md](release-readiness.md) for deployment and manual privacy checks.
+
+| Data | Where / purpose | Visibility | Retention / account deletion |
+|---|---|---|---|
+| Group Ideas | `group_ideas`: creator, group, title, food/activity type, description, location text, timestamps | Current group members; API validates mutations; creator edits/deletes, owner may delete | Until deleted; group/creator deletion cascades. Location text is not geocoded. No image/upload storage |
+| Frozen Group Idea candidates | Existing Pick candidate snapshots; `picks.include_group_ideas` | Existing Pick participants; library membership is rechecked when committing a deck | Existing Pick history rules; library edit/deletion does not rewrite snapshots. Account attribution cleanup follows existing custom-candidate rules; shared historical text may remain |
+| Direct group invitations | `group_invitations`: group, inviter, invitee, status, created/resolved times | Intended recipient/inviter while invitation eligibility remains; pending list is not membership | Resolved rows retained; no scheduled retention cleanup. Group or either account deletion cascades; only accept inserts membership |
+| Username / favorites / metadata privacy | `profiles.username`, favorites, `share_profile_metadata` | Owner full; accepted unblocked friends see basic identity; counts/favorites/mutual groups only with sharing enabled. Raw metadata columns are not granted to clients | Until edited/deleted; username normalized and unique; sharing off by default. New identity required; established username cannot be erased |
+| Optional setup offer | `profiles.optional_setup_pending` | Owner through API only; never controls authorization | Until dismissed or account deleted; existing accounts are not forced through optional steps |
+| Group chat | `group_messages`: group, sender, text, retry ID, time | Current members; blocked sender content filtered. API returns latest 50; bounded display is not storage deletion | Stored until message's group or sender account deleted. Leaving/removal revokes access without erasing prior messages |
+| Direct conversations/messages | `direct_conversations`, `direct_messages`: pair, sender, text, retry ID, time | Pair only while accepted friends and unblocked; API latest 50 | Unfriend/block retains inaccessible history; accepted re-friend can reuse conversation. Either account deletion cascades conversation/messages |
+| Message/invitation notifications | Existing `notifications` plus message foreign keys / routing IDs | Recipient only; authorization checked again at destination. Message push payloads contain routing IDs, not message text | Message deletion cascades linked notifications. Invitation resolution marks matching notifications read; account deletion removes recipient rows |
+| Past Moves | `profile_past_moves` projection of completed Picks, winners and own `went=true`; no new feed table | Owner; friend requires metadata sharing, accepted/unblocked friendship and participation in same Pick. Group label requires viewer's current membership | Existing Pick/outcome retention; correcting attendance removes projected entry. Timed eligibility +1h, untimed +3h. Restricted Google display content omitted; deletion follows underlying records |
+
+Chats and Group Ideas add user-generated content to the store disclosure review;
+usernames add a public-facing identifier within authorized profile contexts. These
+features introduce no contacts, birthday, uploaded-photo or analytics collection.
+
 ## For the App Store privacy labels (Mike, M5)
 
 Draft mapping, to confirm against Apple's current categories in App Store Connect:
