@@ -6,6 +6,7 @@
 import { ApiError } from './errors.ts';
 
 export const NOTIFICATION_TYPES = [
+  'direct_message',
   'group_message',
   'group_invite',
   'added_to_pick',
@@ -25,6 +26,10 @@ export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
  * reasons. Details are in the in-app inbox, which only the owner can read.
  */
 export const PUSH_TEXT: Readonly<Record<NotificationType, { title: string; body: string }>> = {
+  direct_message: {
+    title: 'New message',
+    body: 'A friend sent you a message. Open WTW to read it.',
+  },
   group_message: {
     title: 'New group message',
     body: 'There’s a new message in your group. Open WTW to read it.',
@@ -151,7 +156,12 @@ export function createNotifier(
         tokens,
         {
           ...PUSH_TEXT[type],
-          data: { type, pickId, ...(type === 'group_message' ? { groupId: payload.groupId } : {}) },
+          data: {
+            type,
+            pickId,
+            ...(type === 'group_message' ? { groupId: payload.groupId } : {}),
+            ...(type === 'direct_message' ? { conversationId: payload.conversationId } : {}),
+          },
         },
         log,
       );

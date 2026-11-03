@@ -20,7 +20,12 @@ export function inboxText(n: Pick<NotificationRow, 'type' | 'payload'>): {
 export function inboxRoute(
   n: Pick<NotificationRow, 'pickId'> & Partial<Pick<NotificationRow, 'type' | 'payload'>>,
 ): string | null {
-  return routeForNotification({ pickId: n.pickId, type: n.type, groupId: n.payload?.groupId });
+  return routeForNotification({
+    pickId: n.pickId,
+    type: n.type,
+    groupId: n.payload?.groupId,
+    conversationId: n.payload?.conversationId,
+  });
 }
 
 /** What a screen reader says, since the unread dot and bold title are visual only. */

@@ -634,3 +634,19 @@ sender IDs and applies existing text filtering. Membership writers and chat shar
 lock. RLS and API reads filter blocked pairs. Group/account deletion cascade messages and
 linked inbox rows; member departure preserves history. No changes to Pick ranking, Group
 Ideas, auth or profile privacy are required. See API integration docs for deployment/testing.
+
+### Direct conversations between friends
+
+A separate Message action on accepted friend rows/profiles opens `/messages/:id`, while friend
+row taps still open profiles. The dedicated screen shows basic peer identity and the same
+`MessageThread` presentation/composer as Group Chat. Inbox notifications link back to DMs.
+`useLiveMessages` and `createMessageLive` share only focused/foreground Realtime invalidation,
+polling, private-state cleanup and retry presentation mechanics; group-specific APIs remain.
+
+Postgres `direct_conversations` uses one unique ordered pair and participant FKs;
+`direct_messages` uses a conversation FK, authenticated sender, body, timestamp and retry key.
+Service-only `direct_chat` RPCs enforce current accepted friendship, blocking and account
+availability, with matching RLS for reads/Realtime. Unfriending blocks access but retains history;
+newly accepted friendship restores it. Deleting either account cascades the conversation and
+all linked content. Notification delivery reuses notify/inbox/Expo push, with per-message
+uniqueness and generic ID-only payloads. No Group Ideas, Pick, auth or profile privacy changes.

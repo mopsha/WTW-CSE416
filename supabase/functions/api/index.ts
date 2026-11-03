@@ -1,3 +1,4 @@
+import { createDirectChatStore } from './directChatStore.ts';
 import { createGroupChatStore } from './groupChatStore.ts';
 import { createUserProfilesStore } from './userProfilesStore.ts';
 import { createGroupInvitationsStore } from './groupInvitationsStore.ts';
@@ -65,6 +66,7 @@ const app = createApp(
     groupInvitationsStore: createGroupInvitationsStore(),
     groupIdeasStore: createGroupIdeasStore(),
     groupChatStore: createGroupChatStore(),
+    directChatStore: createDirectChatStore(),
     safetyStore: createSafetyStore(),
     inviteStore: createInviteStore(),
     accountStore: createAccountStore(),

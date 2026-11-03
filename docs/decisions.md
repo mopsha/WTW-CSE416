@@ -325,3 +325,26 @@ uniqueness. No per-chat notification preference is implied; current device/OS pe
 Push remains best effort and needs signed development/store build testing. Hosted Realtime
 publication and two-device revocation/reconnect tests remain deployment checks. A dedicated
 notification outbox, older-history pagination and per-group mute controls are deferred.
+
+## Accepted-friend direct messages
+
+Direct conversations use one canonical ordered pair with database uniqueness, rather than a
+second friendship or general participant system. Only current accepted, unblocked friends can
+open/read/send; pending requests and shared group membership confer no DM access. The server
+and RLS enforce this independently of UI actions. Profile/friendship locks protect sends and
+notification insertion against deletion/unfriend/block races using existing writer semantics.
+
+Unfriend/block retain history but make it inaccessible to both users. Unblock does not restore
+the removed friendship; accepting a new friendship restores access to the original pair's
+history. Account deletion removes the whole conversation and linked messages/notices, avoiding
+an unavailable participant/orphan path. Existing generic notices need not disappear on unfriend
+or block because they contain no sender name or message text and their routes reauthorize.
+
+The group composer, text validation and live-message lifecycle are extracted narrowly and
+reused by DMs, preserving existing Group Chat exports/tests. Both use a latest-50 window,
+1000-code-point limit, retry IDs and existing content filtering. Realtime uses current RLS;
+five-second foreground checks detect eligibility changes even without an INSERT. No messaging
+abstractions beyond these shared mechanics, conversation dashboard, read receipts, attachments,
+replies, search, typing or reactions are introduced. Existing inbox notices and friend/profile
+Message actions provide entry points. Push continues through existing device controls with
+generic text, deduplication and best-effort delivery; device/hosted validation is still needed.

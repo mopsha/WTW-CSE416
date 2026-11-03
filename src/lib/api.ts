@@ -1,3 +1,4 @@
+import type { DirectConversation, DirectMessage, DirectHistory } from '@shared/api/directChat.ts';
 import type { GroupMessage, GroupMessageInput } from '@shared/api/groupChat.ts';
 import type { UserProfile, ProfileDetailsInput } from '@shared/api/userProfiles.ts';
 import type { GroupInvitation } from '@shared/api/groupInvitations.ts';
@@ -189,6 +190,14 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     respondGroupInvitation: (id: string, decision: 'accepted' | 'declined') =>
       request<GroupInvitation>('POST', `/group-invitations/${encodeURIComponent(id)}/respond`, {
         body: { decision },
+      }),
+    openDirectConversation: (userId: string) =>
+      request<DirectConversation>('POST', '/conversations', { body: { userId } }),
+    listDirectMessages: (id: string) =>
+      request<DirectHistory>('GET', `/conversations/${encodeURIComponent(id)}/messages`),
+    sendDirectMessage: (id: string, input: GroupMessageInput) =>
+      request<DirectMessage>('POST', `/conversations/${encodeURIComponent(id)}/messages`, {
+        body: input,
       }),
     listGroupMessages: (groupId: string) =>
       request<{ messages: GroupMessage[] }>('GET', `${groupPath(groupId)}/messages`),

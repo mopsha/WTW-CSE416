@@ -3,7 +3,7 @@ import { GroupInvitations } from '@/components/GroupInvitations';
 // and see who you're friends with. Every write goes through the API (src/lib/api.ts).
 // Joining a Pick still happens by code; inviting friends to a Pick comes later.
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { FriendPerson, FriendsList } from '@shared/api/friends.ts';
@@ -135,6 +135,7 @@ export default function FriendsScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const action = useAction();
+  const openingMessage = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -263,11 +264,39 @@ export default function FriendsScreen() {
                     subtitle={`Friends since ${day(p.since)}`}
                     leading={<Avatar name={nameOf(p)} neutral size={44} />}
                     right={
-                      <HeaderAction
-                        icon="ellipsis-horizontal"
-                        label={`Remove ${nameOf(p)} from friends`}
-                        onPress={() => void remove(p)}
-                      />
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        {action.busy === `message:${p.userId}` ? (
+                          <ActivityIndicator
+                            color={colors.primary}
+                            accessibilityLabel="Opening conversation"
+                          />
+                        ) : (
+                          <HeaderAction
+                            icon="chatbubble-outline"
+                            label={`Message ${nameOf(p)}`}
+                            onPress={() => {
+                              if (openingMessage.current) return;
+                              openingMessage.current = true;
+                              void action
+                                .run(`message:${p.userId}`, async () => {
+                                  const conversation = await api.openDirectConversation(p.userId);
+                                  router.push({
+                                    pathname: '/messages/[id]',
+                                    params: { id: conversation.id },
+                                  });
+                                })
+                                .finally(() => {
+                                  openingMessage.current = false;
+                                });
+                            }}
+                          />
+                        )}
+                        <HeaderAction
+                          icon="ellipsis-horizontal"
+                          label={`Remove ${nameOf(p)} from friends`}
+                          onPress={() => void remove(p)}
+                        />
+                      </View>
                     }
                   />
                 ))}

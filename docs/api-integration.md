@@ -1015,3 +1015,55 @@ Mock chat uses the same parsers, member checks, history bound/order, blocking an
 Its emitter invalidates history without a network connection; simulated other-member sends
 produce deduplicated inbox notices for the fixture user. Group reset/delete and account-delete
 cleanup cover chat, while leaving/removal preserve history. Mock data remains in-memory.
+
+### Friend direct messages (0029)
+
+Deploy `0029_direct_messages.sql` before the API/client. `direct_conversations` holds exactly
+one ordered UUID pair (`user_low < user_high`, unique pair), and `direct_messages` holds
+conversation_id, sender_id, body, created_at and the same client retry ID used by Group Chat.
+Indexes cover recent messages, pair lookup, sender deletion and notification cascades.
+
+- POST `/conversations` `{userId: friendId}` opens/reuses the canonical pair and returns
+  `{id,createdAt,peer:{id,displayName,username,avatarUrl}}` (200 for new or existing).
+- GET `/conversations/:id/messages` returns `{conversation,messages}` with the latest 50
+  messages in chronological `(created_at,id)` order and private/no-store cache headers.
+- POST `/conversations/:id/messages` `{body,clientId}` returns the message (201, including
+  successful retry). The existing trimmed 1–1000-code-point validation/text filter is shared
+  with Group Chat. Changed content/conversation under the same sender/clientId returns
+  409 `MESSAGE_CONFLICT`; sender IDs in a body are ignored.
+
+All actions recheck pair participation, two available profile rows, accepted friendship and
+both block directions. Profile key-share locks and a friendship row lock serialize DM actions
+with account deletion and the existing unfriend/block writers. Clients have read-only RLS
+access and cannot invoke the service RPC. Outsiders, pending requests, missing accounts,
+unfriended pairs and blocked pairs receive 404 `CONVERSATION_UNAVAILABLE`, without disclosing
+which eligibility condition failed. Basic peer identity is returned, never private favorites,
+counts or mutual groups.
+
+Unfriend/block retain messages but revoke all read/send access. Unblocking does not restore
+friendship. A newly accepted friendship can reopen the same conversation and retained history;
+a pending re-request cannot. Hard account deletion cascades the entire two-person conversation
+and its messages/notices, including the surviving participant's messages in that conversation,
+so no conversation with a deleted participant or orphaned access remains.
+
+`direct_message` notifications reuse notify/inbox/Expo push: only the other participant is
+notified; the notification RPC rechecks friendship/blocking and deduplicates per message.
+Payloads contain conversation/message IDs only, and push text is generic. Inbox and push taps
+open `/messages/:id`. Old generic inbox rows may remain after unfriend/block, but opening them
+still requires current eligibility. Current device/OS permission and token behavior applies;
+no new mute/preferences infrastructure is implied. Delivery remains best effort.
+
+Group Chat and DMs now share only validation, the thread/composer UI, and the Realtime/polling
+lifecycle. Existing Group Chat exports and behavior remain compatible. INSERT invalidations
+reread the API, with five-second focused foreground checks for friendship/block changes and
+fallback recovery. Blur/background/error clear private history/peer data. A known authorization
+failure disables sending until retry/reentry; DMs also wait for an authorized initial history
+read before enabling the composer. The migration joins an existing Realtime publication.
+
+Friends rows keep their profile tap and remove action, adding a separate Message icon. Eligible
+friend profiles have a Message button; own profiles do not. Existing inbox DM notifications
+provide conversation reentry; no separate conversations dashboard was added. Mock mode uses
+current accepted fixture friendships/blocking, canonical pair reuse, retries, bounded history,
+an invalidation emitter, recipient notices and deletion cleanup. It remains an in-memory
+single-user fixture environment. Verify two-device delivery/revocation/reconnect and keyboard
+behavior in development/store builds; standalone SQL cannot validate hosted sockets or push.

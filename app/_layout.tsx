@@ -125,6 +125,7 @@ function RootStack() {
           <Stack.Screen name="settings/profile" />
           <Stack.Screen name="settings/blocked" />
           <Stack.Screen name="users/[id]" />
+          <Stack.Screen name="messages/[id]" />
           <Stack.Screen name="pick/new" />
           <Stack.Screen name="pick/[id]/index" options={{ animation: 'fade' }} />
           <Stack.Screen name="pick/[id]/lobby" />

@@ -1,3 +1,4 @@
+import { sendDirectMessage, type DirectChatStore } from '../_shared/api/directChat.ts';
 import { sendGroupMessage, type GroupChatStore } from '../_shared/api/groupChat.ts';
 import {
   parseIdentity,
@@ -109,6 +110,7 @@ export function createApp(
     groupInvitationsStore?: GroupInvitationsStore;
     groupIdeasStore?: GroupIdeasStore;
     groupChatStore?: GroupChatStore;
+    directChatStore?: DirectChatStore;
     safetyStore?: SafetyStore;
     inviteStore?: InviteStore;
     accountStore?: AccountStore;
@@ -563,6 +565,35 @@ export function createApp(
       throw new ApiError(503, 'NOT_CONFIGURED', 'Group chat is unavailable');
     return { user, store: deps.groupChatStore, groupId: parseId(c.req.param('id'), 'group id') };
   };
+  const direct = async (c: { req: { raw: Request } }) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.directChatStore)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Direct messages are unavailable');
+    return { user, store: deps.directChatStore };
+  };
+  app.post('/conversations', async (c) => {
+    const { user, store } = await direct(c);
+    const body = (await readJsonBody(c)) as { userId?: unknown } | null;
+    return c.json(await store.open(user.id, parseId(body?.userId, 'friend id')));
+  });
+  app.get('/conversations/:id/messages', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await direct(c);
+    return c.json(await store.list(user.id, parseId(c.req.param('id'), 'conversation id')));
+  });
+  app.post('/conversations/:id/messages', async (c) => {
+    const { user, store } = await direct(c);
+    return c.json(
+      await sendDirectMessage(
+        store,
+        deps.lifecycleStore.notifier,
+        user.id,
+        parseId(c.req.param('id'), 'conversation id'),
+        await readJsonBody(c),
+      ),
+      201,
+    );
+  });
   app.get('/groups/:id/messages', async (c) => {
     c.header('Cache-Control', 'private, no-store');
     const { user, store, groupId } = await chat(c);

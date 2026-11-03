@@ -355,3 +355,20 @@ test('group message push uses existing delivery with group route IDs and no mess
   expect(message.body).toBe(PUSH_TEXT.group_message.body);
   expect(message).not.toHaveProperty('messageId');
 });
+
+test('direct-message push carries only the conversation route ID and generic text', async () => {
+  const store = notifyStore();
+  const fetchFn = jest.fn().mockResolvedValue(ok([{ status: 'ok' }]));
+  await createNotifier(store, fetchFn)(['recipient'], 'direct_message', null, {
+    conversationId: 'conversation-1',
+    messageId: 'message-1',
+  });
+  const [message] = JSON.parse(fetchFn.mock.calls[0][1].body);
+  expect(message.data).toEqual({
+    type: 'direct_message',
+    pickId: null,
+    conversationId: 'conversation-1',
+  });
+  expect(message.body).toBe(PUSH_TEXT.direct_message.body);
+  expect(message.data).not.toHaveProperty('messageId');
+});

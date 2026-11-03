@@ -1,3 +1,4 @@
+import { MessageFriendButton } from '@/components/MessageFriendButton';
 import type { UserProfile } from '@shared/api/userProfiles.ts';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
@@ -51,6 +52,7 @@ export default function UserProfileScreen() {
               <Text style={{ ...type.body, color: colors.muted }}>@{profile.username}</Text>
             ) : null}
           </View>
+          {!profile.isOwner ? <MessageFriendButton userId={profile.id} /> : null}
           <UserProfileMetadata profile={profile} />
         </View>
       ) : null}
