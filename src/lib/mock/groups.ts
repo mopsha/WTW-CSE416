@@ -1,3 +1,4 @@
+import { mockGroupMessages, resetMockGroupChat } from './groupChat';
 import {
   inviteMockGroupMembers,
   mockGroupInvitations,
@@ -82,6 +83,7 @@ export function resetMockGroups() {
   groups = initial();
   resetMockGroupInvitations();
   mockGroupIdeas.clear();
+  resetMockGroupChat();
   pickGroup.clear();
 }
 
@@ -199,6 +201,8 @@ export function handleMockGroups(method: string, path: string, body: unknown): R
   }
   if (action === 'delete') {
     groups.delete(g.id);
+    for (const [id, message] of mockGroupMessages)
+      if (message.groupId === g.id) mockGroupMessages.delete(id);
     for (const [id, invite] of mockGroupInvitations)
       if (invite.groupId === g.id) mockGroupInvitations.delete(id);
     for (const [id, idea] of mockGroupIdeas) if (idea.groupId === g.id) mockGroupIdeas.delete(id);

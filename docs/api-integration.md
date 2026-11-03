@@ -973,3 +973,45 @@ Email Log In disallows account creation; Sign Up explicitly permits it. Hosted e
 provider/SMTP and an OTP email template containing the token must be configured and tested
 for actual delivery. The app still verifies email codes, without password or OAuth UI.
 See `decisions.md` for deferred provider setup and legal publication requirements.
+
+### Group chat (0028)
+
+Deploy `0028_group_chat.sql` before the API/client. `group_messages` contains UUID id,
+group_id, sender_id, body (1–1000 code points), created_at, and an opaque client_id for
+retry deduplication. The unique `(sender_id, client_id)` index makes retries safe. All
+writes use the service-only `group_chat` RPC, sharing the membership-mutation group lock.
+Client table reads have member/block-aware RLS; clients have no write grants/RPC access.
+
+- GET `/groups/:id/messages` → `{messages: GroupMessage[]}`. Latest 50 visible messages,
+  chronological `(created_at,id)` order, private/no-store; older-page navigation is omitted.
+- POST `/groups/:id/messages` `{body,clientId}` → 201 `GroupMessage`, including on a
+  successful retry. clientId is 8–100 ASCII letters/digits/underscores/hyphens and must be
+  reused for a network retry. Different content/group under the same sender/clientId gets
+  409 `MESSAGE_CONFLICT`. Sender/group fields in the body convey no authority.
+- Body is trimmed, validated, and passed through the existing text filter. API responses
+  include basic sender identity/avatar, never profile counts, favorites or privacy fields.
+- Nonmembers, pending invitees and removed members get 404 `GROUP_NOT_FOUND`. Historical
+  messages survive leaving/removal. Blocking does not eject existing shared group members;
+  instead messages/notifications between the blocked pair are suppressed in both directions.
+- Group deletion cascades messages. Account deletion removes that sender's messages; owner
+  deletion also cascades the owned group. Linked chat inbox rows cascade with message deletion.
+
+The existing `notify()` writes inbox rows and delivers generic Expo pushes. Chat adds a
+`group_message` type, per-message/per-recipient uniqueness and a FK to its message. The
+notification RPC rechecks current membership/blocking, excludes the sender and stores only
+message/group IDs. Existing generic notices may remain after removal/blocking; opening them
+never bypasses chat authorization. Existing OS notification permissions and registered-token
+behavior apply; there is no per-group mute setting. Delivery is best effort, like Pick events;
+no new outbox or push infrastructure was introduced. Inbox/push taps open the group's Chat.
+
+`0028` adds messages to an existing `supabase_realtime` publication. Chat listens for INSERTs,
+then rereads the authenticated API. A 5-second foreground/focused poll also verifies current
+membership/blocking and recovers when Realtime is unavailable. No requests run in background;
+blur/background clear displayed chat. Failed reads clear cached messages; 401/403/404 disable
+sending until explicit retry/reentry. Test hosted publication/RLS, socket reconnect and push
+with two signed-in devices; standalone SQL verifies policy/publication wiring, not delivery.
+
+Mock chat uses the same parsers, member checks, history bound/order, blocking and retry rules.
+Its emitter invalidates history without a network connection; simulated other-member sends
+produce deduplicated inbox notices for the fixture user. Group reset/delete and account-delete
+cleanup cover chat, while leaving/removal preserve history. Mock data remains in-memory.

@@ -12,6 +12,7 @@ import { timeAgo } from '@/lib/time';
 
 const ICONS: Record<NotificationType, keyof typeof Ionicons.glyphMap> = {
   group_invite: 'people-outline',
+  group_message: 'chatbubbles-outline',
   added_to_pick: 'person-add-outline',
   pick_started: 'flame-outline',
   reminder: 'time-outline',

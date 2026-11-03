@@ -1,3 +1,4 @@
+import { sendGroupMessage, type GroupChatStore } from '../_shared/api/groupChat.ts';
 import {
   parseIdentity,
   parseProfileDetails,
@@ -107,6 +108,7 @@ export function createApp(
     groupsStore?: GroupsStore;
     groupInvitationsStore?: GroupInvitationsStore;
     groupIdeasStore?: GroupIdeasStore;
+    groupChatStore?: GroupChatStore;
     safetyStore?: SafetyStore;
     inviteStore?: InviteStore;
     accountStore?: AccountStore;
@@ -555,6 +557,30 @@ export function createApp(
       throw new ApiError(503, 'NOT_CONFIGURED', 'Profile details are unavailable');
     return { user, store: deps.userProfilesStore };
   };
+  const chat = async (c: { req: { raw: Request; param(name: string): string } }) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.groupChatStore)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Group chat is unavailable');
+    return { user, store: deps.groupChatStore, groupId: parseId(c.req.param('id'), 'group id') };
+  };
+  app.get('/groups/:id/messages', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store, groupId } = await chat(c);
+    return c.json({ messages: await store.list(user.id, groupId) });
+  });
+  app.post('/groups/:id/messages', async (c) => {
+    const { user, store, groupId } = await chat(c);
+    return c.json(
+      await sendGroupMessage(
+        store,
+        deps.lifecycleStore.notifier,
+        user.id,
+        groupId,
+        await readJsonBody(c),
+      ),
+      201,
+    );
+  });
   app.get('/me/details', async (c) => {
     c.header('Cache-Control', 'private, no-store');
     const { user, store } = await userProfiles(c);

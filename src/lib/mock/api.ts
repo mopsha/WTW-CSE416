@@ -1,3 +1,4 @@
+import { handleMockGroupChat, mockGroupMessages, mockGroupChatNotices } from './groupChat';
 import {
   getMockUserProfile,
   handleMockUserProfiles,
@@ -663,6 +664,8 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     const error = errorResponse(e);
     return json(error.status, error.body);
   }
+  const chatResult = handleMockGroupChat(method, path, readBody(init));
+  if (chatResult) return json(chatResult.status, chatResult.body);
   const groupResult = handleMockGroups(method, path, readBody(init));
   if (groupResult) return json(groupResult.status, groupResult.body);
   const groupId = (readBody(init) as { groupId?: unknown } | null)?.groupId;
@@ -701,6 +704,12 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   if (method === 'POST' && path === '/push-tokens') return registerPushToken(readBody(init));
   if (method === 'DELETE' && path === '/me') {
     forgetMockAccount();
+    for (const [id, message] of mockGroupMessages)
+      if (
+        message.senderId === MOCK_USER_ID ||
+        mockGetGroup(message.groupId)?.ownerId === MOCK_USER_ID
+      )
+        mockGroupMessages.delete(id);
     resetOwnMockUserProfile();
     for (const [id, invite] of mockGroupInvitations)
       if (invite.inviterId === MOCK_USER_ID || invite.inviteeId === MOCK_USER_ID)
@@ -728,13 +737,20 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   }
   if (method === 'GET' && path === '/notifications') {
     return json(200, {
-      notifications: mockNotifications,
-      unreadCount: mockNotifications.filter((n) => !n.readAt).length,
+      notifications: [...mockNotifications, ...mockGroupChatNotices()]
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 50),
+      unreadCount: [...mockNotifications, ...mockGroupChatNotices()]
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 50)
+        .filter((n) => !n.readAt).length,
     });
   }
   const read = method === 'POST' && /^\/notifications\/([^/]+)\/read$/.exec(path);
   if (read) {
-    const n = mockNotifications.find((x) => x.id === decodeURIComponent(read[1] ?? ''));
+    const n = [...mockNotifications, ...mockGroupChatNotices()].find(
+      (x) => x.id === decodeURIComponent(read[1] ?? ''),
+    );
     if (!n) return fail(404, 'NOTIFICATION_NOT_FOUND', 'Notification not found');
     n.readAt ??= new Date().toISOString();
     return json(200, { status: 'ok' });

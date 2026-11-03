@@ -1,3 +1,4 @@
+import type { GroupMessage, GroupMessageInput } from '@shared/api/groupChat.ts';
 import type { UserProfile, ProfileDetailsInput } from '@shared/api/userProfiles.ts';
 import type { GroupInvitation } from '@shared/api/groupInvitations.ts';
 import type { GroupIdea, GroupIdeaInput } from '@shared/api/groupIdeas.ts';
@@ -189,6 +190,10 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
       request<GroupInvitation>('POST', `/group-invitations/${encodeURIComponent(id)}/respond`, {
         body: { decision },
       }),
+    listGroupMessages: (groupId: string) =>
+      request<{ messages: GroupMessage[] }>('GET', `${groupPath(groupId)}/messages`),
+    sendGroupMessage: (groupId: string, input: GroupMessageInput) =>
+      request<GroupMessage>('POST', `${groupPath(groupId)}/messages`, { body: input }),
     listGroupIdeas: (groupId: string) =>
       request<{ ideas: GroupIdea[] }>('GET', `/groups/${encodeURIComponent(groupId)}/ideas`),
     getGroupIdea: (groupId: string, id: string) =>

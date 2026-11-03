@@ -609,3 +609,28 @@ for favorites, foreground location and notifications. Permission prompts require
 The route lives in the signed-in stack so optional setup cannot gate Picks or voting.
 A private new-account offer marker survives real-backend restarts; no duplicate identity,
 username, recommendation-preference or onboarding-complete model was added.
+
+### Group chat
+
+The existing group detail route has Chat / Plans / Ideas / Members sections. Plans retains
+Pick creation and history; Members retains invitations, rename/delete and leave/remove.
+`GroupChat` uses the current component kit, basic sender avatars/names, timestamps and a
+plain-text composer. `useGroupChat` rereads a bounded history through the API on Realtime
+INSERT invalidations and every five seconds while focused/foreground. It clears content
+on access/read failure, blur or background; authorization always comes from current membership.
+
+```mermaid
+flowchart LR
+  UI[Group detail / Chat] --> API[GET / POST group messages]
+  API --> RPC[Member-authorized group_chat RPC]
+  RPC --> DB[(group_messages + RLS)]
+  DB --> RT[Existing Supabase Realtime]
+  RT --> UI
+  API --> Notify[Existing notify / inbox / Expo push]
+```
+
+Postgres stores messages with group/sender FKs and retry uniqueness; the Edge Function derives
+sender IDs and applies existing text filtering. Membership writers and chat share the group
+lock. RLS and API reads filter blocked pairs. Group/account deletion cascade messages and
+linked inbox rows; member departure preserves history. No changes to Pick ranking, Group
+Ideas, auth or profile privacy are required. See API integration docs for deployment/testing.

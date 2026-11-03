@@ -6,6 +6,7 @@
 import { ApiError } from './errors.ts';
 
 export const NOTIFICATION_TYPES = [
+  'group_message',
   'group_invite',
   'added_to_pick',
   'pick_started',
@@ -24,6 +25,10 @@ export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
  * reasons. Details are in the in-app inbox, which only the owner can read.
  */
 export const PUSH_TEXT: Readonly<Record<NotificationType, { title: string; body: string }>> = {
+  group_message: {
+    title: 'New group message',
+    body: 'There’s a new message in your group. Open WTW to read it.',
+  },
   group_invite: {
     title: 'Group invitation',
     body: 'Someone invited you to a group. Open WTW to respond.',
@@ -144,7 +149,10 @@ export function createNotifier(
       const dead = await sendPush(
         fetchFn,
         tokens,
-        { ...PUSH_TEXT[type], data: { type, pickId } },
+        {
+          ...PUSH_TEXT[type],
+          data: { type, pickId, ...(type === 'group_message' ? { groupId: payload.groupId } : {}) },
+        },
         log,
       );
       if (dead.length) await store.deleteTokens(dead);

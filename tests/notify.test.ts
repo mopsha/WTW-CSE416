@@ -342,3 +342,16 @@ describe('deadline reminders in the sweep', () => {
     expect(result).toMatchObject({ status: 'ok', reminders: { picks: 0 } });
   });
 });
+
+test('group message push uses existing delivery with group route IDs and no message content', async () => {
+  const store = notifyStore();
+  const fetchFn = jest.fn().mockResolvedValue(ok([{ status: 'ok' }]));
+  await createNotifier(store, fetchFn)(['a'], 'group_message', null, {
+    groupId: 'group-1',
+    messageId: 'message-1',
+  });
+  const [message] = JSON.parse(fetchFn.mock.calls[0][1].body);
+  expect(message.data).toEqual({ type: 'group_message', pickId: null, groupId: 'group-1' });
+  expect(message.body).toBe(PUSH_TEXT.group_message.body);
+  expect(message).not.toHaveProperty('messageId');
+});

@@ -1,3 +1,4 @@
+import './groupChat_test.ts';
 // Include feature route coverage in the existing CI entry point.
 import './groupIdeas_test.ts';
 import { createApp } from './app.ts';

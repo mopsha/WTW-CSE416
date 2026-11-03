@@ -302,3 +302,26 @@ Mock auth uses code `123456`: Log In with `demo@wtw.test` exercises a returning 
 Sign Up with another email exercises new identity and optional setup. Per-email profile
 snapshots survive logout/login during that mock runtime; a cold reload resets in-memory
 mock data, as before. The fixture user ID and social/Pick fixture graph stay unchanged.
+
+## Group-only chat
+
+Chat lives in each existing group detail page alongside Plans (existing Picks/history), Ideas,
+and Members (existing invitations/settings). No direct messages or new social graph were added.
+Messages are plain text, capped at 1000 code points with the current text filter; history is a
+bounded latest-50 window. No edits/deletes, reactions, threads, attachments, read receipts,
+search or typing state are modeled. A send-attempt key supports retries without duplicate rows
+or pushes. Removed members lose server access immediately, while their history stays. Auth
+account deletion erases authored messages and linked notices, matching existing deletion policy.
+
+Realtime is reused from the Pick architecture, with INSERT events as invalidations. A focused,
+foreground five-second poll is retained even when connected: membership removal and blocking
+need not insert a message. Blur/background clear displayed content; failed reads do not leave
+private cached chat visible. Both RLS and service RPCs enforce current membership; blocked pairs
+cannot read each other's messages or receive new notifications from one another. Shared group
+membership itself is unchanged. Pending direct invitations never authorize chat access.
+
+Notifications reuse notify/inbox/Expo push, with generic lock-screen text and message-ID
+uniqueness. No per-chat notification preference is implied; current device/OS permissions apply.
+Push remains best effort and needs signed development/store build testing. Hosted Realtime
+publication and two-device revocation/reconnect tests remain deployment checks. A dedicated
+notification outbox, older-history pagination and per-group mute controls are deferred.
