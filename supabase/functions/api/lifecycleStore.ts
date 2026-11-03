@@ -1,3 +1,4 @@
+import { createGroupIdeasStore } from './groupIdeasStore.ts';
 import fixtures from '../../seed/places.json' with { type: 'json' };
 import type { Candidate } from '../_shared/places/types.ts';
 import { ApiError, type ErrorStatus } from '../_shared/api/errors.ts';
@@ -38,6 +39,8 @@ export function createLifecycleStore(): LifecycleStore {
     return data;
   }
   return {
+    groupIdeas: (groupId, hostId) => createGroupIdeasStore().list(hostId, groupId),
+    candidateUuid: () => crypto.randomUUID(),
     async savedCandidates(hostId) {
       const client = createServiceClient();
       const { data: saved, error } = await client

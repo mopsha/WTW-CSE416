@@ -742,5 +742,64 @@ these same rules. Edits use last successful write wins, as existing group rename
 
 Deploy migration 0023 before the updated Edge Function/client. No existing custom
 options are converted: `picks.custom_options`, `custom:<uuid>` candidates, Pick Again
-and existing histories keep their contracts. Group Ideas are not in places/cache,
-Discover or Pick pools. No image bucket/upload policy exists, so images are deferred.
+and existing histories keep their contracts. Group Ideas stay outside provider caches
+and the Discover feed. Pick inclusion is
+explicitly opt-in; see the deck contract below. No image bucket/upload policy exists, so images are deferred.
+
+
+## Group Ideas in Pick decks (0024)
+
+The group creation form has a default-off **Include Group Ideas** switch beside saved
+places and discovery filters. `POST /picks` accepts `includeGroupIdeas?: boolean`;
+true requires a valid `groupId` and current host membership. `picks.include_group_ideas`
+defaults false for old/new Picks. `GET /picks/:id` returns `includeGroupIdeas` and
+`groupId`. Non-group Pick configuration cannot enable this option.
+
+The form also offers `category: 'both'` (Food + activities). Existing Food, Activities
+and Custom contracts remain supported. Both calls the existing food and activity
+provider searches separately (and therefore can consume two capped provider calls),
+round-robins their results and keeps each place's actual category in storage.
+
+Decks are built at **start**, not draft creation. OFF never retrieves ideas. ON
+resolves current group ideas via the member-authorized store, generates the ordinary
+provider pool with the same filters, then mixes matching ideas into that pool.
+Food matches `food`, Activities matches library `activity`, Both allows both. Legacy
+Custom uses its mix category, or both idea types when no provider mix is selected.
+Radius, price and Open Now apply to provider/saved-provider places, not group ideas:
+ideas have no provider prices/hours/coordinates. No library idea enters Discover.
+
+The configured `poolSize` remains the total deck bound (maximum 30). Typed options
+retain their slots. Remaining slots alternate ideas and ordinary candidates, starting
+with an idea; the library is ordered newest first then UUID. Not every idea fits a
+large library. Custom opt-in creation uses a 30-card capacity; API callers must leave
+at least one free slot beyond typed options. Zero matching ideas leaves the public
+pool intact. If public results are empty, eligible ideas can still form the deck;
+if everything is empty, the existing 409 NO_CANDIDATES applies.
+
+Snapshots use `custom:<fresh uuid>` per build, `provider/source: 'custom'`,
+`origin: 'group_idea'`, `groupIdeaId`, `groupId`, creator, frozen name, description
+(`note`) and location text (`address`). These are explicit provenance fields, not
+name parsing. No live FK to the library is added. New IDs prevent a refresh or a
+new Pick from overwriting historical places/snapshots. Clients preserve provenance
+and show **Our Idea** on swipe/finalist/winner cards. Google enrichment is skipped.
+
+Coordinate-free ideas reuse the legacy custom contract: numeric center coordinates
+satisfy canonical DB/ranking inputs, with `locationProvided: false`. The app exposes
+null coordinates, no distance and no Directions. The existing ranking algorithm is
+unchanged, including its custom neutral-point (zero-distance) tie-break behavior;
+these internal coordinates never claim an actual idea location.
+
+Start/refresh rechecks host membership and idea/group/category provenance under the
+same group lock before committing the deck. A library entry deleted between lookup
+and commit fails safely (400); retry rebuilds from the current library. Edits/deletion
+**after** deck commit do not affect swipes, votes, winners or history. Explicit refresh
+replaces the deck using current library content and the existing answer-reset/confirm
+rules. Pick Again carries the opt-in and current membership, reuses an existing draft,
+and resolves current ideas at its own start. If the host left or the group disappeared,
+the new Pick disables idea inclusion. Existing account-deletion redaction still applies.
+
+Apply migration 0024 before deploying the API/client. The migration wraps canonical
+lifecycle/Pick Again functions and adds authorization checks; ranking, voting,
+notifications and provider retention restrictions are unchanged. Service-only helpers
+stay in the private schema. Mock mode uses the same category, snapshot and mixing
+helpers and existing group graph.

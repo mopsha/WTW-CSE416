@@ -39,6 +39,9 @@ export interface Candidate {
   closesAt?: string | null;
   note?: string | null;
   provider?: 'mock' | 'google' | 'custom';
+  origin?: 'group_idea';
+  groupIdeaId?: string;
+  groupId?: string;
   createdBy?: string;
   locationProvided?: boolean;
 }
@@ -83,9 +86,11 @@ export type DecidedBy = 'clear_winner' | 'vote' | 'tie_break';
 
 /** GET /picks/:id (Alan's lifecycle route): the Pick, MY candidate order and MY answers. */
 export interface PickDetail extends PlaceFilters {
+  includeGroupIdeas?: boolean;
+  groupId?: string | null;
   id: string;
   state: PickState;
-  category: 'food' | 'activities' | 'custom';
+  category: 'food' | 'activities' | 'both' | 'custom';
   center: { lat: number; lng: number };
   radiusM: number;
   poolSize: number;

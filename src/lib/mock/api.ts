@@ -171,6 +171,8 @@ function getPick(pick: MockPick) {
     category: pick.category,
     center: pick.center,
     radiusM: pick.radiusM,
+    includeGroupIdeas: pick.includeGroupIdeas ?? false,
+    groupId: mockGroupOfPick(pick.id),
     includeSaved: pick.includeSaved,
     customOptions: pick.customOptions,
     mixCategory: pick.mixCategory,
@@ -275,7 +277,13 @@ const ROUTES: Record<string, Handler> = {
     if (pick.participants.length < 2) {
       return fail(409, 'NOT_ENOUGH_PARTICIPANTS', 'A Pick needs at least 2 participants to start');
     }
-    const candidates = mockPickPool(pick);
+    let candidates;
+    try {
+      candidates = mockPickPool(pick);
+    } catch (e) {
+      const error = errorResponse(e);
+      return json(error.status, error.body);
+    }
     if (!candidates.length) return fail(409, 'NO_CANDIDATES', 'No places match these filters');
     pick.candidates = candidates;
     pick.state = 'swiping';
@@ -299,7 +307,13 @@ const ROUTES: Record<string, Handler> = {
       );
     }
     // A "new" pool: the same places, rotated, so the deck visibly changes.
-    const pool = mockPickPool(pick, true);
+    let pool;
+    try {
+      pool = mockPickPool(pick, true);
+    } catch (e) {
+      const error = errorResponse(e);
+      return json(error.status, error.body);
+    }
     if (!pool.length) return fail(409, 'NO_CANDIDATES', 'No places match these filters');
     const rotated = pool;
     if (pick.state === 'swiping') pick.candidates = rotated.slice(0, pick.poolSize);
@@ -468,6 +482,7 @@ const ROUTES: Record<string, Handler> = {
           .filter((p) => p.userId !== MOCK_USER_ID && !mockBlocks.has(p.userId))
           .map((p) => ({ ...p, answers: new Map(), vote: null })),
       );
+    next.includeGroupIdeas = !!pick.includeGroupIdeas && !!mockGroupOfPick(next.id);
     againOf.set(pick.id, next.id);
     return json(201, { pickId: next.id, state: 'draft' });
   }),

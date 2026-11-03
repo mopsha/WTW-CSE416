@@ -21,6 +21,10 @@ export interface Candidate extends LatLng {
   timezone?: string;
   provider?: 'google' | 'mock' | 'custom';
   source?: 'google' | 'mock' | 'custom';
+  /** Explicit provenance; never inferred from a display name. */
+  origin?: 'group_idea';
+  groupIdeaId?: string;
+  groupId?: string;
   createdBy?: string;
   note?: string;
   locationProvided?: boolean;

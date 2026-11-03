@@ -19,6 +19,7 @@ import { colors, fonts } from './theme';
 /** "Mill Pond Bakery, Italian, price 2 of 4, 1.2 mi away" for screen readers. */
 export function describePlace(place: Candidate): string {
   const parts = [place.name];
+  if (place.origin === 'group_idea') parts.push('Our Idea');
   if (place.cuisine) parts.push(place.cuisine);
   if (place.note) parts.push(place.note);
   if (place.rating) parts.push(`rated ${place.rating.toFixed(1)} of 5`);
@@ -41,6 +42,7 @@ export function Chips({ place, light = true }: { place: Candidate; light?: boole
   const price = formatPriceLevel(place.priceLevel);
   const miles = milesFromCampus(place);
   const chips: { icon: keyof typeof Ionicons.glyphMap; text: string }[] = [];
+  if (place.origin === 'group_idea') chips.push({ icon: 'people-outline', text: 'Our Idea' });
   if (place.rating !== null) chips.push({ icon: 'star', text: place.rating.toFixed(1) });
   if (place.cuisine) chips.push({ icon: 'restaurant', text: place.cuisine });
   if (price) chips.push({ icon: 'cash-outline', text: price });

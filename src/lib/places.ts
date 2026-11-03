@@ -20,6 +20,13 @@ export function candidateFromSnapshot(placeId: string, snapshot: unknown): Candi
           locationProvided: s.locationProvided === true,
         }
       : {}),
+    ...(s.provider === 'custom' && s.origin === 'group_idea' && str(s.groupIdeaId) && str(s.groupId)
+      ? {
+          origin: 'group_idea' as const,
+          groupIdeaId: str(s.groupIdeaId)!,
+          groupId: str(s.groupId)!,
+        }
+      : {}),
     name: str(s.name) ?? 'Unnamed place',
     photoUrl: str(s.photoUrl),
     priceLevel: num(s.priceLevel),

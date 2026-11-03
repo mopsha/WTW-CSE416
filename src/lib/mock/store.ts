@@ -44,7 +44,8 @@ export interface MockPick extends PlaceFilters {
   id: string;
   hostId: string;
   state: PickState;
-  category: 'food' | 'activities' | 'custom';
+  category: 'food' | 'activities' | 'both' | 'custom';
+  includeGroupIdeas?: boolean;
   includeSaved?: boolean;
   customOptions?: StoredCustomOption[];
   mixCategory?: 'food' | 'activities';
@@ -296,6 +297,7 @@ export function createMockPick(input: CreatePickInput, hostId = MOCK_USER_ID): M
   for (const option of options) customPlaces.set(option.placeId, option);
   const pick = base(id, {
     hostId,
+    includeGroupIdeas: input.includeGroupIdeas,
     includeSaved: input.includeSaved,
     customOptions: options,
     mixCategory: input.mixCategory,

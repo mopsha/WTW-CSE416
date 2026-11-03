@@ -518,3 +518,28 @@ time, participant RSVP, image upload or automatic candidate inclusion. Legacy
 Pick creation, ranking, voting, history and Pick Again are unchanged. See
 [API contract](api-integration.md#group-ideas-0023) and
 [decision](decisions.md#group-ideas-unscheduled-group-library).
+
+
+## Group Idea candidate integration
+
+The group Pick configuration now has an explicit default-off Include Group Ideas
+switch. `include_group_ideas` is persisted in `picks`; normal lifecycle reads expose
+it alongside `groupId`. Food, Activities and Food + activities are supported; legacy
+Custom options remain compatible. Both searches the existing provider categories
+separately and interleaves results, without changing Discover or provider filters.
+
+At start/refresh, `_shared/api/lifecycle.ts` resolves eligible group entries through
+`groupIdeasStore`, with category/snapshot/mixing helpers in
+`_shared/domain/groupIdeaCandidates.ts`. The same helpers drive mock decks. A bounded
+mixed pool uses the ordinary custom-candidate snapshot contract with additional
+explicit `origin`, `groupIdeaId`, and group metadata. Fresh snapshot IDs and frozen
+content make library edits/deletions independent of existing Picks/history. Library
+membership and provenance are rechecked atomically at commit by migration 0024.
+
+The current swipe, ranking, finalist vote, winner and Pick Again systems handle these
+candidates. Cards add Our Idea through shared place metadata rendering; coordinate-free
+ideas display no distance/directions and request no Google enrichment. Legacy numeric
+neutral-center ranking semantics remain unchanged. Pick Again retains opt-in/current
+group, reuses drafts and builds from current ideas when started. See
+[deck contract](api-integration.md#group-ideas-in-pick-decks-0024) for filter/capacity,
+snapshot and account-deletion details.

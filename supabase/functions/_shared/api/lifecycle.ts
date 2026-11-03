@@ -1,3 +1,12 @@
+import {
+  groupIdeaCandidates,
+  groupIdeaCategory,
+  mixGroupIdeaCandidates,
+  providerCategories,
+  interleaveCandidates,
+} from '../domain/groupIdeaCandidates.ts';
+import { parseId } from './groups.ts';
+import type { GroupIdea } from './groupIdeas.ts';
 // Pick lifecycle: create, start, refresh, cancel, read. Spec: docs/design.md
 // (owner: Alan). The API is the only writer of picks.state; every transition
 // goes through canTransition.
@@ -21,7 +30,7 @@ import { matchesFilters } from '../domain/placeFilters.ts';
 // Limits mirror Mike's validateCreatePick (_shared/domain/createPick.ts, PR #11, not yet
 // merged): once that lands, replace this parser with his shared validateCreatePick so the
 // app and API check the same function instead of two copies of the same limits.
-const CATEGORIES: readonly PickCategory[] = ['food', 'activities', 'custom'];
+const CATEGORIES: readonly PickCategory[] = ['food', 'activities', 'both', 'custom'];
 export const MIN_RADIUS_M = 200;
 export const MAX_RADIUS_M = 50_000;
 export const MIN_POOL_SIZE = 5;
@@ -35,6 +44,8 @@ export const MAX_DEADLINE_LEAD_MS = 7 * 24 * 60 * 60_000;
 export const MIN_PARTICIPANTS_TO_START = 2;
 
 export interface CreatePickInput extends PlaceFilters, PlanOptions {
+  includeGroupIdeas?: boolean;
+  groupId?: string | null;
   category: PickCategory;
   center: LatLng;
   radiusM: number;
@@ -57,6 +68,8 @@ export interface LifecyclePick extends PlaceFilters {
   customOptions?: StoredCustomOption[];
   mixCategory?: 'food' | 'activities';
   state: PickState;
+  includeGroupIdeas?: boolean;
+  groupId?: string | null;
   category: PickCategory;
   center: LatLng;
   radiusM: number;
@@ -82,6 +95,8 @@ export interface LifecycleStore {
   refresh(pickId: string, userId: string, candidates: CandidateSnapshot[]): Promise<void>;
   cancel(pickId: string, userId: string, reason: string | null): Promise<void>;
   savedCandidates?(hostId: string): Promise<Candidate[]>;
+  groupIdeas?(groupId: string, hostId: string): Promise<GroupIdea[]>;
+  candidateUuid?(): string;
   /** Tells the other participants when the host starts or cancels. Optional in tests. */
   notifier?: Notifier;
 }
@@ -97,7 +112,7 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
   }
   const b = body as Record<string, unknown>;
   if (typeof b.category !== 'string' || !CATEGORIES.includes(b.category as PickCategory)) {
-    throw new ApiError(400, 'INVALID_INPUT', 'category must be food, activities or custom');
+    throw new ApiError(400, 'INVALID_INPUT', 'category must be food, activities, both or custom');
   }
   const center = b.center as Partial<LatLng> | undefined;
   if (
@@ -125,6 +140,9 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
       `radiusM must be between ${MIN_RADIUS_M} and ${MAX_RADIUS_M}`,
     );
   }
+  if (b.includeGroupIdeas !== undefined && typeof b.includeGroupIdeas !== 'boolean')
+    throw new ApiError(400, 'INVALID_INPUT', 'includeGroupIdeas must be a boolean');
+  const ideaGroupId = b.includeGroupIdeas === true ? parseId(b.groupId, 'group id') : undefined;
   const planError = planProblem(b);
   if (planError) throw new ApiError(400, 'INVALID_INPUT', planError);
   for (const option of (b.customOptions ?? []) as { name: string; note?: string }[]) {
@@ -150,6 +168,12 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
   }
   if (Array.isArray(b.customOptions) && poolSize < b.customOptions.length)
     throw new ApiError(400, 'INVALID_INPUT', 'Pool must fit all typed options');
+  if (
+    b.includeGroupIdeas === true &&
+    Array.isArray(b.customOptions) &&
+    poolSize <= b.customOptions.length
+  )
+    throw new ApiError(400, 'INVALID_INPUT', 'Leave at least one deck slot for Group Ideas');
   const closeThreshold = b.closeThreshold ?? DEFAULT_CLOSE_THRESHOLD;
   if (
     typeof closeThreshold !== 'number' ||
@@ -180,6 +204,10 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
   if (!validFilters(b as PlaceFilters))
     throw new ApiError(400, 'INVALID_INPUT', 'Invalid priceMax or openNow');
   return {
+    ...(b.includeGroupIdeas !== undefined
+      ? { includeGroupIdeas: b.includeGroupIdeas as boolean }
+      : {}),
+    ...(ideaGroupId ? { groupId: ideaGroupId } : {}),
     ...(b.includeSaved !== undefined ? { includeSaved: b.includeSaved as boolean } : {}),
     ...(b.customOptions !== undefined
       ? { customOptions: b.customOptions as PlanOptions['customOptions'] }
@@ -235,6 +263,21 @@ async function buildCandidates(
   pick: LifecyclePick,
   store: LifecycleStore,
 ): Promise<CandidateSnapshot[]> {
+  let ideas: Candidate[] = [];
+  if (pick.includeGroupIdeas) {
+    if (!pick.groupId || !pick.hostId)
+      throw new ApiError(409, 'GROUP_REQUIRED', 'This Pick no longer has a group');
+    if (!store.groupIdeas || !store.candidateUuid)
+      throw new ApiError(503, 'GROUP_IDEAS_UNAVAILABLE', 'Group Ideas are unavailable');
+    const entries = await store.groupIdeas(pick.groupId, pick.hostId);
+    ideas = groupIdeaCandidates(
+      entries,
+      pick.groupId,
+      groupIdeaCategory(pick.category, pick.mixCategory),
+      pick.center,
+      store.candidateUuid,
+    );
+  }
   const priority: Candidate[] = [...(pick.customOptions ?? [])];
   if (pick.includeSaved && pick.hostId) {
     if (!store.savedCandidates)
@@ -245,7 +288,9 @@ async function buildCandidates(
         (p) =>
           (pick.category === 'custom'
             ? p.category === 'custom' || p.category === pick.mixCategory
-            : p.category === pick.category) &&
+            : pick.category === 'both'
+              ? p.category === 'food' || p.category === 'activities'
+              : p.category === pick.category) &&
           (p.provider !== 'custom' || p.locationProvided === true) &&
           distanceMeters(pick.center, p) <= pick.radiusM &&
           matchesFilters(p, pick, new Date()),
@@ -253,22 +298,32 @@ async function buildCandidates(
     );
   }
   let candidates = priorityCandidates(priority, [], pick.poolSize);
-  const category = pick.category === 'custom' ? pick.mixCategory : pick.category;
-  if (category && candidates.length < pick.poolSize) {
+  const foundByCategory: Candidate[][] = [];
+  for (const category of providerCategories(pick.category, pick.mixCategory)) {
+    if (candidates.length >= pick.poolSize && !pick.includeGroupIdeas) break;
     try {
-      const found = await pool.buildPool({
-        center: pick.center,
-        radiusM: pick.radiusM,
-        category,
-        poolSize: priority.length ? 30 : pick.poolSize,
-        priceMax: pick.priceMax,
-        openNow: pick.openNow,
-      });
-      candidates = priorityCandidates(priority, found, pick.poolSize);
+      foundByCategory.push(
+        await pool.buildPool({
+          center: pick.center,
+          radiusM: pick.radiusM,
+          category,
+          poolSize: priority.length ? 30 : pick.poolSize,
+          priceMax: pick.priceMax,
+          openNow: pick.openNow,
+        }),
+      );
     } catch (error) {
       if (!(error instanceof NoCandidatesError)) throw error;
     }
   }
+  candidates = priorityCandidates(priority, interleaveCandidates(foundByCategory), pick.poolSize);
+  if (pick.includeGroupIdeas)
+    candidates = mixGroupIdeaCandidates(
+      candidates,
+      ideas,
+      pick.poolSize,
+      pick.customOptions?.length ?? 0,
+    );
   if (!candidates.length) throw new ApiError(409, 'NO_CANDIDATES', 'No places found for this Pick');
   return candidates.map((c) => ({ placeId: c.placeId, snapshot: candidateSnapshot(c) }));
 }
@@ -407,6 +462,8 @@ export async function getPick(
     category: pick.category,
     center: pick.center,
     radiusM: pick.radiusM,
+    includeGroupIdeas: pick.includeGroupIdeas ?? false,
+    groupId: pick.groupId ?? null,
     poolSize: pick.poolSize,
     priceMax: pick.priceMax,
     openNow: pick.openNow,

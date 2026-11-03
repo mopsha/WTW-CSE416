@@ -133,6 +133,7 @@ export function SmallResult({
         <Text style={styles.smallName} numberOfLines={2}>
           {place.name}
         </Text>
+        {place.origin === 'group_idea' ? <Text style={styles.smallMeta}>Our Idea</Text> : null}
         {place.cuisine ? <Text style={styles.smallMeta}>{place.cuisine}</Text> : null}
       </View>
       {onPress ? <Ionicons name="navigate" size={20} color={colors.muted} /> : null}

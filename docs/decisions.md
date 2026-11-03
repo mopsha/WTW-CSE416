@@ -151,8 +151,31 @@ The new library reuses the existing API writer model, shared text filter, group
 membership rules and UI kit. It adds no second voting engine or scheduling system.
 Images are deferred because there is no configured storage bucket/upload policy.
 
-Future deck integration must explicitly select eligible group ideas, recheck current
-membership, map the idea category `activity` to the existing Pick category `activities`,
-and snapshot an idea's content/provenance into the canonical candidate contract.
-It must define behavior for edits/deletions after deck creation and ideas without
-coordinates, and preserve Google retention rules. None of those changes are included.
+## Opt-in Group Idea candidate integration
+
+Migration 0024 persists a default-false per-Pick flag and wraps existing canonical
+creation/load/start/refresh/Pick Again RPCs. It adds no voting or ranking engine.
+The group create form offers Include Group Ideas beside existing configuration;
+Food + activities is supported explicitly, using the two existing provider searches.
+The normal Discover feed remains provider-only.
+
+Ideas are resolved only when enabled, using current host membership, the Pick group
+and selected type. Provider distance/price/opening-hours filters do not apply to
+user-authored ideas. The deck retains its pool-size limit, preserves typed Custom
+options, and alternates ideas/public candidates in remaining slots. Both providers
+are queried normally for Both, through the existing quota/retention boundary.
+
+Each built idea gets a fresh custom candidate ID and explicit origin/library/group
+metadata. Snapshot content is copied at start/refresh; it never references mutable
+library content during swipe/vote/history reads. The database rechecks membership
+and idea provenance at deck commit, including when the library is empty. A deleted
+entry between lookup/commit is rejected safely. Edits/deletion after commit leave
+history intact. Pick Again retains opt-in/current group and normal repeated-tap reuse,
+then uses current library entries when started; it disables inclusion if group access
+was lost. Account-deletion privacy redaction remains authoritative.
+
+Coordinate-free candidates use the established Custom Plan numeric neutral center
+and locationProvided=false. Client coordinates are null, distance/directions are
+hidden and Google enrichment is skipped. Ranking keeps its existing custom neutral
+zero-distance tie-break convention; no inferred/geocoded location is introduced.
+Images/uploads remain deferred. See the API contract for exact capacity/type rules.

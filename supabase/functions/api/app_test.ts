@@ -2064,3 +2064,115 @@ Deno.test(
     ]);
   },
 );
+
+Deno.test(
+  'group Idea opt-in persists through POST/GET and uses the normal start pool and snapshots',
+  async () => {
+    const host = 'c1111111-1111-4111-8111-111111111111';
+    const groupId = 'c0000000-1111-4111-8111-111111111111';
+    let createdInput: unknown;
+    let committed: unknown;
+    let lookups = 0;
+    let providerCalls = 0;
+    const pick = {
+      id: 'c9999999-1111-4111-8111-111111111111',
+      hostId: host,
+      groupId,
+      includeGroupIdeas: true,
+      state: 'draft' as const,
+      category: 'food' as const,
+      center: { lat: 40, lng: -73 },
+      radiusM: 5000,
+      poolSize: 5,
+      deadlineAt: null,
+      closeThreshold: 100,
+      participantIds: [host, 'guest'],
+      candidates: [],
+      hasAnswers: false,
+      myAnswers: {},
+      winnerPlaceId: null,
+      decidedAt: null,
+      decidedBy: null,
+      version: '1',
+    };
+    const app = createApp({
+      getUser: async () => ({ id: host }),
+      store,
+      closingStore,
+      lifecycleStore: {
+        ...lifecycleStore,
+        createPick: async (_u, input) => {
+          createdInput = input;
+          return { id: pick.id };
+        },
+        load: async () => pick,
+        groupIdeas: async (g, u) => {
+          equal([g, u], [groupId, host]);
+          lookups++;
+          return [
+            {
+              id: 'c8888888-1111-4111-8111-111111111111',
+              groupId,
+              createdBy: host,
+              name: 'Cook together',
+              category: 'food',
+              description: null,
+              locationText: 'Our kitchen',
+              createdAt: 'now',
+              updatedAt: 'now',
+            },
+          ];
+        },
+        candidateUuid: () => 'c7777777-1111-4111-8111-111111111111',
+        start: async (_p, _u, candidates) => {
+          committed = candidates;
+        },
+      },
+      groupsStore: {
+        isMember: async () => true,
+        addGroupToPick: async () => 1,
+      } as unknown as GroupsStore,
+      poolBuilder: {
+        buildPool: async () => {
+          providerCalls++;
+          return [{ placeId: 'public', name: 'Cafe', category: 'food', lat: 40, lng: -73 }];
+        },
+      },
+    });
+    const body = {
+      category: 'food',
+      center: pick.center,
+      radiusM: 5000,
+      poolSize: 5,
+      deadlineAt: null,
+      closeThreshold: 100,
+      includeGroupIdeas: true,
+      groupId,
+    };
+    const created = await app.request('/picks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    equal(created.status, 201);
+    equal((createdInput as { includeGroupIdeas: boolean }).includeGroupIdeas, true);
+    equal((createdInput as { groupId: string }).groupId, groupId);
+    equal(lookups, 0); // deck built at start, not while creating draft
+    const started = await app.request(`/picks/${pick.id}/start`, { method: 'POST' });
+    equal(started.status, 200);
+    equal(providerCalls, 1);
+    equal(lookups, 1);
+    const candidates = committed as { snapshot: { origin?: string; groupIdeaId?: string } }[];
+    equal(candidates.length, 2);
+    equal(candidates[0].snapshot.origin, 'group_idea');
+    const detail = await (await app.request(`/picks/${pick.id}`)).json();
+    equal(detail.includeGroupIdeas, true);
+    equal(detail.groupId, groupId);
+    const invalid = await app.request('/picks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, groupId: undefined }),
+    });
+    equal(invalid.status, 400);
+  },
+);

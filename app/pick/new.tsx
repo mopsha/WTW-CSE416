@@ -10,6 +10,7 @@ import {
   colors,
   ErrorState,
   fonts,
+  MIN_TARGET,
   Screen,
   space,
   type,
@@ -37,6 +38,7 @@ import type { LatLng } from '@shared/domain/geo.ts';
 const CATEGORIES: readonly ChipOption<PickCategory>[] = [
   { value: 'food', label: '🍜 Food' },
   { value: 'activities', label: '🎳 Activities' },
+  { value: 'both', label: 'Food + activities' },
   { value: 'custom', label: '✨ Custom' },
 ];
 
@@ -75,6 +77,7 @@ export default function CreatePickScreen() {
   const [category, setCategory] = useState<PickCategory>(hangId ? 'activities' : 'food');
   const [customOptions, setCustomOptions] = useState<CustomOption[]>([{ name: '' }, { name: '' }]);
   const [includeSaved, setIncludeSaved] = useState(false);
+  const [includeGroupIdeas, setIncludeGroupIdeas] = useState(false);
   const [mix, setMix] = useState<'none' | 'food' | 'activities'>('none');
   const [center, setCenter] = useState<LatLng>(DEFAULT_CENTER);
   const [placeLabel, setPlaceLabel] = useState('SBU Academic Mall');
@@ -104,11 +107,14 @@ export default function CreatePickScreen() {
       openNow,
       poolSize:
         category === 'custom'
-          ? mix === 'none' && !includeSaved
-            ? customOptions.length
-            : Math.max(20, customOptions.length)
+          ? includeGroupIdeas && groupId && !hangId
+            ? 30
+            : mix === 'none' && !includeSaved && !includeGroupIdeas
+              ? customOptions.length
+              : Math.max(20, customOptions.length)
           : poolSize,
       includeSaved,
+      ...(groupId && !hangId ? { groupId, includeGroupIdeas } : {}),
       ...(category === 'custom'
         ? { customOptions, ...(mix !== 'none' ? { mixCategory: mix } : {}) }
         : {}),
@@ -219,6 +225,25 @@ export default function CreatePickScreen() {
           />
         </View>
       </Card>
+      {groupId && !hangId ? (
+        <Card>
+          <View style={styles.sectionHead}>
+            <Text style={styles.sectionTitle}>Include Group Ideas</Text>
+            <Switch
+              style={{ minHeight: MIN_TARGET, minWidth: MIN_TARGET }}
+              disabled={submitting}
+              value={includeGroupIdeas}
+              onValueChange={setIncludeGroupIdeas}
+              accessibilityLabel="Include Group Ideas"
+            />
+          </View>
+          <Text style={styles.hint}>
+            Mix your group’s matching ideas into this Pick. Distance, price and Open Now apply to
+            public places only.
+          </Text>
+          {problems.includeGroupIdeas ? <ErrorState message={problems.includeGroupIdeas} /> : null}
+        </Card>
+      ) : null}
       <Section title="Where" error={problems.center}>
         <LocationSearch label={placeLabel} onPick={moveCenter} />
         <MapPicker
