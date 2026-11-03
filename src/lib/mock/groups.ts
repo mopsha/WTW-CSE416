@@ -66,6 +66,7 @@ function initial(): Map<string, MockGroup> {
 }
 
 let groups = initial();
+export const mockAllGroupRecords = () => [...groups.values()];
 export const mockGroupRecord = (id: string) => groups.get(id);
 export const mockGroupPersonName = (id: string) => NAMES.get(id) ?? null;
 /** Group-scoped library; intentionally separate from immutable Pick custom options. */

@@ -256,6 +256,9 @@ export default function FriendsScreen() {
                 {list.friends.map((p) => (
                   <ListRow
                     key={p.userId}
+                    onPress={() =>
+                      router.push({ pathname: '/users/[id]', params: { id: p.userId } })
+                    }
                     title={nameOf(p)}
                     subtitle={`Friends since ${day(p.since)}`}
                     leading={<Avatar name={nameOf(p)} neutral size={44} />}

@@ -1,3 +1,4 @@
+import type { UserProfile, ProfileDetailsInput } from '@shared/api/userProfiles.ts';
 import type { GroupInvitation } from '@shared/api/groupInvitations.ts';
 import type { GroupIdea, GroupIdeaInput } from '@shared/api/groupIdeas.ts';
 // Typed client for our Edge Function (`${EXPO_PUBLIC_SUPABASE_URL}/functions/v1/api`).
@@ -175,6 +176,11 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
   const groupPath = (groupId: string) => `/groups/${encodeURIComponent(groupId)}`;
 
   return {
+    getUserProfile: (id: string) =>
+      request<UserProfile>('GET', `/users/${encodeURIComponent(id)}/profile`),
+    getMyUserProfile: () => request<UserProfile>('GET', '/me/details'),
+    updateProfileDetails: (input: ProfileDetailsInput) =>
+      request<UserProfile>('POST', '/me/details', { body: input }),
     listGroupInvitations: () =>
       request<{ invitations: GroupInvitation[] }>('GET', '/group-invitations'),
     listPendingGroupInvitations: (groupId: string) =>

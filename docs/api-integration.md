@@ -865,3 +865,53 @@ Deploy 0025 before the updated API/client. The API calls the new `group_invite_m
 RPC so a missing migration returns 503 rather than falling back to old immediate-add
 behavior. Mock mode shares these decisions, current graph checks, retries/capacity and
 cascades; its Weekend crew fixture demonstrates an invitation before membership.
+
+## Friend profiles and metadata privacy (0026)
+
+`GET /users/:id/profile` returns a fixed, authenticated projection of a user profile.
+Only the owner or an accepted, unblocked friend may read it. Pending requests,
+unrelated users, deleted profiles and blocks in either direction return the same
+404 PROFILE_NOT_FOUND, including when users share a group or old Pick.
+
+`GET /me/details` reads the caller's own full projection. `POST /me/details` replaces
+only `{ username, favoriteCuisine, favoriteActivity, shareMetadata }` for the verified
+caller. Body IDs, avatar, counts, preferences and privilege fields cannot change the
+update target. The legacy GET/POST /me, preference survey and onboarding are unchanged.
+
+Response fields: `id`, `displayName`, `username`, `avatarUrl`, `isOwner`,
+`metadataVisible`, `friendsCount`, `groupsCount`, `favoriteCuisine`, `favoriteActivity`,
+`mutualGroups: [{id,name}]`. Only the owner also receives `shareMetadata`.
+Email, Discover preferences, hidden metadata and non-mutual group names are never
+included in the friend-profile projection. Hidden scalar metadata is null, mutual
+lists are empty; zero counts remain zero. Responses are private/no-store.
+
+Migration 0026 adds nullable username/favorites and a default-false metadata sharing
+flag to profiles. New fields have no authenticated/anonymous direct SELECT grant;
+service-only RPCs explicitly check the current graph and whitelist fields. Existing
+basic-identity RLS/column grants for friend requests/groups/Pick history stay intact.
+The existing avatar_url is reused read-only; no upload/storage infrastructure or
+arbitrary image URL setter is introduced. Missing photos use the current Avatar fallback.
+
+Usernames are optional for compatibility: no email-derived backfill or new onboarding.
+Updates trim, remove one leading @ and lowercase; valid usernames are 3–24 ASCII
+letters/digits/underscores. A database unique index on lower(username) enforces races
+and case-insensitive uniqueness; collisions return 409 USERNAME_TAKEN. Clearing a
+username or deleting the account releases it. Favorites are optional one-line text,
+up to 60 Unicode characters. The existing text filter moderates all edited text.
+
+One **Share profile metadata with friends** switch controls both counts, both
+favorites and mutual groups together. Default off: friends see only name, username
+and available avatar. Owners always see their own full data. Counts use accepted,
+unblocked friendships and current group_members rows (pending invitations do not
+count). Enabling sharing explicitly shares the aggregate group count, including groups
+not shared with the viewer; their names/IDs remain private. Mutual groups require both
+users to be current members and are hidden with the rest of metadata when sharing is off.
+Existing account deletion cascades profile data; auth/provider behavior is unchanged.
+
+Friends rows open `/users/[id]`, with their existing secondary action kept separate.
+The current Profile tab displays the same avatar/username/counts/favorites and adds a
+small details/privacy sheet; the existing name editor and settings remain. There is
+no public directory, username lookup, messaging or profile feed. Mock mode uses the
+same parser/projection shape, accepted friendships, current group membership and blocks.
+Its third-party friend counts reflect only known mock friendship edges, not invented
+friend lists. Apply migration 0026 before the updated API/client.

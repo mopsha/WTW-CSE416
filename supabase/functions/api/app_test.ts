@@ -2359,3 +2359,120 @@ Deno.test(
     equal(notices, [[[AVA], 'group_invite', null, { inviteId: id }]]);
   },
 );
+
+Deno.test(
+  'user profiles authenticate, derive owner identity, validate targets/updates and expose only store projections',
+  async () => {
+    const calls: unknown[][] = [];
+    const profile = {
+      id: AVA,
+      displayName: 'Ava',
+      username: 'ava',
+      avatarUrl: null,
+      isOwner: false,
+      metadataVisible: false,
+      friendsCount: null,
+      groupsCount: null,
+      favoriteCuisine: null,
+      favoriteActivity: null,
+      mutualGroups: [],
+    };
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => ({ id: OWNER }),
+      userProfilesStore: {
+        get: async (...args) => {
+          calls.push(['get', ...args]);
+          return profile;
+        },
+        update: async (...args) => {
+          calls.push(['update', ...args]);
+          return { ...profile, id: OWNER, isOwner: true };
+        },
+      },
+    });
+    const friend = await app.request(`/users/${AVA}/profile`);
+    equal(friend.status, 200);
+    equal(friend.headers.get('Cache-Control'), 'private, no-store');
+    equal(await friend.json(), profile);
+    equal(calls.at(-1), ['get', OWNER, AVA]);
+    equal((await app.request('/me/details')).status, 200);
+    equal(calls.at(-1), ['get', OWNER, OWNER]);
+    const saved = await app.request('/me/details', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: '@Josh',
+        shareMetadata: false,
+        userId: AVA,
+        favoriteCuisine: 'Japanese',
+      }),
+    });
+    equal(saved.status, 200);
+    equal(calls.at(-1), [
+      'update',
+      OWNER,
+      {
+        username: 'josh',
+        favoriteCuisine: 'Japanese',
+        favoriteActivity: null,
+        shareMetadata: false,
+      },
+    ]);
+    const before = calls.length;
+    equal((await app.request('/users/bad/profile')).status, 400);
+    equal(
+      (
+        await app.request('/me/details', {
+          method: 'POST',
+          body: '{"username":"ab","shareMetadata":true}',
+        })
+      ).status,
+      400,
+    );
+    equal(calls.length, before);
+    const anon = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => {
+        throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+      },
+    });
+    equal((await anon.request('/me/details')).status, 401);
+    equal((await anon.request(`/users/${AVA}/profile`)).status, 401);
+  },
+);
+Deno.test(
+  'profile endpoints preserve privacy 404s and username conflicts without extra reads',
+  async () => {
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => ({ id: OWNER }),
+      userProfilesStore: {
+        get: async () => {
+          throw new ApiError(404, 'PROFILE_NOT_FOUND', 'Profile not found');
+        },
+        update: async () => {
+          throw new ApiError(409, 'USERNAME_TAKEN', 'Taken');
+        },
+      },
+    });
+    equal((await app.request(`/users/${AVA}/profile`)).status, 404);
+    equal(
+      (
+        await app.request('/me/details', {
+          method: 'POST',
+          body: '{"username":"josh","shareMetadata":false}',
+        })
+      ).status,
+      409,
+    );
+  },
+);

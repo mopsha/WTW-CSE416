@@ -206,3 +206,25 @@ keeps names private to the protected list, and deduplicates repeated sends. Pend
 cards live on Friends; owners see Pending in group detail. Bearer-link opens and Pick
 codes retain their existing explicit join-request behavior and caps. No Pick/swipe,
 Group Idea, auth or ranking change is part of this feature.
+
+## Friend profiles use a private projection
+
+Profiles already stored display names, avatar URLs and private Discover preferences,
+but had no username or friend-profile API. Migration 0026 adds optional normalized,
+case-insensitively unique usernames, optional favorites and one default-off sharing
+flag. Existing accounts/auth/onboarding need no changes. Existing avatar references
+are displayed; photo uploads/editing are outside this task.
+
+The new service-only projection requires self or current accepted friendship and no
+block in either direction, regardless of shared groups/Picks. Metadata never gets
+new direct client grants. One simple friends/hidden toggle covers counts, favorites
+and mutual groups; owners always get their full profile. Discover preferences are
+never reused as implicitly shared favorites. Enabling sharing opts into aggregate
+counts, while mutual group names/IDs are returned only for actual shared memberships.
+Existing basic-identity RLS for session/group/request compatibility is unchanged.
+
+Friends rows navigate to a protected `/users/[id]` page. The Profile tab retains its
+name/preferences/settings flows and adds details/privacy editing. Username uniqueness
+is enforced by PostgreSQL, with 409 conflicts and no availability enumeration endpoint.
+Nullable handles preserve compatibility, and clearing/deleting releases a handle.
+No messaging, birthdays, onboarding, follower system or photo feed is introduced.

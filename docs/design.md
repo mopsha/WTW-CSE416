@@ -565,3 +565,19 @@ roles or membership system is introduced. Accepted requests feed the existing gr
 membership table, so Group Ideas and future group Picks work unchanged. Codes/bearer
 links retain their current join behavior; Pick invitations are unchanged. See the
 [direct invitation contract](api-integration.md#direct-group-invitations-0025).
+
+## Friend profile navigation and privacy
+
+Friends rows open the authenticated Stack route `users/[id]`, keeping secondary friend
+actions separate. Existing Profile-tab identity/settings remain; username, favorites
+and the simple sharing toggle use a small sheet. Avatar reads reuse profiles.avatar_url.
+
+`GET /users/:id/profile` and `GET/POST /me/details` use UserProfilesStore and service-only
+`user_profile_get` / `user_profile_update` RPCs from migration 0026. No private metadata
+is added to direct client grants or the public friendship list. A fixed projection
+checks owner/accepted friendship/blocks and hides counts/favorites/mutual groups unless
+sharing is enabled; owners always receive full data. Mutual groups are an intersection
+of current memberships, never a target user's private group list. Usernames use a
+normalized database unique index; existing name/survey/onboarding APIs stay compatible.
+The same client types/parser and mock graph back mock profiles. See the
+[profile contract](api-integration.md#friend-profiles-and-metadata-privacy-0026).

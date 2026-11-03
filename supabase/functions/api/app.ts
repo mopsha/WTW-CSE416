@@ -1,3 +1,4 @@
+import { parseProfileDetails, type UserProfilesStore } from '../_shared/api/userProfiles.ts';
 import {
   parseGroupInvitationDecision,
   type GroupInvitationsStore,
@@ -98,6 +99,7 @@ export function createApp(
     joinStore?: JoinStore;
     friendsStore?: FriendsStore;
     profileStore?: ProfileStore;
+    userProfilesStore?: UserProfilesStore;
     groupsStore?: GroupsStore;
     groupInvitationsStore?: GroupInvitationsStore;
     groupIdeasStore?: GroupIdeasStore;
@@ -541,6 +543,26 @@ export function createApp(
         parseGroupInvitationDecision(await readJsonBody(c)),
       ),
     );
+  });
+  const userProfiles = async (c: { req: { raw: Request } }) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.userProfilesStore)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Profile details are unavailable');
+    return { user, store: deps.userProfilesStore };
+  };
+  app.get('/me/details', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await userProfiles(c);
+    return c.json(await store.get(user.id, user.id));
+  });
+  app.post('/me/details', async (c) => {
+    const { user, store } = await userProfiles(c);
+    return c.json(await store.update(user.id, parseProfileDetails(await readJsonBody(c))));
+  });
+  app.get('/users/:id/profile', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await userProfiles(c);
+    return c.json(await store.get(user.id, parseId(c.req.param('id'), 'user id')));
   });
   app.post('/groups', async (c) => {
     const { user, store } = await groups(c);

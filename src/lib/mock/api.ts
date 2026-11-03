@@ -1,3 +1,4 @@
+import { handleMockUserProfiles, resetOwnMockUserProfile } from './userProfiles';
 import { handleMockGroupInvitations, mockGroupInvitations } from './groupInvitations';
 import { handleMockGroupIdeas } from './groupIdeas';
 // A fake `fetch` for our Edge Function. It mirrors the API contract (docs/api-integration.md):
@@ -643,6 +644,13 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     const error = errorResponse(e);
     return json(error.status, error.body);
   }
+  try {
+    const profile = handleMockUserProfiles(method, path, readBody(init));
+    if (profile) return json(200, profile);
+  } catch (e) {
+    const error = errorResponse(e);
+    return json(error.status, error.body);
+  }
   const groupResult = handleMockGroups(method, path, readBody(init));
   if (groupResult) return json(groupResult.status, groupResult.body);
   const groupId = (readBody(init) as { groupId?: unknown } | null)?.groupId;
@@ -670,6 +678,7 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   if (method === 'POST' && path === '/me/preferences') return updatePreferences(readBody(init));
   if (method === 'POST' && path === '/push-tokens') return registerPushToken(readBody(init));
   if (method === 'DELETE' && path === '/me') {
+    resetOwnMockUserProfile();
     for (const [id, invite] of mockGroupInvitations)
       if (invite.inviterId === MOCK_USER_ID || invite.inviteeId === MOCK_USER_ID)
         mockGroupInvitations.delete(id);

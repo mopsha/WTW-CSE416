@@ -1,3 +1,5 @@
+import type { UserProfile } from '@shared/api/userProfiles.ts';
+import { OwnProfileDetails } from '@/components/OwnProfileDetails';
 import { Ionicons } from '@expo/vector-icons';
 import { ListRow, Sheet } from '@/components/TabUi';
 import { DISPLAY_NAME_MAX, validateDisplayName } from '@shared/api/profile.ts';
@@ -44,12 +46,29 @@ export default function ProfileScreen() {
   const { displayName, preferences, saveDisplayName } = useProfile();
   const email = session.user.email ?? 'you';
   const name = displayName || suggestedName(session.user.email) || email;
+  const [details, setDetails] = useState<UserProfile | null>(null);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
   const [panel, setPanel] = useState<'notifications' | 'settings' | null>(null);
   const [draft, setDraft] = useState<string | null>(null);
   const [invalid, setInvalid] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<boolean | null>(null);
   const { busy, error, run, clearError } = useAction();
   const native = Platform.OS !== 'web';
+
+  const loadDetails = useCallback(async () => {
+    try {
+      setDetails(await api.getMyUserProfile());
+      setDetailsError(null);
+    } catch (e) {
+      setDetails(null);
+      setDetailsError(e instanceof Error ? e.message : 'Could not load profile details');
+    }
+  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      void loadDetails();
+    }, [loadDetails]),
+  );
 
   // Re-check when the tab comes back into view: the user may have changed it in Settings.
   useFocusEffect(
@@ -122,13 +141,18 @@ export default function ProfileScreen() {
         accessibilityRole="button"
         accessibilityLabel={`Edit profile for ${name}`}
       >
-        <Avatar name={name} neutral size={84} />
+        <Avatar name={name} uri={details?.avatarUrl} neutral size={84} />
         <View style={styles.who}>
           <Text style={styles.name}>{name}</Text>
+          {details?.username ? <Text style={styles.email}>@{details.username}</Text> : null}
           <Text style={styles.email}>{email}</Text>
         </View>
         <Ionicons name="chevron-forward" size={20} color={colors.muted} />
       </Pressable>
+      {detailsError ? (
+        <ErrorState message={detailsError} onRetry={() => void loadDetails()} />
+      ) : null}
+      {details ? <OwnProfileDetails profile={details} onSaved={setDetails} /> : null}
       <View style={styles.settings}>
         <ListRow
           title="Preferences"
