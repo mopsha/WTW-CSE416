@@ -17,6 +17,8 @@ export function createUserProfilesStore(): UserProfilesStore {
     return data as UserProfile;
   }
   return {
+    completeIdentity: (user, input) =>
+      rpc('user_identity_update', { p_user_id: user, p_input: input }),
     get: (viewer, target) => rpc('user_profile_get', { p_viewer_id: viewer, p_target_id: target }),
     update: (user, input) => rpc('user_profile_update', { p_user_id: user, p_input: input }),
   };

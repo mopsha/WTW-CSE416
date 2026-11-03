@@ -125,8 +125,15 @@ export const mockProfile: {
   displayName: string | null;
   preferences: Preferences;
   onboarded: boolean;
+  optionalSetupPending: boolean;
   pushTokens: string[];
-} = { displayName: null, preferences: EMPTY_PREFERENCES, onboarded: false, pushTokens: [] };
+} = {
+  optionalSetupPending: true,
+  displayName: null,
+  preferences: EMPTY_PREFERENCES,
+  onboarded: false,
+  pushTokens: [],
+};
 
 /** Back to a brand-new account (what DELETE /me leaves behind). */
 export function resetMockProfile() {
@@ -134,6 +141,7 @@ export function resetMockProfile() {
     displayName: null,
     preferences: EMPTY_PREFERENCES,
     onboarded: false,
+    optionalSetupPending: true,
     pushTokens: [],
   });
 }

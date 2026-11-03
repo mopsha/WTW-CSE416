@@ -597,3 +597,15 @@ new table, metadata grant or deletion behavior is needed. Contacts/password cont
 and unprovided legal policies are omitted. Local help/data information explains real
 features without introducing feedback transport or legal claims. See the
 [Settings contract](api-integration.md#settings-and-blocked-user-list).
+
+### Auth entry and optional new-account setup
+
+Email OTP has explicit Log In / Sign Up modes. Existing encrypted native session storage,
+web persistence and Supabase auth-state navigation are retained. Required setup collects
+display name + the existing unique username through one atomic API/RPC operation.
+The root guard checks identity only. Existing users with identity enter tabs immediately;
+legacy accounts fill missing identity only. New accounts are offered a skippable route
+for favorites, foreground location and notifications. Permission prompts require taps.
+The route lives in the signed-in stack so optional setup cannot gate Picks or voting.
+A private new-account offer marker survives real-backend restarts; no duplicate identity,
+username, recommendation-preference or onboarding-complete model was added.

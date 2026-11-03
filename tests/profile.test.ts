@@ -86,6 +86,8 @@ test('updateMe does not write an invalid name', async () => {
 describe('getMe', () => {
   test('a missing row reads as a new account', async () => {
     await expect(getMe(storeWith({}), 'me')).resolves.toEqual({
+      username: null,
+      optionalSetupPending: false,
       displayName: null,
       preferences: EMPTY_PREFERENCES,
       onboarded: false,
@@ -99,6 +101,8 @@ describe('getMe', () => {
       preferencesUpdatedAt: '2026-10-30T12:00:00Z',
     }));
     await expect(getMe(storeWith({ getProfile }), 'me')).resolves.toEqual({
+      username: null,
+      optionalSetupPending: false,
       displayName: 'Ava',
       // casino isn't an option, so the whole stored list reads as unset.
       preferences: { ...EMPTY_PREFERENCES, priceMax: 2 },

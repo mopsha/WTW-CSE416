@@ -952,3 +952,24 @@ in this repo and are omitted. Help is local usage guidance, not a feedback submi
 service. Data & privacy information is an explicitly informational summary of the
 current inventory/controls, not fabricated legal policy. Device permission/push and
 account actions still need a native smoke test; no schema migration is required.
+
+### Auth identity and optional setup (0027)
+
+Deploy `0027_auth_identity_setup.sql` before the updated API/client. GET `/me` adds
+`username: string|null` and `optionalSetupPending: boolean`; legacy `onboarded` retains
+its Discover-survey meaning and no longer gates navigation.
+
+- POST `/me/identity` `{displayName, username}` validates existing text rules and saves
+  both atomically for the verified caller. Username normalization/uniqueness reuse 0026.
+  Returns the caller's full UserProfile; 409 `USERNAME_TAKEN` leaves both fields unchanged.
+- POST `/me/optional-setup` dismisses the optional offer, returning
+  `{optionalSetupPending:false}`. Repeated calls are harmless; this is independent of
+  identity access and does not change preferences or permission settings.
+- Existing `/me`, `/me/details`, `/me/preferences`, logout and account deletion contracts
+  remain available. Optional favorites use existing `/me/details` fields and preserve
+  username/privacy. New RPC execution remains service-role only; no RLS/grants weakened.
+
+Email Log In disallows account creation; Sign Up explicitly permits it. Hosted email
+provider/SMTP and an OTP email template containing the token must be configured and tested
+for actual delivery. The app still verifies email codes, without password or OAuth UI.
+See `decisions.md` for deferred provider setup and legal publication requirements.

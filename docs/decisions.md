@@ -249,3 +249,56 @@ There is no contacts integration, password-based auth, feedback backend or publi
 legal text. Those controls are omitted; local Help and clearly labeled data information
 reuse existing product behavior and inventory facts. No photo editing/upload, messaging,
 onboarding or new auth mechanism is part of Settings.
+
+## Explicit email auth and lightweight identity setup
+
+WTW retains email OTP instead of adding password login. A complete password flow needs
+recovery, email confirmation and verified hosted password policies, none of which the
+current app implements. Log In sends OTP with `shouldCreateUser: false` (also the helper's
+safe default); only Sign Up uses `true`. Signing up with an existing email may authenticate
+that existing account through Supabase; it does not reset its profile. OTP expiry,
+resend limits and encrypted native/web session persistence remain unchanged.
+
+Identity setup now requires display name and the existing unique username. The atomic
+service-only `user_identity_update` RPC preserves favorites/privacy and relies on the
+existing username index; conflict returns 409 without partially changing the name.
+Required navigation is derived from identity, never survey or permission completion.
+Migration 0027 sets `optional_setup_pending=false` for existing profiles and defaults it
+to true for newly inserted profiles. This private offer/dismiss marker resumes optional
+setup after a restart; it is not an authorization or onboarding-complete flag.
+Legacy users complete only missing identity. New users may save existing favorite fields,
+then explicitly request location/notification permission, or skip everything. No prompt
+runs on screen mount. Denials/errors do not block app access. Failed dismissal persistence
+may show the offer again on restart. Existing Discover preferences remain separate and
+editable through Preferences; optional favorites do not claim to tune recommendations.
+
+Google/Apple are intentionally absent from the auth UI: local Apple is disabled, Google
+is not configured, hosted settings are unverified, and there is no OAuth callback flow.
+Before exposing them:
+
+- Google: create a Google OAuth web client and consent screen; authorize the project's
+  Supabase Auth callback (`https://<project-ref>.supabase.co/auth/v1/callback`); enable
+  Google in hosted Supabase with its client ID/secret. Keep the secret server-side.
+- Apple: configure Sign in with Apple in the Apple developer account, Services ID,
+  verified domain/return URL, Team ID, Key ID and signing key; enable the corresponding
+  hosted Supabase provider and arrange secret rotation. Native Apple login additionally
+  needs the Expo Apple Authentication module/plugin, entitlement and a new signed build.
+- Choose and implement one supported Expo/Supabase OAuth strategy, including a signed-out
+  callback route, PKCE/session exchange, cancellation/error handling and nonce validation
+  where needed. Allowlist its exact app redirect (the app scheme is `wtw`) and web URLs
+  in hosted Supabase. Test development/store builds on both platforms and web before
+  showing provider buttons. No OAuth credentials or placeholder implementations ship here.
+
+References: [Supabase OTP](https://supabase.com/docs/reference/javascript/auth-signinwithotp),
+[Google](https://supabase.com/docs/guides/auth/social-login/auth-google),
+[Apple](https://supabase.com/docs/guides/auth/social-login/auth-apple),
+[Expo auth](https://docs.expo.dev/guides/authentication/).
+
+Published Terms and Privacy Policy remain a release requirement. Signup honestly states
+that they are unavailable; it does not link to internal notes or record fictional legal
+consent. Birthday, photo upload, contacts and phone auth remain deferred: none is needed
+for this identity flow and no existing supported implementation is extended by adding them.
+Mock auth uses code `123456`: Log In with `demo@wtw.test` exercises a returning account;
+Sign Up with another email exercises new identity and optional setup. Per-email profile
+snapshots survive logout/login during that mock runtime; a cold reload resets in-memory
+mock data, as before. The fixture user ID and social/Pick fixture graph stay unchanged.

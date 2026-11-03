@@ -1,4 +1,8 @@
-import { parseProfileDetails, type UserProfilesStore } from '../_shared/api/userProfiles.ts';
+import {
+  parseIdentity,
+  parseProfileDetails,
+  type UserProfilesStore,
+} from '../_shared/api/userProfiles.ts';
 import {
   parseGroupInvitationDecision,
   type GroupInvitationsStore,
@@ -450,6 +454,7 @@ export function createApp(
   // My name, survey answers and whether onboarding is done. Preferences are private
   // (no client column grant), so the app reads them here rather than through RLS.
   app.get('/me', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
     const user = await deps.getUser(c.req.raw);
     if (!deps.profileStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Profiles are not available');
     return c.json(await getMe(deps.profileStore, user.id));
@@ -554,6 +559,19 @@ export function createApp(
     c.header('Cache-Control', 'private, no-store');
     const { user, store } = await userProfiles(c);
     return c.json(await store.get(user.id, user.id));
+  });
+  app.post('/me/identity', async (c) => {
+    const { user, store } = await userProfiles(c);
+    if (!store.completeIdentity)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Identity setup is unavailable');
+    return c.json(await store.completeIdentity(user.id, parseIdentity(await readJsonBody(c))));
+  });
+  app.post('/me/optional-setup', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.profileStore?.finishOptionalSetup)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Setup is unavailable');
+    await deps.profileStore.finishOptionalSetup(user.id);
+    return c.json({ optionalSetupPending: false });
   });
   app.post('/me/details', async (c) => {
     const { user, store } = await userProfiles(c);

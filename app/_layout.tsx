@@ -1,3 +1,4 @@
+import { hasRequiredIdentity } from '@shared/api/userProfiles.ts';
 import {
   Poppins_400Regular,
   Poppins_500Medium,
@@ -6,10 +7,10 @@ import {
   Poppins_800ExtraBold,
   useFonts,
 } from '@expo-google-fonts/poppins';
-import { router, Stack } from 'expo-router';
+import { router, Stack, usePathname } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { colors } from '@/components/theme';
@@ -47,12 +48,10 @@ function RootStack() {
   });
   // A font failure falls back to the system font rather than blocking the app.
   const ready = !loading && !profile.loading && (fontsLoaded || !!fontError);
-  // First sign-in: ask "what should we call you?" before anything else. If the profile
-  // couldn't be read, don't block the app on it; the Profile tab can still set a name.
-  const needsName = !!session && !profile.displayName && !profile.failed;
-  // Then the survey and permission explainers, once (FR-02). Same rule: never block on a failed read.
-  const needsOnboarding = !!session && !needsName && !profile.onboarded && !profile.failed;
-  const inApp = !!session && !needsName && !needsOnboarding;
+  const needsName = !!session && !hasRequiredIdentity(profile.displayName, profile.username);
+  const inApp = !!session && !needsName;
+  const pathname = usePathname();
+  const offered = useRef<string | null>(null);
   const userId = session?.user.id;
 
   useEffect(() => {
@@ -71,9 +70,20 @@ function RootStack() {
     return onNotificationTap((route) => router.push(route as never));
   }, [ready, inApp]);
 
-  // A join link that arrived signed out: once signed in (named and onboarded), finish joining.
+  // A join link that arrived signed out: once required identity is available, finish joining.
   useEffect(() => {
+    if (!session) {
+      offered.current = null;
+      return;
+    }
     if (!ready || !inApp) return;
+    if (!profile.optionalSetupPending) offered.current = null;
+    if (profile.optionalSetupPending && offered.current !== userId) {
+      offered.current = userId ?? null;
+      if (pathname !== '/onboarding') router.push('/onboarding');
+      return;
+    }
+    if (pathname === '/onboarding') return;
     const code = takePendingJoin();
     if (code) {
       router.push({ pathname: '/join/[code]', params: { code } });
@@ -83,7 +93,7 @@ function RootStack() {
     void takePendingInvite().then((token) => {
       if (token) router.push({ pathname: '/i/[token]', params: { token } });
     });
-  }, [ready, inApp]);
+  }, [ready, inApp, userId, session, profile.optionalSetupPending, pathname]);
 
   // Keep the splash up until the stored session and fonts are loaded. Rendering the
   // guarded Stack earlier treats a signed-in user as signed out for a moment, which
@@ -107,11 +117,9 @@ function RootStack() {
         <Stack.Protected guard={needsName}>
           <Stack.Screen name="welcome" />
         </Stack.Protected>
-        <Stack.Protected guard={needsOnboarding}>
-          <Stack.Screen name="onboarding" />
-        </Stack.Protected>
         <Stack.Protected guard={inApp}>
           <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="onboarding" />
           <Stack.Screen name="preferences" />
           <Stack.Screen name="settings/index" />
           <Stack.Screen name="settings/profile" />

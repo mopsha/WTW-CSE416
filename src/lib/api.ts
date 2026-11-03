@@ -265,6 +265,10 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     updateMe: (displayName: string) =>
       request<{ displayName: string }>('POST', '/me', { body: { displayName } }),
     /** My name, survey answers and whether onboarding is done (survey answers are API-only). */
+    completeIdentity: (displayName: string, username: string) =>
+      request<UserProfile>('POST', '/me/identity', { body: { displayName, username } }),
+    finishOptionalSetup: () =>
+      request<{ optionalSetupPending: false }>('POST', '/me/optional-setup', { body: {} }),
     getMe: () => request<MeResponse>('GET', '/me'),
     /** Saves the survey (FR-02); even all-empty answers mark onboarding done. */
     savePreferences: (preferences: Preferences) =>

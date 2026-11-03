@@ -1133,6 +1133,8 @@ Deno.test('GET /me: my name, preferences and onboarding flag, never someone else
   const result = await profileApp(rows).request('/me?userId=other');
   equal(result.status, 200);
   equal(await result.json(), {
+    username: null,
+    optionalSetupPending: false,
     displayName: 'Ava',
     preferences: {
       categories: [],
@@ -2509,5 +2511,75 @@ Deno.test(
       },
     });
     equal((await anon.request('/blocks')).status, 401);
+  },
+);
+
+Deno.test(
+  'identity setup authenticates, normalizes, preserves 409, and never trusts a body user ID',
+  async () => {
+    const OWNER = '11111111-1111-4111-8111-111111111111';
+    const AVA = '22222222-2222-4222-8222-222222222222';
+    const calls: unknown[] = [];
+    const profile = {
+      id: OWNER,
+      displayName: 'Josh',
+      username: 'josh',
+      avatarUrl: null,
+      isOwner: true,
+      metadataVisible: true,
+      friendsCount: 0,
+      groupsCount: 0,
+      favoriteCuisine: null,
+      favoriteActivity: null,
+      mutualGroups: [],
+    };
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => ({ id: OWNER }),
+      userProfilesStore: {
+        get: async () => profile,
+        update: async () => profile,
+        completeIdentity: async (id, input) => {
+          calls.push([id, input]);
+          if (input.username === 'taken')
+            throw new ApiError(409, 'USERNAME_TAKEN', 'That username is already taken');
+          return profile;
+        },
+      },
+      profileStore: {
+        getProfile: async () => null,
+        setDisplayName: async () => {},
+        setPreferences: async () => {},
+        finishOptionalSetup: async (id) => {
+          calls.push(['finish', id]);
+        },
+      },
+    });
+    const post = (body: unknown) =>
+      app.request('/me/identity', { method: 'POST', body: JSON.stringify(body) });
+    equal((await post({ displayName: ' Josh ', username: '@JOSH', userId: AVA })).status, 200);
+    equal(calls[0], [OWNER, { displayName: 'Josh', username: 'josh' }]);
+    equal((await post({ displayName: 'Josh', username: 'taken' })).status, 409);
+    equal((await post({ displayName: 'Josh' })).status, 400);
+    equal(calls.length, 2);
+    equal((await app.request('/me/optional-setup', { method: 'POST', body: '{}' })).status, 200);
+    equal(calls.at(-1), ['finish', OWNER]);
+    const unauthenticated = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => {
+        throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+      },
+    });
+    equal(
+      (await unauthenticated.request('/me/identity', { method: 'POST', body: '{}' })).status,
+      401,
+    );
+    equal((await unauthenticated.request('/me/optional-setup', { method: 'POST' })).status, 401);
   },
 );

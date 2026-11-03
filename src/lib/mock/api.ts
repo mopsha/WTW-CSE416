@@ -1,4 +1,8 @@
-import { handleMockUserProfiles, resetOwnMockUserProfile } from './userProfiles';
+import {
+  getMockUserProfile,
+  handleMockUserProfiles,
+  resetOwnMockUserProfile,
+} from './userProfiles';
 import { handleMockGroupInvitations, mockGroupInvitations } from './groupInvitations';
 import { handleMockGroupIdeas } from './groupIdeas';
 // A fake `fetch` for our Edge Function. It mirrors the API contract (docs/api-integration.md):
@@ -14,7 +18,7 @@ import { validatePreferences } from '@shared/domain/preferences.ts';
 
 import { MOCK_FAIL_RATE } from '../config';
 import type { PreferenceValue } from '../types';
-import { MOCK_ACCESS_TOKEN, MOCK_USER_ID, mockAuth } from './auth';
+import { MOCK_ACCESS_TOKEN, MOCK_USER_ID, mockAuth, forgetMockAccount } from './auth';
 import { handleMockFriends } from './friends';
 import { mockPickPool } from './placePool';
 import { mockHang } from './hang';
@@ -679,13 +683,24 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   if (method === 'POST' && path === '/picks') return createPick(readBody(init));
   if (method === 'POST' && path === '/picks/join') return joinPick(readBody(init));
   if (method === 'POST' && path === '/me') return updateMe(readBody(init));
+  if (method === 'POST' && path === '/me/optional-setup') {
+    mockProfile.optionalSetupPending = false;
+    return json(200, { optionalSetupPending: false });
+  }
   if (method === 'GET' && path === '/me') {
     const { displayName, preferences, onboarded } = mockProfile;
-    return json(200, { displayName, preferences, onboarded });
+    return json(200, {
+      displayName,
+      preferences,
+      onboarded,
+      username: getMockUserProfile(MOCK_USER_ID).username,
+      optionalSetupPending: mockProfile.optionalSetupPending,
+    });
   }
   if (method === 'POST' && path === '/me/preferences') return updatePreferences(readBody(init));
   if (method === 'POST' && path === '/push-tokens') return registerPushToken(readBody(init));
   if (method === 'DELETE' && path === '/me') {
+    forgetMockAccount();
     resetOwnMockUserProfile();
     for (const [id, invite] of mockGroupInvitations)
       if (invite.inviterId === MOCK_USER_ID || invite.inviteeId === MOCK_USER_ID)

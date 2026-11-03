@@ -73,6 +73,7 @@ test('signout failures surface honestly, including after successful deletion', a
 test('mock logout clears session and emits the auth change used by navigation guards', async () => {
   const { mockAuth, MOCK_CODE } =
     jest.requireActual<typeof import('@/lib/mock/auth')>('@/lib/mock/auth');
+  await mockAuth.sendCode('settings-test@example.com', 'signup');
   await mockAuth.verifyCode('settings-test@example.com', MOCK_CODE);
   expect(await mockAuth.getSession()).not.toBeNull();
   const events: unknown[] = [];

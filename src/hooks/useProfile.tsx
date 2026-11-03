@@ -7,33 +7,45 @@ import { useAuth } from './useAuth';
 
 interface ProfileState {
   /** My display name; null until I've picked one ("what should we call you?"). */
+  username: string | null;
+  optionalSetupPending: boolean;
   displayName: string | null;
   /** My survey answers (FR-02); empty until onboarding. */
   preferences: Preferences;
-  /** True once the survey was saved or skipped; false shows onboarding. */
+  /** Legacy Discover survey status; does not gate navigation. */
   onboarded: boolean;
   /** True while the signed-in user's profile is being read. */
   loading: boolean;
-  /** True when the read failed; the app then skips the name and survey steps instead of blocking. */
+  /** True when the read failed; identity setup offers retry instead of assuming completion. */
   failed: boolean;
   /** Saves through POST /me and updates everyone reading this context. */
+  completeIdentity(name: string, username: string): Promise<void>;
+  finishOptionalSetup(): Promise<void>;
+  retry(): void;
   saveDisplayName(name: string): Promise<void>;
   /** Saves through POST /me/preferences; also finishes onboarding. */
   savePreferences(preferences: Preferences): Promise<void>;
 }
 
 const ProfileContext = createContext<ProfileState>({
+  username: null,
+  optionalSetupPending: false,
   displayName: null,
   preferences: EMPTY_PREFERENCES,
   onboarded: false,
   loading: false,
   failed: false,
+  completeIdentity: async () => {},
+  finishOptionalSetup: async () => {},
+  retry: () => {},
   saveDisplayName: async () => {},
   savePreferences: async () => {},
 });
 
 interface Loaded {
   userId: string | null;
+  username: string | null;
+  optionalSetupPending: boolean;
   displayName: string | null;
   preferences: Preferences;
   onboarded: boolean;
@@ -44,8 +56,11 @@ interface Loaded {
 export function ProfileProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
   const userId = session?.user.id ?? null;
+  const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<Loaded>({
     userId: null,
+    username: null,
+    optionalSetupPending: false,
     displayName: null,
     preferences: EMPTY_PREFERENCES,
     onboarded: false,
@@ -53,8 +68,13 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
-    if (!userId) return;
     let active = true;
+    if (!userId) {
+      void Promise.resolve().then(() => active && setState((s) => ({ ...s, userId: null })));
+      return () => {
+        active = false;
+      };
+    }
     // Like useAuth: an unreachable backend must not leave the app on a blank screen.
     const timeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('timeout')), 4000),
@@ -66,6 +86,8 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
           active &&
           setState({
             userId,
+            username: null,
+            optionalSetupPending: false,
             displayName: null,
             preferences: EMPTY_PREFERENCES,
             onboarded: false,
@@ -75,8 +97,28 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     return () => {
       active = false;
     };
-  }, [userId]);
+  }, [userId, attempt]);
 
+  const completeIdentity = useCallback(
+    async (name: string, username: string) => {
+      const saved = await api.completeIdentity(name, username);
+      setState((s) =>
+        s.userId !== userId
+          ? s
+          : {
+              ...s,
+              displayName: saved.displayName,
+              username: saved.username,
+              failed: false,
+            },
+      );
+    },
+    [userId],
+  );
+  const finishOptionalSetup = useCallback(async () => {
+    await api.finishOptionalSetup();
+    setState((s) => (s.userId !== userId ? s : { ...s, optionalSetupPending: false }));
+  }, [userId]);
   const saveDisplayName = useCallback(async (name: string) => {
     const { displayName } = await api.updateMe(name);
     setState((s) => ({ ...s, displayName, failed: false }));
@@ -89,11 +131,16 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
 
   const current = state.userId === userId;
   const value: ProfileState = {
+    username: current ? state.username : null,
+    optionalSetupPending: current && state.optionalSetupPending,
     displayName: current ? state.displayName : null,
     preferences: current ? state.preferences : EMPTY_PREFERENCES,
     onboarded: current && state.onboarded,
     loading: !!userId && !current,
     failed: current && state.failed,
+    completeIdentity,
+    finishOptionalSetup,
+    retry: () => setAttempt((n) => n + 1),
     saveDisplayName,
     savePreferences,
   };

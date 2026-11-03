@@ -1,10 +1,11 @@
 import { ApiError } from '@shared/api/errors.ts';
 import {
+  parseIdentity,
   parseProfileDetails,
   type ProfileDetailsInput,
   type UserProfile,
 } from '@shared/api/userProfiles.ts';
-import { MOCK_USER_ID } from './auth';
+import { MOCK_USER_ID, mockUsernameTaken } from './auth';
 import { mockProfile, mockBlocks } from './store';
 import { mockFriendsList } from './friends';
 import { mockAllGroupRecords } from './groups';
@@ -76,13 +77,20 @@ export function handleMockUserProfiles(method: string, path: string, body: unkno
   const target = /^\/users\/([^/]+)\/profile$/.exec(path);
   if (method === 'GET' && (path === '/me/details' || target))
     return getMockUserProfile(target ? decodeURIComponent(target[1]!) : MOCK_USER_ID);
-  if (method === 'POST' && path === '/me/details') {
-    const input = parseProfileDetails(body);
+  if (method === 'POST' && (path === '/me/details' || path === '/me/identity')) {
+    const identity = path === '/me/identity' ? parseIdentity(body) : null;
+    const input = identity
+      ? { ...(mockUserProfiles.get(MOCK_USER_ID) ?? empty()), username: identity.username }
+      : parseProfileDetails(body);
     if (
       input.username &&
-      [...mockUserProfiles].some(([id, p]) => id !== MOCK_USER_ID && p.username === input.username)
+      (mockUsernameTaken(input.username) ||
+        [...mockUserProfiles].some(
+          ([id, p]) => id !== MOCK_USER_ID && p.username === input.username,
+        ))
     )
       throw new ApiError(409, 'USERNAME_TAKEN', 'That username is already taken');
+    if (identity) mockProfile.displayName = identity.displayName;
     mockUserProfiles.set(MOCK_USER_ID, { ...mockUserProfiles.get(MOCK_USER_ID), ...input });
     return getMockUserProfile(MOCK_USER_ID);
   }

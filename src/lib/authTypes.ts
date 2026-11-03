@@ -20,12 +20,14 @@ export class AuthError extends Error {
   }
 }
 
+export type AuthMode = 'login' | 'signup';
+
 export interface AuthService {
   getSession(): Promise<AuthSession | null>;
   /** Calls `listener` whenever the session changes. Returns an unsubscribe function. */
   onChange(listener: (session: AuthSession | null) => void): () => void;
-  /** Email a 6-digit sign-in code (creates the account on first sign-in). */
-  sendCode(email: string): Promise<void>;
+  /** Only explicit signup may create an account. Defaults to login. */
+  sendCode(email: string, mode?: AuthMode): Promise<void>;
   verifyCode(email: string, code: string): Promise<AuthSession>;
   signOut(): Promise<void>;
 }
