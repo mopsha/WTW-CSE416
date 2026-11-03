@@ -166,7 +166,7 @@ Intentionally deferred:
 - [x] No ranking/retention rewrite or live Google persistent Pick-deck integration.
 - [x] No chat pagination, reactions, read receipts or typing indicators.
 
-## Manual demo smoke test (22 steps)
+## Post-merge TestFlight smoke test (22 steps)
 
 Use two real accounts/devices plus seeded eligible historical Picks; allow roughly
 20–30 minutes excluding build, delivery delays and fixture preparation.
@@ -194,7 +194,9 @@ Use two real accounts/devices plus seeded eligible historical Picks; allow rough
 21. On aged completed fixtures, answer Did you go yes/no/yes; verify Past Moves appearance/correction/privacy.
 22. Check Settings edits/permissions/blocked list, restart session, logout; delete a disposable account with confirmation and verify revoked access.
 
-Merge recommendation: automated green is necessary, not sufficient. Require current
-CI database/API green and manual core-flow smoke before approval; require external
-configuration/legal gates before public deployment. Fixture-based demo can proceed
-once its selected environment/device smoke passes with limitations stated clearly.
+Team workflow: PR → teammate approval → merge to main → TestFlight build/update →
+real-phone QA. Missing TestFlight testing does not block opening this PR in the
+absence of a known code blocker. Review code/migrations and require current CI
+database/API checks before merging; execute the smoke test on the resulting
+TestFlight build after merge. Hosted configuration and legal publication remain
+gates for public release. Fixture-based demos must state provider limitations.
