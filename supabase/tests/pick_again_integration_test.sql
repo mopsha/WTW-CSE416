@@ -16,12 +16,14 @@ begin
  values(host, former, 'accepted', now()), (host, current_member, 'accepted', now());
  g := (public.group_create(host, 'Integration') ->> 'id')::uuid;
  perform public.group_add_members(host, g, array[former]);
+ perform public.group_invitation_resolve(former,(select id from public.group_invitations where group_id=g and invitee_id=former and status='pending'),'accepted');
  old_id := (public.pick_create_options(host,
   '{"category":"custom","center":{"lat":40,"lng":-73},"radiusM":5000,"poolSize":4,"deadlineAt":null,"closeThreshold":100,"priceMax":2,"openNow":true,"includeSaved":true,"mixCategory":"activities","customOptions":[{"name":"Cards"},{"name":"Movie"},{"name":"Cookout"},{"name":"Study"}]}') ->> 'id')::uuid;
  perform public.pick_add_group(old_id, host, g);
  update public.picks set state='canceled' where id=old_id;
  perform public.group_remove_member(host, g, former);
  perform public.group_add_members(host, g, array[current_member]);
+ perform public.group_invitation_resolve(current_member,(select id from public.group_invitations where group_id=g and invitee_id=current_member and status='pending'),'accepted');
  result := public.pick_again(old_id::text, host);
  new_id := (result ->> 'id')::uuid;
  if public.pick_again(old_id::text, host) is distinct from

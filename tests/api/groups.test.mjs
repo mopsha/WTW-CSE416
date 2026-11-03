@@ -89,7 +89,19 @@ test('local groups integration', { timeout: 120_000 }, async (t) => {
       );
       const added = await api(`/groups/${groupId}/members`, owner.token, { userIds: [friend.id] });
       assert.equal(added.status, 200);
-      assert.deepEqual(added.data, { added: 1 });
+      assert.deepEqual(added.data, { invited: 1, added: 0 });
+      assert.deepEqual(await listGroups(friend), [], 'invitation does not grant membership');
+      const pending = requireStatus(
+        await request(config, '/functions/v1/api/group-invitations', { token: friend.token }),
+        200,
+        'pending invitations',
+      );
+      const invitation = pending.invitations.find((i) => i.groupId === groupId);
+      assert.ok(invitation);
+      const accepted = await api(`/group-invitations/${invitation.id}/respond`, friend.token, {
+        decision: 'accepted',
+      });
+      assert.equal(accepted.status, 200);
     } else {
       t.diagnostic('0008_friendships not applied: checking that adding fails closed');
       const closed = await api(`/groups/${groupId}/members`, owner.token, { userIds: [friend.id] });

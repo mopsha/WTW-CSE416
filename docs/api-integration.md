@@ -61,9 +61,10 @@ nothing to outsiders.
 - `POST /groups` `{ "name" }` → 201 `{ id, name, ownerId }`. Names are trimmed, 1–50 characters.
 - `POST /groups/:id/rename` `{ "name" }`, `POST /groups/:id/delete` → `{ status: "ok" }`. Owner
   only (403 `FORBIDDEN`). Deleting keeps every past Pick and result (`picks.group_id` → null).
-- `POST /groups/:id/members` `{ "userIds": [...] }` (1–25) → `{ added }`. Owner only; every id
-  must be the owner's **accepted** friend, all or nothing (403 `NOT_FRIENDS`); members are
-  skipped; 409 `GROUP_FULL` past 25 people.
+- `POST /groups/:id/members` `{ "userIds": [...] }` (1–25) → `{ invited, added: 0 }`.
+  Owner only; accepted friends only, all or nothing. Migration 0025 makes these pending
+  recipient requests; this call never adds membership. Members and duplicate pending
+  requests are skipped. Acceptance enforces the 25-member cap.
 - `POST /groups/:id/members/:userId/remove` → `{ status: "ok" }`. Owner only; idempotent; 409
   `OWNER_CANNOT_LEAVE` for the owner. `POST /groups/:id/leave`: anyone but the owner (same 409).
 - `POST /picks` accepts an optional `"groupId"`. The caller must be a member (404
@@ -803,3 +804,64 @@ lifecycle/Pick Again functions and adds authorization checks; ranking, voting,
 notifications and provider retention restrictions are unchanged. Service-only helpers
 stay in the private schema. Mock mode uses the same category, snapshot and mixing
 helpers and existing group graph.
+
+
+## Direct group invitations (0025)
+
+Direct requests now require recipient consent. Existing groups/members are unchanged.
+`group_invitations` stores UUID id/group/inviter/invitee, pending/accepted/declined
+status and created/resolved timestamps. A partial unique index allows one pending
+invite per group/recipient. Group and inviter/invitee deletion cascade these rows.
+There is no new auth system and no link-token storage duplicated in this table:
+`invite_links` remains the separate bearer join mechanism.
+
+- `POST /groups/:id/members { userIds }` creates pending invitations, never members.
+  `{ invited, added: 0 }` reports newly created rows; repeat sends reuse pending IDs
+  and return zero newly invited. Existing client helper `addGroupMembers` and SQL
+  `group_add_members` remain compatibility names with the new consent semantics.
+- `GET /group-invitations` → `{ invitations }`, only the authenticated recipient's
+  currently eligible pending requests, with group/inviter display names.
+- `GET /groups/:id/invitations` → `{ invitations }`, current owner only, pending
+  outgoing requests. Ordinary members cannot browse other people's invitations.
+- `POST /group-invitations/:id/respond { decision: 'accepted' | 'declined' }`
+  → resolved invitation. Body user IDs are ignored; the recipient is always the
+  verified caller. Unknown/foreign/ineligible requests return 404.
+
+The owner remains the only inviter (the model has owner/member roles, no admins).
+Inviter and invitee must still be accepted friends and unblocked in either direction.
+The API and RLS hide invitations after a block, friendship removal or invalid group.
+Only relevant recipient/owner rows are readable; clients cannot write or call service
+RPCs. All invitation writes lock the group before the invite, serializing concurrent
+sends, capacity checks, membership changes and duplicate response taps.
+
+Acceptance rechecks eligibility and capacity, inserts only the caller if not already
+present, and marks accepted/resolved atomically. Already joined through a bearer link
+is an idempotent no-extra-membership case. Decline records declined/resolved without
+inserting or removing membership. Repeating the same successful decision returns its
+existing result; an opposite decision returns 409 INVITE_RESOLVED. An old accepted
+invite cannot re-add someone after they leave/are removed (409). A full group returns
+409 GROUP_FULL and retains pending status; acceptance may be retried when room opens.
+Pending requests do not reserve seats. A new invitation may be sent after decline;
+it has a new ID. No expiry/revocation dashboard is introduced.
+
+Friends displays Group invitations above the Friends/Groups content, using existing
+request cards and Accept/Decline buttons. Owner group detail says Invite/Pending and
+shows an outstanding count. Existing notify()/push transport sends a generic
+`group_invite` event with only `{ inviteId }` in the inbox payload. Names are fetched
+from the protected invitation list, never embedded in lock-screen text. A per-invite
+unique index deduplicates inbox rows/pushes, including resend retries. Responding marks
+the corresponding notice read. Notice taps open Friends; stale notices have no power
+to grant membership. Pending requests remain visible if push delivery fails.
+
+Pick six-character codes and POST /picks/:id/invite are unchanged. Existing
+`wtw://i/TOKEN` bearer links still request their established join/accept path when opened;
+group links can add the opener immediately after authentication, subject to their
+existing expiry/use limits/blocking checks. This deliberate bearer-link behavior is
+distinct from sending a direct recipient invitation. Receiving a direct request never
+runs that path. Group Ideas and new group Picks remain member-only until acceptance;
+acceptance does not retroactively add anyone to existing Picks.
+
+Deploy 0025 before the updated API/client. The API calls the new `group_invite_members`
+RPC so a missing migration returns 503 rather than falling back to old immediate-add
+behavior. Mock mode shares these decisions, current graph checks, retries/capacity and
+cascades; its Weekend crew fixture demonstrates an invitation before membership.

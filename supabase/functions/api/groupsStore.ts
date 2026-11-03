@@ -5,6 +5,7 @@ import { createServiceClient } from './serviceClient.ts';
 // 0012_groups.sql raises PT4xx with a HINT naming the reason, so "not the owner"
 // and "not your friend" (both 403) map to different API codes.
 const HINTS: Record<string, ApiError> = {
+  invalid_invitees: new ApiError(400, 'INVALID_INPUT', 'Choose 1 to 25 people to invite'),
   invalid_name: new ApiError(400, 'INVALID_INPUT', 'Group names are 1 to 50 characters'),
   group_not_found: new ApiError(404, 'GROUP_NOT_FOUND', 'Group not found'),
   pick_not_found: new ApiError(404, 'PICK_NOT_FOUND', 'Pick not found'),
@@ -51,7 +52,7 @@ export function createGroupsStore(): GroupsStore {
       await rpc('group_delete', { p_user_id: userId, p_group_id: groupId });
     },
     async addMembers(userId, groupId, userIds) {
-      return (await rpc('group_add_members', {
+      return (await rpc('group_invite_members', {
         p_user_id: userId,
         p_group_id: groupId,
         p_user_ids: userIds,

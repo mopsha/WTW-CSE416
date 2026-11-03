@@ -1,3 +1,4 @@
+import type { GroupInvitation } from '@shared/api/groupInvitations.ts';
 import { GroupIdeas } from '@/components/GroupIdeas';
 // One group: Start a Pick, members, add friends (owner), recent Picks, rename/delete or leave.
 // Non-members (and removed members) get "not found": RLS returns no row.
@@ -41,6 +42,7 @@ export default function GroupScreen() {
   const session = useSession();
   const me = session.user.id;
   const [group, setGroup] = useState<GroupDetail | null | undefined>(undefined);
+  const [pendingInvites, setPendingInvites] = useState<GroupInvitation[]>([]);
   const [friends, setFriends] = useState<FriendOption[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -53,6 +55,9 @@ export default function GroupScreen() {
       const [g, f] = await Promise.all([queries.getGroup(id), queries.listMyFriends(me)]);
       setGroup(g);
       setFriends(f);
+      setPendingInvites(
+        g?.ownerId === me ? (await api.listPendingGroupInvitations(id)).invitations : [],
+      );
     } catch (e) {
       setError(messageOf(e));
     }
@@ -190,12 +195,19 @@ export default function GroupScreen() {
       {isOwner ? (
         <Card>
           <Text style={styles.heading} accessibilityRole="header">
-            Add friends
+            Invite friends
           </Text>
+          <Text style={styles.sub}>They join only after accepting your invitation.</Text>
+          {pendingInvites.length ? (
+            <Text style={styles.sub}>
+              {pendingInvites.length} pending{' '}
+              {pendingInvites.length === 1 ? 'invitation' : 'invitations'}
+            </Text>
+          ) : null}
           {toAdd.length === 0 ? (
             <Text style={styles.sub}>
               {friends.length === 0
-                ? 'Only friends can be added. Add friends on the Friends tab first.'
+                ? 'Only accepted friends can be invited. Add friends on the Friends tab first.'
                 : 'All your friends are already in this group.'}
             </Text>
           ) : (
@@ -204,15 +216,17 @@ export default function GroupScreen() {
                 <Avatar name={memberName(f)} size={40} />
                 <Text style={[styles.name, { flex: 1 }]}>{memberName(f)}</Text>
                 <Button
-                  label="Add"
+                  label={
+                    pendingInvites.some((i) => i.inviteeId === f.userId) ? 'Pending' : 'Invite'
+                  }
                   variant="secondary"
                   icon="add"
                   loading={busy === `add:${f.userId}`}
-                  disabled={busy !== null}
+                  disabled={busy !== null || pendingInvites.some((i) => i.inviteeId === f.userId)}
                   onPress={() =>
                     void run(`add:${f.userId}`, () => api.addGroupMembers(group.id, [f.userId]))
                   }
-                  accessibilityLabel={`Add ${memberName(f)} to ${group.name}`}
+                  accessibilityLabel={`Invite ${memberName(f)} to ${group.name}`}
                 />
               </View>
             ))

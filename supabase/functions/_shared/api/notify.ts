@@ -6,6 +6,7 @@
 import { ApiError } from './errors.ts';
 
 export const NOTIFICATION_TYPES = [
+  'group_invite',
   'added_to_pick',
   'pick_started',
   'reminder',
@@ -23,6 +24,10 @@ export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
  * reasons. Details are in the in-app inbox, which only the owner can read.
  */
 export const PUSH_TEXT: Readonly<Record<NotificationType, { title: string; body: string }>> = {
+  group_invite: {
+    title: 'Group invitation',
+    body: 'Someone invited you to a group. Open WTW to respond.',
+  },
   added_to_pick: { title: 'You’re in a Pick', body: 'Someone added you to a Pick.' },
   pick_started: { title: 'Time to swipe', body: 'Your Pick has started.' },
   reminder: { title: 'One hour left', body: 'You haven’t finished swiping yet.' },

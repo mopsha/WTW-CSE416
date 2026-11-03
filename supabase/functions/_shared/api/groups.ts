@@ -1,8 +1,9 @@
+import type { GroupInvitationsStore } from './groupInvitations.ts';
 // Groups (Razin, M4). Reusable groups for repeat Picks (0012_groups.sql):
 //   POST /groups                           { name } -> 201 { id, name, ownerId }
 //   POST /groups/:id/rename                { name } -> { status: 'ok' }        (owner)
 //   POST /groups/:id/delete                         -> { status: 'ok' }        (owner)
-//   POST /groups/:id/members               { userIds } -> { added }           (owner; friends only)
+//   POST /groups/:id/members               { userIds } -> { invited, added: 0 } (owner; friends only; pending requests)
 //   POST /groups/:id/members/:userId/remove         -> { status: 'ok' }        (owner)
 //   POST /groups/:id/leave                          -> { status: 'ok' }        (anyone but the owner)
 //   POST /picks                            { ...createPick, groupId? } -> 201 { pickId, state, groupId, added }
@@ -29,6 +30,7 @@ export interface GroupsStore {
   create(userId: string, name: string): Promise<GroupSummary>;
   rename(userId: string, groupId: string, name: string): Promise<void>;
   delete(userId: string, groupId: string): Promise<void>;
+  /** Compatibility name: creates pending requests; returns newly invited count, never membership. */
   addMembers(userId: string, groupId: string, userIds: string[]): Promise<number>;
   removeMember(userId: string, groupId: string, memberId: string): Promise<void>;
   leave(userId: string, groupId: string): Promise<void>;
@@ -115,9 +117,19 @@ export async function addGroupMembers(
   userId: string,
   groupId: string,
   body: unknown,
+  invitations?: GroupInvitationsStore,
+  notifier?: LifecycleStore['notifier'],
 ) {
   const id = parseId(groupId, 'group id');
-  return { added: await store.addMembers(userId, id, parseUserIds(body)) };
+  const users = parseUserIds(body);
+  const invited = await store.addMembers(userId, id, users);
+  // Retrying repairs a missed notice; notify's per-invite uniqueness prevents duplicate pushes.
+  if (invitations && notifier) {
+    const pending = await invitations.list(userId, id).catch(() => []);
+    for (const invite of pending.filter((i) => users.includes(i.inviteeId)))
+      await notifier([invite.inviteeId], 'group_invite', null, { inviteId: invite.id });
+  }
+  return { invited, added: 0 as const };
 }
 
 export async function removeGroupMember(

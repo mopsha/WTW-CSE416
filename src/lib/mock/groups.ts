@@ -1,3 +1,8 @@
+import {
+  inviteMockGroupMembers,
+  mockGroupInvitations,
+  resetMockGroupInvitations,
+} from './groupInvitations';
 import type { GroupIdea } from '@shared/api/groupIdeas.ts';
 // Groups for mock mode: the same routes, rules, shapes and error codes as the API's /groups
 // (supabase/functions/_shared/api/groups.ts + 0012_groups.sql), in memory. Ava, Ben and Cam
@@ -19,7 +24,6 @@ const NAMES = new Map<string, string>([
   [MOCK_USER_ID, 'You'],
   ...FRIENDS.map((f, i) => [FRIEND_IDS[i]!, f.name] as [string, string]),
 ]);
-const MAX_MEMBERS = 25;
 
 interface MockGroup {
   id: string;
@@ -31,6 +35,15 @@ interface MockGroup {
 
 function initial(): Map<string, MockGroup> {
   return new Map([
+    [
+      'mock-group-weekend',
+      {
+        id: 'mock-group-weekend',
+        name: 'Weekend crew',
+        ownerId: FRIEND_IDS[0]!,
+        memberIds: [FRIEND_IDS[0]!],
+      },
+    ],
     [
       'mock-group-roommates',
       {
@@ -53,6 +66,8 @@ function initial(): Map<string, MockGroup> {
 }
 
 let groups = initial();
+export const mockGroupRecord = (id: string) => groups.get(id);
+export const mockGroupPersonName = (id: string) => NAMES.get(id) ?? null;
 /** Group-scoped library; intentionally separate from immutable Pick custom options. */
 export const mockGroupIdeas = new Map<string, GroupIdea>();
 /** picks.group_id in mock form. */
@@ -64,6 +79,7 @@ export const mockGroupOfPick = (pickId: string): string | null => pickGroup.get(
 
 export function resetMockGroups() {
   groups = initial();
+  resetMockGroupInvitations();
   mockGroupIdeas.clear();
   pickGroup.clear();
 }
@@ -182,6 +198,8 @@ export function handleMockGroups(method: string, path: string, body: unknown): R
   }
   if (action === 'delete') {
     groups.delete(g.id);
+    for (const [id, invite] of mockGroupInvitations)
+      if (invite.groupId === g.id) mockGroupInvitations.delete(id);
     for (const [id, idea] of mockGroupIdeas) if (idea.groupId === g.id) mockGroupIdeas.delete(id);
     for (const [pickId, groupId] of pickGroup) if (groupId === g.id) pickGroup.delete(pickId);
     return ok({ status: 'ok' });
@@ -201,12 +219,15 @@ export function handleMockGroups(method: string, path: string, body: unknown): R
   const ids = validIds(body);
   if (!Array.isArray(ids)) return ids;
   if (!ids.every(isFriend)) return notFriends();
-  const fresh = ids.filter((id) => !g.memberIds.includes(id));
-  if (g.memberIds.length + fresh.length > MAX_MEMBERS) {
-    return fail(409, 'GROUP_FULL', `A group can have up to ${MAX_MEMBERS} people`);
+  try {
+    return ok({ invited: inviteMockGroupMembers(MOCK_USER_ID, g.id, ids), added: 0 });
+  } catch (e) {
+    return fail(
+      (e as { status: number }).status,
+      (e as { code: string }).code,
+      (e as Error).message,
+    );
   }
-  g.memberIds.push(...fresh);
-  return ok({ added: fresh.length });
 }
 
 function participant(userId: string) {

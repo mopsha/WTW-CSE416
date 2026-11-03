@@ -1,3 +1,7 @@
+import {
+  parseGroupInvitationDecision,
+  type GroupInvitationsStore,
+} from '../_shared/api/groupInvitations.ts';
 import { parseGroupIdea, type GroupIdeasStore } from '../_shared/api/groupIdeas.ts';
 import { parseId } from '../_shared/api/groups.ts';
 import { cleanupCache, type CacheCleanupStore } from '../_shared/api/cacheCleanup.ts';
@@ -95,6 +99,7 @@ export function createApp(
     friendsStore?: FriendsStore;
     profileStore?: ProfileStore;
     groupsStore?: GroupsStore;
+    groupInvitationsStore?: GroupInvitationsStore;
     groupIdeasStore?: GroupIdeasStore;
     safetyStore?: SafetyStore;
     inviteStore?: InviteStore;
@@ -509,6 +514,34 @@ export function createApp(
     await store.delete(user.id, groupId, parseId(c.req.param('ideaId'), 'idea id'));
     return c.json({ status: 'ok' });
   });
+  const groupInvitations = async (c: { req: { raw: Request } }) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.groupInvitationsStore)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Group invitations are unavailable');
+    return { user, store: deps.groupInvitationsStore };
+  };
+  app.get('/group-invitations', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await groupInvitations(c);
+    return c.json({ invitations: await store.list(user.id) });
+  });
+  app.get('/groups/:id/invitations', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await groupInvitations(c);
+    return c.json({
+      invitations: await store.list(user.id, parseId(c.req.param('id'), 'group id')),
+    });
+  });
+  app.post('/group-invitations/:id/respond', async (c) => {
+    const { user, store } = await groupInvitations(c);
+    return c.json(
+      await store.resolve(
+        user.id,
+        parseId(c.req.param('id'), 'invitation id'),
+        parseGroupInvitationDecision(await readJsonBody(c)),
+      ),
+    );
+  });
   app.post('/groups', async (c) => {
     const { user, store } = await groups(c);
     return c.json(await createGroup(store, user.id, await readJsonBody(c)), 201);
@@ -523,7 +556,16 @@ export function createApp(
   });
   app.post('/groups/:id/members', async (c) => {
     const { user, store } = await groups(c);
-    return c.json(await addGroupMembers(store, user.id, c.req.param('id'), await readJsonBody(c)));
+    return c.json(
+      await addGroupMembers(
+        store,
+        user.id,
+        c.req.param('id'),
+        await readJsonBody(c),
+        deps.groupInvitationsStore,
+        deps.lifecycleStore.notifier,
+      ),
+    );
   });
   app.post('/groups/:id/members/:userId/remove', async (c) => {
     const { user, store } = await groups(c);

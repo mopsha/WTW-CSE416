@@ -17,8 +17,10 @@ export function inboxText(n: Pick<NotificationRow, 'type' | 'payload'>): {
 }
 
 /** The Pick this row opens; null for a row about no Pick, which isn't tappable. */
-export function inboxRoute(n: Pick<NotificationRow, 'pickId'>): string | null {
-  return routeForNotification({ pickId: n.pickId });
+export function inboxRoute(
+  n: Pick<NotificationRow, 'pickId'> & Partial<Pick<NotificationRow, 'type'>>,
+): string | null {
+  return routeForNotification({ pickId: n.pickId, type: n.type });
 }
 
 /** What a screen reader says, since the unread dot and bold title are visual only. */

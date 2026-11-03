@@ -1,3 +1,4 @@
+import { createGroupInvitationsStore } from './groupInvitationsStore.ts';
 import { createGroupIdeasStore } from './groupIdeasStore.ts';
 import { createHangStore } from './hangStore.ts';
 import { createApp } from './app.ts';
@@ -58,6 +59,7 @@ const app = createApp(
     friendsStore: createFriendsStore(),
     profileStore: createProfileStore(),
     groupsStore: createGroupsStore(),
+    groupInvitationsStore: createGroupInvitationsStore(),
     groupIdeasStore: createGroupIdeasStore(),
     safetyStore: createSafetyStore(),
     inviteStore: createInviteStore(),

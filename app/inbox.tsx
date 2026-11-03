@@ -11,6 +11,7 @@ import { inboxLabel, inboxRoute, inboxText } from '@/lib/inbox';
 import { timeAgo } from '@/lib/time';
 
 const ICONS: Record<NotificationType, keyof typeof Ionicons.glyphMap> = {
+  group_invite: 'people-outline',
   added_to_pick: 'person-add-outline',
   pick_started: 'flame-outline',
   reminder: 'time-outline',

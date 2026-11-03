@@ -26,7 +26,7 @@ test('calls the 0012 RPCs with their SQL argument names', async () => {
   mockRpc.mockResolvedValue({ data: 2, error: null });
   const store = createGroupsStore();
   await store.addMembers('me', 'g1', ['a', 'b']);
-  expect(mockRpc).toHaveBeenLastCalledWith('group_add_members', {
+  expect(mockRpc).toHaveBeenLastCalledWith('group_invite_members', {
     p_user_id: 'me',
     p_group_id: 'g1',
     p_user_ids: ['a', 'b'],

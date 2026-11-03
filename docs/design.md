@@ -12,6 +12,8 @@ erDiagram
     profiles ||--o{ friendships : "has"
     profiles ||--o{ group_members : "belongs to"
     groups ||--o{ group_members : "has"
+    groups ||--o{ group_invitations : "invites with consent"
+    profiles ||--o{ group_invitations : "sends or receives"
     groups ||--o{ group_ideas : "collects unscheduled ideas"
     profiles ||--o{ group_ideas : "creates"
     groups |o--o{ picks : "started from"
@@ -543,3 +545,23 @@ neutral-center ranking semantics remain unchanged. Pick Again retains opt-in/cur
 group, reuses drafts and builds from current ideas when started. See
 [deck contract](api-integration.md#group-ideas-in-pick-decks-0024) for filter/capacity,
 snapshot and account-deletion details.
+
+
+## Recipient-controlled group invitations
+
+Direct group invites use `group_invitations` (0025) with a unique pending group/invitee
+pair and recipient-only Accept/Decline. The existing members endpoint now requests an
+invitation; existing membership rows remain intact. The API uses the service-only
+`group_invite_members`, `group_invitations_list` and `group_invitation_resolve` RPCs.
+Legacy `group_add_members` delegates to the same request implementation. Group locks
+serialize creation/acceptance and membership capacity checks; RLS permits only relevant
+owner/recipient reads and never client writes. Existing friends/block/account deletion
+rules are reused, with cascades for deleted groups or either party.
+
+The Friends tab shows incoming request cards; group detail shows outgoing Pending
+labels for owners. The existing notification transport adds a generic `group_invite`
+event, deduplicated by invitation ID, and opens Friends. No second inbox, messaging,
+roles or membership system is introduced. Accepted requests feed the existing group
+membership table, so Group Ideas and future group Picks work unchanged. Codes/bearer
+links retain their current join behavior; Pick invitations are unchanged. See the
+[direct invitation contract](api-integration.md#direct-group-invitations-0025).

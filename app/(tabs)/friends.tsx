@@ -1,3 +1,4 @@
+import { GroupInvitations } from '@/components/GroupInvitations';
 // Friends, in the live-demo style: add someone by the email they sign in with, answer requests,
 // and see who you're friends with. Every write goes through the API (src/lib/api.ts).
 // Joining a Pick still happens by code; inviting friends to a Pick comes later.
@@ -202,6 +203,11 @@ export default function FriendsScreen() {
         value={tab}
         onChange={setTab}
         label="Friends or groups"
+      />
+      <GroupInvitations
+        key={session.user.id}
+        refreshing={refreshing}
+        onAccepted={() => void load()}
       />
       {action.error ? <ErrorState message={action.error} /> : null}
       {tab === 'friends' ? (

@@ -1217,6 +1217,7 @@ const PICK = 'b0000000-0000-4000-8000-000000000001';
 const DRAFT_BODY = { category: 'food', center: { lat: 1, lng: 2 }, radiusM: 500 };
 
 function groupsWorld() {
+  const pending = new Set<string>();
   const friends = new Set([AVA, BEN]); // the owner's accepted friends
   const members = new Map<string, Set<string>>([[GROUP, new Set([OWNER])]]);
   const picks = new Map<string, { hostId: string; participants: Set<string>; canceled: boolean }>();
@@ -1240,9 +1241,9 @@ function groupsWorld() {
       if (ids.some((id) => id !== userId && !friends.has(id))) {
         throw new ApiError(403, 'NOT_FRIENDS', 'You can only add your friends');
       }
-      const before = m.size;
-      ids.forEach((id) => m.add(id));
-      return m.size - before;
+      const before = pending.size;
+      ids.filter((id) => !m.has(id)).forEach((id) => pending.add(id));
+      return pending.size - before;
     },
     removeMember: async (userId, groupId, memberId) =>
       void asOwner(userId, groupId).delete(memberId),
@@ -1304,7 +1305,10 @@ function groupsWorld() {
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-  return { post, members, picks, groupsStore };
+  const accept = (...ids: string[]) => {
+    for (const id of ids) if (pending.delete(id)) members.get(GROUP)!.add(id);
+  };
+  return { post, members, picks, groupsStore, accept };
 }
 
 Deno.test('POST /groups: 401 without a token, 400 for a bad name, 201 trimmed', async () => {
@@ -1334,22 +1338,27 @@ Deno.test('group routes: 503 when groups are not configured, after authenticatin
   }
 });
 
-Deno.test('only friends can be added to a group, and only by the owner', async () => {
-  const { post, members } = groupsWorld();
-  const stranger = await post(`/groups/${GROUP}/members`, OWNER, { userIds: [STRANGER] });
-  equal(stranger.status, 403);
-  equal((await stranger.json()).error.code, 'NOT_FRIENDS');
-  const mixed = await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA, STRANGER] });
-  equal(mixed.status, 403);
-  equal([...members.get(GROUP)!], [OWNER]); // all or nothing
-  const ok = await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA, BEN, AVA] });
-  equal(await ok.json(), { added: 2 });
-  equal((await post(`/groups/${GROUP}/members`, AVA, { userIds: [BEN] })).status, 403);
-  for (const userIds of [[], ['not-a-uuid'], undefined, Array(26).fill(AVA)]) {
-    equal((await post(`/groups/${GROUP}/members`, OWNER, { userIds })).status, 400);
-  }
-  equal((await post('/groups/not-a-uuid/members', OWNER, { userIds: [AVA] })).status, 400);
-});
+Deno.test(
+  'only owners can invite accepted friends; direct invitations do not add members',
+  async () => {
+    const { post, members, accept } = groupsWorld();
+    const stranger = await post(`/groups/${GROUP}/members`, OWNER, { userIds: [STRANGER] });
+    equal(stranger.status, 403);
+    equal((await stranger.json()).error.code, 'NOT_FRIENDS');
+    const mixed = await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA, STRANGER] });
+    equal(mixed.status, 403);
+    equal([...members.get(GROUP)!], [OWNER]); // all or nothing
+    const ok = await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA, BEN, AVA] });
+    equal(await ok.json(), { invited: 2, added: 0 });
+    equal([...members.get(GROUP)!], [OWNER]);
+    accept(AVA, BEN);
+    equal((await post(`/groups/${GROUP}/members`, AVA, { userIds: [BEN] })).status, 403);
+    for (const userIds of [[], ['not-a-uuid'], undefined, Array(26).fill(AVA)]) {
+      equal((await post(`/groups/${GROUP}/members`, OWNER, { userIds })).status, 400);
+    }
+    equal((await post('/groups/not-a-uuid/members', OWNER, { userIds: [AVA] })).status, 400);
+  },
+);
 
 Deno.test('a non-member cannot see or change a group (404, not 403)', async () => {
   const { post } = groupsWorld();
@@ -1368,8 +1377,9 @@ Deno.test('a non-member cannot see or change a group (404, not 403)', async () =
 });
 
 Deno.test('POST /picks with groupId adds every member; without it, nothing changes', async () => {
-  const { post, picks } = groupsWorld();
+  const { post, picks, accept } = groupsWorld();
   await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA, BEN] });
+  accept(AVA, BEN);
   const res = await post('/picks', OWNER, { ...DRAFT_BODY, groupId: GROUP.toUpperCase() });
   equal(res.status, 201);
   equal(await res.json(), { pickId: PICK, state: 'draft', groupId: GROUP, added: 2 });
@@ -1385,8 +1395,9 @@ Deno.test('POST /picks with groupId adds every member; without it, nothing chang
 });
 
 Deno.test('a removed member keeps past Picks but is not added to new ones', async () => {
-  const { post, picks } = groupsWorld();
+  const { post, picks, accept } = groupsWorld();
   await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA, BEN] });
+  accept(AVA, BEN);
   const first = await (await post('/picks', OWNER, { ...DRAFT_BODY, groupId: GROUP })).json();
   equal((await post(`/groups/${GROUP}/members/${BEN}/remove`, OWNER)).status, 200);
   equal(picks.get(first.pickId)!.participants.has(BEN), true);
@@ -1411,8 +1422,9 @@ Deno.test(
 );
 
 Deno.test('leave: members can, the owner cannot', async () => {
-  const { post, members } = groupsWorld();
+  const { post, members, accept } = groupsWorld();
   await post(`/groups/${GROUP}/members`, OWNER, { userIds: [AVA] });
+  accept(AVA);
   equal(await (await post(`/groups/${GROUP}/leave`, AVA)).json(), { status: 'ok' });
   equal(members.get(GROUP)!.has(AVA), false);
   const owner = await post(`/groups/${GROUP}/leave`, OWNER);
@@ -2174,5 +2186,176 @@ Deno.test(
       body: JSON.stringify({ ...body, groupId: undefined }),
     });
     equal(invalid.status, 400);
+  },
+);
+
+Deno.test(
+  'group invitation routes derive recipient from auth, validate decisions and keep private lists uncached',
+  async () => {
+    const id = 'd1111111-1111-4111-8111-111111111111';
+    const calls: unknown[][] = [];
+    const invitation = {
+      id,
+      groupId: GROUP,
+      inviterId: OWNER,
+      inviteeId: AVA,
+      status: 'pending' as const,
+      createdAt: 'now',
+      resolvedAt: null,
+      groupName: 'Crew',
+      inviterName: 'Josh',
+      inviteeName: 'Ava',
+    };
+    const invitationStore = {
+      list: async (...args: [string, string?]) => {
+        calls.push(['list', ...args]);
+        return [invitation];
+      },
+      resolve: async (...args: [string, string, 'accepted' | 'declined']) => {
+        calls.push(['resolve', ...args]);
+        return { ...invitation, status: args[2], resolvedAt: 'resolved' };
+      },
+    };
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      groupInvitationsStore: invitationStore,
+      getUser: async () => ({ id: AVA }),
+    });
+    const list = await app.request('/group-invitations');
+    equal(list.headers.get('Cache-Control'), 'private, no-store');
+    equal(list.status, 200);
+    equal(calls[0], ['list', AVA]);
+    const outgoing = await app.request(`/groups/${GROUP}/invitations`);
+    equal(outgoing.status, 200);
+    equal(calls[1], ['list', AVA, GROUP]);
+    for (const decision of ['accepted', 'declined'] as const) {
+      const res = await app.request(`/group-invitations/${id}/respond`, {
+        method: 'POST',
+        body: JSON.stringify({ decision, userId: OWNER, inviteeId: OWNER }),
+      });
+      equal(res.status, 200);
+      equal(calls.at(-1), ['resolve', AVA, id, decision]);
+    }
+    const before = calls.length;
+    for (const body of [{}, { decision: 'yes' }, null])
+      equal(
+        (
+          await app.request(`/group-invitations/${id}/respond`, {
+            method: 'POST',
+            body: JSON.stringify(body),
+          })
+        ).status,
+        400,
+      );
+    equal(
+      (
+        await app.request('/group-invitations/bad/respond', {
+          method: 'POST',
+          body: '{"decision":"accepted"}',
+        })
+      ).status,
+      400,
+    );
+    equal(calls.length, before);
+  },
+);
+Deno.test(
+  'group invitation routes preserve missing/forbidden/resolved/capacity errors and authenticate first',
+  async () => {
+    for (const status of [404, 409] as const) {
+      const app = createApp({
+        store,
+        lifecycleStore,
+        poolBuilder,
+        closingStore,
+        getUser: async () => ({ id: AVA }),
+        groupInvitationsStore: {
+          list: async () => [],
+          resolve: async () => {
+            throw new ApiError(status, 'EXPECTED', 'Unavailable');
+          },
+        },
+      });
+      equal(
+        (
+          await app.request(`/group-invitations/${GROUP}/respond`, {
+            method: 'POST',
+            body: '{"decision":"accepted"}',
+          })
+        ).status,
+        status,
+      );
+    }
+    const anon = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => {
+        throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+      },
+    });
+    for (const [path, method] of [
+      ['/group-invitations', 'GET'],
+      [`/groups/${GROUP}/invitations`, 'GET'],
+      [`/group-invitations/${GROUP}/respond`, 'POST'],
+    ])
+      equal(
+        (await anon.request(path, { method, body: method === 'POST' ? '{}' : undefined })).status,
+        401,
+      );
+  },
+);
+Deno.test(
+  'direct invite sends reuse existing notifier with invite IDs and never report added membership',
+  async () => {
+    const id = 'd1111111-1111-4111-8111-111111111111';
+    const notices: unknown[][] = [];
+    const app = createApp({
+      store,
+      poolBuilder,
+      closingStore,
+      getUser: async () => ({ id: OWNER }),
+      lifecycleStore: {
+        ...lifecycleStore,
+        notifier: async (...args) => {
+          notices.push(args);
+        },
+      },
+      groupsStore: {
+        addMembers: async (user: string, group: string, ids: string[]) => {
+          equal([user, group, ids], [OWNER, GROUP, [AVA]]);
+          return 1;
+        },
+      } as unknown as GroupsStore,
+      groupInvitationsStore: {
+        list: async () => [
+          {
+            id,
+            groupId: GROUP,
+            inviterId: OWNER,
+            inviteeId: AVA,
+            status: 'pending',
+            createdAt: 'now',
+            resolvedAt: null,
+            groupName: 'Crew',
+            inviterName: 'Josh',
+            inviteeName: 'Ava',
+          },
+        ],
+        resolve: async () => {
+          throw new Error('Unexpected resolve');
+        },
+      },
+    });
+    const response = await app.request(`/groups/${GROUP}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ userIds: [AVA] }),
+    });
+    equal(await response.json(), { invited: 1, added: 0 });
+    equal(notices, [[[AVA], 'group_invite', null, { inviteId: id }]]);
   },
 );

@@ -1,3 +1,4 @@
+import type { GroupInvitation } from '@shared/api/groupInvitations.ts';
 import type { GroupIdea, GroupIdeaInput } from '@shared/api/groupIdeas.ts';
 // Typed client for our Edge Function (`${EXPO_PUBLIC_SUPABASE_URL}/functions/v1/api`).
 // Every write goes through here with the user's access token; reads use Supabase + RLS.
@@ -174,6 +175,14 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
   const groupPath = (groupId: string) => `/groups/${encodeURIComponent(groupId)}`;
 
   return {
+    listGroupInvitations: () =>
+      request<{ invitations: GroupInvitation[] }>('GET', '/group-invitations'),
+    listPendingGroupInvitations: (groupId: string) =>
+      request<{ invitations: GroupInvitation[] }>('GET', `${groupPath(groupId)}/invitations`),
+    respondGroupInvitation: (id: string, decision: 'accepted' | 'declined') =>
+      request<GroupInvitation>('POST', `/group-invitations/${encodeURIComponent(id)}/respond`, {
+        body: { decision },
+      }),
     listGroupIdeas: (groupId: string) =>
       request<{ ideas: GroupIdea[] }>('GET', `/groups/${encodeURIComponent(groupId)}/ideas`),
     getGroupIdea: (groupId: string, id: string) =>
@@ -283,7 +292,9 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
       request<StatusResponse>('POST', `${groupPath(groupId)}/delete`),
     /** Owner only; accepted friends only (403 NOT_FRIENDS). Already-members are skipped. */
     addGroupMembers: (groupId: string, userIds: string[]) =>
-      request<{ added: number }>('POST', `${groupPath(groupId)}/members`, { body: { userIds } }),
+      request<{ invited: number; added: 0 }>('POST', `${groupPath(groupId)}/members`, {
+        body: { userIds },
+      }),
     /** Owner only. They keep past Picks; new group Picks won't include them. */
     removeGroupMember: (groupId: string, userId: string) =>
       request<StatusResponse>(

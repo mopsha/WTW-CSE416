@@ -179,3 +179,30 @@ and locationProvided=false. Client coordinates are null, distance/directions are
 hidden and Google enrichment is skipped. Ranking keeps its existing custom neutral
 zero-distance tie-break convention; no inferred/geocoded location is introduced.
 Images/uploads remain deferred. See the API contract for exact capacity/type rules.
+
+
+## Direct group invitations require consent
+
+The old owner Add action inserted group membership immediately. Migration 0025 changes
+that existing endpoint into a pending request and adds recipient Accept/Decline.
+`invite_links` is retained for shareable bearer joins; its reusable token/use-count
+model cannot represent an individually addressed request with a resolved decision.
+The new table supplies that missing state without duplicating the join-link model.
+
+Owner-only accepted-friend permissions stay unchanged. Blocked/unfriended requests
+are hidden and cannot be accepted. Accept serializes on the group and invitation,
+checks the 25-member cap, inserts exactly the recipient and resolves atomically.
+Successful retries never add another membership; a resolved accepted request cannot
+re-add a removed member. Decline never adds/removes a member. Pending requests do not
+reserve seats; capacity failures keep them pending. No expiry/revoke management UI
+is included. Group/account deletion cascades requests; existing members/Picks/history
+are untouched. An old pending request may become eligible again after friendship is
+restored; the recipient still must explicitly accept it.
+
+The API calls a newly named request RPC, so deploying it before 0025 fails closed
+instead of executing a legacy immediate-add function. Legacy group_add_members is
+also redirected for old callers. The existing notifier carries only the invite ID,
+keeps names private to the protected list, and deduplicates repeated sends. Pending
+cards live on Friends; owners see Pending in group detail. Bearer-link opens and Pick
+codes retain their existing explicit join-request behavior and caps. No Pick/swipe,
+Group Idea, auth or ranking change is part of this feature.
