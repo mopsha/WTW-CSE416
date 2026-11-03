@@ -114,9 +114,9 @@ export function OwnProfileDetails({
             />
           </View>
           <Text style={s.caption}>
-            Shares your friends count, groups count, favorites and mutual groups with accepted
-            friends. Your name, username and available avatar remain visible to friends. Discover
-            preferences stay private.
+            Shares your friends count, groups count, favorites, mutual groups and confirmed Past
+            Moves from Picks you shared with accepted friends. Your name, username and available
+            avatar remain visible to friends. Discover preferences stay private.
           </Text>
           <Button label="Save profile details" loading={busy} onPress={() => void save()} />
           <Button

@@ -1,3 +1,4 @@
+import './pastMoves_test.ts';
 import './directChat_test.ts';
 import './groupChat_test.ts';
 // Include feature route coverage in the existing CI entry point.

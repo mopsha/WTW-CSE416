@@ -1067,3 +1067,59 @@ current accepted fixture friendships/blocking, canonical pair reuse, retries, bo
 an invalidation emitter, recipient notices and deletion cleanup. It remains an in-memory
 single-user fixture environment. Verify two-device delivery/revocation/reconnect and keyboard
 behavior in development/store builds; standalone SQL cannot validate hosted sockets or push.
+
+### Past Moves from existing plans (0030)
+
+Past Moves are a bounded read projection of existing `picks`, `pick_candidates`,
+`pick_participants` and per-user `pick_outcomes`. There is no post table, duplicated history,
+new attendance flag or upload model. Deploy `0030_past_moves.sql` before the API/client: it
+adds the service-only `profile_past_moves(viewer,target,group)` projection and a partial
+attended-outcome index. Existing outcome RLS remains own-row-only; no table grants weaken.
+
+- GET `/me/past-moves?groupId=…` reads the caller's eligible records, optionally using the
+  same current-group-member filtering rule as group History.
+- GET `/users/:id/past-moves` returns `{visible,pastMoves}` for a profile. Every route derives
+  the viewer from authentication and uses private/no-store caching. Nonfriends/blocked or
+  missing profiles return 404; a friend's hidden metadata returns `{visible:false,pastMoves:[]}`.
+- A record requires a completed Pick with a frozen winner, subject participation, an explicit
+  `went=true` outcome for that subject, and the existing UI delay: at least one hour after
+  `plan_at`, or three hours after `decided_at` for an untimed Pick. A decided winner or another
+  participant's confirmation alone never creates a personal memory. Early API answers remain
+  valid under the existing outcome contract but do not qualify until this delay passes.
+- The latest 50 are ordered by stored occurrence time descending, then Pick ID. `occurredAt`
+  is plan time or untimed decision time, not proof of an exact physical completion time.
+  `confirmedAt` is the caller's last outcome-answer timestamp; it is null for friend projections.
+  Existing plan-time changes can move eligibility/date; these derived views do not create an
+  immutable schedule copy. Existing RSVP, outcome updates, Pick Again and reminders are preserved.
+
+Owner views ignore the profile-sharing flag and include remaining participant/confirmed counts.
+Friend views require accepted friendship, no block in either direction, the existing
+`share_profile_metadata` opt-in AND original participation in that same Pick. Thus sharing
+metadata never gives a friend access to a new/private plan. Friend cards omit participant
+identities, counts and response timestamps. Group ID/name appear only if the viewer is a
+current member; otherwise they are null, including after group deletion. The privacy-control
+explanation now explicitly includes confirmed Past Moves from shared Picks.
+
+Winner name/address/provenance are read from the frozen candidate, never a live Group Idea,
+place lookup or Google request. Group Idea edits/deletion therefore do not rename past events.
+Legacy Google/request-only snapshots are reduced to ID plus a generic UI title: no retained
+Google name, address or photo is displayed/hydrated by this feature. The existing conservative
+provider retention boundary remains unchanged.
+
+History keeps one card per completed Pick and adds a personal Past Move badge/date when eligible.
+A Past Moves API failure does not break normal History. Profiles show five cards initially,
+expandable within the 50-row bound. Cards open the existing Pick route, already authorized by
+original participation. `Did you go?` wording is explicitly personal, with an attendance-update
+control; an RSVP of not-going does not prevent an explicit later attendance correction.
+
+Deletion follows existing FK/trigger behavior: user attendance/profile visibility disappear;
+completed shared Picks and frozen custom/idea content survive for remaining participants.
+Group deletion clears `picks.group_id` and retains Pick history without a group label. Counts
+reflect surviving records, matching existing History. No additional attendance is inferred.
+Mock mode mirrors eligibility, projection/privacy, frozen winners, updates and own-attendance
+cleanup; its plan state remains in-memory like existing demo data.
+
+Photos are deferred: no configured bucket, upload/picker pipeline, signed media access policy
+or photo ownership model exists. The stable Pick ID is the extension point for a future
+attachment model after upload limits, access/deletion policy and provider restrictions are
+reviewed. No fake media controls, empty photo grids or public feed were added.

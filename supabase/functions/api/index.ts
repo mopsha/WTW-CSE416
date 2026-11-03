@@ -1,3 +1,4 @@
+import { createPastMovesStore } from './pastMovesStore.ts';
 import { createDirectChatStore } from './directChatStore.ts';
 import { createGroupChatStore } from './groupChatStore.ts';
 import { createUserProfilesStore } from './userProfilesStore.ts';
@@ -52,6 +53,7 @@ const app = createApp(
     cacheCleanupStore: createCacheCleanupStore(),
     notifyStore,
     plansStore: { ...createPlansStore(), notifier },
+    pastMovesStore: createPastMovesStore(),
     cronSecret: Deno.env.get('CRON_SECRET'),
     poolBuilder,
     discoverPool: placesPoolBuilder,

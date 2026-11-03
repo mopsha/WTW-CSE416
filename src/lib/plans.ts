@@ -1,3 +1,4 @@
+import { attendanceDue } from '@shared/domain/pastMoves.ts';
 // After the winner (Alan): plan-time presets, labels, and when to ask "Did you go?".
 // Pure functions so the Winner screen stays simple and these stay tested.
 import type { PlanSummary } from '@shared/api/plans.ts';
@@ -57,8 +58,7 @@ export function shouldAskDidYouGo(
   now: Date = new Date(),
 ): boolean {
   if (plan.myOutcome || plan.myRsvp === 'not_going') return false;
-  if (plan.planAt) return now.getTime() - Date.parse(plan.planAt) >= 60 * 60_000;
-  return decidedAt !== null && now.getTime() - Date.parse(decidedAt) >= 3 * 60 * 60_000;
+  return attendanceDue(plan.planAt, decidedAt, now.getTime());
 }
 
 /** "3 of 4 went", once anyone has answered. */

@@ -348,3 +348,32 @@ abstractions beyond these shared mechanics, conversation dashboard, read receipt
 replies, search, typing or reactions are introduced. Existing inbox notices and friend/profile
 Message actions provide entry points. Push continues through existing device controls with
 generic text, deduplication and best-effort delivery; device/hosted validation is still needed.
+
+## Past Moves / Memories
+
+Reuse per-user `pick_outcomes`, not a new social-post system or group-level attendance flag.
+Completed currently means the Pick chose a winner, so it is insufficient alone: a personal
+Past Move also needs explicit `went=true` and the existing attendance-prompt delay (one hour
+past a timed plan; three hours past an untimed decision). The existing API's outcome upsert
+contract and reminder schedule remain intact. Personal wording and correction controls avoid
+suggesting that one participant can mark everyone attended.
+
+History annotates its existing cards rather than duplicating plans into another history.
+Profiles use a separate protected read projection of those same rows, with no independent
+memory persistence. Sharing reuses the existing metadata opt-in AND limits friends to Picks
+they already participated in; it does not reveal unknown private plans. Group names require
+current membership, and friend projections exclude participant identities/counts and response
+receipt timestamps. Owner records remain visible with sharing off. Privacy text names this
+extension explicitly. Relationship/block authorization is checked on every API read.
+
+Frozen winner snapshots support Group Ideas/custom options and owned provider fixtures after
+library/place edits. No Google hydration or new retention permission is introduced; restricted
+legacy Google display data is omitted. Dates use stored plan/decision time, with the owner's
+last confirmation timestamp separately available. Rescheduling may change the derived date
+or temporarily hide a future plan; there is no additional immutable scheduling model.
+
+Existing account/group deletion semantics apply: remove personal attendance/visibility while
+retaining valid shared completed Picks and their snapshots for remaining participants. Photos
+are deferred because there is no configured upload/storage system. A future attachment model
+can key by Pick ID after ownership, signed access, limits and deletion rules are designed;
+there are no placeholder photo controls in this implementation.

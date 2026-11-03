@@ -650,3 +650,18 @@ availability, with matching RLS for reads/Realtime. Unfriending blocks access bu
 newly accepted friendship restores it. Deleting either account cascades the conversation and
 all linked content. Notification delivery reuses notify/inbox/Expo push, with per-message
 uniqueness and generic ID-only payloads. No Group Ideas, Pick, auth or profile privacy changes.
+
+### Past Moves (derived memories)
+
+`profile_past_moves` projects attended completed Picks using frozen winner snapshots and the
+existing per-user outcome row. No posts table, global completion flag or media subsystem is
+added. `GET /me/past-moves` and `/users/:id/past-moves` serve bounded private projections.
+History annotates the original card; profile sections show eligible cards with name/date,
+permitted location/group context and owner-only counts. Existing Pick routes open details.
+
+Owner access is independent of sharing. A friend needs accepted/unblocked status, the metadata
+sharing opt-in AND participation in that Pick. Only current group members see the group label;
+friend projections omit participant identities/counts and outcome receipt times. Existing RLS
+and account/group deletion cascades remain unchanged. The service-only projection is installed
+by migration 0030 alongside an attended-outcome index. Photos await a real storage/upload and
+media privacy/deletion design. No Google lookup is needed to render a Past Move.

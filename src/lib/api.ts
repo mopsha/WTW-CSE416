@@ -1,3 +1,4 @@
+import type { PastMovesResult } from '@shared/api/pastMoves.ts';
 import type { DirectConversation, DirectMessage, DirectHistory } from '@shared/api/directChat.ts';
 import type { GroupMessage, GroupMessageInput } from '@shared/api/groupChat.ts';
 import type { UserProfile, ProfileDetailsInput } from '@shared/api/userProfiles.ts';
@@ -427,6 +428,13 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     /** A new draft with the same people and settings; I host it. */
     pickAgain: (pickId: string) => request<CreatePickResponse>('POST', `${pickPath(pickId)}/again`),
     /** Completed Picks I was in, newest first; with a group id, that group's. */
+    getMyPastMoves: (groupId?: string) =>
+      request<PastMovesResult>(
+        'GET',
+        `/me/past-moves${groupId ? `?groupId=${encodeURIComponent(groupId)}` : ''}`,
+      ),
+    getUserPastMoves: (userId: string) =>
+      request<PastMovesResult>('GET', `/users/${encodeURIComponent(userId)}/past-moves`),
     getHistory: (groupId?: string) =>
       request<{ picks: HistoryItem[] }>(
         'GET',

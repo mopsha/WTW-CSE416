@@ -1,3 +1,4 @@
+import { PastMoves } from '@/components/PastMoves';
 import { MessageFriendButton } from '@/components/MessageFriendButton';
 import type { UserProfile } from '@shared/api/userProfiles.ts';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
@@ -54,6 +55,7 @@ export default function UserProfileScreen() {
           </View>
           {!profile.isOwner ? <MessageFriendButton userId={profile.id} /> : null}
           <UserProfileMetadata profile={profile} />
+          <PastMoves key={`${profile.id}:${profile.metadataVisible}`} userId={profile.id} />
         </View>
       ) : null}
     </Screen>

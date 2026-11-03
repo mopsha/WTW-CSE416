@@ -1,3 +1,4 @@
+import { PastMoves } from '@/components/PastMoves';
 import type { UserProfile } from '@shared/api/userProfiles.ts';
 import { OwnProfileDetails } from '@/components/OwnProfileDetails';
 import { Ionicons } from '@expo/vector-icons';
@@ -95,6 +96,7 @@ export default function ProfileScreen() {
         <ErrorState message={detailsError} onRetry={() => void loadDetails()} />
       ) : null}
       {details ? <OwnProfileDetails profile={details} onSaved={setDetails} /> : null}
+      <PastMoves key={session.user.id} userId={session.user.id} />
       <View style={styles.settings}>
         <ListRow
           title="Preferences"

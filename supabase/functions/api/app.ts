@@ -1,3 +1,4 @@
+import type { PastMovesStore } from '../_shared/api/pastMoves.ts';
 import { sendDirectMessage, type DirectChatStore } from '../_shared/api/directChat.ts';
 import { sendGroupMessage, type GroupChatStore } from '../_shared/api/groupChat.ts';
 import {
@@ -117,6 +118,7 @@ export function createApp(
     sweepStore?: SweepStore;
     notifyStore?: NotifyStore;
     plansStore?: PlansStore;
+    pastMovesStore?: PastMovesStore;
     cacheCleanupStore?: CacheCleanupStore;
     hangStore?: HangStore;
     cronSecret?: string;
@@ -434,6 +436,28 @@ export function createApp(
     // A new draft, so it counts against the same daily create limit as POST /picks.
     await deps.checkLimit?.('create', user.id);
     return c.json(await pickAgain(requirePlans(), c.req.param('id'), user.id), 201);
+  });
+  const pastMoves = async (
+    c: { req: { raw: Request; query(name: string): string | undefined } },
+    targetId?: string,
+  ) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.pastMovesStore)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Past Moves are unavailable');
+    const group = c.req.query('groupId');
+    return deps.pastMovesStore.list(
+      user.id,
+      targetId ? parseId(targetId, 'user id') : user.id,
+      group ? parseId(group, 'group id') : null,
+    );
+  };
+  app.get('/me/past-moves', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    return c.json(await pastMoves(c));
+  });
+  app.get('/users/:id/past-moves', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    return c.json(await pastMoves(c, c.req.param('id')));
   });
   app.get('/history', async (c) => {
     c.header('Cache-Control', 'private, no-store');

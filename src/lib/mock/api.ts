@@ -1,3 +1,4 @@
+import { handleMockPastMoves } from './pastMoves';
 import { handleMockDirectChat, mockDirectNotices, resetMockDirectChat } from './directChat';
 import { handleMockGroupChat, mockGroupMessages, mockGroupChatNotices } from './groupChat';
 import {
@@ -212,9 +213,23 @@ function getPick(pick: MockPick) {
 interface MockPlan {
   planAt: string | null;
   rsvps: Map<string, RsvpStatus>;
-  outcomes: Map<string, { went: boolean; again: boolean | null }>;
+  outcomes: Map<string, { went: boolean; again: boolean | null; answeredAt?: string }>;
 }
 const mockPlans = new Map<string, MockPlan>();
+export function resetMockPlanState() {
+  mockPlans.clear();
+}
+export function recordMockOutcome(
+  pickId: string,
+  userId: string,
+  went: boolean,
+  again: boolean | null = null,
+) {
+  const pick = mockPicks.get(pickId);
+  if (!pick || pick.state !== 'completed' || !pick.participants.some((p) => p.userId === userId))
+    throw new Error('Outcome requires a completed Pick participant');
+  plans(pick).outcomes.set(userId, { went, again, answeredAt: new Date().toISOString() });
+}
 /** Pick again: source Pick id -> its newest copy (one open draft at a time). */
 const againOf = new Map<string, string>();
 function plans(pick: MockPick): MockPlan {
@@ -246,7 +261,12 @@ function planOf(pick: MockPick): PlanSummary {
       didNotGo: outcomes.filter((o) => !o.went).length,
       again: outcomes.filter((o) => o.again).length,
     },
-    myOutcome: plan.outcomes.get(MOCK_USER_ID) ?? null,
+    myOutcome: plan.outcomes.has(MOCK_USER_ID)
+      ? {
+          went: plan.outcomes.get(MOCK_USER_ID)!.went,
+          again: plan.outcomes.get(MOCK_USER_ID)!.again,
+        }
+      : null,
   };
 }
 
@@ -465,10 +485,7 @@ const ROUTES: Record<string, Handler> = {
       return fail(400, 'INVALID_INPUT', 'went must be true or false');
     }
     if (pick.state !== 'completed') return wrongState('The Pick has no winner yet');
-    plans(pick).outcomes.set(MOCK_USER_ID, {
-      went,
-      again: typeof again === 'boolean' ? again : null,
-    });
+    recordMockOutcome(pick.id, MOCK_USER_ID, went, typeof again === 'boolean' ? again : null);
     return json(200, { status: 'ok' });
   },
 
@@ -665,6 +682,8 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     const error = errorResponse(e);
     return json(error.status, error.body);
   }
+  const memories = handleMockPastMoves(method, path, new URL(url).searchParams, plans);
+  if (memories) return json(memories.status, memories.body);
   const directResult = handleMockDirectChat(method, path, readBody(init));
   if (directResult) return json(directResult.status, directResult.body);
   const chatResult = handleMockGroupChat(method, path, readBody(init));
@@ -708,6 +727,10 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   if (method === 'DELETE' && path === '/me') {
     forgetMockAccount();
     resetMockDirectChat();
+    for (const plan of mockPlans.values()) {
+      plan.outcomes.delete(MOCK_USER_ID);
+      plan.rsvps.delete(MOCK_USER_ID);
+    }
     for (const [id, message] of mockGroupMessages)
       if (
         message.senderId === MOCK_USER_ID ||
