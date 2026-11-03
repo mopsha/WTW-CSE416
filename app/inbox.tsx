@@ -47,6 +47,7 @@ export default function InboxScreen() {
   const [pageError, setPageError] = useState<string | null>(null);
   // Only the newest request may update the list (a refresh can race the focus load).
   const latest = useRef(0);
+  const returningFromNotification = useRef(false);
 
   const fetchRows = useCallback(() => {
     const request = ++latest.current;
@@ -67,6 +68,13 @@ export default function InboxScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      // Stack keeps this screen/ScrollView mounted. Preserve loaded pages and
+      // position when returning from our own notification; pull-to-refresh still
+      // explicitly reloads the newest page.
+      if (returningFromNotification.current) {
+        returningFromNotification.current = false;
+        return;
+      }
       void fetchRows();
     }, [fetchRows]),
   );
@@ -108,6 +116,7 @@ export default function InboxScreen() {
       // A failed write shows as unread again on the next load; it never blocks opening the Pick.
       void api.markNotificationRead(n.id).catch(() => {});
     }
+    returningFromNotification.current = true;
     router.push(route as never);
   };
 

@@ -121,18 +121,27 @@ for an installed-client reproduction.
 
 ## Validation results
 
+GitHub CI for reviewed commit `507f91106b2a1538497a83170e7a75282117a425`
+[passed](https://github.com/mopsha/WTW-CSE416/actions/runs/41711328319).
+The completed job/step outcomes were checked directly with GitHub CLI. Both `validate`
+and `Local database and API` succeeded: Docker startup, full migration reset with seed,
+pgTAP/RLS, database concurrency, authenticated HTTP/persistence, lint, TypeScript,
+Jest, Deno and Android export. Backend deployment was correctly skipped for this PR.
+These passing results supersede the earlier local-only database limitations below.
+They do not yet include the uncommitted follow-up changes described later in this document.
+
 | Validation | Result |
 |---|---|
 | `npm run lint` | PASS |
 | `npm run typecheck` | PASS |
-| `npm test -- --ci --runInBand` | PASS: 114 suites, 864 tests |
+| `npm test -- --ci --runInBand` | PASS locally after follow-ups: 115 suites, 869 tests; baseline CI also passed |
 | `deno check --config supabase/functions/api/deno.json supabase/functions/api/index.ts` | PASS (cached local Deno 2.9.6 binary) |
 | `deno test --config supabase/functions/api/deno.json supabase/functions/api/app_test.ts` | PASS: 87 tests |
-| Ordered local migration replay | PASS for 0001–0032 except 0007, in isolated PostgreSQL 14 with minimal Supabase auth/role bootstrap. 0032 applied after the pre-fix reproduction. This is not a full Supabase replay. |
-| Full SQL suite attempted | 15 of 28 files PASS, including all Group Ideas/invitations/chat/DM and new regressions. 13 blocked at CREATE EXTENSION pgtap: local extension files unavailable; no assertion failures in runnable files. No pgTAP stubs substituted. |
-| Migration 0007 | BLOCKED: pg_cron unavailable; this migration also requires pg_net and Vault, so full Supabase migration replay remains required. |
+| Migration replay | PASS in GitHub CI: full Supabase reset through 0032 with seed, including 0007. Earlier isolated local replay excluded 0007. |
+| Full SQL suite | PASS in GitHub CI: pgTAP/RLS. Earlier local PostgreSQL ran 15 files; 13 required unavailable pgTAP. That local limitation is no longer an outstanding CI validation gap. |
+| Migration 0007 | PASS in GitHub CI with Supabase extensions. Local PostgreSQL lacks those extensions. |
 | Two-connection concurrency regressions | PASS; original functions fail as expected; corrected functions and concurrent retries pass. |
-| Docker-backed Supabase/API tests | NOT RUN: Docker executable unavailable. Hosted CI must run db reset, pgTAP/RLS and authenticated HTTP tests. Supabase CLI status also hit a sandbox telemetry-file write restriction; no hosted service accessed. |
+| Docker-backed Supabase/API tests | PASS in GitHub CI for 507f911, including concurrency and authenticated HTTP. Docker remains unavailable locally. The new pagination HTTP regression awaits the next CI run. |
 | `CI=1 expo export --platform android` | PASS; output `/private/tmp/pr42-android-final` |
 | `git diff --check` | PASS |
 
@@ -158,11 +167,13 @@ all legitimate pending invitations without team agreement. Removal is not a ban;
 retain their existing policy. No offline identity cache was introduced: a cold-start user whose
 identity cannot be confirmed stays at retry rather than bypassing required setup.
 
-PR #42 is ready for another focused review of these corrections and the proposed decisions.
-It is **not merge/release ready**: message-reporting scope and moderator operations, TestFlight
-rollout, the migration-policy exception/split, and full Docker/Supabase validation remain open.
-Refresh policy and optional same-draft recovery must be explicitly accepted as existing behavior
-or scheduled as separately approved changes; they were not silently changed here.
+PR #42 is ready for final human review of these small follow-ups, subject to renewed CI
+validation of the uncommitted changes (especially the new real HTTP pagination test).
+The prior full Docker/Supabase validation gap is closed by passing CI at 507f911.
+The documented product/deployment and migration-policy decisions still belong to the team:
+message reporting/moderation scope, TestFlight rollout, the migration exception/split, and
+accepting current refresh/cancel-recreate semantics or scheduling separately approved changes.
+This follow-up does not reopen those decisions or silently add their proposed features.
 
 ## Exact files changed
 
@@ -194,3 +205,46 @@ or scheduled as separately approved changes; they were not silently changed here
 - `tests/lib/mockGroupInvitations.test.ts`
 - `tests/notificationPaginationStore.test.ts`
 - `tests/notify.test.ts`
+
+## Small follow-ups to Michael's re-review of 507f911
+
+- **Rate event retention:** reuse the existing secret-protected `/internal/sweep` and
+  `createCacheCleanupStore` service-role maintenance adapter. After its cache RPC succeeds,
+  delete only `message_send` events older than the previous UTC day's start. This retains
+  at least 24 hours (longest quota window is one hour). Other event actions remain untouched.
+  Deletion is idempotent and runs even when the daily cache claim returns `ran: false`, so
+  a failed event cleanup retries on the next sweep. Existing sweep partial-failure handling
+  surfaces errors without discarding deadline work. No migration, schema change or new cron
+  job is needed. Tests cover cutoff/action filters, already-claimed days, failures and retries.
+- **Real HTTP pagination:** `tests/api/notifications.test.mjs` is included in `npm run test:api`.
+  It provisions local users and 101 notice fixtures through existing test helpers, then checks
+  50/50/1 page boundaries, descending chronology/UUID ties and microsecond precision,
+  no duplicates or skipped rows, inserts/read-state changes between pages, terminal cursors,
+  caller isolation and unauthenticated/malformed cursors. A cursor from another user's inbox
+  remains a position filter, never authorization. Auth-user cleanup cascades fixture notices.
+- **Inbox return:** skip only the next focus fetch after opening a notification from this
+  mounted inbox. Stack/ScrollView state, loaded pages, cursor and optimistic read state remain
+  intact on Back. Pull-to-refresh and other focus loads still work. Component regressions
+  cover page preservation, explicit refresh and retrying an initial failed load. No new
+  navigation framework or persistent inbox cache was introduced.
+- **Welcome cleanup:** RootStack already renders profile-fetch errors outside the navigator.
+  Removed its unreachable duplicate failure branch in Welcome and the redundant failed flag
+  on Save. Existing root-guard and identity form tests remain passing.
+
+Follow-up local validation: lint, TypeScript, all 115 Jest suites/869 tests, Deno typecheck
+and all 87 Deno tests pass. Android export passes (artifact: `/private/tmp/pr42-small-followups-android`).
+`git diff --check` passes. The new HTTP test was attempted but
+stopped before fixture creation because local Supabase is unavailable (Docker is absent).
+This is an environment limitation; its real-stack assertions still require the next CI run.
+The baseline passing CI result is not a claim that this newly added test has already passed.
+
+Exact files changed in this follow-up:
+
+- `app/inbox.tsx`
+- `app/welcome.tsx`
+- `docs/pr-42-review-response.md`
+- `package.json`
+- `supabase/functions/api/placeCacheStore.ts`
+- `tests/api/notifications.test.mjs`
+- `tests/components/Inbox.test.tsx`
+- `tests/placeCacheStore.test.ts`

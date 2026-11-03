@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Avatar, Button, colors, ErrorState, fonts, MIN_TARGET, Screen } from '@/components';
+import { Avatar, Button, colors, ErrorState, fonts, MIN_TARGET } from '@/components';
 import { GradientButton } from '@/components/GradientButton';
 import { useAction } from '@/hooks/useAction';
 import { useSession } from '@/hooks/useAuth';
@@ -21,29 +21,8 @@ import { suggestedName, useProfile } from '@/hooks/useProfile';
 import { auth } from '@/lib/auth';
 
 // Required identity setup for new accounts and legacy profiles missing a name or username.
+// RootStack handles profile lookup failures before mounting this route.
 export default function WelcomeScreen() {
-  const profile = useProfile();
-  const { error, run, busy } = useAction();
-  if (profile.failed)
-    return (
-      <Screen title="Complete your profile">
-        <ErrorState
-          message="Could not load your profile. Try again before continuing."
-          onRetry={profile.retry}
-        />
-        {error ? <ErrorState variant="banner" message={error} /> : null}
-        <Button
-          label="Use a different email"
-          variant="link"
-          loading={!!busy}
-          onPress={() => void run('logout', () => auth.signOut())}
-        />
-      </Screen>
-    );
-  return <IdentityForm />;
-}
-
-function IdentityForm() {
   const session = useSession();
   const profile = useProfile();
   const [username, setUsername] = useState(profile.username ?? '');
@@ -131,7 +110,7 @@ function IdentityForm() {
                 label="Save"
                 onPress={() => void save()}
                 loading={busy === 'save'}
-                disabled={!name.trim() || !username.trim() || profile.failed}
+                disabled={!name.trim() || !username.trim()}
               />
               <Text style={styles.fine}>You can change it any time on the Profile tab.</Text>
               <Button

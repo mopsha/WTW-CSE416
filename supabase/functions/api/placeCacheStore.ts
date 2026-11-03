@@ -43,6 +43,17 @@ export function createCacheCleanupStore(): CacheCleanupStore {
         p_cutoff: cutoff,
       });
       if (error) throw new Error('Cache cleanup failed');
+      // The sweep already runs as service_role. Retain at least 24 hours of
+      // message quota events (longest window: one hour), leaving daily safety
+      // actions untouched. Run even when the daily cache claim was already used,
+      // so a failed deletion can retry on the next sweep without a new RPC/schema.
+      const eventCutoff = new Date(Date.parse(`${day}T00:00:00Z`) - 86_400_000).toISOString();
+      const { error: eventError } = await createServiceClient()
+        .from('rate_limit_events')
+        .delete()
+        .eq('action', 'message_send')
+        .lt('created_at', eventCutoff);
+      if (eventError) throw new Error('Rate limit event cleanup failed');
       return data as { removed: number; ran: boolean };
     },
   };
