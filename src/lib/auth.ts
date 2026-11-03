@@ -59,7 +59,8 @@ const supabaseAuth: AuthService = {
     return session;
   },
   async signOut() {
-    await getSupabase().auth.signOut();
+    const { error } = await getSupabase().auth.signOut();
+    if (error) throw new AuthError('unknown', 'Could not sign out. Please try again.');
   },
 };
 

@@ -113,6 +113,9 @@ function RootStack() {
         <Stack.Protected guard={inApp}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="preferences" />
+          <Stack.Screen name="settings/index" />
+          <Stack.Screen name="settings/profile" />
+          <Stack.Screen name="settings/blocked" />
           <Stack.Screen name="users/[id]" />
           <Stack.Screen name="pick/new" />
           <Stack.Screen name="pick/[id]/index" options={{ animation: 'fade' }} />

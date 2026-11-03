@@ -323,6 +323,8 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     /** Host only: stop (or allow) new people joining by code or link. */
     setLobbyLocked: (pickId: string, locked: boolean) =>
       request<{ locked: boolean }>('POST', `${pickPath(pickId)}/lock`, { body: { locked } }),
+    listBlockedUsers: () =>
+      request<{ users: import('@shared/api/safety.ts').BlockedUser[] }>('GET', '/blocks'),
     blockUser: (userId: string) =>
       request<StatusResponse>('POST', `/blocks/${encodeURIComponent(userId)}`),
     unblockUser: (userId: string) =>

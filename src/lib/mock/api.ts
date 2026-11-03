@@ -29,6 +29,7 @@ import {
   mockCopyGroupMembers,
   mockCreateGroupPick,
   mockGetGroup,
+  mockGroupPersonName,
   mockGroupOfPick,
   mockGroupIdeas,
   mockInvite,
@@ -541,6 +542,13 @@ function safetyRoute(method: string, path: string, body: unknown): Response | nu
         : fail(404, 'NOT_FOUND', 'Invite not found');
     }
   }
+  if (method === 'GET' && path === '/blocks')
+    return json(200, {
+      users: [...mockBlocks].map((userId) => ({
+        userId,
+        displayName: mockGroupPersonName(userId),
+      })),
+    });
   const block = /^\/blocks\/([^/]+)(\/remove)?$/.exec(path);
   if (block && method === 'POST') {
     const userId = decodeURIComponent(block[1] ?? '');

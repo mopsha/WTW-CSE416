@@ -915,3 +915,40 @@ no public directory, username lookup, messaging or profile feed. Mock mode uses 
 same parser/projection shape, accepted friendships, current group membership and blocks.
 Its third-party friend counts reflect only known mock friendship edges, not invented
 friend lists. Apply migration 0026 before the updated API/client.
+
+## Settings and blocked-user list
+
+The authenticated `/settings` Stack page replaces Profile's partial Settings sheet.
+`/settings/profile` reuses the existing display-name API/context and metadata/privacy
+editor; `/settings/blocked` lists and unblocks users. Existing Profile shortcuts stay
+available. Display name and metadata have separate save actions, with no new profile
+schema or multi-field atomic-save claim.
+
+`GET /blocks` → `{ users: [{ userId, displayName }] }`, private/no-store, authenticates
+before reading. The service adapter filters blocks by the verified caller's blocker_id
+then resolves only those IDs' basic display names. It never returns reverse blocks,
+email, usernames, favorites or other private profile metadata. No client-supplied user
+ID selects the list. Existing POST /blocks/:userId/remove handles unblock idempotently;
+unblocking does not recreate friendships, group membership or access to friend profiles.
+No migration or RLS grant change is needed; blocks already has owner-only reads and
+service writes. Mock GET/list/unblock follows the same caller-owned shape and semantics.
+
+Notification settings expose the real inbox, permission state, explicit permission
+request/device registration, and native system-settings link. There is no server
+per-category preference model and no fake toggle. Permission granted is distinguished
+from successful push registration; failed/unavailable registration points to the inbox.
+Location shows foreground permission status, never asks permission or reads coordinates
+on entry, and offers a native settings link. Status refreshes on focus/foreground.
+Web offers informational guidance, with no unsupported native permission actions.
+
+Profile and Settings share accountActions: logout attempts push-token cleanup then uses
+the existing auth service; account deletion confirms, awaits DELETE /me, then signs out.
+Cancellation/failure never signs the user out prematurely. Duplicate actions serialize;
+SDK signout errors are surfaced. Auth changes continue through useAuth and protected
+routes. No deletion backend or auth-provider behavior was redesigned.
+
+Contacts integration, password auth, published Terms and Privacy Policy do not exist
+in this repo and are omitted. Help is local usage guidance, not a feedback submission
+service. Data & privacy information is an explicitly informational summary of the
+current inventory/controls, not fabricated legal policy. Device permission/push and
+account actions still need a native smoke test; no schema migration is required.

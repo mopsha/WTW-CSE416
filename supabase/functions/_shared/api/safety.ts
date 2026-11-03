@@ -12,7 +12,14 @@ export interface ReportInput {
 }
 
 /** Database adapter (service role). Mutations recheck everything atomically. */
+export interface BlockedUser {
+  userId: string;
+  displayName: string | null;
+}
+
 export interface SafetyStore {
+  /** Only blocks created by the verified caller; never reverse blocks or private metadata. */
+  listBlocks?(userId: string): Promise<BlockedUser[]>;
   block(userId: string, targetId: string): Promise<void>;
   unblock(userId: string, targetId: string): Promise<void>;
   /** 404 for something the reporter can't see, 429 past 10 a day. */

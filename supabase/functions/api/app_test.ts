@@ -2476,3 +2476,38 @@ Deno.test(
     );
   },
 );
+
+Deno.test(
+  'GET /blocks authenticates and lists only caller-owned basic identifiers without caching',
+  async () => {
+    const calls: string[] = [];
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => ({ id: OWNER }),
+      safetyStore: {
+        listBlocks: async (user: string) => {
+          calls.push(user);
+          return [{ userId: AVA, displayName: 'Ava' }];
+        },
+      } as unknown as SafetyStore,
+    });
+    const res = await app.request(`/blocks?userId=${AVA}`);
+    equal(res.status, 200);
+    equal(res.headers.get('Cache-Control'), 'private, no-store');
+    equal(await res.json(), { users: [{ userId: AVA, displayName: 'Ava' }] });
+    equal(calls, [OWNER]);
+    const anon = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => {
+        throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+      },
+    });
+    equal((await anon.request('/blocks')).status, 401);
+  },
+);

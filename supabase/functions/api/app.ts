@@ -617,6 +617,13 @@ export function createApp(
     const body = await readJsonBody(c);
     return c.json(await setLobbyLocked(store, c.req.param('id'), user.id, body));
   });
+  app.get('/blocks', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await safety(c);
+    if (!store.listBlocks)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Blocked-user listing is unavailable');
+    return c.json({ users: await store.listBlocks(user.id) });
+  });
   app.post('/blocks/:userId', async (c) => {
     const { user, store } = await safety(c);
     return c.json(await blockUser(store, user.id, c.req.param('userId')));

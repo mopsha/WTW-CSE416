@@ -13,16 +13,18 @@ import { UserProfileMetadata } from './UserProfileMetadata';
 export function OwnProfileDetails({
   profile,
   onSaved,
+  initiallyOpen = false,
 }: {
   profile: UserProfile;
   onSaved: (p: UserProfile) => void;
+  initiallyOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initiallyOpen);
   const [draft, setDraft] = useState<ProfileDetailsInput>({
-    username: null,
-    favoriteCuisine: null,
-    favoriteActivity: null,
-    shareMetadata: false,
+    username: profile.username,
+    favoriteCuisine: profile.favoriteCuisine,
+    favoriteActivity: profile.favoriteActivity,
+    shareMetadata: profile.shareMetadata ?? false,
   });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

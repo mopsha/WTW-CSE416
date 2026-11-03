@@ -228,3 +228,24 @@ name/preferences/settings flows and adds details/privacy editing. Username uniqu
 is enforced by PostgreSQL, with 409 conflicts and no availability enumeration endpoint.
 Nullable handles preserve compatibility, and clearing/deleting releases a handle.
 No messaging, birthdays, onboarding, follower system or photo feed is introduced.
+
+## Settings surfaces existing capabilities honestly
+
+Settings uses a protected Stack page reached from Profile, reusing existing name and
+metadata/privacy editing, notification inbox, permission APIs, unblock and account
+mutations. The only backend extension is a caller-owned blocked-list read; it returns
+basic display labels for managing one's own blocks, never private profile metadata or
+reverse blocks. No schema/RLS migration is needed.
+
+Notification permission is distinct from push registration. Both are exposed through
+real actions, with no unsupported category toggles. Location is read-only on Settings
+entry; permission requests stay attached to explicit current-location actions elsewhere.
+Foreground refresh updates permission status after returning from system settings.
+The shared account helper prevents overlapping actions, confirms deletion, preserves
+the session on failed deletion and uses the existing auth change lifecycle on signout.
+Supabase signout errors now surface rather than silently reporting success.
+
+There is no contacts integration, password-based auth, feedback backend or published
+legal text. Those controls are omitted; local Help and clearly labeled data information
+reuse existing product behavior and inventory facts. No photo editing/upload, messaging,
+onboarding or new auth mechanism is part of Settings.

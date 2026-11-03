@@ -581,3 +581,19 @@ of current memberships, never a target user's private group list. Usernames use 
 normalized database unique index; existing name/survey/onboarding APIs stay compatible.
 The same client types/parser and mock graph back mock profiles. See the
 [profile contract](api-integration.md#friend-profiles-and-metadata-privacy-0026).
+
+## Settings navigation
+
+Profile's Settings row opens the protected Stack route `settings/index`, with small
+`settings/profile` and `settings/blocked` subpages. Existing component-kit rows/cards,
+sheets and profile editor are reused; no tab or social-flow redesign is introduced.
+Permission reads are isolated from explicit permission requests and system-settings
+actions. Shared accountActions preserves push cleanup, destructive confirmation and
+the existing auth-session guard lifecycle for Profile and Settings.
+
+GET /blocks filters caller-owned blocks in the existing safety adapter and returns
+only basic blocked-user identifiers/names; unblock uses the existing mutation. No
+new table, metadata grant or deletion behavior is needed. Contacts/password controls
+and unprovided legal policies are omitted. Local help/data information explains real
+features without introducing feedback transport or legal claims. See the
+[Settings contract](api-integration.md#settings-and-blocked-user-list).
