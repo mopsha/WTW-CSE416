@@ -52,12 +52,18 @@ export function createNotifyStore(): NotifyStore {
         .in('token', tokens);
       if (error) fail(error);
     },
-    async list(userId, limit) {
-      const { data, error } = await createServiceClient()
+    async list(userId, limit, before) {
+      let query = createServiceClient()
         .from('notifications')
         .select('id, type, pick_id, payload, created_at, read_at')
-        .eq('user_id', userId)
+        .eq('user_id', userId);
+      if (before)
+        query = query.or(
+          `created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})`,
+        );
+      const { data, error } = await query
         .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
         .limit(limit);
       if (error) fail(error);
       return ((data ?? []) as Row[]).map((r) => ({

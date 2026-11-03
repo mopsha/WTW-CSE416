@@ -43,6 +43,7 @@ const ProfileContext = createContext<ProfileState>({
 });
 
 interface Loaded {
+  attempt: number;
   userId: string | null;
   username: string | null;
   optionalSetupPending: boolean;
@@ -58,6 +59,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   const userId = session?.user.id ?? null;
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<Loaded>({
+    attempt: -1,
     userId: null,
     username: null,
     optionalSetupPending: false,
@@ -81,11 +83,12 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       (_, reject) => (timer = setTimeout(() => reject(new Error('timeout')), 4000)),
     );
     Promise.race([api.getMe(), timeout])
-      .then((me) => active && setState({ userId, ...me, failed: false }))
+      .then((me) => active && setState({ attempt, userId, ...me, failed: false }))
       .catch(
         () =>
           active &&
           setState({
+            attempt,
             userId,
             username: null,
             optionalSetupPending: false,
@@ -138,7 +141,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     [userId],
   );
 
-  const current = state.userId === userId;
+  const current = state.userId === userId && state.attempt === attempt;
   const value: ProfileState = {
     username: current ? state.username : null,
     optionalSetupPending: current && state.optionalSetupPending,

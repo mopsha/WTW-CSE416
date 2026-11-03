@@ -139,3 +139,19 @@ test('anonymous and malformed decisions cannot resolve invitations', async () =>
   expect(response.status).toBe(400);
   expect(mockGetGroup(weekend)).toBeNull();
 });
+
+test('a pending invite hidden by link membership cannot resurrect a removed member', async () => {
+  await api.addGroupMembers(group, ['mock-cam']);
+  const invite = (await api.listPendingGroupInvitations(group)).invitations[0]!;
+  mockGroupRecord(group)!.memberIds.push('mock-cam'); // explicit link join
+  expect(listMockGroupInvitations(MOCK_USER_ID, group)).toHaveLength(0);
+  await api.removeGroupMember(group, 'mock-cam');
+  expect(() => resolveMockGroupInvitation('mock-cam', invite.id, 'accepted')).toThrow();
+  expect(mockGroupInvitations.get(invite.id)).toMatchObject({ status: 'declined' });
+  expect(mockGroupRecord(group)!.memberIds).not.toContain('mock-cam');
+  await api.addGroupMembers(group, ['mock-cam']);
+  const fresh = (await api.listPendingGroupInvitations(group)).invitations[0]!;
+  expect(fresh.id).not.toBe(invite.id);
+  resolveMockGroupInvitation('mock-cam', fresh.id, 'accepted');
+  expect(mockGroupRecord(group)!.memberIds).toContain('mock-cam');
+});

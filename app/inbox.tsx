@@ -4,7 +4,17 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { Card, colors, EmptyState, ErrorState, fonts, Screen, space, type } from '@/components';
+import {
+  Button,
+  Card,
+  colors,
+  EmptyState,
+  ErrorState,
+  fonts,
+  Screen,
+  space,
+  type,
+} from '@/components';
 import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
 import { inboxLabel, inboxRoute, inboxText } from '@/lib/inbox';
@@ -27,20 +37,26 @@ const ICONS: Record<NotificationType, keyof typeof Ionicons.glyphMap> = {
 
 type Load = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready' };
 
-// My newest 50 notifications (GET /notifications). Tapping one marks it read and opens its Pick.
+// Paginated inbox. Tapping a notification marks it read and opens its destination.
 export default function InboxScreen() {
   const [rows, setRows] = useState<NotificationRow[]>([]);
   const [load, setLoad] = useState<Load>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [pageError, setPageError] = useState<string | null>(null);
   // Only the newest request may update the list (a refresh can race the focus load).
   const latest = useRef(0);
 
   const fetchRows = useCallback(() => {
     const request = ++latest.current;
+    setLoadingMore(false);
+    setPageError(null);
     return api.listNotifications().then(
       (r) => {
         if (request !== latest.current) return;
         setRows(r.notifications);
+        setNextCursor(r.nextCursor ?? null);
         setLoad({ status: 'ready' });
       },
       (e: unknown) => {
@@ -58,6 +74,31 @@ export default function InboxScreen() {
   const refresh = () => {
     setRefreshing(true);
     void fetchRows().finally(() => setRefreshing(false));
+  };
+
+  const loadMore = () => {
+    if (!nextCursor || loadingMore) return;
+    const request = ++latest.current;
+    setLoadingMore(true);
+    setPageError(null);
+    void api
+      .listNotifications(nextCursor)
+      .then(
+        (r) => {
+          if (request !== latest.current) return;
+          setRows((previous) => {
+            const seen = new Set(previous.map((n) => n.id));
+            return [...previous, ...r.notifications.filter((n) => !seen.has(n.id))];
+          });
+          setNextCursor(r.nextCursor ?? null);
+        },
+        (e: unknown) => {
+          if (request === latest.current) setPageError(messageOf(e));
+        },
+      )
+      .finally(() => {
+        if (request === latest.current) setLoadingMore(false);
+      });
   };
 
   const open = (n: NotificationRow, route: string) => {
@@ -109,6 +150,16 @@ export default function InboxScreen() {
           );
         })
       )}
+      {pageError ? <ErrorState variant="banner" message={pageError} onRetry={loadMore} /> : null}
+      {nextCursor ? (
+        <Button
+          label="Load older notifications"
+          variant="secondary"
+          loading={loadingMore}
+          disabled={refreshing || load.status === 'loading'}
+          onPress={loadMore}
+        />
+      ) : null}
     </Screen>
   );
 }

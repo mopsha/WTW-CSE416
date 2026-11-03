@@ -109,7 +109,7 @@ Deno.test(
     equal((await denied.request('GET', `/conversations/${id}/messages`)).status, 401);
     equal((await denied.request('POST', `/conversations/${id}/messages`, {})).status, 401);
     equal(denied.calls, []);
-    for (const status of [404, 409, 503] as const) {
+    for (const status of [404, 409, 429, 503] as const) {
       const fail = async (): Promise<never> => {
         throw new ApiError(status, 'UNAVAILABLE', 'Unavailable');
       };

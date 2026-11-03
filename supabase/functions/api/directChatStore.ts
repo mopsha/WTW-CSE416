@@ -15,6 +15,8 @@ export function createDirectChatStore(): DirectChatStore {
       p_input: input,
     });
     if (error) {
+      if (error.code === 'PT429')
+        throw new ApiError(429, 'MESSAGE_RATE_LIMITED', 'Too many messages. Try again shortly.');
       if (error.code === 'PT404')
         throw new ApiError(
           404,

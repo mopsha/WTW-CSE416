@@ -402,9 +402,13 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     /** Decline their request, cancel mine, or unfriend. Idempotent. */
     removeFriend: (userId: string) =>
       request<StatusResponse>('POST', `/friends/${encodeURIComponent(userId)}/remove`),
-    /** My newest 50 notifications (the inbox) and how many are unread. */
-    listNotifications: () =>
-      request<{ notifications: NotificationRow[]; unreadCount: number }>('GET', '/notifications'),
+    /** A page of notifications, newest first. Older builds may omit nextCursor. */
+    listNotifications: (before?: string) =>
+      request<{
+        notifications: NotificationRow[];
+        unreadCount: number;
+        nextCursor?: string | null;
+      }>('GET', `/notifications${before ? `?before=${encodeURIComponent(before)}` : ''}`),
     markNotificationRead: (id: string) =>
       request<StatusResponse>('POST', `/notifications/${encodeURIComponent(id)}/read`),
 

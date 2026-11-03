@@ -385,11 +385,11 @@ export function createApp(
     if (!deps.profileStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Profiles are not available');
     return c.json(await updateMe(deps.profileStore, user.id, body));
   });
-  // My inbox (newest 50) and push registration. Always the verified caller's own rows.
+  // My paginated inbox (newest 50 per page) and push registration. Always the verified caller's own rows.
   app.get('/notifications', async (c) => {
     c.header('Cache-Control', 'private, no-store');
     const user = await deps.getUser(c.req.raw);
-    return c.json(await listNotifications(requireNotify(), user.id));
+    return c.json(await listNotifications(requireNotify(), user.id, c.req.query('before')));
   });
   app.post('/notifications/:id/read', async (c) => {
     const user = await deps.getUser(c.req.raw);

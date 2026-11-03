@@ -76,7 +76,10 @@ do $$ begin
 end $$;
 select 'ok 9 - leaving revokes access';
 do $$ declare r jsonb; i integer; begin
- for i in 1..55 loop perform public.group_chat('send','f0000001-2222-4222-8222-222222222222','f0000000-2222-4222-8222-222222222222',jsonb_build_object('body',i::text,'clientId','history-'||lpad(i::text,4,'0'))); end loop;
+ -- Historical page fixtures represent paced sends, not a burst. Age quota events only.
+ for i in 1..55 loop
+ update public.rate_limit_events set created_at=clock_timestamp()-interval '2 hours' where action='message_send';
+ perform public.group_chat('send','f0000001-2222-4222-8222-222222222222','f0000000-2222-4222-8222-222222222222',jsonb_build_object('body',i::text,'clientId','history-'||lpad(i::text,4,'0'))); end loop;
  r:=public.group_chat('list','f0000001-2222-4222-8222-222222222222','f0000000-2222-4222-8222-222222222222');
  if jsonb_array_length(r)<>50 or r->0->>'body'<>'6' or r->49->>'body'<>'55' then raise exception 'Unbounded/unordered history'; end if;
 end $$;

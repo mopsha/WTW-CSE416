@@ -92,7 +92,10 @@ select 'ok 9 - pending requests never restore access';
 do $$ declare r jsonb; other_id uuid; i integer; begin
  other_id:=(public.direct_chat('open','e0000001-3333-4333-8333-333333333333','e0000004-3333-4333-8333-333333333333')->>'id')::uuid;
  begin perform public.direct_chat('send','e0000001-3333-4333-8333-333333333333',other_id,'{"body":"Private hello","clientId":"request-0001"}'); raise exception 'Cross-conversation retry accepted'; exception when sqlstate 'PT409' then null; end;
- for i in 1..55 loop perform public.direct_chat('send','e0000002-3333-4333-8333-333333333333',current_setting('test.dm.id')::uuid,jsonb_build_object('body',i::text,'clientId','history-'||lpad(i::text,4,'0'))); end loop;
+ -- Historical page fixtures represent paced sends, not a burst. Age quota events only.
+ for i in 1..55 loop
+ update public.rate_limit_events set created_at=clock_timestamp()-interval '2 hours' where action='message_send';
+ perform public.direct_chat('send','e0000002-3333-4333-8333-333333333333',current_setting('test.dm.id')::uuid,jsonb_build_object('body',i::text,'clientId','history-'||lpad(i::text,4,'0'))); end loop;
  r:=public.direct_chat('list','e0000001-3333-4333-8333-333333333333',current_setting('test.dm.id')::uuid);
  if jsonb_array_length(r->'messages')<>50 or r->'messages'->0->>'body'<>'6' or r->'messages'->49->>'body'<>'55' then raise exception 'Unbounded/unordered history'; end if;
 end $$;

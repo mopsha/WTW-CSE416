@@ -108,6 +108,7 @@ Deno.test(
     for (const [status, code] of [
       [404, 'GROUP_NOT_FOUND'],
       [409, 'MESSAGE_CONFLICT'],
+      [429, 'MESSAGE_RATE_LIMITED'],
       [503, 'DATABASE_NOT_READY'],
     ] as const) {
       const fail = async (): Promise<never> => {

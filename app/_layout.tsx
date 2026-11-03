@@ -13,9 +13,11 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { Button, ErrorState, Screen } from '@/components';
 import { colors } from '@/components/theme';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { ProfileProvider, useProfile } from '@/hooks/useProfile';
+import { auth } from '@/lib/auth';
 import { configureNotifications, onNotificationTap } from '@/lib/notify';
 import { takePendingInvite } from '@/lib/pendingInvite';
 import { takePendingJoin } from '@/lib/pendingJoin';
@@ -48,8 +50,9 @@ function RootStack() {
   });
   // A font failure falls back to the system font rather than blocking the app.
   const ready = !loading && !profile.loading && (fontsLoaded || !!fontError);
-  const needsName = !!session && !hasRequiredIdentity(profile.displayName, profile.username);
-  const inApp = !!session && !needsName;
+  const needsName =
+    !!session && !profile.failed && !hasRequiredIdentity(profile.displayName, profile.username);
+  const inApp = !!session && !profile.failed && !needsName;
   const pathname = usePathname();
   const offered = useRef<string | null>(null);
   const userId = session?.user.id;
@@ -98,7 +101,24 @@ function RootStack() {
   // Keep the splash up until the stored session and fonts are loaded. Rendering the
   // guarded Stack earlier treats a signed-in user as signed out for a moment, which
   // redirects deep links (e.g. a reload on /pick/:id/swipe) back to Home.
-  if (!ready) return null;
+  if (!ready)
+    return session && !loading && profile.loading ? (
+      <Screen title="Loading your profile…">{null}</Screen>
+    ) : null;
+
+  // A failed lookup says nothing about whether identity is complete. Keep the
+  // navigator unmounted so a restored deep link is not redirected into onboarding.
+  if (session && profile.failed)
+    return (
+      <Screen title="Could not load your profile">
+        <ErrorState message="Check your connection and try again." onRetry={profile.retry} />
+        <Button
+          label="Sign out"
+          variant="link"
+          onPress={() => void auth.signOut().catch(() => {})}
+        />
+      </Screen>
+    );
 
   // Every Pick screen draws its own top bar (the demo look), so the native header is off.
   return (

@@ -230,6 +230,12 @@ export function handleMockGroups(method: string, path: string, body: unknown): R
         'The owner cannot be removed; delete the group instead',
       );
     }
+    for (const invite of mockGroupInvitations.values()) {
+      if (invite.groupId === g.id && invite.inviteeId === who && invite.status === 'pending') {
+        invite.status = 'declined';
+        invite.resolvedAt = new Date().toISOString();
+      }
+    }
     g.memberIds = g.memberIds.filter((id) => id !== who);
     return ok({ status: 'ok' });
   }

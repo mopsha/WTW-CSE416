@@ -155,7 +155,7 @@ describe('routes', () => {
       ]),
     });
     expect((await listNotifications(store, 'u')).unreadCount).toBe(1);
-    expect(store.list).toHaveBeenCalledWith('u', 50);
+    expect(store.list).toHaveBeenCalledWith('u', 51, undefined);
   });
 
   test('mark read: a malformed id is a 404 without a query', async () => {
@@ -371,4 +371,36 @@ test('direct-message push carries only the conversation route ID and generic tex
   });
   expect(message.body).toBe(PUSH_TEXT.direct_message.body);
   expect(message.data).not.toHaveProperty('messageId');
+});
+
+test('51 newer message notices cannot make an older Pick event inaccessible', async () => {
+  const rows = Array.from({ length: 52 }, (_, i) => ({
+    id: `00000000-0000-4000-8000-${(52 - i).toString().padStart(12, '0')}`,
+    type: i === 51 ? ('vote_needed' as const) : ('group_message' as const),
+    pickId: i === 51 ? 'pick' : null,
+    payload: {},
+    createdAt: '2026-11-03T12:00:00.123456+00:00',
+    readAt: null,
+  }));
+  const store = notifyStore({
+    list: jest.fn(async (_u, limit, before) =>
+      rows.filter((n) => !before || n.id < before.id).slice(0, limit),
+    ),
+  });
+  const first = await listNotifications(store, 'user');
+  expect(first.notifications).toHaveLength(50);
+  expect(first.nextCursor).toContain('.123456+00:00|');
+  const second = await listNotifications(store, 'user', first.nextCursor!);
+  expect(second.notifications.map((n) => n.type)).toEqual(['group_message', 'vote_needed']);
+  expect(second.nextCursor).toBeNull();
+  expect(new Set([...first.notifications, ...second.notifications].map((n) => n.id)).size).toBe(52);
+});
+test.each([
+  'bad',
+  '2026-11-03T12:00:00Z|bad',
+  '2026-11-03T12:00:00Z|00000000-0000-4000-8000-000000000001|attack',
+])('invalid cursor %s fails before database query', async (cursor) => {
+  const store = notifyStore();
+  await expect(listNotifications(store, 'user', cursor)).rejects.toMatchObject({ status: 400 });
+  expect(store.list).not.toHaveBeenCalled();
 });

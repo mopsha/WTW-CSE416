@@ -764,15 +764,18 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     if (!mockGetGroup(id)) return fail(404, 'GROUP_NOT_FOUND', 'Group not found');
     return json(200, { picks: historyOf().filter((p) => p.groupId === id) });
   }
-  if (method === 'GET' && path === '/notifications') {
+  if (method === 'GET' && path.split('?')[0] === '/notifications') {
+    const cursor = new URL(url).searchParams.get('before');
+    const [stamp, id] = cursor?.split('|') ?? [];
+    const all = [...mockNotifications, ...mockGroupChatNotices(), ...mockDirectNotices()]
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
+      .filter((n) => !stamp || !id || n.createdAt < stamp || (n.createdAt === stamp && n.id < id));
+    const notifications = all.slice(0, 50);
+    const last = notifications[notifications.length - 1];
     return json(200, {
-      notifications: [...mockNotifications, ...mockGroupChatNotices(), ...mockDirectNotices()]
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-        .slice(0, 50),
-      unreadCount: [...mockNotifications, ...mockGroupChatNotices(), ...mockDirectNotices()]
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-        .slice(0, 50)
-        .filter((n) => !n.readAt).length,
+      notifications,
+      unreadCount: notifications.filter((n) => !n.readAt).length,
+      nextCursor: all.length > 50 && last ? `${last.createdAt}|${last.id}` : null,
     });
   }
   const read = method === 'POST' && /^\/notifications\/([^/]+)\/read$/.exec(path);

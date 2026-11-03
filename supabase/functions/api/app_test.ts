@@ -906,7 +906,7 @@ Deno.test('notifications: always the verified caller, never a body-supplied user
   const inbox = await app.request('/notifications');
   equal(inbox.status, 200);
   equal(inbox.headers.get('cache-control'), 'private, no-store');
-  equal(await inbox.json(), { notifications: [], unreadCount: 0 });
+  equal(await inbox.json(), { notifications: [], unreadCount: 0, nextCursor: null });
   const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
   equal((await app.request(`/notifications/${id}/read`, { method: 'POST' })).status, 200);
   const token = await app.request('/push-tokens', {
