@@ -119,7 +119,13 @@ test(
               status: 'accepted',
               accepted_at: new Date().toISOString(),
             },
-            { requester_id: owner.id, addressee_id: pending.id, status: 'pending' },
+            // PostgREST bulk inserts require identical keys in every row.
+            {
+              requester_id: owner.id,
+              addressee_id: pending.id,
+              status: 'pending',
+              accepted_at: null,
+            },
           ],
         }),
         201,
