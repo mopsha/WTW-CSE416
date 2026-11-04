@@ -1,8 +1,11 @@
+import { Ionicons } from '@expo/vector-icons';
+import { SafetySheet } from './MemberMenu';
 import { SocialIdentity } from './friends/SocialRow';
 import { messageTheme } from './theme';
 import { useEffect, useRef, useState } from 'react';
 import {
   Platform,
+  Pressable,
   ActivityIndicator,
   RefreshControl,
   ScrollView,
@@ -40,6 +43,7 @@ export function MessageThread({
   inputLabel,
   group = false,
   onRefresh,
+  reportKind,
 }: {
   userId: string;
   chat: MessageThreadState;
@@ -49,8 +53,10 @@ export function MessageThread({
   placeholder: string;
   inputLabel: string;
   group?: boolean;
+  reportKind: 'group_message' | 'direct_message';
   onRefresh?: () => void | Promise<void>;
 }) {
+  const [flagged, setFlagged] = useState<{ message: Message; name: string } | null>(null);
   const [body, setBody] = useState('');
   const [inputHeight, setInputHeight] = useState(MIN_TARGET);
   const [busy, setBusy] = useState(false);
@@ -227,6 +233,17 @@ export function MessageThread({
                   <Text style={[s.timestamp, own && s.ownTime]}>{timeAgo(message.createdAt)}</Text>
                 ) : null}
               </View>
+              {!own ? (
+                <Pressable
+                  onPress={() => setFlagged({ message, name })}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Options for message from ${name}`}
+                  accessibilityHint="Report this message or block the sender"
+                  style={s.options}
+                >
+                  <Ionicons name="ellipsis-horizontal" size={18} color={colors.muted} />
+                </Pressable>
+              ) : null}
             </View>
           );
         })}
@@ -280,10 +297,25 @@ export function MessageThread({
           style={s.send}
         />
       </View>
+      {flagged ? (
+        <SafetySheet
+          onClose={() => setFlagged(null)}
+          userId={flagged.message.senderId}
+          name={flagged.name}
+          target={{ kind: reportKind, id: flagged.message.id }}
+          onBlocked={() => void chat.refresh()}
+        />
+      ) : null}
     </View>
   );
 }
 const s = StyleSheet.create({
+  options: {
+    minWidth: MIN_TARGET,
+    minHeight: MIN_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   notice: { marginHorizontal: space.md },
   context: {
     fontSize: 12,

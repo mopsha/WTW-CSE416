@@ -27,16 +27,14 @@ jest.mock('@/components', () => {
 });
 test('failed send retains the draft and retry ID, duplicate taps are ignored, success clears the draft', async () => {
   const refresh = jest.fn().mockResolvedValue(undefined);
-  jest
-    .mocked(useGroupChat)
-    .mockReturnValue({
-      messages: [],
-      loading: false,
-      error: null,
-      unavailable: false,
-      mode: 'polling',
-      refresh,
-    });
+  jest.mocked(useGroupChat).mockReturnValue({
+    messages: [],
+    loading: false,
+    error: null,
+    unavailable: false,
+    mode: 'polling',
+    refresh,
+  });
   let reject!: (error: Error) => void;
   jest.mocked(api.sendGroupMessage).mockReturnValueOnce(
     new Promise((_resolve, r) => {
@@ -47,6 +45,7 @@ test('failed send retains the draft and retry ID, duplicate taps are ignored, su
   await act(async () => {
     tree = create(<GroupChat groupId="group-1" userId="me" />);
   });
+  expect(tree.root.findAllByProps({ reportKind: 'group_message' }).length).toBeGreaterThan(0);
   await act(async () =>
     tree.root
       .findAllByProps({ accessibilityLabel: 'Group message' })[0]!

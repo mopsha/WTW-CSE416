@@ -73,6 +73,13 @@ describe('reports and blocks', () => {
         reason: 'spam',
       },
     );
+    for (const kind of ['group_message', 'direct_message']) {
+      expect(parseReport({ kind, targetId: OTHER, reason: 'Threats' })).toEqual({
+        kind,
+        targetId: OTHER,
+        reason: 'Threats',
+      });
+    }
     for (const bad of [
       null,
       [],

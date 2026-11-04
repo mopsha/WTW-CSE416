@@ -107,6 +107,9 @@ export const mockAuth: AuthService = {
     setSession(next);
     return next;
   },
+  async signInWithPassword() {
+    throw new AuthError('unknown', 'Password sign-in isn’t available in demo mode.');
+  },
   async signOut() {
     await saveCurrent();
     setSession(null);

@@ -74,3 +74,31 @@ test('temporary errors use a neutral header and recovery restores the actual pee
   expect(tree.root.findByType(SocialIdentity).props.name).toBe('Ava');
   await act(async () => tree.unmount());
 });
+
+test('header action slot remains separate from identity navigation', async () => {
+  const profile = jest.fn();
+  const action = jest.fn();
+  const { Pressable } = jest.requireActual('react-native');
+  let tree: any;
+  await act(async () => {
+    tree = create(
+      <ConversationHeader
+        name="Ava"
+        onPress={profile}
+        right={
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Peer options"
+            onPress={action}
+          />
+        }
+      />,
+    );
+  });
+  await act(async () =>
+    tree.root.findByProps({ accessibilityLabel: 'Peer options' }).props.onPress(),
+  );
+  expect(action).toHaveBeenCalledTimes(1);
+  expect(profile).not.toHaveBeenCalled();
+  await act(async () => tree.unmount());
+});

@@ -1,6 +1,7 @@
 import { ConversationHeader } from '@/components/ConversationHeader';
 import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import { GroupChat } from '@/components/GroupChat';
+import { MemberMenu } from '@/components/MemberMenu';
 import { Segments } from '@/components/TabUi';
 import type { GroupInvitation } from '@shared/api/groupInvitations.ts';
 import { GroupIdeas } from '@/components/GroupIdeas';
@@ -269,6 +270,13 @@ export default function GroupScreen() {
                   <Text style={styles.name}>{m.userId === me ? 'You' : memberName(m)}</Text>
                   {m.role === 'owner' ? <Text style={styles.sub}>Owner</Text> : null}
                 </View>
+                {m.userId !== me ? (
+                  <MemberMenu
+                    userId={m.userId}
+                    name={memberName(m)}
+                    onBlocked={() => void load()}
+                  />
+                ) : null}
                 {isOwner && m.role !== 'owner' ? (
                   <Pressable
                     onPress={async () => {

@@ -1,3 +1,4 @@
+import { MemberMenu } from '@/components/MemberMenu';
 import { useLocalSearchParams } from 'expo-router';
 import { Screen } from '@/components';
 import { ConversationHeader } from '@/components/ConversationHeader';
@@ -16,6 +17,15 @@ function Conversation({ id, userId }: { id: string; userId: string }) {
   return (
     <Screen scroll={false} contentStyle={{ padding: 0, paddingBottom: 0, gap: 0 }}>
       <ConversationHeader
+        right={
+          peer ? (
+            <MemberMenu
+              userId={peer.id}
+              name={peer.displayName ?? 'WTW friend'}
+              onBlocked={() => void chat.refresh()}
+            />
+          ) : undefined
+        }
         name={
           peer
             ? peer.displayName || (peer.username ? `@${peer.username}` : 'WTW friend')
@@ -34,6 +44,7 @@ function Conversation({ id, userId }: { id: string; userId: string }) {
         emptyText="No messages yet. Say hello to your friend."
         placeholder="Message your friend…"
         inputLabel="Direct message"
+        reportKind="direct_message"
       />
     </Screen>
   );

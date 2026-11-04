@@ -22,6 +22,7 @@ export function GroupChat({
       emptyText="No messages yet. Say hello to your group."
       placeholder="Message your group…"
       inputLabel="Group message"
+      reportKind="group_message"
     />
   );
 }

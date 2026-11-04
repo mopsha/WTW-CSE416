@@ -1,3 +1,5 @@
+import { api } from '@/lib/api';
+import { confirmAction } from '@/lib/confirm';
 import React from 'react';
 import DirectMessageScreen from '../../app/messages/[id]';
 import { useDirectChat } from '@/hooks/useDirectChat';
@@ -9,12 +11,21 @@ jest.mock('@/components', () => ({
   Screen: ({ children }: { children: React.ReactNode }) => children,
 }));
 jest.mock('@/components/ConversationHeader', () => ({
-  ConversationHeader: (p: object) => jest.requireActual('react').createElement('test-header', p),
+  ConversationHeader: (p: { right?: React.ReactNode }) =>
+    jest.requireActual('react').createElement('test-header', p, p.right),
 }));
 jest.mock('@/components/MessageThread', () => ({
   MessageThread: (p: object) => jest.requireActual('react').createElement('test-thread', p),
 }));
-jest.mock('@/lib/api', () => ({ api: { sendDirectMessage: jest.fn() } }));
+jest.mock('@/lib/api', () => ({
+  api: { sendDirectMessage: jest.fn(), report: jest.fn(), blockUser: jest.fn() },
+}));
+jest.mock('@/lib/confirm', () => ({ confirmAction: jest.fn() }));
+jest.mock('@/components/HostMenu', () => ({
+  menuStyles: {},
+  MenuItem: (props: object) => jest.requireActual('react').createElement('test-item', props),
+}));
+jest.mock('@/components/ErrorBanner', () => ({ ErrorBanner: () => null }));
 const base: ReturnType<typeof useDirectChat> = {
   conversation: null,
   messages: [],
@@ -37,6 +48,7 @@ test.each([
     await act(async () => {
       tree = create(<DirectMessageScreen />);
     });
+    expect(tree.root.findByType('test-header').props.right).toBeUndefined();
     expect(tree.root.findByType('test-header').props.name).toBeUndefined();
     expect(tree.root.findByType('test-header').props.loading).toBe(headerLoading);
     expect(tree.root.findByType('test-header').props.unavailable).toBe(unavailable);
@@ -58,8 +70,52 @@ test('a verified peer retains their actual identity and messages remain availabl
   await act(async () => {
     tree = create(<DirectMessageScreen />);
   });
+  expect(tree.root.findByType('test-thread').props.reportKind).toBe('direct_message');
   expect(tree.root.findByType('test-header').props.name).toBe('Ava');
   expect(tree.root.findByType('test-header').props.subtitle).toBe('@ava');
   expect(tree.root.findByType('test-thread').props.chat.unavailable).toBe(false);
+  await act(async () => tree.unmount());
+});
+
+test('verified direct-chat peer menu reports and blocks the peer, then refreshes access', async () => {
+  const refresh = jest.fn().mockResolvedValue(undefined);
+  jest
+    .mocked(useDirectChat)
+    .mockReturnValue({
+      ...base,
+      loading: false,
+      refresh,
+      conversation: {
+        id: 'conversation',
+        createdAt: '2026-11-03',
+        peer: { id: 'friend', displayName: 'Ava', username: 'ava', avatarUrl: null },
+      },
+    });
+  jest.mocked(api.report).mockResolvedValue({ status: 'ok' });
+  jest.mocked(api.blockUser).mockResolvedValue({ status: 'ok' });
+  jest.mocked(confirmAction).mockResolvedValue(true);
+  let tree: any;
+  await act(async () => {
+    tree = create(<DirectMessageScreen />);
+  });
+  const trigger = () =>
+    tree.root
+      .findAllByProps({ accessibilityLabel: 'Options for Ava' })
+      .find((n: any) => typeof n.props.onPress === 'function');
+  const item = (label: string) =>
+    tree.root.findAllByType('test-item').find((n: any) => n.props.label === label);
+  await act(async () => trigger().props.onPress());
+  await act(async () => item('Report').props.onPress());
+  await act(async () => item('Spam or a fake account').props.onPress());
+  expect(api.report).toHaveBeenCalledWith({
+    kind: 'user',
+    targetId: 'friend',
+    reason: 'Spam or a fake account',
+  });
+  await act(async () => item('Thanks. We’ll look into Ava.').props.onPress());
+  await act(async () => trigger().props.onPress());
+  await act(async () => item('Block').props.onPress());
+  expect(api.blockUser).toHaveBeenCalledWith('friend');
+  expect(refresh).toHaveBeenCalledTimes(1);
   await act(async () => tree.unmount());
 });

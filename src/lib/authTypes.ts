@@ -29,5 +29,7 @@ export interface AuthService {
   /** Only explicit signup may create an account. Defaults to login. */
   sendCode(email: string, mode?: AuthMode): Promise<void>;
   verifyCode(email: string, code: string): Promise<AuthSession>;
+  /** Only the App Store review account has a password. */
+  signInWithPassword(email: string, password: string): Promise<AuthSession>;
   signOut(): Promise<void>;
 }

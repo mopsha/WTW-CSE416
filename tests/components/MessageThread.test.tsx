@@ -28,6 +28,7 @@ const base: MessageThreadState = {
 };
 const props = {
   userId: 'me',
+  reportKind: 'direct_message' as const,
   title: 'Direct chat',
   emptyText: 'No messages yet.',
   placeholder: 'Message…',

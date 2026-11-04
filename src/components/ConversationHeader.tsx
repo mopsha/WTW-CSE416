@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { SocialIdentity } from './friends/SocialRow';
 import { router } from 'expo-router';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -10,6 +11,7 @@ export function ConversationHeader({
   onPress,
   loading = false,
   unavailable = false,
+  right,
 }: {
   name?: string;
   uri?: string | null;
@@ -17,6 +19,7 @@ export function ConversationHeader({
   onPress?: () => void;
   loading?: boolean;
   unavailable?: boolean;
+  right?: ReactNode;
 }) {
   const identity = (
     <>
@@ -60,6 +63,7 @@ export function ConversationHeader({
       ) : (
         <View style={s.identity}>{identity}</View>
       )}
+      {right}
     </View>
   );
 }
