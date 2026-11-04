@@ -1,17 +1,26 @@
 """Photo CAS and deletion races on a disposable migrated PostgreSQL database.
 
-Uses metadata-only Storage fixtures, never real uploaded objects. Actual Storage
-authorization and physical deletion require tests/api/avatars.test.mjs.
+Creates real small Storage fixtures through the local Storage API, and removes
+them through that API. Broader authorization tests live in tests/api/avatars.test.mjs.
 """
 import argparse
 import concurrent.futures
 import subprocess
 import time
 import uuid
+from pathlib import Path
+from urllib.parse import urlparse
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--dsn', required=True)
 args = parser.parse_args()
+# Match localConfig's fixed loopback API: never mix a hosted DB with local Storage.
+parsed_dsn = urlparse(args.dsn)
+if (parsed_dsn.scheme not in ('postgres', 'postgresql')
+        or parsed_dsn.hostname not in ('localhost', '127.0.0.1')
+        or parsed_dsn.port != 54322 or parsed_dsn.path != '/postgres'
+        or parsed_dsn.query or parsed_dsn.fragment):
+    parser.error('Expected disposable local Supabase PostgreSQL on port 54322')
 base = ['psql', args.dsn, '-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1']
 user = str(uuid.uuid4())
 paths = [f'{user}/{uuid.uuid4()}.jpg' for _ in range(2)]
@@ -24,12 +33,23 @@ def query(sql, check=True):
     return result
 
 
+def storage_fixtures(action):
+    helper = Path(__file__).with_name('avatar_storage_fixtures.mjs')
+    result = subprocess.run(['node', str(helper), action, *paths],
+                            text=True, capture_output=True, timeout=45)
+    if result.returncode:
+        raise AssertionError(result.stderr)
+
+
+user_created = False
+storage_started = False
 try:
     query(f"""
       insert into auth.users(id,raw_user_meta_data) values('{user}','{{"display_name":"Photo race"}}');
-      insert into storage.objects(bucket_id,name) values
-        ('profile-photos','{paths[0]}'),('profile-photos','{paths[1]}');
     """)
+    user_created = True
+    storage_started = True  # Also clean up if only the first upload succeeds.
+    storage_fixtures('create')
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(query,
             f"set role service_role; select public.avatar_change('{user}',0,'{path}');", False)
@@ -69,6 +89,14 @@ try:
     assert query(f"select avatar_path from public.profiles where id='{user}';").stdout.strip() == active
     print('PASS concurrent replacements: one winner; deletion race: no late mutation or photo read')
 finally:
-    # Only metadata fixtures inserted above, with no backing uploaded binaries.
-    query(f"delete from storage.objects where bucket_id='profile-photos' and name in ('{paths[0]}','{paths[1]}'); "
-          f"delete from auth.users where id='{user}';")
+    # Separate connections require committed fixtures, so one enclosing rollback
+    # cannot clean this test. Remove binaries and metadata through Storage instead.
+    try:
+        if storage_started:
+            storage_fixtures('remove')
+            remaining = query(f"select count(*) from storage.objects where bucket_id='profile-photos' "
+                              f"and name in ('{paths[0]}','{paths[1]}');").stdout.strip()
+            assert remaining == '0', 'Storage fixture metadata remained after API cleanup'
+    finally:
+        if user_created:
+            query(f"delete from auth.users where id='{user}';")
