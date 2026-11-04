@@ -56,9 +56,21 @@ test('loading and unavailable headers contain no invented identity and retain ba
     .findAllByType(View)
     .find((node: any) => StyleSheet.flatten(node.props.style)?.minHeight === 60);
   expect(StyleSheet.flatten(header.props.style).paddingHorizontal).toBe(space.md);
-  await act(async () => tree.update(<ConversationHeader />));
+  await act(async () => tree.update(<ConversationHeader unavailable />));
   expect(tree.root.findAllByType(SocialIdentity)).toHaveLength(0);
   expect(JSON.stringify(tree.toJSON())).toContain('Conversation unavailable');
   expect(JSON.stringify(tree.toJSON())).not.toContain('WTW friend');
+  await act(async () => tree.unmount());
+});
+
+test('temporary errors use a neutral header and recovery restores the actual peer', async () => {
+  let tree: any;
+  await act(async () => {
+    tree = create(<ConversationHeader />);
+  });
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Conversation unavailable');
+  expect(tree.root.findAllByType(SocialIdentity)).toHaveLength(0);
+  await act(async () => tree.update(<ConversationHeader name="Ava" />));
+  expect(tree.root.findByType(SocialIdentity).props.name).toBe('Ava');
   await act(async () => tree.unmount());
 });

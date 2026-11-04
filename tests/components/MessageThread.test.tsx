@@ -129,9 +129,13 @@ test.each([
   },
 );
 
-test.each(['Next message', 'First message'])(
+test.each([
+  ['Next message', 'Next message'],
+  ['First message there', ' there'],
+  ['First message', ''],
+])(
   'sending keeps focus eligibility and preserves an edited next draft: %s',
-  async (nextDraft) => {
+  async (nextDraft, expected) => {
     let finish!: () => void;
     props.onSend.mockReturnValueOnce(
       new Promise<void>((resolve) => {
@@ -148,7 +152,7 @@ test.each(['Next message', 'First message'])(
     expect(tree.root.findByType(TextInput).props.editable).toBe(true);
     await act(async () => tree.root.findByType(TextInput).props.onChangeText(nextDraft));
     await act(async () => finish());
-    expect(tree.root.findByType(TextInput).props.value).toBe(nextDraft);
+    expect(tree.root.findByType(TextInput).props.value).toBe(expected);
     await act(async () => tree.unmount());
     props.onSend.mockClear();
   },
@@ -205,4 +209,87 @@ test('chat notices have their own inset without narrowing the history', async ()
     StyleSheet.flatten(tree.root.findByType(ScrollView).props.style).marginHorizontal,
   ).toBeUndefined();
   await act(async () => tree.unmount());
+});
+
+test('success clears an unchanged draft and releases sending before history finishes', async () => {
+  let historyDone!: () => void;
+  const refresh = jest.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        historyDone = resolve;
+      }),
+  );
+  props.onSend.mockClear();
+  props.onSend.mockResolvedValue(undefined);
+  let tree: any;
+  await act(async () => {
+    tree = create(<MessageThread {...props} chat={{ ...base, refresh }} />);
+  });
+  await act(async () => tree.root.findByType(TextInput).props.onChangeText('First'));
+  await act(async () => tree.root.findByType('test-button').props.onPress());
+  expect(tree.root.findByType(TextInput).props.value).toBe('');
+  expect(tree.root.findByType('test-button').props.loading).toBe(false);
+  await act(async () => tree.root.findByType(TextInput).props.onChangeText('Second'));
+  await act(async () => tree.root.findByType('test-button').props.onPress());
+  expect(props.onSend).toHaveBeenCalledTimes(2);
+  expect(props.onSend.mock.calls[0][0].clientId).not.toBe(props.onSend.mock.calls[1][0].clientId);
+  await act(async () => historyDone());
+  await act(async () => tree.unmount());
+  props.onSend.mockClear();
+});
+
+test('failed delivery preserves appended text and unchanged retries retain their ID', async () => {
+  let fail!: (e: Error) => void;
+  props.onSend.mockClear();
+  props.onSend.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        fail = reject;
+      }),
+  );
+  const tree = await mount();
+  await act(async () => tree.root.findByType(TextInput).props.onChangeText('Hello'));
+  await act(async () => tree.root.findByType('test-button').props.onPress());
+  await act(async () => tree.root.findByType(TextInput).props.onChangeText('Hello there'));
+  await act(async () => fail(new Error('Offline')));
+  expect(tree.root.findByType(TextInput).props.value).toBe('Hello there');
+  await act(async () => tree.root.findByType(TextInput).props.onChangeText('Hello'));
+  props.onSend.mockResolvedValueOnce(undefined);
+  await act(async () => tree.root.findByType('test-button').props.onPress());
+  expect(props.onSend.mock.calls[1][0].clientId).toBe(props.onSend.mock.calls[0][0].clientId);
+  await act(async () => tree.unmount());
+  props.onSend.mockClear();
+});
+
+test('a late refresh rejection after unmount is handled independently of delivery', async () => {
+  let fail!: (e: Error) => void;
+  props.onSend.mockResolvedValueOnce(undefined);
+  const refresh = () =>
+    new Promise<void>((_resolve, reject) => {
+      fail = reject;
+    });
+  const tree = await mount({ ...base, refresh });
+  await act(async () => tree.root.findByType(TextInput).props.onChangeText('Hello'));
+  await act(async () => tree.root.findByType('test-button').props.onPress());
+  await act(async () => tree.unmount());
+  await act(async () => fail(new Error('Offline')));
+  props.onSend.mockClear();
+});
+
+test('delivery completing after unmount does not start history reconciliation', async () => {
+  let finish!: () => void;
+  props.onSend.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const refresh = jest.fn(async () => {});
+  const tree = await mount({ ...base, refresh });
+  await act(async () => tree.root.findByType(TextInput).props.onChangeText('Hello'));
+  await act(async () => tree.root.findByType('test-button').props.onPress());
+  await act(async () => tree.unmount());
+  await act(async () => finish());
+  expect(refresh).not.toHaveBeenCalled();
+  props.onSend.mockClear();
 });

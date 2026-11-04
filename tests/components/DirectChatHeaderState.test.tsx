@@ -39,22 +39,21 @@ test.each([
     });
     expect(tree.root.findByType('test-header').props.name).toBeUndefined();
     expect(tree.root.findByType('test-header').props.loading).toBe(headerLoading);
+    expect(tree.root.findByType('test-header').props.unavailable).toBe(unavailable);
     expect(tree.root.findByType('test-thread').props.chat.unavailable).toBe(true);
     await act(async () => tree.unmount());
   },
 );
 test('a verified peer retains their actual identity and messages remain available', async () => {
-  jest
-    .mocked(useDirectChat)
-    .mockReturnValue({
-      ...base,
-      loading: false,
-      conversation: {
-        id: 'conversation',
-        createdAt: '2026-11-03',
-        peer: { id: 'friend', displayName: 'Ava', username: 'ava', avatarUrl: null },
-      },
-    });
+  jest.mocked(useDirectChat).mockReturnValue({
+    ...base,
+    loading: false,
+    conversation: {
+      id: 'conversation',
+      createdAt: '2026-11-03',
+      peer: { id: 'friend', displayName: 'Ava', username: 'ava', avatarUrl: null },
+    },
+  });
   let tree: any;
   await act(async () => {
     tree = create(<DirectMessageScreen />);

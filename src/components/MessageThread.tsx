@@ -56,7 +56,7 @@ export function MessageThread({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pending = useRef(false);
-  const draftVersion = useRef(0);
+  const draft = useRef('');
   const [refreshing, setRefreshing] = useState(false);
   const refreshingPending = useRef(false);
   const mounted = useRef(true);
@@ -74,9 +74,10 @@ export function MessageThread({
     pending.current = true;
     setBusy(true);
     setError(null);
-    const submittedVersion = draftVersion.current;
+    const submittedDraft = draft.current;
+    let delivered = false;
     try {
-      const text = body.trim();
+      const text = submittedDraft.trim();
       if (!attempt.current || attempt.current.body !== text)
         attempt.current = {
           body: text,
@@ -85,20 +86,35 @@ export function MessageThread({
       const input = parseMessage(attempt.current);
       await onSend(input);
       attempt.current = null;
-      // Keep the keyboard and allow the next draft while this send is pending.
-      if (draftVersion.current === submittedVersion) {
-        setBody('');
-        setInputHeight(MIN_TARGET);
+      delivered = true;
+      if (mounted.current) {
+        // Only remove the delivered prefix; a rewritten draft belongs to the user.
+        const remaining = draft.current.startsWith(submittedDraft)
+          ? draft.current.slice(submittedDraft.length)
+          : draft.current;
+        draft.current = remaining;
+        setBody(remaining);
+        if (!remaining) setInputHeight(MIN_TARGET);
+        atBottom.current = true;
       }
-      atBottom.current = true;
-      await chat.refresh();
     } catch (e) {
-      setError(messageOf(e));
+      if (mounted.current) setError(messageOf(e));
     } finally {
       pending.current = false;
-      setBusy(false);
+      if (mounted.current) setBusy(false);
+    }
+    // Delivery is complete: history reconciliation must not hold the send lock.
+    if (delivered && mounted.current) {
+      void Promise.resolve()
+        .then(() => {
+          if (mounted.current) return chat.refresh();
+        })
+        .catch((e) => {
+          if (mounted.current) setError(messageOf(e));
+        });
     }
   }
+
   async function refresh() {
     if (refreshingPending.current) return;
     refreshingPending.current = true;
@@ -106,7 +122,9 @@ export function MessageThread({
     setError(null);
     try {
       const results = await Promise.allSettled([
-        Promise.resolve().then(() => chat.refresh()),
+        Promise.resolve().then(() => {
+          if (mounted.current) return chat.refresh();
+        }),
         Promise.resolve().then(() => onRefresh?.()),
       ]);
       const failed = results.find((result) => result.status === 'rejected');
@@ -224,7 +242,7 @@ export function MessageThread({
             style={[s.input, { height: inputHeight }]}
             value={body}
             onChangeText={(value) => {
-              draftVersion.current++;
+              draft.current = value;
               setBody(value);
             }}
             multiline

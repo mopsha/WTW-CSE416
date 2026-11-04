@@ -9,12 +9,14 @@ export function ConversationHeader({
   subtitle,
   onPress,
   loading = false,
+  unavailable = false,
 }: {
   name?: string;
   uri?: string | null;
   subtitle?: string;
   onPress?: () => void;
   loading?: boolean;
+  unavailable?: boolean;
 }) {
   const identity = (
     <>
@@ -25,7 +27,12 @@ export function ConversationHeader({
       ) : null}
       <View style={s.labels}>
         <Text style={s.name}>
-          {name ?? (loading ? 'Loading conversation…' : 'Conversation unavailable')}
+          {name ??
+            (unavailable
+              ? 'Conversation unavailable'
+              : loading
+                ? 'Loading conversation…'
+                : 'Conversation')}
         </Text>
         {subtitle ? <Text style={s.subtitle}>{subtitle}</Text> : null}
       </View>

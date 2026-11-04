@@ -21,6 +21,7 @@ function Conversation({ id, userId }: { id: string; userId: string }) {
             ? peer.displayName || (peer.username ? `@${peer.username}` : 'WTW friend')
             : undefined
         }
+        unavailable={chat.unavailable}
         loading={!peer && !chat.error && !chat.unavailable}
         uri={peer?.avatarUrl}
         subtitle={peer?.username ? `@${peer.username}` : undefined}
