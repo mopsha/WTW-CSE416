@@ -14,23 +14,18 @@ export default function DirectMessageScreen() {
 function Conversation({ id, userId }: { id: string; userId: string }) {
   const chat = useDirectChat(id);
   const peer = chat.conversation?.peer;
+  const peerName = peer
+    ? peer.displayName || (peer.username ? `@${peer.username}` : 'WTW friend')
+    : undefined;
   return (
     <Screen scroll={false} contentStyle={{ padding: 0, paddingBottom: 0, gap: 0 }}>
       <ConversationHeader
         right={
-          peer ? (
-            <MemberMenu
-              userId={peer.id}
-              name={peer.displayName ?? 'WTW friend'}
-              onBlocked={() => void chat.refresh()}
-            />
+          peer && peerName ? (
+            <MemberMenu userId={peer.id} name={peerName} onBlocked={() => void chat.refresh()} />
           ) : undefined
         }
-        name={
-          peer
-            ? peer.displayName || (peer.username ? `@${peer.username}` : 'WTW friend')
-            : undefined
-        }
+        name={peerName}
         unavailable={chat.unavailable}
         loading={!peer && !chat.error && !chat.unavailable}
         uri={peer?.avatarUrl}

@@ -119,3 +119,41 @@ test('verified direct-chat peer menu reports and blocks the peer, then refreshes
   expect(refresh).toHaveBeenCalledTimes(1);
   await act(async () => tree.unmount());
 });
+
+test.each([
+  ['Ava', 'ava', 'Ava'],
+  [null, 'ava', '@ava'],
+  ['', 'ava', '@ava'],
+  [null, null, 'WTW friend'],
+  ['', '', 'WTW friend'],
+])(
+  'header and peer menu share the label for displayName=%s username=%s',
+  async (displayName, username, label) => {
+    jest
+      .mocked(useDirectChat)
+      .mockReturnValue({
+        ...base,
+        loading: false,
+        conversation: {
+          id: 'conversation',
+          createdAt: '2026-11-03',
+          peer: { id: 'friend', displayName, username, avatarUrl: null },
+        },
+      });
+    let tree: any;
+    await act(async () => {
+      tree = create(<DirectMessageScreen />);
+    });
+    expect(tree.root.findByType('test-header').props.name).toBe(label);
+    const trigger = tree.root
+      .findAllByProps({ accessibilityLabel: `Options for ${label}` })
+      .find((n: any) => typeof n.props.onPress === 'function');
+    expect(trigger).toBeDefined();
+    await act(async () => trigger.props.onPress());
+    const report = tree.root
+      .findAllByType('test-item')
+      .find((n: any) => n.props.label === 'Report');
+    expect(report).toBeDefined();
+    await act(async () => tree.unmount());
+  },
+);
