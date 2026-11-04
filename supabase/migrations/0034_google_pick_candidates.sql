@@ -3,14 +3,6 @@
 -- { placeId, name: null, category, lat, lng, provider: 'google' }; the API fetches the rest on
 -- each read. See docs/google-picks.md.
 
--- Ranking reads coordinates from the snapshot, so they stay required until a Pick has finished.
-alter table public.pick_candidates drop constraint pick_candidates_snapshot_coords;
-alter table public.pick_candidates add constraint pick_candidates_snapshot_coords check (
-  -- coalesce and "is not distinct from": a missing key is null, and a null check passes.
-  coalesce(jsonb_typeof(snapshot -> 'lat') = 'number' and jsonb_typeof(snapshot -> 'lng') = 'number', false)
-  or (snapshot ->> 'provider' is not distinct from 'google' and not snapshot ? 'lat' and not snapshot ? 'lng')
-);
-
 -- start/refresh copy each snapshot into places, whose columns are required. Nothing reads them
 -- for Google rows, so keep the ID and category only, with no coordinates to expire here.
 create function private.strip_google_place() returns trigger
@@ -30,8 +22,9 @@ revoke all on function private.strip_google_place() from public, anon, authentic
 create trigger strip_google_place before insert or update on public.places
   for each row execute function private.strip_google_place();
 
--- Daily from the sweep. Removes coordinates older than p_cutoff. A Pick still open by then can't
--- be ranked without them, so it's canceled first.
+-- Daily from the sweep. Removes coordinates older than p_cutoff, which the existing
+-- pick_candidates_snapshot_coords check allows because it only rejects non-numeric values. A Pick
+-- still open by then can't be ranked without them, so it's canceled first.
 create function public.purge_google_coordinates(p_cutoff timestamptz) returns integer
 language plpgsql set search_path = '' as $$
 declare v_removed integer;
