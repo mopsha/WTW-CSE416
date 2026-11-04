@@ -268,7 +268,15 @@ export default function FriendsScreen() {
                     }
                     title={nameOf(p)}
                     subtitle={`Friends since ${day(p.since)}`}
-                    leading={<Avatar name={nameOf(p)} avatarRef={p.avatarRef} neutral size={44} />}
+                    leading={
+                      <Avatar
+                        name={nameOf(p)}
+                        userId={p.userId}
+                        avatarRef={p.avatarRef}
+                        neutral
+                        size={44}
+                      />
+                    }
                     right={
                       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                         {action.busy === `message:${p.userId}` ? (

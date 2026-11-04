@@ -3,7 +3,9 @@ import { ProfilePhotoEditor } from '@/components/ProfilePhotoEditor';
 import { api } from '@/lib/api';
 import { pickProfilePhoto, PhotoSelectionError } from '@/lib/pickProfilePhoto';
 import type { UserProfile } from '@shared/api/userProfiles.ts';
-type Node = { props: { onPress(): void; message?: string; avatarRef?: unknown; uri?: string } };
+type Node = {
+  props: { onPress(): void; message?: string; avatarRef?: unknown; uri?: string; userId?: string };
+};
 type Tree = {
   root: { findAllByProps(p: object): Node[]; findAllByType(t: string): Node[] };
   update(e: React.ReactElement): void;
@@ -68,6 +70,7 @@ function Harness({ initial = profile }: { initial?: UserProfile }) {
 }
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(api.getMyUserProfile).mockReset().mockResolvedValue(profile);
   tree = undefined;
   mockSession = { user: { id: 'A', email: 'a@example.com' } };
 });
@@ -125,9 +128,10 @@ test('previews first, ignores rapid repeated save taps and publishes the success
 test('conflict retains the preview, refreshes the revision, and requires explicit retry', async () => {
   picked.mockResolvedValueOnce(selected);
   jest.mocked(api.uploadAvatar).mockRejectedValueOnce(new Error('Photo changed'));
-  jest.mocked(api.getMyUserProfile).mockResolvedValueOnce({ ...profile, avatarRevision: 4 });
+
   await mount();
   await press('Change photo');
+  jest.mocked(api.getMyUserProfile).mockResolvedValueOnce({ ...profile, avatarRevision: 4 });
   await press('Save photo');
   expect(tree!.root.findAllByType('photo-error')[0]!.props.message).toBe('Photo changed');
   expect(saved).toHaveBeenCalledWith(expect.objectContaining({ avatarRevision: 4 }));
@@ -154,16 +158,17 @@ test('permission denial offers settings without touching the API', async () => {
   await mount();
   await press('Change photo');
   expect(tree!.root.findAllByProps({ label: 'Open photo settings' }).length).toBeGreaterThan(0);
-  expect(api.getMyUserProfile).not.toHaveBeenCalled();
+  expect(api.getMyUserProfile).toHaveBeenCalledTimes(1);
   expect(saved).not.toHaveBeenCalled();
 });
 test('an offline replacement preserves the persisted photo and allows cancelling its preview', async () => {
   picked.mockResolvedValueOnce(selected);
   jest.mocked(api.uploadAvatar).mockRejectedValueOnce(new Error('Offline'));
-  jest.mocked(api.getMyUserProfile).mockRejectedValueOnce(new Error('Offline'));
+
   const previous = { userId: 'A', revision: 2 };
   await mount({ ...profile, avatarRevision: 2, avatarRef: previous });
   await press('Change photo');
+  jest.mocked(api.getMyUserProfile).mockRejectedValueOnce(new Error('Offline'));
   await press('Save photo');
   expect(saved).not.toHaveBeenCalled();
   expect(tree!.root.findAllByType('photo-error')[0]!.props.message).toBe('Offline');
@@ -187,4 +192,62 @@ test('account switching discards a pending upload result and the previous previe
   await act(async () => finish({ revision: 1, avatarRef: null }));
   expect(saved).not.toHaveBeenCalled();
   expect(tree!.root.findAllByProps({ label: 'Save photo' })).toHaveLength(0);
+});
+
+test('opening and reopening refresh persisted photo state and removal uses the fresh revision', async () => {
+  const remote = { ...profile, avatarRevision: 2, avatarRef: { userId: 'A', revision: 2 } };
+  jest.mocked(api.getMyUserProfile).mockResolvedValueOnce(remote);
+  await mount();
+  expect(tree!.root.findAllByType('photo-avatar')[0]!.props.avatarRef).toEqual(remote.avatarRef);
+  jest.mocked(api.removeAvatar).mockResolvedValueOnce({ revision: 3, avatarRef: null });
+  await press('Remove photo');
+  expect(api.removeAvatar).toHaveBeenLastCalledWith('A', 2);
+  await act(async () => tree!.unmount());
+  jest.mocked(api.getMyUserProfile).mockResolvedValueOnce({ ...profile, avatarRevision: 4 });
+  await mount(remote);
+  expect(tree!.root.findAllByProps({ label: 'Remove photo' })).toHaveLength(0);
+  expect(tree!.root.findAllByType('photo-avatar')[0]!.props.userId).toBe('A');
+});
+
+test('a delayed opening refresh preserves a selected preview and updates its save revision', async () => {
+  let finish!: (p: UserProfile) => void;
+  jest.mocked(api.getMyUserProfile).mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  picked.mockResolvedValueOnce(selected);
+  await mount();
+  await press('Change photo');
+  await act(async () =>
+    finish({ ...profile, avatarRevision: 2, avatarRef: { userId: 'A', revision: 2 } }),
+  );
+  expect(tree!.root.findAllByType('photo-avatar')[0]!.props.uri).toBe(selected.previewUri);
+  expect(tree!.root.findAllByType('photo-avatar')[0]!.props.userId).toBeUndefined();
+  jest
+    .mocked(api.uploadAvatar)
+    .mockResolvedValueOnce({ revision: 3, avatarRef: { userId: 'A', revision: 3 } });
+  await press('Save photo');
+  expect(api.uploadAvatar).toHaveBeenLastCalledWith('A', 2, selected.bytes);
+});
+
+test('an opening response cannot overwrite a mutation that already started', async () => {
+  let finish!: (p: UserProfile) => void;
+  jest.mocked(api.getMyUserProfile).mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  picked.mockResolvedValueOnce(selected);
+  await mount();
+  await press('Change photo');
+  jest
+    .mocked(api.uploadAvatar)
+    .mockResolvedValueOnce({ revision: 1, avatarRef: { userId: 'A', revision: 1 } });
+  await press('Save photo');
+  await act(async () => finish(profile));
+  expect(tree!.root.findAllByType('photo-avatar')[0]!.props.avatarRef).toEqual({
+    userId: 'A',
+    revision: 1,
+  });
 });

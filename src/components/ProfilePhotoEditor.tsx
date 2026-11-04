@@ -37,10 +37,50 @@ function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: Photo
   const epoch = useRef(0);
   const latestProfile = useRef(profile);
   const busyChanged = useRef(onBusyChange);
+  const savedChanged = useRef(onSaved);
+  const mutationVersion = useRef(0);
   useLayoutEffect(() => {
     latestProfile.current = profile;
     busyChanged.current = onBusyChange;
-  }, [profile, onBusyChange]);
+    savedChanged.current = onSaved;
+  }, [profile, onBusyChange, onSaved]);
+  useEffect(() => {
+    let active = true;
+    const version = mutationVersion.current;
+    // Mounted anew whenever the existing details sheet opens. Refresh only photo
+    // fields: metadata drafts and a local selection belong to the editor.
+    void api
+      .getMyUserProfile()
+      .then((fresh) => {
+        const latest = latestProfile.current;
+        if (
+          !active ||
+          version !== mutationVersion.current ||
+          fresh.id !== profile.id ||
+          fresh.avatarRevision === undefined ||
+          fresh.avatarRevision < (latest.avatarRevision ?? 0)
+        )
+          return;
+        if (
+          fresh.avatarRevision === latest.avatarRevision &&
+          fresh.avatarUrl === latest.avatarUrl &&
+          fresh.avatarRef?.revision === latest.avatarRef?.revision
+        )
+          return;
+        savedChanged.current({
+          ...latest,
+          avatarUrl: fresh.avatarUrl,
+          avatarRef: fresh.avatarRef,
+          avatarRevision: fresh.avatarRevision,
+        });
+      })
+      .catch((e) => {
+        if (active && version === mutationVersion.current) setError(messageOf(e));
+      });
+    return () => {
+      active = false;
+    };
+  }, [profile.id]);
   useEffect(
     () => () => {
       epoch.current++;
@@ -99,6 +139,7 @@ function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: Photo
   }
   async function save(remove = false) {
     await run(async () => {
+      mutationVersion.current++;
       if (profile.avatarRevision === undefined)
         throw new Error('Reload your profile before changing its photo.');
       const request = epoch.current;
@@ -131,6 +172,7 @@ function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: Photo
         size={72}
         uri={selected?.previewUri ?? profile.avatarUrl}
         avatarRef={selected ? undefined : profile.avatarRef}
+        userId={selected ? undefined : profile.id}
       />
       <Button
         label="Change photo"
