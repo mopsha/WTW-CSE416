@@ -5,6 +5,11 @@ stored in `public.reports` and no client can read them. App Store guideline 1.2 
 to act on objectionable content within 24 hours, so someone on the team has to own this queue
 and check it at least once a day. There are no alerts yet.
 
+You can report a message from any group you're in or conversation you're part of, even after you
+or the sender block each other or unfriend. Otherwise someone could send abuse and block the
+recipient to make it unreportable. Outsiders can't report a message, and can't tell if it exists.
+Someone removed from a group can no longer report that group's messages.
+
 ## Review the queue
 
 In the Supabase dashboard for the project, open the SQL editor and run:

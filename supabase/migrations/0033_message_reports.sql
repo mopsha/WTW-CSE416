@@ -27,6 +27,10 @@ create index reports_unreviewed_idx on public.reports (created_at) where reviewe
 -- You can report a message in a group you are in or a conversation you are part of, never your
 -- own. Anything else is PT404, so a report never confirms that something exists. Grants survive
 -- the replace.
+--
+-- This is deliberately wider than reading: blocking or unfriending doesn't remove the right to
+-- report. Otherwise someone could send abuse and block the recipient to make it unreportable.
+-- A participant has already received the message, and the report returns nothing from it.
 create or replace function public.report_create(p_user_id uuid, p_kind text, p_target_id uuid, p_reason text)
 returns uuid
 language plpgsql
