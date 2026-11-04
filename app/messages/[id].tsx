@@ -1,6 +1,7 @@
 import { useLocalSearchParams } from 'expo-router';
 import { Text, View } from 'react-native';
 import { Avatar, Screen, colors, space, type } from '@/components';
+import { MemberMenu } from '@/components/MemberMenu';
 import { MessageThread } from '@/components/MessageThread';
 import { useSession } from '@/hooks/useAuth';
 import { useDirectChat } from '@/hooks/useDirectChat';
@@ -14,7 +15,20 @@ function Conversation({ id, userId }: { id: string; userId: string }) {
   const chat = useDirectChat(id);
   const peer = chat.conversation?.peer;
   return (
-    <Screen title="Messages" back onRefresh={() => void chat.refresh()}>
+    <Screen
+      title="Messages"
+      back
+      onRefresh={() => void chat.refresh()}
+      right={
+        peer ? (
+          <MemberMenu
+            userId={peer.id}
+            name={peer.displayName ?? 'WTW friend'}
+            onBlocked={() => void chat.refresh()}
+          />
+        ) : undefined
+      }
+    >
       {peer ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
           <Avatar name={peer.displayName ?? 'WTW friend'} uri={peer.avatarUrl} size={48} />
@@ -36,6 +50,7 @@ function Conversation({ id, userId }: { id: string; userId: string }) {
         emptyText="No messages yet. Say hello to your friend."
         placeholder="Message your friend…"
         inputLabel="Direct message"
+        reportKind="direct_message"
       />
     </Screen>
   );

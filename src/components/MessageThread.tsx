@@ -1,5 +1,14 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useRef, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import {
   MESSAGE_MAX,
   parseMessage,
@@ -8,6 +17,7 @@ import {
 } from '@shared/api/messages.ts';
 import { messageOf } from '@/lib/errors';
 import { timeAgo } from '@/lib/time';
+import { SafetySheet } from './MemberMenu';
 import {
   Avatar,
   Button,
@@ -37,6 +47,7 @@ export function MessageThread({
   emptyText,
   placeholder,
   inputLabel,
+  reportKind,
 }: {
   userId: string;
   chat: MessageThreadState;
@@ -45,10 +56,12 @@ export function MessageThread({
   emptyText: string;
   placeholder: string;
   inputLabel: string;
+  reportKind: 'group_message' | 'direct_message';
 }) {
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [flagged, setFlagged] = useState<{ message: Message; name: string } | null>(null);
   const pending = useRef(false);
   const attempt = useRef<{ body: string; clientId: string } | null>(null);
   const history = useRef<ScrollView>(null);
@@ -130,6 +143,18 @@ export function MessageThread({
                     {message.body}
                   </Text>
                 </View>
+                {message.senderId !== userId ? (
+                  <Pressable
+                    onPress={() => setFlagged({ message, name })}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Options for message from ${name}`}
+                    accessibilityHint="Report this message or block the sender"
+                    style={s.options}
+                  >
+                    <Ionicons name="ellipsis-horizontal" size={18} color={colors.muted} />
+                  </Pressable>
+                ) : null}
               </View>
             );
           })}
@@ -156,6 +181,15 @@ export function MessageThread({
         disabled={!body.trim() || chat.unavailable}
         onPress={() => void send()}
       />
+      {flagged ? (
+        <SafetySheet
+          onClose={() => setFlagged(null)}
+          userId={flagged.message.senderId}
+          name={flagged.name}
+          target={{ kind: reportKind, id: flagged.message.id }}
+          onBlocked={() => void chat.refresh()}
+        />
+      ) : null}
     </Card>
   );
 }
@@ -166,6 +200,7 @@ const s = StyleSheet.create({
   history: { maxHeight: 360 },
   message: { flexDirection: 'row', gap: space.sm, padding: space.sm, borderRadius: radius.sm },
   own: { backgroundColor: colors.cardHi },
+  options: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
   input: {
     ...type.body,
     color: colors.text,
