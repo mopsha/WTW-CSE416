@@ -349,8 +349,11 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     unblockUser: (userId: string) =>
       request<StatusResponse>('POST', `/blocks/${encodeURIComponent(userId)}/remove`),
     /** 10 a day; 404 for anything I can't see. */
-    report: (input: { kind: 'user' | 'pick' | 'group'; targetId: string; reason: string }) =>
-      request<StatusResponse>('POST', '/reports', { body: input }),
+    report: (input: {
+      kind: import('@shared/api/safety.ts').ReportKind;
+      targetId: string;
+      reason: string;
+    }) => request<StatusResponse>('POST', '/reports', { body: input }),
     submitSwipe: (pickId: string, placeId: string, value: PreferenceValue) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/swipes`, { body: { placeId, value } }),
     /** Host only: closes swiping and ranks. Others get 403 FORBIDDEN. */

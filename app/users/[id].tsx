@@ -1,5 +1,6 @@
 import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import { PastMoves } from '@/components/PastMoves';
+import { MemberMenu } from '@/components/MemberMenu';
 import { MessageFriendButton } from '@/components/MessageFriendButton';
 import type { UserProfile } from '@shared/api/userProfiles.ts';
 import { useLocalSearchParams } from 'expo-router';
@@ -38,7 +39,20 @@ export default function UserProfileScreen() {
   }, []);
   usePrivateRefresh(load, clear);
   return (
-    <Screen title="Profile" back onRefresh={() => void load()}>
+    <Screen
+      title="Profile"
+      back
+      onRefresh={() => void load()}
+      right={
+        profile && !profile.isOwner ? (
+          <MemberMenu
+            userId={profile.id}
+            name={profile.displayName ?? 'WTW friend'}
+            onBlocked={() => void load()}
+          />
+        ) : undefined
+      }
+    >
       {loading ? (
         <ActivityIndicator color={colors.primary} accessibilityLabel="Loading profile" />
       ) : null}
