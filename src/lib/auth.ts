@@ -64,6 +64,16 @@ const supabaseAuth: AuthService = {
     if (!session) throw new AuthError('unknown', 'Sign-in did not return a session.');
     return session;
   },
+  async signInWithPassword(email, password) {
+    const { data, error } = await getSupabase().auth.signInWithPassword({ email, password });
+    if (error?.code === 'invalid_credentials') {
+      throw new AuthError('invalid_code', 'That password is wrong.');
+    }
+    if (error) throw toAuthError(error);
+    const session = toSession(data.session);
+    if (!session) throw new AuthError('unknown', 'Sign-in did not return a session.');
+    return session;
+  },
   async signOut() {
     const { error } = await getSupabase().auth.signOut();
     if (error) throw new AuthError('unknown', 'Could not sign out. Please try again.');

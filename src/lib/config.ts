@@ -12,3 +12,6 @@ export const API_BASE_URL = `${SUPABASE_URL}/functions/v1/api`;
 
 /** Mock mode only: fraction (0–1) of API writes that fail, to exercise retry UI. */
 export const MOCK_FAIL_RATE = Number(process.env.EXPO_PUBLIC_MOCK_FAIL_RATE ?? '0') || 0;
+
+/** The App Store review account signs in with a password; see docs/app-review.md. Not a secret. */
+export const REVIEW_EMAIL = 'appreview@getwtw.app';
