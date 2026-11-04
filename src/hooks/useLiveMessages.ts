@@ -31,13 +31,29 @@ export function useLiveMessages<S extends { messages: Message[] }>(
       let again = false;
       let revoked = false;
       let epoch = 0;
-      async function load() {
-        if (!active || !foreground || revoked) return;
-        if (inflight) {
-          again = true;
+      const queued: (() => void)[] = [];
+      const waiting = new Set<() => void>();
+      const settle = (callbacks: (() => void)[]) =>
+        callbacks.forEach((resolve) => {
+          waiting.delete(resolve);
+          resolve();
+        });
+      async function load(waitForQueued = false) {
+        if (!active || !foreground || revoked) {
+          settle(queued.splice(0));
           return;
         }
+        if (inflight) {
+          again = true;
+          if (!waitForQueued) return;
+          // Manual refresh must await its queued read, not just enqueue it.
+          return new Promise<void>((resolve) => {
+            queued.push(resolve);
+            waiting.add(resolve);
+          });
+        }
         inflight = true;
+        const currentWaiters = queued.splice(0);
         const requestEpoch = epoch;
         try {
           const next = await loadHistory(resourceId);
@@ -60,6 +76,7 @@ export function useLiveMessages<S extends { messages: Message[] }>(
           }
         } finally {
           inflight = false;
+          settle(currentWaiters);
           if (active) setLoading(false);
           if (again) {
             again = false;
@@ -67,9 +84,17 @@ export function useLiveMessages<S extends { messages: Message[] }>(
           }
         }
       }
-      reload.current = async () => {
+      reload.current = () => {
         revoked = false;
-        await load();
+        return new Promise<void>((resolve) => {
+          waiting.add(resolve);
+          // A canceled screen/background refresh must settle even if the old
+          // network request is still finishing; its epoch still guards the data.
+          void load(true).then(
+            () => settle([resolve]),
+            () => settle([resolve]),
+          );
+        });
       };
       void load();
       let unsubscribe = () => {};
@@ -93,9 +118,15 @@ export function useLiveMessages<S extends { messages: Message[] }>(
         foreground = state === 'active';
         if (foreground) void load();
         else setData(null);
+        if (!foreground) {
+          settle([...waiting]);
+          queued.length = 0;
+        }
       });
       return () => {
         active = false;
+        settle([...waiting]);
+        queued.length = 0;
         setData(null);
         setLoading(true);
         clearInterval(timer);

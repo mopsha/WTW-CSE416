@@ -165,14 +165,20 @@ export function Segments<T extends string>({
   value,
   onChange,
   label,
+  variant = 'default',
 }: {
   options: readonly { value: T; label: string }[];
   value: T;
   onChange: (value: T) => void;
   label: string;
+  variant?: 'default' | 'compact';
 }) {
   return (
-    <View style={s.segments} accessibilityRole="tablist" accessibilityLabel={label}>
+    <View
+      style={[s.segments, variant === 'compact' && s.compactSegments]}
+      accessibilityRole="tablist"
+      accessibilityLabel={label}
+    >
       {options.map((o) => (
         <Pressable
           key={o.value}
@@ -180,9 +186,15 @@ export function Segments<T extends string>({
           accessibilityRole="tab"
           accessibilityLabel={o.label}
           accessibilityState={{ selected: o.value === value }}
-          style={[s.segment, o.value === value && s.selected]}
+          style={[
+            s.segment,
+            variant === 'compact' && s.compactSegment,
+            o.value === value && s.selected,
+          ]}
         >
-          <Text style={s.segmentText}>{o.label}</Text>
+          <Text style={[s.segmentText, variant === 'compact' && s.compactSegmentText]}>
+            {o.label}
+          </Text>
         </Pressable>
       ))}
     </View>
@@ -280,6 +292,13 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: radius.pill,
   },
+  compactSegments: { borderWidth: 0, borderRadius: radius.md, padding: space.xs },
+  compactSegment: {
+    borderRadius: radius.sm,
+    paddingHorizontal: space.sm,
+    paddingVertical: space.sm,
+  },
+  compactSegmentText: { fontFamily: fonts.semibold, fontSize: 16, lineHeight: 22 },
   selected: { backgroundColor: colors.cardHi },
   segmentText: { ...type.body, color: colors.text },
   empty: {
