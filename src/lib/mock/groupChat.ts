@@ -9,7 +9,7 @@ import {
 import { MOCK_USER_ID } from './auth';
 import { mockGroupRecord, mockGroupPersonName } from './groups';
 import { mockBlocks, mockProfile } from './store';
-import { mockUserProfiles } from './userProfiles';
+import { mockUserProfiles, mockAvatarRef } from './userProfiles';
 
 export const mockGroupMessages = new Map<string, GroupMessage & { clientId: string }>();
 let sequence = 0;
@@ -44,7 +44,7 @@ function membership(userId: string, groupId: string) {
     throw new ApiError(404, 'GROUP_NOT_FOUND', 'Group not found');
   return group;
 }
-const project = (m: GroupMessage): GroupMessage => {
+const project = (m: GroupMessage, viewer: string): GroupMessage => {
   const details = mockUserProfiles.get(m.senderId);
   return {
     id: m.id,
@@ -56,6 +56,7 @@ const project = (m: GroupMessage): GroupMessage => {
       m.senderId === MOCK_USER_ID ? mockProfile.displayName : mockGroupPersonName(m.senderId),
     senderUsername: details?.username ?? null,
     senderAvatarUrl: details?.avatarUrl ?? null,
+    senderAvatarRef: mockAvatarRef(viewer, m.senderId),
   };
 };
 export function listMockGroupMessages(userId: string, groupId: string): GroupMessage[] {
@@ -65,7 +66,7 @@ export function listMockGroupMessages(userId: string, groupId: string): GroupMes
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
     .slice(0, GROUP_MESSAGE_LIMIT)
     .reverse()
-    .map(project);
+    .map((m) => project(m, userId));
 }
 export function sendMockGroupMessage(userId: string, groupId: string, value: GroupMessageInput) {
   const group = membership(userId, groupId);
@@ -100,7 +101,7 @@ export function sendMockGroupMessage(userId: string, groupId: string, value: Gro
       createdAt: message.createdAt,
       readAt: null,
     });
-  return { message: project(message), recipientIds };
+  return { message: project(message, userId), recipientIds };
 }
 export function handleMockGroupChat(method: string, path: string, body: unknown) {
   const match = /^\/groups\/([^/]+)\/messages$/.exec(path);

@@ -235,7 +235,7 @@ export default function GroupScreen() {
             </Text>
             {group.members.map((m) => (
               <View key={m.userId} style={styles.member}>
-                <Avatar name={memberName(m)} size={40} />
+                <Avatar name={memberName(m)} userId={m.userId} size={40} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.name}>{m.userId === me ? 'You' : memberName(m)}</Text>
                   {m.role === 'owner' ? <Text style={styles.sub}>Owner</Text> : null}
@@ -292,7 +292,7 @@ export default function GroupScreen() {
               ) : (
                 toAdd.map((f) => (
                   <View key={f.userId} style={styles.member}>
-                    <Avatar name={memberName(f)} size={40} />
+                    <Avatar name={memberName(f)} userId={f.userId} size={40} />
                     <Text style={[styles.name, { flex: 1 }]}>{memberName(f)}</Text>
                     <Button
                       label={

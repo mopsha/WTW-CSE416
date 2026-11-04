@@ -10,6 +10,7 @@ import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
 import { Sheet } from './TabUi';
 import { UserProfileMetadata } from './UserProfileMetadata';
+import { ProfilePhotoEditor } from './ProfilePhotoEditor';
 export function OwnProfileDetails({
   profile,
   onSaved,
@@ -29,8 +30,10 @@ export function OwnProfileDetails({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const photoPending = useRef(false);
   const save = async () => {
-    if (pending.current) return;
+    if (pending.current || photoPending.current) return;
     pending.current = true;
     setBusy(true);
     setError(null);
@@ -68,10 +71,22 @@ export function OwnProfileDetails({
         visible={open}
         title="Profile details & privacy"
         onClose={() => {
-          if (!pending.current) setOpen(false);
+          if (!pending.current && !photoPending.current) setOpen(false);
         }}
       >
         <View style={{ gap: space.md }}>
+          {open ? (
+            <ProfilePhotoEditor
+              key={profile.id}
+              profile={profile}
+              onSaved={onSaved}
+              disabled={busy}
+              onBusyChange={(value) => {
+                photoPending.current = value;
+                setPhotoBusy(value);
+              }}
+            />
+          ) : null}
           {error ? <ErrorState message={error} /> : null}
           <Text style={s.label}>Username</Text>
           <TextInput
@@ -120,11 +135,16 @@ export function OwnProfileDetails({
             Moves from Picks you shared with accepted friends. Your name, username and available
             avatar remain visible to friends. Discover preferences stay private.
           </Text>
-          <Button label="Save profile details" loading={busy} onPress={() => void save()} />
+          <Button
+            label="Save profile details"
+            loading={busy}
+            disabled={photoBusy}
+            onPress={() => void save()}
+          />
           <Button
             label="Cancel"
             variant="secondary"
-            disabled={busy}
+            disabled={busy || photoBusy}
             onPress={() => setOpen(false)}
           />
         </View>

@@ -46,7 +46,13 @@ export default function UserProfileScreen() {
       {profile ? (
         <View style={{ gap: space.lg }}>
           <View style={{ alignItems: 'center', gap: space.sm }}>
-            <Avatar name={profile.displayName ?? 'WTW friend'} uri={profile.avatarUrl} size={84} />
+            <Avatar
+              name={profile.displayName ?? 'WTW friend'}
+              uri={profile.avatarUrl}
+              avatarRef={profile.avatarRef}
+              userId={profile.id}
+              size={84}
+            />
             <Text style={{ ...type.heading, color: colors.text }}>
               {profile.displayName ?? 'WTW friend'}
             </Text>

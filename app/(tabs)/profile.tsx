@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { ListRow, Sheet } from '@/components/TabUi';
 import { DISPLAY_NAME_MAX, validateDisplayName } from '@shared/api/profile.ts';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
@@ -39,16 +39,25 @@ export default function ProfileScreen() {
   const [draft, setDraft] = useState<string | null>(null);
   const [invalid, setInvalid] = useState<string | null>(null);
   const { busy, error, run, clearError } = useAction();
+  const account = `${session.user.id}:${session.user.email ?? ''}`;
+  const currentUser = useRef(account);
+  useLayoutEffect(() => {
+    currentUser.current = account;
+  }, [account]);
+  const ownDetails = details?.id === session.user.id ? details : null;
 
   const loadDetails = useCallback(async () => {
     try {
-      setDetails(await api.getMyUserProfile());
+      const result = await api.getMyUserProfile();
+      if (currentUser.current !== account || result.id !== session.user.id) return;
+      setDetails(result);
       setDetailsError(null);
     } catch (e) {
+      if (currentUser.current !== account) return;
       setDetails(null);
       setDetailsError(e instanceof Error ? e.message : 'Could not load profile details');
     }
-  }, []);
+  }, [session.user.id, account]);
   useFocusEffect(
     useCallback(() => {
       void loadDetails();
@@ -84,10 +93,17 @@ export default function ProfileScreen() {
         accessibilityRole="button"
         accessibilityLabel={`Edit profile for ${name}`}
       >
-        <Avatar name={name} uri={details?.avatarUrl} neutral size={84} />
+        <Avatar
+          name={name}
+          uri={ownDetails?.avatarUrl}
+          userId={session.user.id}
+          avatarRef={ownDetails?.avatarRef}
+          neutral
+          size={84}
+        />
         <View style={styles.who}>
           <Text style={styles.name}>{name}</Text>
-          {details?.username ? <Text style={styles.email}>@{details.username}</Text> : null}
+          {ownDetails?.username ? <Text style={styles.email}>@{ownDetails.username}</Text> : null}
           <Text style={styles.email}>{email}</Text>
         </View>
         <Ionicons name="chevron-forward" size={20} color={colors.muted} />
@@ -95,7 +111,15 @@ export default function ProfileScreen() {
       {detailsError ? (
         <ErrorState message={detailsError} onRetry={() => void loadDetails()} />
       ) : null}
-      {details ? <OwnProfileDetails profile={details} onSaved={setDetails} /> : null}
+      {ownDetails ? (
+        <OwnProfileDetails
+          key={account}
+          profile={ownDetails}
+          onSaved={(p) => {
+            if (currentUser.current === account && p.id === session.user.id) setDetails(p);
+          }}
+        />
+      ) : null}
       <PastMoves key={session.user.id} userId={session.user.id} />
       <View style={styles.settings}>
         <ListRow

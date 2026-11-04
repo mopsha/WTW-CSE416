@@ -222,7 +222,13 @@ export default function FriendsScreen() {
               <SectionHeading title="Friend requests" badge={list.incoming.length} />
               {list.incoming.map((p) => (
                 <View key={p.userId} style={styles.row}>
-                  <Avatar name={nameOf(p)} neutral size={46} />
+                  <Avatar
+                    name={nameOf(p)}
+                    userId={p.userId}
+                    avatarRef={p.avatarRef}
+                    neutral
+                    size={46}
+                  />
                   <View style={styles.who}>
                     <Text style={styles.name}>{nameOf(p)}</Text>
                     <Text style={styles.caption}>Request sent by email</Text>
@@ -262,7 +268,7 @@ export default function FriendsScreen() {
                     }
                     title={nameOf(p)}
                     subtitle={`Friends since ${day(p.since)}`}
-                    leading={<Avatar name={nameOf(p)} neutral size={44} />}
+                    leading={<Avatar name={nameOf(p)} avatarRef={p.avatarRef} neutral size={44} />}
                     right={
                       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                         {action.busy === `message:${p.userId}` ? (

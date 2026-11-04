@@ -121,7 +121,13 @@ export function MessageThread({
               (message.senderUsername ? `@${message.senderUsername}` : 'WTW member');
             return (
               <View key={message.id} style={[s.message, message.senderId === userId && s.own]}>
-                <Avatar name={name} uri={message.senderAvatarUrl} size={32} />
+                <Avatar
+                  name={name}
+                  uri={message.senderAvatarUrl}
+                  avatarRef={message.senderAvatarRef}
+                  userId={message.senderId}
+                  size={32}
+                />
                 <View style={{ flex: 1, gap: space.xs }}>
                   <Text style={s.caption}>
                     {message.senderId === userId ? 'You' : name} · {timeAgo(message.createdAt)}

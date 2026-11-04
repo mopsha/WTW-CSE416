@@ -84,6 +84,7 @@ import {
 } from '../_shared/api/invites.ts';
 import { deleteAccount, type AccountStore } from '../_shared/api/account.ts';
 import { requestFriendSafely } from '../_shared/api/friendRequests.ts';
+import { parseAvatarRevision, readAvatarBody, type AvatarStore } from '../_shared/api/avatars.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
   const raw = await c.req.text();
@@ -115,6 +116,7 @@ export function createApp(
     safetyStore?: SafetyStore;
     inviteStore?: InviteStore;
     accountStore?: AccountStore;
+    avatarStore?: AvatarStore;
     sweepStore?: SweepStore;
     notifyStore?: NotifyStore;
     plansStore?: PlansStore;
@@ -154,6 +156,57 @@ export function createApp(
   });
   app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404));
   app.get('/health', (c) => c.json({ status: 'ok' }));
+  app.post('/avatars/resolve', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const user = await deps.getUser(c.req.raw);
+    const body = (await readJsonBody(c)) as { userIds?: unknown } | null;
+    if (!body || !Array.isArray(body.userIds) || body.userIds.length > 100)
+      throw new ApiError(400, 'INVALID_INPUT', 'Expected up to 100 user IDs');
+    const ids = [...new Set(body.userIds.map((id) => parseId(id, 'user id')))];
+    if (!deps.avatarStore?.resolve)
+      throw new ApiError(503, 'PHOTO_UNAVAILABLE', 'Photos unavailable');
+    return c.json(await deps.avatarStore.resolve(user.id, ids));
+  });
+  // No-store applies to errors as well as successful image responses.
+  app.use('/me/avatar', async (c, next) => {
+    c.header('Cache-Control', 'private, no-store');
+    await next();
+  });
+  app.use('/users/:id/avatar', async (c, next) => {
+    c.header('Cache-Control', 'private, no-store');
+    await next();
+  });
+  app.post('/me/avatar', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.avatarStore) throw new ApiError(503, 'PHOTO_UNAVAILABLE', 'Photos unavailable');
+    const revision = parseAvatarRevision(c.req.query('revision'));
+    const bytes = await readAvatarBody(c.req.raw);
+    return c.json(await deps.avatarStore.upload(user.id, revision, bytes));
+  });
+  app.delete('/me/avatar', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.avatarStore) throw new ApiError(503, 'PHOTO_UNAVAILABLE', 'Photos unavailable');
+    return c.json(
+      await deps.avatarStore.remove(user.id, parseAvatarRevision(c.req.query('revision'))),
+    );
+  });
+  app.get('/users/:id/avatar', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.avatarStore) throw new ApiError(503, 'PHOTO_UNAVAILABLE', 'Photos unavailable');
+    const bytes = await deps.avatarStore.read(
+      user.id,
+      parseId(c.req.param('id'), 'user id'),
+      parseAvatarRevision(c.req.query('revision')),
+    );
+    return new Response(new Uint8Array(bytes).buffer, {
+      headers: {
+        'Content-Type': 'image/jpeg',
+        'Cache-Control': 'private, no-store',
+        'X-Content-Type-Options': 'nosniff',
+        Vary: 'Authorization',
+      },
+    });
+  });
   app.post('/internal/sweep', async (c) => {
     authorizeSweep(c.req.header('x-cron-secret'), deps.cronSecret);
     if (!deps.sweepStore) {
@@ -161,12 +214,18 @@ export function createApp(
     }
     const result = await sweepDeadlines(deps.sweepStore, deps.closingStore);
     const cacheCleanup = await cleanupCache(deps.cacheCleanupStore);
+    let avatarCleanup: 'ok' | 'partial_failure' = 'ok';
+    try {
+      await deps.avatarStore?.cleanup();
+    } catch {
+      avatarCleanup = 'partial_failure';
+    }
     console.info(JSON.stringify({ service: 'sweep', event: 'cache_cleanup', ...cacheCleanup }));
     const status =
-      result.status === 'ok' && cacheCleanup.status !== 'partial_failure'
+      result.status === 'ok' && cacheCleanup.status !== 'partial_failure' && avatarCleanup === 'ok'
         ? 'ok'
         : 'partial_failure';
-    return c.json({ ...result, status, cacheCleanup }, status === 'ok' ? 200 : 503);
+    return c.json({ ...result, status, cacheCleanup, avatarCleanup }, status === 'ok' ? 200 : 503);
   });
   app.get('/hang', async (c) => {
     const user = await deps.getUser(c.req.raw);

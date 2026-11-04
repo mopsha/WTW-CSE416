@@ -17,7 +17,13 @@ function Conversation({ id, userId }: { id: string; userId: string }) {
     <Screen title="Messages" back onRefresh={() => void chat.refresh()}>
       {peer ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
-          <Avatar name={peer.displayName ?? 'WTW friend'} uri={peer.avatarUrl} size={48} />
+          <Avatar
+            name={peer.displayName ?? 'WTW friend'}
+            uri={peer.avatarUrl}
+            avatarRef={peer.avatarRef}
+            userId={peer.id}
+            size={48}
+          />
           <View>
             <Text style={{ ...type.heading, color: colors.text }}>
               {peer.displayName ?? 'WTW friend'}

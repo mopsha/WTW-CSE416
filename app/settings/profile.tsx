@@ -1,7 +1,7 @@
 import type { UserProfile } from '@shared/api/userProfiles.ts';
 import { validateDisplayName } from '@shared/api/profile.ts';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TextInput } from 'react-native';
 import {
   Button,
@@ -16,10 +16,17 @@ import {
 } from '@/components';
 import { OwnProfileDetails } from '@/components/OwnProfileDetails';
 import { useProfile } from '@/hooks/useProfile';
+import { useSession } from '@/hooks/useAuth';
 import { useAction } from '@/hooks/useAction';
 import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
 export default function EditProfileSettings() {
+  const session = useSession();
+  const account = `${session.user.id}:${session.user.email ?? ''}`;
+  const currentUser = useRef(account);
+  useLayoutEffect(() => {
+    currentUser.current = account;
+  }, [account]);
   const { section } = useLocalSearchParams<{ section?: string }>();
   const { displayName, saveDisplayName } = useProfile();
   const [name, setName] = useState<string | null>(null);
@@ -31,14 +38,18 @@ export default function EditProfileSettings() {
     const request = ++latest.current;
     try {
       const p = await api.getMyUserProfile();
-      if (request === latest.current) {
+      if (
+        request === latest.current &&
+        currentUser.current === account &&
+        p.id === session.user.id
+      ) {
         setProfile(p);
         setError(null);
       }
     } catch (e) {
-      if (request === latest.current) setError(messageOf(e));
+      if (request === latest.current && currentUser.current === account) setError(messageOf(e));
     }
-  }, []);
+  }, [session.user.id, account]);
   useFocusEffect(
     useCallback(() => {
       void load();
@@ -79,11 +90,13 @@ export default function EditProfileSettings() {
           onPress={() => void saveName()}
         />
       </Card>
-      {profile ? (
+      {profile?.id === session.user.id ? (
         <OwnProfileDetails
-          key={section ?? 'details'}
+          key={`${account}:${section ?? 'details'}`}
           profile={profile}
-          onSaved={setProfile}
+          onSaved={(p) => {
+            if (currentUser.current === account && p.id === session.user.id) setProfile(p);
+          }}
           initiallyOpen={section === 'privacy'}
         />
       ) : !error ? (

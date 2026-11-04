@@ -1,3 +1,4 @@
+import './avatars_test.ts';
 import './pastMoves_test.ts';
 import './directChat_test.ts';
 import './groupChat_test.ts';

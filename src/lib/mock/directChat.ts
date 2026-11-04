@@ -5,7 +5,7 @@ import type { NotificationRow } from '@shared/api/notify.ts';
 import { MOCK_USER_ID } from './auth';
 import { mockFriendsList } from './friends';
 import { mockProfile } from './store';
-import { mockUserProfiles } from './userProfiles';
+import { mockUserProfiles, mockAvatarRef } from './userProfiles';
 type Conversation = { id: string; low: string; high: string; createdAt: string };
 export const mockDirectConversations = new Map<string, Conversation>();
 export const mockDirectMessages = new Map<string, DirectMessage & { clientId: string }>();
@@ -40,6 +40,7 @@ function project(c: Conversation, viewer: string): DirectConversation {
           : (mockFriendsList().friends.find((f) => f.userId === peer)?.displayName ?? null),
       username: details?.username ?? null,
       avatarUrl: details?.avatarUrl ?? null,
+      avatarRef: mockAvatarRef(viewer, peer),
     },
   };
 }
@@ -60,7 +61,7 @@ export function openMockDirectConversation(userId: string, peer: string): Direct
   }
   return project(c, userId);
 }
-const projectMessage = (m: DirectMessage): DirectMessage => {
+const projectMessage = (m: DirectMessage, viewer: string): DirectMessage => {
   const p = mockUserProfiles.get(m.senderId);
   return {
     id: m.id,
@@ -74,6 +75,7 @@ const projectMessage = (m: DirectMessage): DirectMessage => {
         : (mockFriendsList().friends.find((f) => f.userId === m.senderId)?.displayName ?? null),
     senderUsername: p?.username ?? null,
     senderAvatarUrl: p?.avatarUrl ?? null,
+    senderAvatarRef: mockAvatarRef(viewer, m.senderId),
   };
 };
 export function listMockDirectMessages(userId: string, id: string): DirectHistory {
@@ -83,7 +85,7 @@ export function listMockDirectMessages(userId: string, id: string): DirectHistor
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
     .slice(0, MESSAGE_LIMIT)
     .reverse()
-    .map(projectMessage);
+    .map((m) => projectMessage(m, userId));
   return { conversation: project(c, userId), messages };
 }
 export function sendMockDirectMessage(userId: string, id: string, value: MessageInput) {
@@ -119,7 +121,7 @@ export function sendMockDirectMessage(userId: string, id: string, value: Message
       createdAt: m.createdAt,
       readAt: null,
     });
-  return { message: projectMessage(m), recipientId };
+  return { message: projectMessage(m, userId), recipientId };
 }
 export function mockDirectNotices() {
   return [...notices.values()].filter((n) => mockDirectMessages.has(String(n.payload.messageId)));

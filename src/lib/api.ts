@@ -6,7 +6,10 @@ import type { GroupInvitation } from '@shared/api/groupInvitations.ts';
 import type { GroupIdea, GroupIdeaInput } from '@shared/api/groupIdeas.ts';
 // Typed client for our Edge Function (`${EXPO_PUBLIC_SUPABASE_URL}/functions/v1/api`).
 // Every write goes through here with the user's access token; reads use Supabase + RLS.
-import { getAccessToken } from './auth';
+import { auth, getAccessToken, refreshPhotoSession, type AuthSession } from './auth';
+import { AVATAR_MAX_BYTES, type AvatarChange, type AvatarRef } from '@shared/api/avatars.ts';
+import { photoBase64 } from './photoBytes';
+import { photoChanged } from './photoEvents';
 import { API_BASE_URL, USE_MOCK } from './config';
 import { MOCK_API_BASE_URL, mockFetch } from './mock/api';
 import type { NotificationRow } from '@shared/api/notify.ts';
@@ -60,6 +63,8 @@ export interface ApiClientOptions {
   baseUrl: string;
   getAccessToken: () => Promise<string | null>;
   fetch: FetchLike;
+  getSession?: () => Promise<AuthSession | null>;
+  refreshSession?: () => Promise<AuthSession | null>;
 }
 
 export type InviteKind = 'pick' | 'group';
@@ -129,7 +134,110 @@ export function pickDetailFromApi(raw: RawPickDetail): PickDetail {
   };
 }
 
-export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOptions) {
+export function createApiClient({
+  baseUrl,
+  getAccessToken,
+  fetch,
+  getSession,
+  refreshSession,
+}: ApiClientOptions) {
+  async function photoRequest<T>(
+    viewer: string,
+    path: string,
+    method: 'GET' | 'POST' | 'DELETE',
+    read: (response: Response) => Promise<T>,
+    body?: BodyInit,
+    signal?: AbortSignal,
+    jsonBody = false,
+  ): Promise<T> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const abort = () => controller.abort();
+    signal?.addEventListener('abort', abort);
+    if (signal?.aborted) controller.abort();
+    const aborted = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener(
+        'abort',
+        () =>
+          reject(new ApiError('network_error', 'Photo request interrupted. Please try again.', 0)),
+        { once: true },
+      );
+      timer = setTimeout(abort, 10_000);
+    });
+    async function execute() {
+      if (controller.signal.aborted)
+        throw new ApiError('network_error', 'Photo request interrupted.', 0);
+      const session = await getSession?.();
+      if (!session || session.user.id !== viewer)
+        throw new ApiError('account_changed', 'Please reopen your profile and try again.', 401);
+      const sameAccount = (value: AuthSession | null | undefined) =>
+        value?.user.id === viewer && value.user.email === session.user.email;
+      let current = session;
+      let response: Response;
+      for (let attempt = 0; ; attempt++) {
+        if (controller.signal.aborted)
+          throw new ApiError('network_error', 'Photo request interrupted.', 0);
+        if (!sameAccount(await getSession?.()))
+          throw new ApiError('account_changed', 'Account changed.', 401);
+        try {
+          response = await fetch(`${baseUrl}${path}`, {
+            method,
+            signal: controller.signal,
+            cache: 'no-store',
+            redirect: 'error',
+            headers: {
+              Authorization: `Bearer ${current.accessToken}`,
+              Accept: method === 'GET' ? 'image/jpeg' : 'application/json',
+              ...(body === undefined
+                ? {}
+                : { 'Content-Type': jsonBody ? 'application/json' : 'image/jpeg' }),
+            },
+            body,
+          });
+        } catch {
+          throw new ApiError('network_error', 'Can’t reach WTW. Check your connection.', 0);
+        }
+        if (response.status !== 401 || attempt > 0 || !refreshSession) break;
+        await response.text();
+        if (!sameAccount(await getSession?.()))
+          throw new ApiError('account_changed', 'Please reopen your profile and try again.', 401);
+        const refreshed = await refreshSession();
+        if (!sameAccount(refreshed))
+          throw new ApiError('not_signed_in', 'Please sign in again.', 401);
+        current = refreshed!;
+      }
+      if (!sameAccount(await getSession?.()))
+        throw new ApiError('account_changed', 'Please reopen your profile and try again.', 401);
+      if (!response.ok) {
+        let error = null;
+        try {
+          error = parseErrorBody(await response.json());
+        } catch {
+          /* non-JSON gateway error */
+        }
+        throw new ApiError(
+          error?.code ?? `http_${response.status}`,
+          error?.message ?? 'Photo unavailable. Please try again.',
+          response.status,
+        );
+      }
+      const value = await read(response);
+      if (controller.signal.aborted)
+        throw new ApiError('network_error', 'Photo request interrupted.', 0);
+      if (!sameAccount(await getSession?.()))
+        throw new ApiError('account_changed', 'Account changed.', 401);
+      return value;
+    }
+    try {
+      return await Promise.race([execute(), aborted]);
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError('network_error', 'Can’t reach WTW. Check your connection.', 0);
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+    }
+  }
   async function request<T>(
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
@@ -179,6 +287,66 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
   const groupPath = (groupId: string) => `/groups/${encodeURIComponent(groupId)}`;
 
   return {
+    async uploadAvatar(viewer: string, revision: number, bytes: Uint8Array): Promise<AvatarChange> {
+      if (!bytes.length || bytes.length > AVATAR_MAX_BYTES || bytes[0] !== 255 || bytes[1] !== 216)
+        throw new ApiError('INVALID_IMAGE', 'Choose a JPEG photo under 1 MiB.', 400);
+      const state = await photoRequest<AvatarChange>(
+        viewer,
+        `/me/avatar?revision=${revision}`,
+        'POST',
+        (response) => response.json(),
+        new Uint8Array(bytes).buffer,
+      );
+      photoChanged(viewer, state);
+      return state;
+    },
+    async removeAvatar(viewer: string, revision: number): Promise<AvatarChange> {
+      const state = await photoRequest<AvatarChange>(
+        viewer,
+        `/me/avatar?revision=${revision}`,
+        'DELETE',
+        (response) => response.json(),
+      );
+      photoChanged(viewer, state);
+      return state;
+    },
+    async getAvatar(viewer: string, ref: AvatarRef, signal?: AbortSignal): Promise<string> {
+      return photoRequest(
+        viewer,
+        `/users/${encodeURIComponent(ref.userId)}/avatar?revision=${ref.revision}`,
+        'GET',
+        async (response) => {
+          if (response.headers.get('Content-Type')?.split(';')[0] !== 'image/jpeg')
+            throw new ApiError('INVALID_IMAGE', 'Photo unavailable.', 400);
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          if (
+            !bytes.length ||
+            bytes.length > AVATAR_MAX_BYTES ||
+            bytes[0] !== 255 ||
+            bytes[1] !== 216
+          )
+            throw new ApiError('INVALID_IMAGE', 'Photo unavailable.', 400);
+          return `data:image/jpeg;base64,${photoBase64(bytes)}`;
+        },
+        undefined,
+        signal,
+      );
+    },
+    async resolveAvatarRefs(
+      viewer: string,
+      ids: string[],
+      signal?: AbortSignal,
+    ): Promise<Record<string, AvatarChange>> {
+      return photoRequest(
+        viewer,
+        '/avatars/resolve',
+        'POST',
+        (response) => response.json(),
+        JSON.stringify({ userIds: ids }),
+        signal,
+        true,
+      );
+    },
     getUserProfile: (id: string) =>
       request<UserProfile>('GET', `/users/${encodeURIComponent(id)}/profile`),
     getMyUserProfile: () => request<UserProfile>('GET', '/me/details'),
@@ -344,8 +512,11 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
       request<{ locked: boolean }>('POST', `${pickPath(pickId)}/lock`, { body: { locked } }),
     listBlockedUsers: () =>
       request<{ users: import('@shared/api/safety.ts').BlockedUser[] }>('GET', '/blocks'),
-    blockUser: (userId: string) =>
-      request<StatusResponse>('POST', `/blocks/${encodeURIComponent(userId)}`),
+    blockUser: async (userId: string) => {
+      const result = await request<StatusResponse>('POST', `/blocks/${encodeURIComponent(userId)}`);
+      photoChanged(userId);
+      return result;
+    },
     unblockUser: (userId: string) =>
       request<StatusResponse>('POST', `/blocks/${encodeURIComponent(userId)}/remove`),
     /** 10 a day; 404 for anything I can't see. */
@@ -400,8 +571,14 @@ export function createApiClient({ baseUrl, getAccessToken, fetch }: ApiClientOpt
     acceptFriend: (userId: string) =>
       request<{ status: 'accepted' }>('POST', `/friends/${encodeURIComponent(userId)}/accept`),
     /** Decline their request, cancel mine, or unfriend. Idempotent. */
-    removeFriend: (userId: string) =>
-      request<StatusResponse>('POST', `/friends/${encodeURIComponent(userId)}/remove`),
+    removeFriend: async (userId: string) => {
+      const result = await request<StatusResponse>(
+        'POST',
+        `/friends/${encodeURIComponent(userId)}/remove`,
+      );
+      photoChanged(userId);
+      return result;
+    },
     /** A page of notifications, newest first. Older builds may omit nextCursor. */
     listNotifications: (before?: string) =>
       request<{
@@ -451,6 +628,18 @@ export type ApiClient = ReturnType<typeof createApiClient>;
 
 export const api: ApiClient = createApiClient(
   USE_MOCK
-    ? { baseUrl: MOCK_API_BASE_URL, getAccessToken, fetch: mockFetch }
-    : { baseUrl: API_BASE_URL, getAccessToken, fetch: (url, init) => fetch(url, init) },
+    ? {
+        baseUrl: MOCK_API_BASE_URL,
+        getAccessToken,
+        getSession: () => auth.getSession(),
+        refreshSession: refreshPhotoSession,
+        fetch: mockFetch,
+      }
+    : {
+        baseUrl: API_BASE_URL,
+        getAccessToken,
+        getSession: () => auth.getSession(),
+        refreshSession: refreshPhotoSession,
+        fetch: (url, init) => fetch(url, init),
+      },
 );

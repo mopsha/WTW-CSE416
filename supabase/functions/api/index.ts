@@ -1,4 +1,5 @@
 import { createPastMovesStore } from './pastMovesStore.ts';
+import { createAvatarStore } from './avatarStore.ts';
 import { createDirectChatStore } from './directChatStore.ts';
 import { createGroupChatStore } from './groupChatStore.ts';
 import { createUserProfilesStore } from './userProfilesStore.ts';
@@ -72,6 +73,7 @@ const app = createApp(
     safetyStore: createSafetyStore(),
     inviteStore: createInviteStore(),
     accountStore: createAccountStore(),
+    avatarStore: createAvatarStore(),
     refreshHours: refreshCandidateHours,
   },
   '/api',

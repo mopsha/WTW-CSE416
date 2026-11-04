@@ -16,6 +16,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Button, ErrorState, Screen } from '@/components';
 import { colors } from '@/components/theme';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
+import { useAvatarLifecycle } from '@/hooks/useAvatarSource';
 import { ProfileProvider, useProfile } from '@/hooks/useProfile';
 import { auth } from '@/lib/auth';
 import { configureNotifications, onNotificationTap } from '@/lib/notify';
@@ -54,6 +55,7 @@ function RootStack() {
     !!session && !profile.failed && !hasRequiredIdentity(profile.displayName, profile.username);
   const inApp = !!session && !profile.failed && !needsName;
   const pathname = usePathname();
+  useAvatarLifecycle(session?.user.id, pathname, session?.user.email);
   const offered = useRef<string | null>(null);
   const userId = session?.user.id;
 

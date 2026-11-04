@@ -6,6 +6,7 @@ import type {
   DirectMessage,
 } from '../_shared/api/directChat.ts';
 import { createServiceClient } from './serviceClient.ts';
+import { avatarMetadata } from './avatarMetadata.ts';
 export function createDirectChatStore(): DirectChatStore {
   async function rpc(action: string, userId: string, targetId: string, input = {}) {
     const { data, error } = await createServiceClient().rpc('direct_chat', {
@@ -34,8 +35,34 @@ export function createDirectChatStore(): DirectChatStore {
     return data;
   }
   return {
-    open: async (u, p) => (await rpc('open', u, p)) as DirectConversation,
-    list: async (u, c) => (await rpc('list', u, c)) as DirectHistory,
+    open: async (u, p) => {
+      const conversation = (await rpc('open', u, p)) as DirectConversation;
+      const refs = await avatarMetadata(u, [conversation.peer.id]);
+      return {
+        ...conversation,
+        peer: { ...conversation.peer, avatarRef: refs[conversation.peer.id]?.avatarRef ?? null },
+      };
+    },
+    list: async (u, c) => {
+      const history = (await rpc('list', u, c)) as DirectHistory;
+      const refs = await avatarMetadata(u, [
+        history.conversation.peer.id,
+        ...history.messages.map((m) => m.senderId),
+      ]);
+      return {
+        conversation: {
+          ...history.conversation,
+          peer: {
+            ...history.conversation.peer,
+            avatarRef: refs[history.conversation.peer.id]?.avatarRef ?? null,
+          },
+        },
+        messages: history.messages.map((m) => ({
+          ...m,
+          senderAvatarRef: refs[m.senderId]?.avatarRef ?? null,
+        })),
+      };
+    },
     send: async (u, c, input) =>
       (await rpc('send', u, c, input)) as { message: DirectMessage; recipientId: string },
   };
