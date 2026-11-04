@@ -32,8 +32,9 @@ export function candidateFromSnapshot(placeId: string, snapshot: unknown): Candi
           provider: 'google' as const,
           attributions: Array.isArray(s.attributions)
             ? s.attributions.flatMap((a: unknown) => {
-                const name = str((a as { provider?: unknown } | null)?.provider);
-                return name ? [{ provider: name }] : [];
+                const credit = a as { provider?: unknown; providerUri?: unknown } | null;
+                const name = str(credit?.provider);
+                return name ? [{ provider: name, uri: str(credit?.providerUri) ?? undefined }] : [];
               })
             : [],
           googleMapsUri: str(s.googleMapsUri) ?? undefined,
@@ -63,10 +64,10 @@ export function candidateFromApi(snapshot: unknown): Candidate {
   return candidateFromSnapshot(id, s);
 }
 
-/** The credit Google requires wherever its content appears, or null for other places. */
-export function googleCredit(place: Pick<Candidate, 'provider' | 'attributions'>): string | null {
-  if (place.provider !== 'google') return null;
-  return ['Google Maps', ...(place.attributions ?? []).map((a) => a.provider)].join(' · ');
+/** A link from a provider that's safe to open: https only, as Google sometimes omits the scheme. */
+export function safeLink(uri: string | undefined): string | null {
+  const url = uri?.startsWith('//') ? `https:${uri}` : uri;
+  return url?.startsWith('https://') ? url : null;
 }
 
 /** "Open now · closes 10 PM" / "Closed now", or null when we don't know the hours. */

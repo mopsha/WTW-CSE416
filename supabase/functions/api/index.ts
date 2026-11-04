@@ -23,12 +23,12 @@ import { createNotifyStore } from './notifyStore.ts';
 import { createPlansStore } from './plansStore.ts';
 import { createNotifier } from '../_shared/api/notify.ts';
 import { refreshCandidateHours } from './hours.ts';
-import { pickPlaces, placesPoolBuilder, resolveDiscoverPhoto } from './places.ts';
+import { pickPlaces, pickPoolBuilder, placesPoolBuilder, resolveDiscoverPhoto } from './places.ts';
 import { createDiscoverStore } from './discoverStore.ts';
 import { checkUserLimit } from './limits.ts';
 import { createCacheCleanupStore } from './placeCacheStore.ts';
 
-// Discover and Picks share configured Google/mock selection and an atomic HTTP budget.
+// Discover and Picks have separate Google/mock switches but share an atomic HTTP budget.
 // See docs/google-picks.md for what a Pick may store.
 
 // One notifier for every Pick event; inbox rows + Expo push (no Expo access token needed
@@ -51,7 +51,7 @@ const app = createApp(
     plansStore: { ...createPlansStore(), notifier },
     pastMovesStore: createPastMovesStore(),
     cronSecret: Deno.env.get('CRON_SECRET'),
-    poolBuilder: placesPoolBuilder,
+    poolBuilder: pickPoolBuilder,
     pickPlaces,
     discoverPool: placesPoolBuilder,
     discoverPhoto: resolveDiscoverPhoto,

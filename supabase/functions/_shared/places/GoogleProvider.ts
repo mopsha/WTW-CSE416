@@ -34,6 +34,14 @@ const PICK_FIELDS = [
   'businessStatus',
 ];
 export const PICK_SEARCH_MASK = PICK_FIELDS.map((f) => `places.${f}`).join(',');
+/** Undefined means the full set, which a Pick's price or open-now filter needs to work. */
+export function pickSearchMask(filters: { priceMax?: number | null; openNow?: boolean }) {
+  return filters.priceMax === undefined || filters.priceMax === null
+    ? filters.openNow
+      ? undefined
+      : PICK_SEARCH_MASK
+    : undefined;
+}
 const HOURS_MASK =
   'id,regularOpeningHours.periods,currentOpeningHours.openNow,currentOpeningHours.nextCloseTime,businessStatus,timeZone';
 const record = (v: unknown): Record<string, unknown> =>

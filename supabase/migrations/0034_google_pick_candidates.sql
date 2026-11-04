@@ -22,7 +22,7 @@ revoke all on function private.strip_google_place() from public, anon, authentic
 create trigger strip_google_place before insert or update on public.places
   for each row execute function private.strip_google_place();
 
--- Daily from the sweep. Removes coordinates older than p_cutoff, which the existing
+-- Runs on every sweep. Removes coordinates older than p_cutoff, which the existing
 -- pick_candidates_snapshot_coords check allows because it only rejects non-numeric values. A Pick
 -- still open by then can't be ranked without them, so it's canceled first.
 create function public.purge_google_coordinates(p_cutoff timestamptz) returns integer
@@ -44,3 +44,6 @@ begin
 end $$;
 revoke all on function public.purge_google_coordinates(timestamptz) from public, anon, authenticated;
 grant execute on function public.purge_google_coordinates(timestamptz) to service_role;
+
+create index pick_candidates_google_coords_idx on public.pick_candidates (created_at)
+  where snapshot ->> 'provider' = 'google' and snapshot ? 'lat';

@@ -1,7 +1,8 @@
 # Live Google places in Picks
 
-Set `PLACES_PROVIDER=google` to build new Picks from Google instead of the Stony Brook fixtures.
-This also applies to Discover. Existing Picks keep the provider they started with.
+Set `PICK_PLACES_PROVIDER=google` to build new Picks from Google instead of the Stony Brook
+fixtures. Unset means fixtures. It's separate from Discover's `PLACES_PROVIDER`, so merging or
+deploying never turns this on by itself. Existing Picks keep the provider they started with.
 
 ## What a Pick stores
 
@@ -13,8 +14,18 @@ names, addresses, photos or ratings. So a Google candidate's snapshot is only:
 
 Ranking needs the coordinates to break ties. `purge_google_coordinates` removes them after 27 days,
 and first cancels any Pick still open then, since it could no longer be ranked. **This runs from the
-daily sweep, so the sweep must be configured before turning Google on** (see
-`docs/release-readiness.md`). Otherwise coordinates stay past Google's limit.
+sweep, so check the sweep is healthy before turning Google on.** Otherwise coordinates stay past
+Google's limit. If it fails, the sweep reports `partial_failure` and retries on its next run.
+
+## Which fields are requested
+
+Google bills a Nearby Search by the most expensive field requested, so `pickSearchMask` chooses:
+
+- **Starting or refreshing a Pick:** the basic fields, unless it has a price or open-now filter.
+  Those filters can't work without price and hours, so that one search uses the full set and bills at
+  the Enterprise rate of about $0.035, after 1,000 free a month.
+- **Showing a Pick:** always the basic fields.
+- **Discover:** always the full set, as before.
 
 ## How places are shown
 
@@ -25,7 +36,8 @@ daily sweep, so the sweep must be configured before turning Google on** (see
 - Up to 5 places missing from that search are looked up individually. Any others, and any lookup
   that fails, show as "Place details unavailable".
 - Only the top three and the winner get photos, because each photo is billed separately.
-- Swipe, results and winner screens show the required Google Maps and photo author credit.
+- Swipe, results and winner screens show the required Google Maps and photo author credit, linking
+  to their sources when Google provides them (`GoogleCredit`).
 
 Drafts and canceled Picks skip all of this. Google places don't show ratings, prices or hours,
 which Google bills at a higher tier. History lists the winner as "Winner" and Past Moves as a saved
@@ -50,8 +62,8 @@ set a budget alert in Google Cloud, since this cap counts calls, not dollars.
 
 1. Enable Places API (New), restrict the key to it, and add a budget alert.
 2. Set `GOOGLE_PLACES_API_KEY` and `GOOGLE_DAILY_CALL_CAP` in Edge Function secrets.
-3. Confirm the daily sweep runs.
-4. Set `PLACES_PROVIDER=google` and try a new Pick away from Stony Brook.
+3. Confirm the sweep runs and `purge_google_coordinates` succeeds.
+4. Set `PICK_PLACES_PROVIDER=google` and try a new Pick away from Stony Brook.
 
-To roll back, set `PLACES_PROVIDER=mock`. New Picks use fixtures again, and existing Google Picks
+To roll back, unset `PICK_PLACES_PROVIDER`. New Picks use fixtures again, and existing Google Picks
 still need the key to show their places.

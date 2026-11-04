@@ -1,5 +1,6 @@
 import { createPickPlaces, MAX_PLACE_LOOKUPS } from '@shared/places/pickPlaces.ts';
-import { GoogleProvider, PICK_SEARCH_MASK } from '@shared/places/GoogleProvider.ts';
+import { GoogleProvider, PICK_SEARCH_MASK, pickSearchMask } from '@shared/places/GoogleProvider.ts';
+import { createConfiguredPoolBuilder } from '@shared/places/config.ts';
 import type { Candidate } from '@shared/places/types.ts';
 
 const center = { lat: 40.9, lng: -73.1 };
@@ -16,7 +17,12 @@ const live = (placeId: string, extra: Partial<Candidate> = {}): Candidate => ({
   address: '1 Main St',
   provider: 'google',
   retention: 'request',
-  photos: [{ name: `places/${placeId}/photos/1`, authorAttributions: [{ displayName: 'Ana' }] }],
+  photos: [
+    {
+      name: `places/${placeId}/photos/1`,
+      authorAttributions: [{ displayName: 'Ana', uri: 'https://a.example' }],
+    },
+  ],
   ...extra,
 });
 function source(found: Candidate[] = []) {
@@ -68,7 +74,7 @@ test('only requested places get a photo and its required credit', async () => {
   expect(s.photo).toHaveBeenCalledTimes(1);
   expect(shown[0]).toMatchObject({
     photoUrl: 'https://photo.example/1',
-    attributions: [{ provider: 'Ana' }],
+    attributions: [{ provider: 'Ana', providerUri: 'https://a.example' }],
   });
   expect(shown[1]!.photoUrl).toBeNull();
 });
@@ -122,4 +128,27 @@ test('the Pick search mask leaves out fields billed at a higher tier', async () 
   );
   const init = (http.mock.calls as unknown as [string, RequestInit][])[0]![1];
   expect((init.headers as Record<string, string>)['X-Goog-FieldMask']).toBe(PICK_SEARCH_MASK);
+});
+
+test('creating a Pick only pays for higher-tier fields when its filters need them', async () => {
+  expect(pickSearchMask({ openNow: false, priceMax: null })).toBe(PICK_SEARCH_MASK);
+  expect(pickSearchMask({})).toBe(PICK_SEARCH_MASK);
+  expect(pickSearchMask({ openNow: true })).toBeUndefined();
+  expect(pickSearchMask({ priceMax: 2 })).toBeUndefined();
+  expect(pickSearchMask({ priceMax: 0 })).toBeUndefined();
+
+  const http = jest.fn(async () => ({ ok: true, json: async () => ({ places: [] }) }));
+  const pool = createConfiguredPoolBuilder(
+    (name) => ({ PLACES_PROVIDER: 'google', GOOGLE_PLACES_API_KEY: 'key' })[name],
+    { http, searchMask: pickSearchMask },
+  );
+  const base = { center, radiusM: 1000, category: 'food' as const, poolSize: 5 };
+  const masks = () =>
+    (http.mock.calls as unknown as [string, RequestInit][]).map(
+      ([, init]) => (init.headers as Record<string, string>)['X-Goog-FieldMask'],
+    );
+  await pool.buildPool({ ...base, openNow: false }).catch(() => {});
+  expect(masks()).toEqual([PICK_SEARCH_MASK]);
+  await pool.buildPool({ ...base, openNow: true }).catch(() => {});
+  expect(masks()[1]).toContain('regularOpeningHours');
 });

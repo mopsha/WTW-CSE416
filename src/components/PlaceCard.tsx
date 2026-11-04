@@ -11,9 +11,10 @@ import {
 } from 'react-native';
 
 import { useEnrichedPlace } from '@/lib/googlePlaces';
-import { formatPriceLevel, googleCredit, milesFromCampus, openLabel } from '@/lib/places';
+import { formatPriceLevel, milesFromCampus, openLabel } from '@/lib/places';
 import type { Candidate } from '@/lib/types';
 
+import { GoogleCredit } from './GoogleCredit';
 import { colors, fonts } from './theme';
 
 /** "Mill Pond Bakery, Italian, price 2 of 4, 1.2 mi away" for screen readers. */
@@ -99,9 +100,7 @@ export function PlaceCard({ place: base, onInfo }: { place: Candidate; onInfo?: 
         <Chips place={place} />
       </View>
       {place.photoCredit ? <Text style={styles.credit}>Photo: {place.photoCredit}</Text> : null}
-      {!place.photoCredit && googleCredit(place) ? (
-        <Text style={styles.credit}>{googleCredit(place)}</Text>
-      ) : null}
+      {!place.photoCredit ? <GoogleCredit place={place} light style={styles.googleCredit} /> : null}
     </View>
   );
 }
@@ -147,6 +146,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.22)',
   },
   chipDark: { backgroundColor: colors.cardHi, borderColor: colors.border },
+  googleCredit: { position: 'absolute', top: 12, right: 14 },
   credit: {
     position: 'absolute',
     top: 12,

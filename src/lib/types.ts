@@ -40,7 +40,7 @@ export interface Candidate {
   note?: string | null;
   provider?: 'mock' | 'google' | 'custom';
   /** Credits Google requires next to its content. */
-  attributions?: { provider: string }[];
+  attributions?: { provider: string; uri?: string }[];
   googleMapsUri?: string;
   origin?: 'group_idea';
   groupIdeaId?: string;

@@ -6,7 +6,8 @@ import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useEnrichedPlace } from '@/lib/googlePlaces';
-import { ordinal, googleCredit } from '@/lib/places';
+import { ordinal } from '@/lib/places';
+import { GoogleCredit } from './GoogleCredit';
 import type { Candidate } from '@/lib/types';
 
 import { Chips, describePlace, PlacePhoto } from './PlaceCard';
@@ -43,12 +44,11 @@ export function WinnerCard({
             <Chips place={place} light={false} />
             {place.photoCredit ? (
               <Text style={styles.credit}>Photo: {place.photoCredit}</Text>
-            ) : googleCredit(place) ? (
-              <Text style={styles.credit}>{googleCredit(place)}</Text>
             ) : null}
           </View>
         </View>
       </LinearGradient>
+      <GoogleCredit place={place} style={styles.creditRow} />
     </View>
   );
 }
@@ -74,41 +74,43 @@ export function BigResult({
   const place = useEnrichedPlace(base);
   const label = accessibilityLabel ?? `${ordinal(rank)}: ${describePlace(place)}`;
   return (
-    <Pressable
-      onPress={onPress}
-      disabled={!onPress}
-      accessibilityRole={onPress ? 'radio' : 'summary'}
-      accessibilityState={onPress ? { selected: !!selected } : undefined}
-      accessibilityLabel={label}
-      accessibilityHint={accessibilityHint}
-      style={({ pressed }) => [
-        styles.bigResult,
-        selected && styles.bigSelected,
-        pressed && onPress && { transform: [{ scale: 0.98 }] },
-      ]}
-    >
-      <PlacePhoto uri={place.photoUrl} style={styles.bigPhoto} />
-      <LinearGradient
-        colors={['transparent', 'rgba(8,6,12,0.92)']}
-        style={StyleSheet.absoluteFill}
-      />
-      <View style={styles.rankBadge}>
-        <Text style={styles.rankText}>{ordinal(rank)}</Text>
-      </View>
-      {selected ? (
-        <View style={styles.check}>
-          <Ionicons name="checkmark" size={20} color="#0E0B12" />
+    <View>
+      <Pressable
+        onPress={onPress}
+        disabled={!onPress}
+        accessibilityRole={onPress ? 'radio' : 'summary'}
+        accessibilityState={onPress ? { selected: !!selected } : undefined}
+        accessibilityLabel={label}
+        accessibilityHint={accessibilityHint}
+        style={({ pressed }) => [
+          styles.bigResult,
+          selected && styles.bigSelected,
+          pressed && onPress && { transform: [{ scale: 0.98 }] },
+        ]}
+      >
+        <PlacePhoto uri={place.photoUrl} style={styles.bigPhoto} />
+        <LinearGradient
+          colors={['transparent', 'rgba(8,6,12,0.92)']}
+          style={StyleSheet.absoluteFill}
+        />
+        <View style={styles.rankBadge}>
+          <Text style={styles.rankText}>{ordinal(rank)}</Text>
         </View>
-      ) : null}
-      <View style={styles.bigInfo}>
-        <Text style={styles.bigName} numberOfLines={2}>
-          {place.name}
-        </Text>
-        {googleCredit(place) ? <Text style={styles.credit}>{googleCredit(place)}</Text> : null}
-        <Chips place={place} />
-        {footer}
-      </View>
-    </Pressable>
+        {selected ? (
+          <View style={styles.check}>
+            <Ionicons name="checkmark" size={20} color="#0E0B12" />
+          </View>
+        ) : null}
+        <View style={styles.bigInfo}>
+          <Text style={styles.bigName} numberOfLines={2}>
+            {place.name}
+          </Text>
+          <Chips place={place} />
+          {footer}
+        </View>
+      </Pressable>
+      <GoogleCredit place={place} style={styles.creditRow} />
+    </View>
   );
 }
 
@@ -123,25 +125,27 @@ export function SmallResult({
 }) {
   const place = useEnrichedPlace(base);
   return (
-    <Pressable
-      onPress={onPress}
-      disabled={!onPress}
-      accessibilityRole={onPress ? 'button' : 'summary'}
-      accessibilityLabel={`${ordinal(rank)}: ${describePlace(place)}`}
-      style={styles.small}
-    >
-      <PlacePhoto uri={place.photoUrl} style={styles.smallPhoto} />
-      <View style={{ flex: 1, gap: 2 }}>
-        <Text style={styles.smallRank}>{ordinal(rank).toUpperCase()}</Text>
-        <Text style={styles.smallName} numberOfLines={2}>
-          {place.name}
-        </Text>
-        {place.origin === 'group_idea' ? <Text style={styles.smallMeta}>Our Idea</Text> : null}
-        {place.cuisine ? <Text style={styles.smallMeta}>{place.cuisine}</Text> : null}
-        {googleCredit(place) ? <Text style={styles.smallMeta}>{googleCredit(place)}</Text> : null}
-      </View>
-      {onPress ? <Ionicons name="navigate" size={20} color={colors.muted} /> : null}
-    </Pressable>
+    <View>
+      <Pressable
+        onPress={onPress}
+        disabled={!onPress}
+        accessibilityRole={onPress ? 'button' : 'summary'}
+        accessibilityLabel={`${ordinal(rank)}: ${describePlace(place)}`}
+        style={styles.small}
+      >
+        <PlacePhoto uri={place.photoUrl} style={styles.smallPhoto} />
+        <View style={{ flex: 1, gap: 2 }}>
+          <Text style={styles.smallRank}>{ordinal(rank).toUpperCase()}</Text>
+          <Text style={styles.smallName} numberOfLines={2}>
+            {place.name}
+          </Text>
+          {place.origin === 'group_idea' ? <Text style={styles.smallMeta}>Our Idea</Text> : null}
+          {place.cuisine ? <Text style={styles.smallMeta}>{place.cuisine}</Text> : null}
+        </View>
+        {onPress ? <Ionicons name="navigate" size={20} color={colors.muted} /> : null}
+      </Pressable>
+      <GoogleCredit place={place} style={styles.creditRow} />
+    </View>
   );
 }
 
@@ -167,6 +171,7 @@ const styles = StyleSheet.create({
   },
   crownText: { fontFamily: fonts.black, fontSize: 14, color: '#FFD23F' },
   winnerInfo: { padding: 18, gap: 6 },
+  creditRow: { marginTop: 6, paddingHorizontal: 4 },
   credit: { fontFamily: fonts.medium, fontSize: 10, color: colors.muted },
   addr: { fontFamily: fonts.medium, fontSize: 14, color: colors.muted },
   winnerName: { fontFamily: fonts.black, fontSize: 28, lineHeight: 34, color: colors.text },
