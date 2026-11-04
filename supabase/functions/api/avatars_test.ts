@@ -97,6 +97,9 @@ function fakeClient() {
   const client = {
     async rpc(name: string, args: Record<string, unknown>) {
       calls.push(name);
+      if (name === 'consume_avatar_limit') return { data: true, error: null };
+      if (name === 'avatar_cleanup_claim') return { data: 'claim', error: null };
+      if (name === 'avatar_cleanup_finish') return { data: null, error: null };
       if (name === 'avatar_orphans')
         return { data: [...objects.keys()].filter((key) => key !== path), error: null };
       if (name === 'avatar_begin_account_delete') {
@@ -232,7 +235,7 @@ Deno.test('cleanup failure does not report a committed replace/remove as failed'
   assert((await store.remove(owner, 1)).avatarRef === null);
   f.failCleanup = false;
   await store.cleanup();
-  assert(f.objects.size === 0);
+  assert(Number(f.objects.size) === 0);
 });
 
 Deno.test(
@@ -258,7 +261,7 @@ Deno.test(
     );
     f.failCleanup = false;
     await deleteAccountPhotos(owner, f.client);
-    assert(f.objects.size === 0);
+    assert(Number(f.objects.size) === 0);
   },
 );
 
@@ -393,5 +396,143 @@ Deno.test(
     assert((await app.request('/me/avatar?revision=-1', { method: 'DELETE' })).status === 400);
     const denied = await setup(photos, false).request(`/users/${other}/avatar?revision=1`);
     assert(denied.status === 401 && denied.headers.get('Cache-Control') === 'private, no-store');
+  },
+);
+
+Deno.test(
+  'photo read quotas deny before protected I/O and cleanup skips unclaimed scans',
+  async () => {
+    const f = fakeClient();
+    const deniedClient = {
+      ...f.client,
+      rpc: async (name: string) => {
+        if (name === 'consume_avatar_limit') return { data: false, error: null };
+        throw new Error('Unexpected I/O');
+      },
+    } as unknown as ReturnType<typeof createServiceClient>;
+    const store = createAvatarStore(() => deniedClient);
+    await rejects(() => store.read(owner, owner, 0), 'PHOTO_RATE_LIMITED');
+    await rejects(() => store.resolve!(owner, [owner]), 'PHOTO_RATE_LIMITED');
+    assert(!f.calls.includes('avatar_read') && !f.calls.includes('download'));
+    const skip = {
+      ...f.client,
+      rpc: async (name: string) => {
+        assert(name === 'avatar_cleanup_claim', 'Unclaimed cleanup scanned Storage');
+        return { data: null, error: null };
+      },
+    } as unknown as ReturnType<typeof createServiceClient>;
+    await createAvatarStore(() => skip).cleanup();
+  },
+);
+
+Deno.test(
+  'photo maintenance failure preserves deadline/cache results and retries account cleanup',
+  async () => {
+    let retried = false;
+    const app = createApp({
+      store: {} as never,
+      lifecycleStore: {} as never,
+      poolBuilder: {} as never,
+      closingStore: {} as never,
+      getUser: async () => ({ id: owner }),
+      cronSecret: 'test-only',
+      sweepStore: { expiredPage: async () => [] },
+      cacheCleanupStore: { deleteExpiredOnce: async () => ({ ran: true, removed: 2 }) },
+      avatarStore: {
+        upload: async () => {
+          throw new Error('Unexpected upload');
+        },
+        remove: async () => {
+          throw new Error('Unexpected removal');
+        },
+        read: async () => {
+          throw new Error('Unexpected read');
+        },
+        cleanup: async () => {
+          throw new Error('Storage unavailable');
+        },
+      },
+      retryAccountDeletions: async () => {
+        retried = true;
+        return { attempted: 1, failed: 1 };
+      },
+    });
+    const response = await app.request('/internal/sweep', {
+      method: 'POST',
+      headers: { 'x-cron-secret': 'test-only' },
+    });
+    const result = await response.json();
+    assert(response.status === 200 && result.status === 'ok');
+    assert(result.avatarCleanup === 'partial_failure' && result.cacheCleanup.removed === 2);
+    assert(retried && result.accountDeletionCleanup.failed === 1);
+  },
+);
+
+Deno.test(
+  'Storage missing/denied responses differ from transient server and transport failures',
+  async () => {
+    for (const [storageStatus, expected] of [
+      [404, 404],
+      [403, 404],
+      [401, 404],
+      [500, 503],
+      [503, 503],
+      [0, 503],
+    ]) {
+      const f = fakeClient();
+      const client = {
+        ...f.client,
+        storage: {
+          from: () => ({
+            download: async () => {
+              if (!storageStatus) throw new Error('PRIVATE transport details');
+              return {
+                data: null,
+                error: { statusCode: String(storageStatus), message: 'PRIVATE' },
+              };
+            },
+          }),
+        },
+      } as unknown as ReturnType<typeof createServiceClient>;
+      try {
+        await createAvatarStore(() => client).read(owner, owner, 0);
+        throw new Error('Expected rejection');
+      } catch (error) {
+        assert(error instanceof ApiError && error.status === expected);
+        assert(!error.message.includes('PRIVATE'));
+      }
+    }
+  },
+);
+
+Deno.test(
+  'actual deletion adapter retries a partially removed Storage prefix while keeping writes frozen',
+  async () => {
+    const f = fakeClient();
+    const bucket = f.client.storage.from('profile-photos');
+    let partial = true;
+    const client = {
+      ...f.client,
+      storage: {
+        from: () => ({
+          ...bucket,
+          remove: async (keys: string[]) => {
+            if (partial) {
+              partial = false;
+              await bucket.remove(keys.slice(0, 1));
+              return { error: { message: 'lost response after partial removal' } };
+            }
+            return bucket.remove(keys);
+          },
+        }),
+      },
+    } as unknown as ReturnType<typeof createServiceClient>;
+    // Two objects ensure retry really encounters a remaining object.
+    await bucket.upload(`${owner}/orphan.jpg`, image(), { upsert: false });
+    await rejects(() => deleteAccountPhotos(owner, client));
+    assert(f.objects.size === 1);
+    await rejects(() => createAvatarStore(() => client).read(owner, owner, 0), 'PHOTO_UNAVAILABLE');
+    await deleteAccountPhotos(owner, client);
+    assert(Number(f.objects.size) === 0);
   },
 );

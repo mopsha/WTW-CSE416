@@ -117,6 +117,7 @@ export function createApp(
     inviteStore?: InviteStore;
     accountStore?: AccountStore;
     avatarStore?: AvatarStore;
+    retryAccountDeletions?: () => Promise<{ attempted: number; failed: number }>;
     sweepStore?: SweepStore;
     notifyStore?: NotifyStore;
     plansStore?: PlansStore;
@@ -220,12 +221,29 @@ export function createApp(
     } catch {
       avatarCleanup = 'partial_failure';
     }
+    let accountDeletionCleanup;
+    try {
+      accountDeletionCleanup = await deps.retryAccountDeletions?.();
+    } catch {
+      accountDeletionCleanup = { status: 'partial_failure' };
+    }
+    console.info(
+      JSON.stringify({
+        service: 'sweep',
+        event: 'photo_maintenance',
+        avatarCleanup,
+        accountDeletionCleanup,
+      }),
+    );
     console.info(JSON.stringify({ service: 'sweep', event: 'cache_cleanup', ...cacheCleanup }));
     const status =
-      result.status === 'ok' && cacheCleanup.status !== 'partial_failure' && avatarCleanup === 'ok'
+      result.status === 'ok' && cacheCleanup.status !== 'partial_failure'
         ? 'ok'
         : 'partial_failure';
-    return c.json({ ...result, status, cacheCleanup, avatarCleanup }, status === 'ok' ? 200 : 503);
+    return c.json(
+      { ...result, status, cacheCleanup, avatarCleanup, accountDeletionCleanup },
+      status === 'ok' ? 200 : 503,
+    );
   });
   app.get('/hang', async (c) => {
     const user = await deps.getUser(c.req.raw);

@@ -14,3 +14,20 @@ export function createAccountStore(): AccountStore {
     },
   };
 }
+
+/** Retry only persisted deletion intent. Failure keeps the profile frozen; it
+ * cannot safely be restored after Storage deletion or an uncertain Auth commit. */
+export async function retryPendingAccountDeletions() {
+  const { data, error } = await createServiceClient().rpc('avatar_pending_deletions');
+  if (error) throw new Error('Account deletion retries unavailable');
+  let failed = 0;
+  const ids = (data ?? []) as string[];
+  for (const id of ids) {
+    try {
+      await createAccountStore().deleteUser(id);
+    } catch {
+      failed++;
+    }
+  }
+  return { status: failed ? 'partial_failure' : 'ok', attempted: ids.length, failed };
+}

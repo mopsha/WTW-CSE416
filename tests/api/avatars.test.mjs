@@ -278,6 +278,29 @@ test(
       assert.ok([200, 400, 401, 403].includes(removedByClient.status));
       assert.equal(await storageExists(original.avatar_path), true);
 
+      for (const terminal of ['completed', 'canceled']) {
+        requireStatus(
+          await db(`picks?id=eq.${pickId}`, {
+            method: 'PATCH',
+            body: { state: terminal },
+          }),
+          204,
+          'finish photo Pick',
+        );
+        await getPhoto(owner, pickPeer, 1, 404);
+        await getPhoto(owner, groupPeer, 1);
+        await getPhoto(owner, friend, 1);
+      }
+      requireStatus(
+        await db(`picks?id=eq.${pickId}`, {
+          method: 'PATCH',
+          body: { state: 'draft' },
+        }),
+        204,
+        'restore active photo fixture',
+      );
+      await getPhoto(owner, pickPeer, 1);
+
       requireStatus(
         await db('blocks', {
           method: 'POST',

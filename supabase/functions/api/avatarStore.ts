@@ -52,6 +52,11 @@ export function createAvatarStore(
   }
   return {
     async resolve(viewer, ids) {
+      if (
+        (await rpc('consume_avatar_limit', { p_user_id: viewer, p_kind: 'avatar_resolve' })) !==
+        true
+      )
+        throw new ApiError(429, 'PHOTO_RATE_LIMITED', 'Photo request limit reached');
       return (await rpc('avatar_refs', { p_viewer_id: viewer, p_target_ids: ids })) as Record<
         string,
         AvatarChange
@@ -73,16 +78,44 @@ export function createAvatarStore(
     },
     remove: (user, revision) => change(user, revision, null),
     async read(viewer, target, revision) {
+      if (
+        (await rpc('consume_avatar_limit', { p_user_id: viewer, p_kind: 'avatar_read' })) !== true
+      )
+        throw new ApiError(429, 'PHOTO_RATE_LIMITED', 'Photo request limit reached');
       const args = { p_viewer_id: viewer, p_target_id: target, p_revision: revision };
       const path = (await rpc('avatar_read', args)) as string;
-      const { data, error } = await client().storage.from(BUCKET).download(path);
-      if (error || !data) throw new ApiError(404, 'PHOTO_UNAVAILABLE', 'Photo unavailable');
+      let data: Blob | null;
+      try {
+        const result = await client().storage.from(BUCKET).download(path);
+        if (result.error) {
+          const status = Number(result.error.statusCode);
+          if (
+            [400, 401, 403, 404].includes(status) &&
+            (status !== 400 || result.error.message === 'Object not found')
+          )
+            throw new ApiError(404, 'PHOTO_UNAVAILABLE', 'Photo unavailable');
+          throw new Error('Storage unavailable');
+        }
+        data = result.data;
+        if (!data) throw new Error('Storage returned no image');
+      } catch (error) {
+        if (error instanceof ApiError) throw error;
+        throw new ApiError(503, 'PHOTO_UNAVAILABLE', 'Photo temporarily unavailable');
+      }
       // Recheck after Storage I/O: do not return a newly revoked/replaced image.
       await rpc('avatar_read', args);
       return new Uint8Array(await data.arrayBuffer());
     },
     async cleanup() {
-      await removeObjects((await rpc('avatar_orphans', {})) as string[]);
+      const token = await rpc('avatar_cleanup_claim', {});
+      if (!token) return;
+      let success = false;
+      try {
+        await removeObjects((await rpc('avatar_orphans', {})) as string[]);
+        success = true;
+      } finally {
+        await rpc('avatar_cleanup_finish', { p_token: token, p_success: success });
+      }
     },
   };
 }

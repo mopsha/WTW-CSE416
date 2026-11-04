@@ -102,6 +102,7 @@ export function mockCanViewAvatar(viewer: string, target: string): boolean {
     ) ||
     [...mockPicks.values()].some(
       (pick) =>
+        ['draft', 'swiping', 'ranking', 'final_vote'].includes(pick.state) &&
         pick.participants.some((p) => p.userId === viewer) &&
         pick.participants.some((p) => p.userId === target),
     )

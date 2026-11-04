@@ -22,7 +22,7 @@ and never accept a user ID or path supplied by the client. Service-role uploads
 do not imply an end-user `owner_id`; ownership is enforced by the API and RPCs.
 
 Photo read eligibility is: existing owner, accepted friend, or current shared
-group/Pick participant. Either-direction blocking takes precedence. Pending
+group participant or participant in a shared active Pick (draft/swiping/ranking/final_vote). Either-direction blocking takes precedence. Pending
 friendship alone does not qualify. Profile-page metadata permissions are unchanged.
 Account-deletion-pending profiles cannot read or serve managed photos.
 
@@ -76,7 +76,7 @@ commit reply never triggers deletion of a potentially active candidate: clients
 must reload owner details to resolve that outcome instead of blindly overwriting.
 
 The existing authenticated cron sweep removes at most 100 unreferenced objects
-per run, older than 24 hours. Commit RPCs reject objects older than 15 minutes;
+per claimed hourly batch, older than 24 hours (five-minute failure/crash backoff). Commit RPCs reject objects older than 15 minutes;
 an object eligible for collection therefore cannot become active concurrently.
 No production code deletes Storage metadata through SQL. The scheduled sweep
 must be configured and monitored before accepting uploads in a deployment.
@@ -85,7 +85,9 @@ Account deletion first durably marks photo deletion pending and advances the
 revision, rejecting in-flight finalization and new photo writes. It removes up
 to ten batches of 100 objects through Storage, then calls Auth deletion. Storage
 failure stops Auth deletion; retrying DELETE /me resumes cleanup. A failed
-account deletion leaves photo editing disabled until deletion is retried.
+account deletion leaves photos disabled. The sweep automatically retries up to five due
+accounts per run using five-minute claims; DELETE /me can also be retried. It never
+unfreezes an uncertain or partially destructive deletion.
 An already-running upload may finish after the prefix scan, but cannot commit;
 the bounded orphan sweep removes any such inaccessible residual object later.
 
@@ -151,3 +153,5 @@ References checked for this implementation:
 | `tests/api/`                      | `avatar-fixture.jpg`, `avatars.test.mjs`                                                                                                                                                                                                           |
 | `tests/db/`                       | `avatar_concurrency.py`                                                                                                                                                                                                                            |
 | `docs/`                           | `profile-photos-phase1.md`                                                                                                                                                                                                                         |
+
+Review follow-ups and release gates: [profile-photos-review-plan.md](profile-photos-review-plan.md).

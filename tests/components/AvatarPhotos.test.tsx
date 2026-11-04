@@ -26,8 +26,14 @@ jest.mock('expo-router', () => ({
 jest.mock('@/lib/api', () => ({ api: { getAvatar: jest.fn(), resolveAvatarRefs: jest.fn() } }));
 const ref = { userId: 'friend', revision: 1 };
 let tree: Tree | undefined;
-function Harness({ resolve = false }: { resolve?: boolean }) {
-  useAvatarLifecycle(mockSession?.user.id, '/profile', mockSession?.user.email);
+function Harness({
+  resolve = false,
+  pathname = '/profile',
+}: {
+  resolve?: boolean;
+  pathname?: string;
+}) {
+  useAvatarLifecycle(mockSession?.user.id, pathname, mockSession?.user.email);
   return <Avatar name="Ava" userId="friend" avatarRef={resolve ? undefined : ref} />;
 }
 beforeEach(() => {
@@ -103,4 +109,28 @@ test('person-only identities resolve in a batch and never download revision zero
   expect(api.resolveAvatarRefs).toHaveBeenCalledWith('A', ['friend'], expect.anything());
   expect(api.getAvatar).toHaveBeenCalledWith('A', ref, expect.anything());
   expect(jest.mocked(api.getAvatar).mock.calls.every(([, photo]) => photo.revision > 0)).toBe(true);
+});
+
+test('pathname changes revalidate without flushing downloaded bytes', async () => {
+  await mount();
+  expect(api.getAvatar).toHaveBeenCalledTimes(1);
+  await act(async () => tree!.update(<Harness pathname="/friends" />));
+  expect(api.getAvatar).toHaveBeenCalledTimes(1);
+  expect(tree!.root.findAllByType(Image)).toHaveLength(1);
+});
+
+test('foreground metadata polling uses the bounded thirty-second cadence', async () => {
+  jest.useFakeTimers();
+  try {
+    await mount();
+    const initial = jest.mocked(api.resolveAvatarRefs).mock.calls.length;
+    await act(async () => jest.advanceTimersByTimeAsync(5_000));
+    expect(api.resolveAvatarRefs).toHaveBeenCalledTimes(initial);
+    await act(async () => jest.advanceTimersByTimeAsync(25_000));
+    expect(api.resolveAvatarRefs).toHaveBeenCalledTimes(initial + 1);
+  } finally {
+    await act(async () => tree?.unmount());
+    tree = undefined;
+    jest.useRealTimers();
+  }
 });

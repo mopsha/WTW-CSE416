@@ -8,7 +8,14 @@ export async function avatarMetadata(
 ): Promise<Record<string, AvatarChange>> {
   if (!userIds.length) return {};
   try {
-    const { data, error } = await createServiceClient().rpc('avatar_refs', {
+    const client = createServiceClient();
+    const budget = await client.rpc('consume_avatar_limit', {
+      p_user_id: viewerId,
+      p_kind: 'avatar_resolve',
+    });
+    if (budget.error) throw new Error('Photo metadata unavailable');
+    if (budget.data !== true) return {};
+    const { data, error } = await client.rpc('avatar_refs', {
       p_viewer_id: viewerId,
       p_target_ids: [...new Set(userIds)],
     });

@@ -9,7 +9,14 @@ interface PhotoLoader {
   ): Promise<Record<string, AvatarChange>>;
 }
 /** Only the cache is retained between mounted image consumers: at most 32 images
- * and 8 MiB of encoded characters, for 15 seconds without reauthorization. */
+ * and 8 MiB of encoded characters, for a bounded authorization lease. */
+export const AVATAR_AUTH_LEASE_MS = 60_000;
+const denied = (error: unknown) =>
+  typeof error === 'object' &&
+  error !== null &&
+  'status' in error &&
+  [401, 403, 404].includes(Number(error.status));
+
 export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
   let viewer: string | null = null;
   let accountScope: string | null = null;
@@ -23,6 +30,7 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
   const latest = new Map<string, AvatarChange>();
   const generations = new Map<string, number>();
   const images = new Map<string, { uri: string; expires: number }>();
+  const leases = new Map<string, number>();
   const failed = new Map<string, number>();
   const pending = new Map<
     string,
@@ -40,6 +48,7 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
     pending.forEach((value) => value.controller.abort());
     pending.clear();
     images.clear();
+    leases.clear();
     failed.clear();
   }
   function setViewer(id: string | null, scope: string | null = id) {
@@ -55,6 +64,7 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
   function update(id: string, state?: AvatarChange, authoritative = false) {
     const previous = latest.get(id);
     if (!authoritative && state && previous && state.revision < previous.revision) return;
+    leases.delete(id);
     if (watches.has(id)) {
       latest.set(id, state ?? { revision: previous?.revision ?? 0, avatarRef: null });
       bump(id);
@@ -68,8 +78,11 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
       }
     notify();
   }
+  function expire() {
+    for (const [id, until] of leases) if (until <= now()) update(id);
+  }
   function effective(id: string, ref: AvatarRef): AvatarRef | null {
-    if (!active || id !== viewer) return null;
+    if (!active || id !== viewer || (leases.get(ref.userId) ?? Infinity) <= now()) return null;
     const state = latest.get(ref.userId);
     return state ? state.avatarRef : ref;
   }
@@ -104,8 +117,24 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
       set.set(token, ref);
       watches.set(ref.userId, set);
       const current = latest.get(ref.userId);
-      if (!current || ref.revision > current.revision)
-        update(ref.userId, { revision: ref.revision, avatarRef: resolveFirst ? null : ref });
+      if (!current || ref.revision > current.revision) {
+        const retained = [...images.entries()].find(
+          ([key, value]) =>
+            key.startsWith(`${ref.userId}:`) &&
+            value.expires > now() &&
+            Number(key.slice(ref.userId.length + 1)) >= ref.revision,
+        );
+        if (!current && retained) {
+          const restored = {
+            userId: ref.userId,
+            revision: Number(retained[0].slice(ref.userId.length + 1)),
+          };
+          latest.set(ref.userId, { revision: restored.revision, avatarRef: restored });
+          leases.set(ref.userId, retained[1].expires);
+          bump(ref.userId);
+          notify();
+        } else update(ref.userId, { revision: ref.revision, avatarRef: resolveFirst ? null : ref });
+      }
       return () => {
         const current = watches.get(ref.userId);
         current?.delete(token);
@@ -113,6 +142,7 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
           watches.delete(ref.userId);
           latest.delete(ref.userId);
           generations.delete(ref.userId);
+          leases.delete(ref.userId);
           for (const [key, value] of pending)
             if (key.startsWith(`${ref.userId}:`)) {
               value.controller.abort();
@@ -122,6 +152,7 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
       };
     },
     async load(id: string, supplied: AvatarRef): Promise<string | null> {
+      expire();
       const ref = effective(id, supplied);
       if (!ref) return null;
       const key = `${ref.userId}:${ref.revision}`;
@@ -134,12 +165,14 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
       }
       if (pending.has(key)) return pending.get(key)!.promise;
       const controller = new AbortController();
+      const expires = now() + AVATAR_AUTH_LEASE_MS;
       const capturedEpoch = epoch;
       const generation = generations.get(ref.userId);
       const promise = loader
         .getAvatar(id, ref, controller.signal)
         .then((uri) => {
           if (
+            expires <= now() ||
             !active ||
             controller.signal.aborted ||
             viewer !== id ||
@@ -147,7 +180,8 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
             generations.get(ref.userId) !== generation
           )
             return null;
-          images.set(key, { uri, expires: now() + 15_000 });
+          images.set(key, { uri, expires });
+          leases.set(ref.userId, expires);
           let size = [...images.values()].reduce((sum, value) => sum + value.uri.length, 0);
           while (images.size > 32 || size > 8 * 1024 * 1024) {
             const oldest = images.keys().next().value!;
@@ -156,14 +190,16 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
           }
           return uri;
         })
-        .catch(() => {
+        .catch((error) => {
           if (
             !controller.signal.aborted &&
             viewer === id &&
             epoch === capturedEpoch &&
             generations.get(ref.userId) === generation
-          )
+          ) {
+            if (denied(error)) update(ref.userId);
             failed.set(key, now() + 15_000);
+          }
           return null;
         })
         .finally(() => {
@@ -173,6 +209,7 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
       return promise;
     },
     async revalidate() {
+      expire();
       if (!viewer || !active || manifest || !watches.size) return;
       const id = viewer;
       const capturedEpoch = epoch;
@@ -183,8 +220,13 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
       try {
         for (let offset = 0; offset < ids.length; offset += 100) {
           const batch = ids.slice(offset, offset + 100);
+          const expires = now() + AVATAR_AUTH_LEASE_MS;
           const states = await loader.resolveAvatarRefs(id, batch, controller.signal);
           if (controller.signal.aborted || viewer !== id || epoch !== capturedEpoch) return;
+          if (expires <= now()) {
+            expire();
+            continue;
+          }
           for (const target of batch) {
             if (!watches.has(target) || generations.get(target) !== captured.get(target)) continue;
             const previous = latest.get(target);
@@ -192,6 +234,7 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
             if (next.revision !== previous?.revision || !!next.avatarRef !== !!previous?.avatarRef)
               update(target, next, true);
             else {
+              if (next.avatarRef) leases.set(target, expires);
               const key = `${target}:${next.revision}`;
               const retry = failed.get(key);
               if (next.avatarRef && retry !== undefined && retry <= now()) {
@@ -199,12 +242,12 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
                 continue;
               }
               const image = images.get(key);
-              if (image) image.expires = now() + 15_000;
+              if (image) image.expires = expires;
             }
           }
         }
-      } catch {
-        if (!controller.signal.aborted && viewer === id && epoch === capturedEpoch)
+      } catch (error) {
+        if (denied(error) && !controller.signal.aborted && viewer === id && epoch === capturedEpoch)
           ids.forEach((target) => {
             if (generations.get(target) === captured.get(target)) update(target);
           });

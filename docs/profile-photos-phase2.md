@@ -65,7 +65,7 @@ deadline, abort support, and at most one explicit session-refresh retry on 401.
 Other authorization errors do not trigger refresh loops.
 
 The shared LRU holds at most 32 images and 8 MiB of encoded characters. Reuse
-expires after 15 seconds without reauthorization. Mounted Image consumers retain
+expires after a 60-second authorization lease without reauthorization. Mounted Image consumers retain
 their current source as rendering state; their lifetime is distinct from the LRU.
 Nothing downloads to a public disk cache or persists remote photo bytes in app
 storage. Already delivered/decoded pixels cannot be remotely erased.
@@ -73,14 +73,19 @@ storage. Already delivered/decoded pixels cannot be remotely erased.
 Cache state is scoped to the user and account email (mock accounts intentionally
 share one user ID). Account changes and sign-out clear sources, pending downloads
 and revisions; token refresh within the same account does not flush photos.
-Navigation/background transitions clear cached bytes. Only focused consumers
+Navigation rechecks visibility but retains unexpired bytes; backgrounding clears them. Only focused consumers
 register identities; blurred consumers hide their sources and unsubscribe.
 Generation and abort checks discard late results even if a transport ignores abort.
 
 Known photo references download directly. Existing person-only projections pass
 `userId`; their refs resolve together rather than triggering profile requests per
-row. One coordinator rechecks the focused identities every five seconds, in batches
-of up to 100. Failed revalidation hides photos. A local block, unfriend, replace or
+row. One coordinator rechecks the focused identities every 30 seconds, in batches
+of up to 100. Confirmed denial hides photos immediately. Transient failures preserve leased bytes;
+The 60-second lease is measured from request start, so delayed responses do not
+extend it. Cache reads and render keys check expiry, as do foreground polls.
+Already rendered pixels can remain until JavaScript runs another render/check;
+there is no hard post-revocation wall-clock maximum. Request completion, retries,
+and JS scheduling affect when changes become visible. A local block, unfriend, replace or
 remove invalidates the relevant source immediately. Changes made on another device
 are observed through polling, not an invented real-time photo subscription.
 Unavailable downloads can retry after a 15-second backoff once the batch check
@@ -174,3 +179,5 @@ changes were preserved. The following files were added or extended for phase 2:
 | `tests/lib/`                      | `avatarCache.test.ts`, `photoApi.test.ts`, `pickProfilePhoto.test.ts`, `mockAvatars.test.ts`                                                |
 | `tests/api/`                      | `avatars.test.mjs`                                                                                                                          |
 | `docs/`                           | `profile-photos-phase2.md`                                                                                                                  |
+
+Review follow-ups and release gates: [profile-photos-review-plan.md](profile-photos-review-plan.md).

@@ -1,7 +1,7 @@
 -- Real SQL authorization and RLS. Storage HTTP and physical object deletion are
 -- separately covered by tests/api/avatars.test.mjs, never inferred from this test.
 begin;
-select '1..12';
+select '1..16';
 insert into auth.users(id,raw_user_meta_data)
  select ('a733000'||n||'-3333-4333-8333-333333333333')::uuid,jsonb_build_object('display_name','Photo person '||n)
  from generate_series(1,6) n;
@@ -31,6 +31,17 @@ do $$ declare n integer; allowed boolean; begin
  if private.can_view_avatar(null,'a7330001-3333-4333-8333-333333333333') then raise exception 'Null viewer'; end if;
 end $$;
 select 'ok 1 - owner, accepted friends and current co-members; no pending/stranger access';
+
+-- Historical Picks alone must not expose current photos. Friends/groups remain eligible.
+do $$ declare state_name text; begin
+ foreach state_name in array array['draft','swiping','ranking','final_vote','completed','canceled'] loop
+  update public.picks set state=state_name::public.pick_state where id='a7330000-3333-4333-8333-333333333333';
+  if private.can_view_avatar('a7330005-3333-4333-8333-333333333333','a7330001-3333-4333-8333-333333333333')
+   is distinct from (state_name in ('draft','swiping','ranking','final_vote')) then raise exception 'Wrong lifecycle visibility'; end if;
+  if not private.can_view_avatar('a7330004-3333-4333-8333-333333333333','a7330001-3333-4333-8333-333333333333') then raise exception 'Group visibility lost'; end if;
+ end loop;
+ update public.picks set state='draft' where id='a7330000-3333-4333-8333-333333333333';
+end $$;
 
 do $$ declare r jsonb; begin
  r:=public.avatar_change('a7330001-3333-4333-8333-333333333333',0,'a7330001-3333-4333-8333-333333333333/11111111-1111-4111-8111-111111111111.jpg');
@@ -121,4 +132,65 @@ do $$ begin
  if (select file_size_limit from storage.buckets where id='profile-photos')<>1048576 then raise exception 'Bucket size'; end if;
 end $$;
 select 'ok 12 - anonymous access denied and bucket private with bounded size';
+
+set local role service_role;
+do $$ declare n integer; begin
+ for n in 1..600 loop if not public.consume_avatar_limit('a7330002-3333-4333-8333-333333333333','avatar_read') then raise exception 'Normal reads denied'; end if; end loop;
+ if public.consume_avatar_limit('a7330002-3333-4333-8333-333333333333','avatar_read') then raise exception 'Read cap bypass'; end if;
+ for n in 1..120 loop if not public.consume_avatar_limit('a7330002-3333-4333-8333-333333333333','avatar_resolve') then raise exception 'Normal resolve denied'; end if; end loop;
+ if public.consume_avatar_limit('a7330002-3333-4333-8333-333333333333','avatar_resolve') then raise exception 'Resolve cap bypass'; end if;
+ if not public.consume_avatar_limit('a7330003-3333-4333-8333-333333333333','avatar_read') then raise exception 'Cross-user quota'; end if;
+end $$;
+select 'ok 13 - normal usage allowed and read quotas are per viewer';
+do $$ declare t uuid; begin
+ t:=public.avatar_cleanup_claim();
+ if t is null or public.avatar_cleanup_claim() is not null then raise exception 'Cleanup claim overlap'; end if;
+ perform public.avatar_cleanup_finish(t,false);
+ if public.avatar_cleanup_claim() is not null then raise exception 'Cleanup retry has no backoff'; end if;
+end $$;
+-- Force expiry without sleeping or changing production claim protections.
+reset role;
+do $$ declare old_token uuid; new_token uuid; deadline timestamptz; begin
+ update private.avatar_cleanup_state set next_run=now()-interval '1 second';
+ old_token:=public.avatar_cleanup_claim();
+ update private.avatar_cleanup_state set next_run=now()-interval '1 second';
+ new_token:=public.avatar_cleanup_claim();
+ if new_token is null or new_token=old_token then raise exception 'Expired claim not replaced'; end if;
+ select next_run into deadline from private.avatar_cleanup_state;
+ -- A slow old worker may finish either successfully or unsuccessfully after reclaim.
+ perform public.avatar_cleanup_finish(old_token,true);
+ perform public.avatar_cleanup_finish(old_token,false);
+ if not exists(select 1 from private.avatar_cleanup_state where token=new_token and next_run=deadline)
+ then raise exception 'Stale worker changed newer claim'; end if;
+ perform public.avatar_cleanup_finish(new_token,true);
+ if not exists(select 1 from private.avatar_cleanup_state where token is null and next_run=now()+interval '1 hour')
+ then raise exception 'Successful cleanup not hourly'; end if;
+ if public.avatar_cleanup_claim() is not null then raise exception 'Hourly gate bypass'; end if;
+ update private.avatar_cleanup_state set next_run=now()-interval '1 second';
+ new_token:=public.avatar_cleanup_claim();
+ perform public.avatar_cleanup_finish(new_token,false);
+ if not exists(select 1 from private.avatar_cleanup_state where next_run=now()+interval '5 minutes')
+ then raise exception 'Failure backoff lost'; end if;
+ update private.avatar_cleanup_state set next_run=now()-interval '1 second';
+ if public.avatar_cleanup_claim() is null then raise exception 'Failure suppressed retry'; end if;
+end $$;
+set local role service_role;
+select 'ok 14 - cleanup claims serialize and failures back off';
+do $$ begin
+ if not exists(select 1 from public.avatar_pending_deletions()) then raise exception 'Pending delete not claimed'; end if;
+ if exists(select 1 from public.avatar_pending_deletions()) then raise exception 'Deletion retry overlap'; end if;
+end $$;
+reset role;
+do $$ declare claimed uuid; begin
+ update public.profiles set avatar_delete_retry_at=now()-interval '1 second' where avatar_deletion_pending;
+ select id into claimed from public.avatar_pending_deletions() id limit 1;
+ if claimed is null then raise exception 'Expired deletion lease not reclaimed'; end if;
+ if not exists(select 1 from public.profiles where id=claimed and avatar_deletion_pending
+  and avatar_delete_retry_at=now()+interval '5 minutes') then raise exception 'Retry unfroze profile'; end if;
+ if exists(select 1 from public.avatar_pending_deletions()) then raise exception 'Reclaimed deletion overlaps'; end if;
+end $$;
+set local role service_role;
+select 'ok 15 - deletion retries claim persisted intent without clearing safety guards';
+select 'ok 16 - photo access ends with active Pick lifecycle while current groups remain visible';
+reset role;
 rollback;

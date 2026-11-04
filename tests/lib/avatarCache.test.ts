@@ -26,9 +26,11 @@ test('deduplicates downloads and uses only unexpired account-scoped cache entrie
   await Promise.all([cache.load('A', ref), cache.load('A', ref)]);
   expect(loader.getAvatar).toHaveBeenCalledTimes(1);
   expect(await cache.load('A', ref)).toBe('A:photo-1');
-  setClock(16_000);
+  setClock(61_000);
   await cache.load('A', ref);
-  expect(loader.getAvatar).toHaveBeenCalledTimes(2);
+  expect(loader.getAvatar).toHaveBeenCalledTimes(1);
+  await cache.revalidate();
+  await cache.load('A', ref);
   cache.setViewer('B');
   cache.watch('B', ref);
   expect(await cache.load('B', ref)).toBe('B:photo-1');
@@ -126,12 +128,12 @@ test('unmount/remount cannot make an old visibility response overwrite a new ref
   await request;
   expect(await cache.load('A', { ...ref, revision: 2 })).toBe('A:photo-2');
 });
-test('visibility failures fail closed and cache count is bounded', async () => {
+test('transient failures retain leased bytes and cache count stays bounded', async () => {
   const { cache, loader } = fixture();
   await cache.load('A', ref);
   loader.resolveAvatarRefs.mockRejectedValueOnce(new Error('offline'));
   await cache.revalidate();
-  expect(await cache.load('A', ref)).toBeNull();
+  expect(await cache.load('A', ref)).toBe('A:photo-1');
   for (let n = 0; n < 33; n++) {
     const photo = { userId: `person-${n}`, revision: 1 };
     cache.watch('A', photo);
@@ -152,4 +154,116 @@ test('an unavailable image can retry after backoff when visibility is still vali
   await cache.revalidate();
   expect(cache.key('A', ref)).not.toBe(before);
   expect(await cache.load('A', ref)).toBe('A:photo-1');
+});
+
+test('offline grace expires; confirmed denial revokes immediately; success recovers', async () => {
+  const { cache, loader, setClock } = fixture();
+  await cache.load('A', ref);
+  loader.resolveAvatarRefs.mockRejectedValueOnce(new Error('offline'));
+  await cache.revalidate();
+  expect(await cache.load('A', ref)).toBe('A:photo-1');
+  // Ignored stale events must not discard the authorization-expiry guard.
+  cache.update('friend', { revision: 0, avatarRef: { ...ref, revision: 0 } });
+  setClock(61_000);
+  loader.resolveAvatarRefs.mockRejectedValueOnce(new Error('offline'));
+  await cache.revalidate();
+  expect(await cache.load('A', ref)).toBeNull();
+  await cache.revalidate();
+  expect(await cache.load('A', ref)).toBe('A:photo-1');
+  loader.resolveAvatarRefs.mockRejectedValueOnce({ status: 401 });
+  await cache.revalidate();
+  expect(await cache.load('A', ref)).toBeNull();
+});
+
+test('returning to an identity reuses bytes but rechecks visibility', async () => {
+  const { loader } = fixture();
+  const cache = createAvatarCache(loader);
+  const stop = cache.watch('A', ref);
+  await cache.load('A', ref);
+  stop();
+  cache.watch('A', ref);
+  await cache.revalidate();
+  expect(await cache.load('A', ref)).toBe('A:photo-1');
+  expect(loader.getAvatar).toHaveBeenCalledTimes(1);
+  loader.resolveAvatarRefs.mockResolvedValueOnce({});
+  await cache.revalidate();
+  expect(await cache.load('A', ref)).toBeNull();
+});
+
+test('render keys and reads reject expired bytes without a polling tick', async () => {
+  const { cache, setClock } = fixture();
+  await cache.load('A', ref);
+  const key = cache.key('A', ref);
+  setClock(60_101);
+  expect(cache.key('A', ref)).not.toBe(key);
+  expect(await cache.load('A', ref)).toBeNull();
+});
+
+test('delayed authorization uses request-start expiry and failed checks do not extend it', async () => {
+  const { cache, loader, setClock } = fixture();
+  await cache.load('A', ref);
+  let finish!: (states: Record<string, AvatarChange>) => void;
+  loader.resolveAvatarRefs.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  setClock(20_000);
+  const pending = cache.revalidate();
+  setClock(29_000);
+  finish({ friend: { revision: 1, avatarRef: ref } });
+  await pending;
+  setClock(79_000);
+  loader.resolveAvatarRefs.mockRejectedValueOnce(new Error('offline'));
+  await cache.revalidate();
+  const key = cache.key('A', ref);
+  setClock(80_001);
+  expect(cache.key('A', ref)).not.toBe(key);
+  expect(await cache.load('A', ref)).toBeNull();
+});
+
+test('a download completing after its entire lease cannot populate the cache', async () => {
+  const { cache, loader, setClock } = fixture();
+  let finish!: (uri: string) => void;
+  loader.getAvatar.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const pending = cache.load('A', ref);
+  setClock(61_000);
+  finish('late-private-bytes');
+  expect(await pending).toBeNull();
+});
+
+test('transient download failures preserve authorization while confirmed denial invalidates it', async () => {
+  const { cache, loader } = fixture();
+  const before = cache.key('A', ref);
+  loader.getAvatar.mockRejectedValueOnce({ status: 503 });
+  expect(await cache.load('A', ref)).toBeNull();
+  expect(cache.key('A', ref)).toBe(before);
+  cache.update('friend', { revision: 1, avatarRef: ref });
+  const authorized = cache.key('A', ref);
+  loader.getAvatar.mockRejectedValueOnce({ status: 404 });
+  expect(await cache.load('A', ref)).toBeNull();
+  expect(cache.key('A', ref)).not.toBe(authorized);
+});
+
+test('an authorization response arriving after its lease cannot revive expired pixels', async () => {
+  const { cache, loader, setClock } = fixture();
+  await cache.load('A', ref);
+  let finish!: (states: Record<string, AvatarChange>) => void;
+  loader.resolveAvatarRefs.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const pending = cache.revalidate();
+  setClock(61_000);
+  finish({ friend: { revision: 1, avatarRef: ref } });
+  await pending;
+  expect(await cache.load('A', ref)).toBeNull();
 });

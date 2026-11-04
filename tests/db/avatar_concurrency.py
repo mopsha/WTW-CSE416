@@ -61,6 +61,19 @@ try:
     active = query(f"select avatar_path from public.profiles where id='{user}';").stdout.strip()
     assert active in paths
 
+    # Two concurrent transactions share one atomic per-viewer resolution cap.
+    quota_sql = f"""begin; set local role service_role;
+      select sum(public.consume_avatar_limit('{user}','avatar_resolve')::int)
+      from generate_series(1,70); commit;"""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        usage = list(pool.map(lambda _: query(quota_sql).stdout.strip(), range(2)))
+    buckets = query(f"select calls from public.rate_limit_counters where scope='avatar_resolve' "
+                    f"and subject='{user}';").stdout.split()
+    assert all(int(value) <= 120 for value in buckets), 'Concurrent quota exceeded'
+    assert sum(int(value) for value in buckets) == sum(int(value) for value in usage), 'Quota undercounted'
+    if len(buckets) == 1:
+        assert sum(int(value) for value in usage) == 120, 'Concurrent cap not enforced'
+
     # Observe the deletion transaction holding the row lock before submitting a
     # competing update. This exercises PostgreSQL wait/recheck, not a mock lock.
     app_name = f'avatar_delete_{uuid.uuid4().hex}'
@@ -87,6 +100,10 @@ try:
     result = query(f"set role service_role; select public.avatar_read('{user}','{user}',2);", False)
     assert result.returncode != 0 and 'Photo unavailable' in result.stderr
     assert query(f"select avatar_path from public.profiles where id='{user}';").stdout.strip() == active
+    # Durable retry claims must not hand the same deletion to concurrent workers.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        claims = list(pool.map(lambda _: query("set role service_role; select public.avatar_pending_deletions();").stdout, range(2)))
+    assert sum(user in claim for claim in claims) == 1, 'Deletion retry must have one claimant'
     print('PASS concurrent replacements: one winner; deletion race: no late mutation or photo read')
 finally:
     # Separate connections require committed fixtures, so one enclosing rollback

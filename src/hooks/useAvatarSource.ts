@@ -65,12 +65,11 @@ export function useAvatarLifecycle(
     const unsubscribe = subscribePhotoChanges(({ userId, state }) =>
       avatarCache.update(userId, state),
     );
-    avatarCache.clear();
     avatarCache.setActive(
       AppState.currentState !== 'background' && AppState.currentState !== 'inactive',
     );
     void avatarCache.revalidate();
-    const timer = setInterval(() => void avatarCache.revalidate(), 5000);
+    const timer = setInterval(() => void avatarCache.revalidate(), 30_000);
     const sub = AppState.addEventListener('change', (state) => {
       avatarCache.setActive(state === 'active');
       if (state === 'active') void avatarCache.revalidate();
@@ -81,5 +80,8 @@ export function useAvatarLifecycle(
       sub.remove();
       avatarCache.clear();
     };
-  }, [viewer, pathname, accountScope]);
+  }, [viewer, accountScope]);
+  useEffect(() => {
+    void avatarCache.revalidate();
+  }, [pathname]);
 }

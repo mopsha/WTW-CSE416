@@ -37,7 +37,9 @@ language sql stable set search_path='' as $$
   or exists(select 1 from public.group_members a join public.group_members b using(group_id)
    where a.user_id=p_viewer and b.user_id=p_target)
   or exists(select 1 from public.pick_participants a join public.pick_participants b using(pick_id)
-   where a.user_id=p_viewer and b.user_id=p_target));
+   join public.picks pick on pick.id=a.pick_id
+   where a.user_id=p_viewer and b.user_id=p_target
+   and pick.state in ('draft','swiping','ranking','final_vote')));
 $$;
 revoke all on function private.can_view_avatar(uuid,uuid) from public,anon,authenticated;
 grant execute on function private.can_view_avatar(uuid,uuid) to service_role;
@@ -128,3 +130,66 @@ revoke all on function public.avatar_refs(uuid,uuid[]),public.avatar_read(uuid,u
 grant execute on function public.avatar_refs(uuid,uuid[]),public.avatar_read(uuid,uuid,bigint),
  public.avatar_prepare(uuid,bigint),public.avatar_change(uuid,bigint,text),
  public.avatar_begin_account_delete(uuid),public.avatar_orphans() to service_role;
+
+
+-- Read quotas reuse the atomic counters, with bounded minute buckets per viewer.
+alter table public.rate_limit_counters drop constraint rate_limit_counters_scope_check;
+alter table public.rate_limit_counters add constraint rate_limit_counters_scope_check
+ check(scope in ('create','start','refresh','discover','avatar_read','avatar_resolve'));
+create function public.consume_avatar_limit(p_user_id uuid,p_kind text) returns boolean
+language plpgsql set search_path='' as $$
+declare n integer; cap integer; bucket_now text:=to_char(now() at time zone 'UTC','YYYY-MM-DD HH24:MI');
+begin
+ if p_kind not in ('avatar_read','avatar_resolve') or p_kind is null then
+  raise exception using errcode='PT400',message='Invalid photo limit'; end if;
+ cap:=case when p_kind='avatar_read' then 600 else 120 end;
+ delete from public.rate_limit_counters where scope in ('avatar_read','avatar_resolve')
+ and subject=p_user_id::text and bucket<to_char((now()-interval '2 minutes') at time zone 'UTC','YYYY-MM-DD HH24:MI');
+ insert into public.rate_limit_counters(scope,subject,bucket,calls) values(p_kind,p_user_id::text,bucket_now,1)
+ on conflict(scope,subject,bucket) do update set calls=public.rate_limit_counters.calls+1
+ where public.rate_limit_counters.calls<cap returning calls into n;
+ return n is not null;
+end $$;
+create function private.purge_avatar_usage() returns trigger
+language plpgsql security definer set search_path='' as $$ begin
+ delete from public.rate_limit_counters where scope in ('avatar_read','avatar_resolve') and subject=old.id::text;
+ return old; end $$;
+create trigger purge_avatar_usage after delete on public.profiles for each row execute function private.purge_avatar_usage();
+
+-- Durable deletion intent: never unfreeze an uncertain or partially destructive attempt.
+-- Five-minute claims prevent overlapping sweep workers from retrying the same account.
+alter table public.profiles add column avatar_delete_retry_at timestamptz;
+create index profiles_avatar_pending_delete on public.profiles(avatar_delete_retry_at,id) where avatar_deletion_pending;
+create function public.avatar_pending_deletions() returns setof uuid
+language sql set search_path='' as $$
+ with due as (
+  select id from public.profiles where avatar_deletion_pending
+  and (avatar_delete_retry_at is null or avatar_delete_retry_at<=now())
+  order by avatar_delete_retry_at nulls first,id limit 5 for update skip locked
+ ) update public.profiles p set avatar_delete_retry_at=now()+interval '5 minutes'
+ from due where p.id=due.id returning p.id;
+$$;
+
+-- One bounded orphan batch per hour, with a crash lease and retry backoff.
+create table private.avatar_cleanup_state (
+ singleton boolean primary key default true check(singleton), token uuid,
+ next_run timestamptz not null default '-infinity'
+);
+insert into private.avatar_cleanup_state(singleton) values(true);
+create function public.avatar_cleanup_claim() returns uuid
+language sql set search_path='' as $$
+ update private.avatar_cleanup_state set token=gen_random_uuid(),next_run=now()+interval '5 minutes'
+ where singleton and next_run<=now() returning token;
+$$;
+create function public.avatar_cleanup_finish(p_token uuid,p_success boolean) returns void
+language sql set search_path='' as $$
+ update private.avatar_cleanup_state set token=null,
+ next_run=now()+case when p_success then interval '1 hour' else interval '5 minutes' end
+ where singleton and token=p_token;
+$$;
+revoke all on private.avatar_cleanup_state from public,anon,authenticated;
+grant all on private.avatar_cleanup_state to service_role;
+revoke all on function public.consume_avatar_limit(uuid,text),public.avatar_pending_deletions(),
+ public.avatar_cleanup_claim(),public.avatar_cleanup_finish(uuid,boolean),private.purge_avatar_usage() from public,anon,authenticated;
+grant execute on function public.consume_avatar_limit(uuid,text),public.avatar_pending_deletions(),
+ public.avatar_cleanup_claim(),public.avatar_cleanup_finish(uuid,boolean) to service_role;

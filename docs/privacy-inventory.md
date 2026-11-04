@@ -79,7 +79,8 @@ an implementation inventory, not published legal text. Use
 
 Chats and Group Ideas add user-generated content to the store disclosure review;
 usernames add a public-facing identifier within authorized profile contexts. These
-features introduce no contacts, birthday, uploaded-photo or analytics collection.
+features introduce no contacts, birthday or analytics collection. Managed profile photos
+add uploaded user content as described below.
 
 ## For the App Store privacy labels (Mike, M5)
 
@@ -90,4 +91,27 @@ Draft mapping, to confirm against Apple's current categories in App Store Connec
 - **Location → Precise location:** collected only when the host centers a Pick on their current location; linked (it's on their Pick); app functionality.
 - **User content → Other user content:** display name, group names, cancel reasons, custom plan options and notes, hang posts, report text; linked; app functionality.
 - **Usage data → Product interaction:** swipes, votes, RSVPs, "Did you go?"; linked; app functionality.
+- **User content → Photos or Videos (draft):** selected profile photos; linked to account ID; app functionality. Confirm this selection and any moderation purpose in App Store Connect before submission. See [Apple’s data-type guidance](https://developer.apple.com/app-store/app-privacy-details/).
 - **Tracking:** none. No third-party analytics or advertising SDKs.
+
+## Managed profile photos (#49; implemented, release gates still open)
+
+| Data                                  | Storage / purpose                                                                                                   | Visibility                                                                                                                                                                                                                                                                   | Retention / deletion                                                                                                                                                                                                                    |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Profile photo                         | Private `profile-photos` bucket; canonical square JPEG, at most 512px / 1 MiB; source metadata stripped server-side | Owner, accepted friends, current shared groups, or shared Picks in `draft`, `swiping`, `ranking`, `final_vote`. Either-direction blocking overrides access; pending friendship alone is insufficient. Metadata-sharing settings do not control this separate photo audience. | Until replacement, removal or account deletion. Normal removal uses Storage API. Failed/incomplete candidates are eligible for a bounded hourly orphan batch after 24 hours; this is an eligibility threshold, not a deletion deadline. |
+| Photo revision / internal path        | Private profile columns; ownership, atomic updates and revocation                                                   | Service-only internal fields; authorized API projections expose only user ID/revision                                                                                                                                                                                        | Account deletion cascades profile metadata. Old revisions cannot finalize after replacement or deletion intent.                                                                                                                         |
+| Account-deletion intent / retry claim | `avatar_deletion_pending`, `avatar_delete_retry_at`; safely complete interrupted deletion                           | Server-only                                                                                                                                                                                                                                                                  | No automatic unfreeze after destructive or uncertain operations. Sweep claims up to five due accounts, retries after five minutes, and reports failures separately. Requires healthy maintenance scheduling.                            |
+| Read quotas                           | Existing rate-limit counters; per-user minute buckets                                                               | Server-only                                                                                                                                                                                                                                                                  | Old photo buckets pruned on subsequent usage; account deletion removes that user's photo counters.                                                                                                                                      |
+
+Downloaded images use account-scoped memory caching, with a 60-second authorization
+lease measured from request start and checked on cache reads/render, focus/navigation,
+and at 30-second intervals while foregrounded. A transient outage can retain already
+authorized pixels until expiry is checked. Request completion, retries, and JS
+scheduling affect visibility; this is not a hard post-revocation wall-clock maximum. Confirmed denial,
+local block/remove events, sign-out and backgrounding invalidate immediately.
+Already delivered pixels cannot be remotely erased from another user's device.
+
+Photo-specific moderation evidence is **not implemented**. Do not claim it is available.
+See `profile-photos-review-plan.md` for the proposed reuse of #44 and unresolved
+retention/operations decisions. #45's policy must remove its no-upload statement,
+explain this audience and retention, and be human-reviewed before photos ship.
