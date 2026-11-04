@@ -1,5 +1,7 @@
 // WTW design tokens. Use these (and the components in this folder) instead of raw values,
-// so every screen shares one look: neutral dark surfaces, the coral accent, Poppins type.
+// Brand headings and kit controls use the named Poppins faces below (not synthetic
+// fontWeight overrides). Opt-in social/conversation body styles use native system
+// text and numeric weights; keep those separate from the Poppins type presets.
 
 export const colors = {
   bg: '#0C0C0E',
@@ -62,3 +64,36 @@ export const surfaces = {
   line: { borderBottomWidth: 1, borderBottomColor: colors.border },
   control: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
 } as const;
+
+/** Opt-in Picks presentation. Existing kit defaults and other screens stay unchanged. */
+export const picksTheme = {
+  colors: {
+    paper: colors.text,
+    ink: colors.bg,
+    speechBacking: '#742C3C',
+    invitation: '#211B20',
+    invitationControl: '#30252C',
+    coralQuiet: '#34202A',
+    monogram: '#32252D',
+  },
+  ui: { fontSize: 17, lineHeight: 24 },
+  secondary: { fontSize: 14, lineHeight: 20 },
+  section: { fontSize: 20, lineHeight: 27, fontWeight: '700' as const },
+} as const;
+
+/** Friends-only social list surfaces; kit and other screen defaults stay unchanged. */
+export const friendsTheme = {
+  surface: '#141416',
+  message: '#2D1D25',
+  identities: ['#63424B', '#414D63', '#574763', '#3E5852', '#665044'],
+} as const;
+
+/** Opt-in own Profile presentation. */
+export const profileTheme = {
+  avatarBacking: '#49303B',
+  surface: '#18181B',
+  memory: '#211B20',
+} as const;
+
+/** Conversation-only bubble surfaces. */
+export const messageTheme = { incoming: colors.cardHi, outgoing: '#4C2835' } as const;

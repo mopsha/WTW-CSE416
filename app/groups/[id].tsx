@@ -1,5 +1,7 @@
+import { ConversationHeader } from '@/components/ConversationHeader';
 import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import { GroupChat } from '@/components/GroupChat';
+import { MemberMenu } from '@/components/MemberMenu';
 import { Segments } from '@/components/TabUi';
 import type { GroupInvitation } from '@shared/api/groupInvitations.ts';
 import { GroupIdeas } from '@/components/GroupIdeas';
@@ -187,36 +189,64 @@ export default function GroupScreen() {
 
   return (
     <Screen
-      title={group.name}
-      subtitle={`${group.members.length} ${group.members.length === 1 ? 'person' : 'people'}`}
-      back
+      scroll={section !== 'chat'}
+      contentStyle={
+        section === 'chat' ? { padding: 0, paddingBottom: 0, gap: space.sm } : undefined
+      }
+      title={section === 'chat' ? undefined : group.name}
+      subtitle={
+        section === 'chat'
+          ? undefined
+          : `${group.members.length} ${group.members.length === 1 ? 'person' : 'people'}`
+      }
+      back={section !== 'chat'}
       onRefresh={() => {
         auxiliaryLoaded.current = false;
         void load();
       }}
     >
-      {error ? <ErrorState message={error} /> : null}
-
-      <Segments
-        label="Group sections"
-        value={section}
-        onChange={setSection}
-        options={[
-          { value: 'chat', label: 'Chat' },
-          { value: 'plans', label: 'Plans' },
-          { value: 'ideas', label: 'Ideas' },
-          { value: 'members', label: 'Members' },
-        ]}
-      />
       {section === 'chat' ? (
-        <GroupChat key={`${group.id}:${me}`} groupId={group.id} userId={me} />
+        <ConversationHeader
+          name={group.name}
+          subtitle={`${group.members.length} ${group.members.length === 1 ? 'person' : 'people'}`}
+          onPress={() => setSection('members')}
+        />
+      ) : null}
+      {error ? (
+        <View style={section === 'chat' ? styles.chatInset : undefined}>
+          <ErrorState message={error} />
+        </View>
+      ) : null}
+
+      <View style={section === 'chat' ? styles.chatInset : undefined}>
+        <Segments
+          label="Group sections"
+          value={section}
+          onChange={setSection}
+          options={[
+            { value: 'chat', label: 'Chat' },
+            { value: 'plans', label: 'Plans' },
+            { value: 'ideas', label: 'Ideas' },
+            { value: 'members', label: 'Members' },
+          ]}
+        />
+      </View>
+      {section === 'chat' ? (
+        <GroupChat
+          key={`${group.id}:${me}`}
+          groupId={group.id}
+          userId={me}
+          onRefresh={() => {
+            auxiliaryLoaded.current = false;
+            return load();
+          }}
+        />
       ) : null}
       {section === 'plans' ? (
         <Button
           label="Start a Pick"
           icon="flame"
           onPress={() => {
-            haptic.tap();
             router.push(newGroupPickRoute(group));
           }}
           accessibilityHint={`Creates a Pick with everyone in ${group.name}`}
@@ -240,6 +270,13 @@ export default function GroupScreen() {
                   <Text style={styles.name}>{m.userId === me ? 'You' : memberName(m)}</Text>
                   {m.role === 'owner' ? <Text style={styles.sub}>Owner</Text> : null}
                 </View>
+                {m.userId !== me ? (
+                  <MemberMenu
+                    userId={m.userId}
+                    name={memberName(m)}
+                    onBlocked={() => void load()}
+                  />
+                ) : null}
                 {isOwner && m.role !== 'owner' ? (
                   <Pressable
                     onPress={async () => {
@@ -436,6 +473,7 @@ export default function GroupScreen() {
 }
 
 const styles = StyleSheet.create({
+  chatInset: { marginHorizontal: space.lg },
   heading: { fontFamily: fonts.bold, fontSize: 17, color: colors.text },
   member: {
     flexDirection: 'row',

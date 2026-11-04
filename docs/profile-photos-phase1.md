@@ -5,7 +5,7 @@ profile editors, native dependencies, onboarding, or the pending design-overhaul
 
 ## Database and Storage
 
-`0033_profile_photos.sql` is the only new migration. It adds `avatar_path`,
+`0035_profile_photos.sql` is the only new migration. It adds `avatar_path`,
 `avatar_revision`, and `avatar_deletion_pending` to existing profiles, with no
 new client grants. A unique path index supports safe orphan checks. Existing
 `avatar_url` remains a legacy field, never a private URL or a signed credential.
@@ -145,7 +145,7 @@ References checked for this implementation:
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `.github/workflows/`              | `ci.yml`                                                                                                                                                                                                                                           |
 | Repository root                   | `package.json`                                                                                                                                                                                                                                     |
-| `supabase/migrations/`            | `0033_profile_photos.sql`                                                                                                                                                                                                                          |
+| `supabase/migrations/`            | `0035_profile_photos.sql`                                                                                                                                                                                                                          |
 | `supabase/functions/_shared/api/` | `avatars.ts`, `directChat.ts`, `friends.ts`, `messages.ts`, `userProfiles.ts`                                                                                                                                                                      |
 | `supabase/functions/api/`         | `accountStore.ts`, `app.ts`, `app_test.ts`, `avatarImage.ts`, `avatarMetadata.ts`, `avatarStore.ts`, `avatars_test.ts`, `deno.json`, `deno.lock`, `directChatStore.ts`, `friendsStore.ts`, `groupChatStore.ts`, `index.ts`, `userProfilesStore.ts` |
 | `supabase/tests/`                 | `profile_photos_test.sql`                                                                                                                                                                                                                          |

@@ -591,7 +591,11 @@ function safetyRoute(method: string, path: string, body: unknown): Response | nu
   if (method === 'POST' && path === '/reports') {
     const { kind, targetId, reason } = (body ?? {}) as Record<string, unknown>;
     const ok =
-      (kind === 'user' || kind === 'pick' || kind === 'group') &&
+      (kind === 'user' ||
+        kind === 'pick' ||
+        kind === 'group' ||
+        kind === 'group_message' ||
+        kind === 'direct_message') &&
       // Mock ids aren't UUIDs, so only the shape is checked.
       typeof targetId === 'string' &&
       typeof reason === 'string' &&

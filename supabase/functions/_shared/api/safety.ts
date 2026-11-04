@@ -4,7 +4,7 @@
 
 import { ApiError } from './errors.ts';
 
-export type ReportKind = 'user' | 'pick' | 'group';
+export type ReportKind = 'user' | 'pick' | 'group' | 'group_message' | 'direct_message';
 export interface ReportInput {
   kind: ReportKind;
   targetId: string;
@@ -28,7 +28,13 @@ export interface SafetyStore {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const REPORT_KINDS: readonly ReportKind[] = ['user', 'pick', 'group'];
+const REPORT_KINDS: readonly ReportKind[] = [
+  'user',
+  'pick',
+  'group',
+  'group_message',
+  'direct_message',
+];
 export const REPORT_REASON_MAX = 500;
 
 export function parseUserId(value: string | undefined): string {
@@ -56,7 +62,7 @@ export function parseReport(body: unknown): ReportInput {
     throw new ApiError(
       400,
       'INVALID_INPUT',
-      `Expected kind user, pick or group, a targetId, and a reason of 1 to ${REPORT_REASON_MAX} characters`,
+      `Expected a report kind, a targetId, and a reason of 1 to ${REPORT_REASON_MAX} characters`,
     );
   }
   return { kind: kind as ReportKind, targetId: targetId.toLowerCase(), reason: text };

@@ -8,17 +8,21 @@ import { StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { Button, ErrorState, colors, MIN_TARGET, radius, space, type } from '@/components';
 import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
+import { ProfilePhotoEditor } from './ProfilePhotoEditor';
 import { Sheet } from './TabUi';
 import { UserProfileMetadata } from './UserProfileMetadata';
-import { ProfilePhotoEditor } from './ProfilePhotoEditor';
 export function OwnProfileDetails({
   profile,
   onSaved,
   initiallyOpen = false,
+  variant = 'default',
+  email,
 }: {
   profile: UserProfile;
   onSaved: (p: UserProfile) => void;
   initiallyOpen?: boolean;
+  variant?: 'default' | 'profile';
+  email?: string;
 }) {
   const [open, setOpen] = useState(initiallyOpen);
   const [draft, setDraft] = useState<ProfileDetailsInput>({
@@ -52,10 +56,11 @@ export function OwnProfileDetails({
   };
   return (
     <View style={{ gap: space.md }}>
-      <UserProfileMetadata profile={profile} />
+      {variant === 'default' ? <UserProfileMetadata profile={profile} /> : null}
       <Button
         label="Profile details & privacy"
-        variant="secondary"
+        variant={variant === 'profile' ? 'link' : 'secondary'}
+        style={variant === 'profile' ? { alignSelf: 'center' } : undefined}
         onPress={() => {
           setDraft({
             username: profile.username,
@@ -86,6 +91,11 @@ export function OwnProfileDetails({
                 setPhotoBusy(value);
               }}
             />
+          ) : null}
+          {email ? (
+            <Text selectable style={s.caption}>
+              {email}
+            </Text>
           ) : null}
           {error ? <ErrorState message={error} /> : null}
           <Text style={s.label}>Username</Text>

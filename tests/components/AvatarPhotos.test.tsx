@@ -1,3 +1,4 @@
+import { SocialIdentity } from '@/components/friends/SocialRow';
 import React from 'react';
 import { Image } from 'react-native';
 import { Avatar } from '@/components/Avatar';
@@ -133,4 +134,69 @@ test('foreground metadata polling uses the bounded thirty-second cadence', async
     tree = undefined;
     jest.useRealTimers();
   }
+});
+
+test.each(['Ava', '@ava'])(
+  'social identity %s shares authenticated bytes and revokes without changing its label',
+  async (name) => {
+    function SocialHarness() {
+      useAvatarLifecycle('A', '/friends', 'a@example.com');
+      return (
+        <>
+          <SocialIdentity name={name} userId="friend" avatarRef={ref} />
+          <SocialIdentity name={name} userId="friend" avatarRef={ref} size={28} />
+        </>
+      );
+    }
+    await act(async () => {
+      tree = create(<SocialHarness />);
+    });
+    expect(tree!.root.findAllByType(Image)).toHaveLength(2);
+    expect(api.getAvatar).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(tree!.toJSON())).toContain(name);
+    await act(async () => photoChanged('friend', { revision: 1, avatarRef: null }));
+    expect(tree!.root.findAllByType(Image)).toHaveLength(0);
+  },
+);
+
+test('social identity loading, absent photo and group monograms retain initials', async () => {
+  jest
+    .mocked(api.resolveAvatarRefs)
+    .mockResolvedValue({ friend: { revision: 0, avatarRef: null } });
+  function SocialHarness() {
+    useAvatarLifecycle('A', '/friends', 'a@example.com');
+    return (
+      <>
+        <SocialIdentity name="Ava" userId="friend" />
+        <SocialIdentity name="Group" userId="not-a-person" avatarRef={ref} group />
+      </>
+    );
+  }
+  await act(async () => {
+    tree = create(<SocialHarness />);
+  });
+  expect(tree!.root.findAllByType(Image)).toHaveLength(0);
+  expect(api.getAvatar).not.toHaveBeenCalled();
+  expect(JSON.stringify(tree!.toJSON())).toContain('Ava');
+});
+
+test('social identity waits for authoritative metadata before downloading a missing reference', async () => {
+  let finish!: (value: Record<string, { revision: number; avatarRef: typeof ref }>) => void;
+  jest.mocked(api.resolveAvatarRefs).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  function SocialHarness() {
+    useAvatarLifecycle('A', '/friends', 'a@example.com');
+    return <SocialIdentity name="@ava" userId="friend" />;
+  }
+  await act(async () => {
+    tree = create(<SocialHarness />);
+  });
+  expect(api.getAvatar).not.toHaveBeenCalled();
+  expect(tree!.root.findAllByType(Image)).toHaveLength(0);
+  await act(async () => finish({ friend: { revision: 1, avatarRef: ref } }));
+  expect(tree!.root.findAllByType(Image)).toHaveLength(1);
 });

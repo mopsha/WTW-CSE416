@@ -44,12 +44,10 @@ active/returning 200. This pass did not independently query deployed cron/Vault.
 DB claims throttle photo work regardless of caller cadence. Verify the new claim
 RPCs, orphan deletion and retry progress on the actual deployed database.
 
-Only the existing **unmerged feature migration** `0033_profile_photos.sql` is
-extended, respecting the repository's one-migration-per-PR convention. No released
-main migration or #44/#48 migration was edited. Before merge, verify applied
-migration history and reconcile its version with #44's 0033 and #48's 0034. If any
-shared environment already applied this feature migration, use an additive team-
-coordinated deployment migration rather than expecting this file to rerun.
+The photo SQL is in the unapplied feature migration `0035_profile_photos.sql`.
+Mike verified wtw-dev history and absence of photo objects before the rename;
+no deployed migration was rewritten. PR #48 reserves 0034 and must precede 0035
+unless the team coordinates numbering.
 
 ## Phase B — proposed implementation, NOT authorized or implemented
 
@@ -87,7 +85,7 @@ Concrete proposal:
    evidence retention after review and cleanup timing before implementing these
    rules. Do not invent a retention period or contradict existing deletion promises.
 7. Extend #44's existing report/block sheet with a photo-specific action carrying
-   the displayed revision. Reconcile its placement with #43 once that UI merges.
+   the displayed revision. Use the integrated #43 identity surfaces when Phase B is approved.
 
 Required team approval: evidence audience/tool access, retention after review or
 reporter deletion, moderation owner/response commitment, upload suspension policy,
@@ -103,19 +101,24 @@ photo collection/purpose/audience/deletion and approved evidence retention, and
 have the responsible team review the final policy and App Store Connect labels.
 Do not claim moderation evidence exists before Phase B lands.
 
-After #43 merges, keep a single authenticated loading/cache path: adapt its
-SocialIdentity to the existing managed Avatar/hook via opt-in presentation props,
-not a second Image network implementation. Preserve its approved size/colors.
-ProfilePresentation and ConversationHeader must pass person ID + optional ref;
-MessageThread must pass sender ID/ref for group senders; Friends/member rows must
-pass IDs even with null refs. Keep group monograms unmanaged. Combine
-OwnProfileDetails' redesign variants with photo busy guards and preview behavior.
-Retain root account/background lifecycle and all redesign messaging fixes.
-No #43 code was copied, merged, checked out or modified in this pass.
+PR #43/#44 main integration now uses one authenticated loading/cache path:
+SocialIdentity delegates to Avatar's opt-in social presentation variant, preserving
+its size, colors, labels, and initials. ConversationHeader, ProfilePresentation,
+Friends and group-message senders forward person IDs and optional photo refs.
+Group monograms remain unmanaged. OwnProfileDetails retains its redesign variant
+and photo busy guards. Root account/background invalidation and the three chat
+send/draft/header fixes remain intact. Phase B moderation is not implemented.
+
+Mike confirmed through read-only wtw-dev queries that the photo migration had
+never been applied and that no photo schema/bucket/policies/functions existed.
+Only this unapplied feature migration was renamed to 0035. Main's deployed
+0033_message_reports.sql is unchanged. PR #48 reserves 0034 and must land before
+0035 is applied unless the team coordinates migration numbering. No placeholder
+0034 was added and no shared database was changed.
 
 ## Gates
 
-Merge: resolve migration numbering/applied history; integrate approved #43 UI;
+Merge: land or coordinate #48 migration 0034 before photo migration 0035;
 review Phase A and obtain green real SQL/Storage/HTTP/concurrency CI.
 App Store release: approve and implement Phase B, publish accurate reviewed #45
 policy/labels, assign moderation ownership, verify deployed maintenance, and test
@@ -145,7 +148,7 @@ Exact files changed:
 - `supabase/functions/api/avatarStore.ts`
 - `supabase/functions/api/avatars_test.ts`
 - `supabase/functions/api/index.ts`
-- `supabase/migrations/0033_profile_photos.sql`
+- `supabase/migrations/0035_profile_photos.sql`
 - `supabase/tests/profile_photos_test.sql`
 - `tests/account.test.ts`
 - `tests/api/avatars.test.mjs`

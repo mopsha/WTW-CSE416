@@ -1,7 +1,7 @@
 # Profile photos: client integration
 
-Implemented on `josh/profile-pictures` against current main, without importing or
-merging the design-overhaul branch. Phase 1's private bucket, migration 0033,
+Implemented on `josh/profile-pictures`, now integrated with main including the
+approved #43 redesign and #44 reporting/blocking controls. Phase 1's private bucket, migration 0035,
 authorization, atomic revisions, account-deletion guard and cleanup remain in place.
 There is no second migration or parallel profile store.
 
@@ -109,24 +109,21 @@ or real Storage RLS and file-deletion tests.
 
 ## Design-overhaul reconciliation
 
-After the team approves and merges that branch, reconcile these specific seams:
+The approved redesign is now integrated from main. SocialIdentity delegates to the
+existing Avatar with an opt-in social style; it does not own another image loader
+or cache. Friends, conversation headers and group senders pass stable person IDs
+and optional photo revisions. ProfilePresentation retains its composition and
+forwards the same identity fields. Group monograms remain unmanaged.
 
-| File                                                             | Required integration                                                                                                                                                           |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `app/(tabs)/profile.tsx`                                         | Keep the approved redesigned composition; retain account-safe detail loading and photo state updates.                                                                          |
-| `src/components/OwnProfileDetails.tsx`                           | Insert the reusable `ProfilePhotoEditor` into the redesigned editor; retain the busy/close guards.                                                                             |
-| `src/components/profile/ProfilePresentation.tsx`                 | Pass `avatarRef` and `userId` into its existing Avatar. This file is only on the pending branch and was not created here.                                                      |
-| `app/(tabs)/friends.tsx`                                         | Preserve approved social rows and pass real identity/photo fields.                                                                                                             |
-| `src/components/friends/SocialRow.tsx`                           | Its `SocialIdentity` uses its own Image presentation. Reuse `useAvatarSource` there, with the same fallback/error handling; keep approved sizes and colors. Not modified here. |
-| `src/components/ConversationHeader.tsx`, `app/messages/[id].tsx` | Carry peer refs/IDs through the redesigned header's SocialIdentity. The shared header does not exist on this branch.                                                           |
-| `src/components/MessageThread.tsx`                               | Carry sender refs/IDs into redesigned group sender identities; preserve its conversation/composer layout.                                                                      |
-| `app/groups/[id].tsx`                                            | Retain person-avatar props in member/friend rows without changing group identities.                                                                                            |
-| `src/components/Avatar.tsx`, `src/components/PickParts.tsx`      | Retain the opt-in managed source interface and real participant IDs; do not replace Picks' deliberate group identities.                                                        |
-| `app/_layout.tsx`, `app/settings/profile.tsx`                    | Retain cache lifecycle initialization and account-safe editor updates.                                                                                                         |
+OwnProfileDetails embeds ProfilePhotoEditor while retaining redesigned variants,
+email details, and busy/close guards. Account/background cache invalidation,
+report/block controls, keyboard handling and all three chat send/draft/header fixes
+remain intact. Picks participant rows and invitation authors use actual IDs.
 
-`GroupChat` does not require a new photo architecture: its existing message data
-already reaches MessageThread. Adapt the redesign's relevant Profile/Friends/
-SocialIdentity/ConversationHeader/MessageThread tests after reconciliation.
+Migration 0035 contains the original photo SQL unchanged. The team confirmed it
+was unapplied in wtw-dev. Reserved migration 0034 from PR #48 must land before
+0035 is applied unless migration numbering is coordinated; no placeholder was
+introduced. Main's 0033 message-report migration is unchanged.
 
 ## Verification and release gates
 

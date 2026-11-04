@@ -1,3 +1,5 @@
+import { picksTheme } from './theme';
+import { HangInvitation } from './picks/HangInvitation';
 import { router, useFocusEffect } from 'expo-router';
 import { queries } from '@/lib/queries';
 import type { GroupSummary } from '@/lib/groups';
@@ -10,12 +12,12 @@ import { CUSTOM_TEMPLATES } from '@shared/domain/customPlans.ts';
 import type { HangPost } from '@shared/api/hang.ts';
 import {
   Button,
-  Card,
   Chips,
   colors,
   ErrorState,
   IconButton,
   MIN_TARGET,
+  radius,
   Screen,
   space,
   type,
@@ -171,7 +173,7 @@ export function HangCard() {
     return () => clearTimeout(timer);
   }, [current, now]);
   return (
-    <Card>
+    <View style={styles.feed}>
       <Text style={styles.title}>Who’s down?</Text>
       {!current ? <Text style={styles.muted}>Loading hang plans…</Text> : null}
       {actionError ? <ErrorState message={actionError} /> : null}
@@ -182,47 +184,23 @@ export function HangCard() {
       {current?.posts
         .filter((p) => Date.parse(p.expiresAt) > now)
         .map((post) => (
-          <View key={post.id}>
-            <Text style={styles.body}>{post.activity}</Text>
-            <Text style={styles.muted}>
-              {post.authorId === userId ? 'You' : (post.authorName ?? 'A friend')} ·{' '}
-              {new Date(post.startsAt).toLocaleString()}
-            </Text>
-            <Text style={styles.muted}>{post.downCount ?? 0} down</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-              {(['down', 'maybe', 'cant'] as const).map((status) => (
-                <Button
-                  key={status}
-                  label={status === 'down' ? 'Down' : status === 'maybe' ? 'Maybe' : 'Can’t'}
-                  variant={post.myStatus === status ? 'secondary' : 'link'}
-                  disabled={busy !== null}
-                  loading={busy === `${post.id}-${status}`}
-                  onPress={() => respond(post.id, status)}
-                />
-              ))}
-            </View>
-            {post.authorId === userId ? (
-              <>
-                <Text style={styles.muted}>
-                  Only people who answer Down join. If you’re not down, one of them hosts.
-                </Text>
-                <Button
-                  label="Let’s Pick"
-                  variant="secondary"
-                  disabled={!post.downCount || busy !== null}
-                  onPress={() =>
-                    router.push({
-                      pathname: '/pick/new',
-                      params: { hangId: post.id, hangActivity: post.activity },
-                    })
-                  }
-                />
-              </>
-            ) : null}
-          </View>
+          <HangInvitation
+            key={post.id}
+            post={post}
+            userId={userId}
+            busy={busy}
+            onRespond={(status) => respond(post.id, status)}
+            onStart={() =>
+              router.push({
+                pathname: '/pick/new',
+                params: { hangId: post.id, hangActivity: post.activity },
+              })
+            }
+          />
         ))}
       <Button
         variant="secondary"
+        style={styles.composeAction}
         label="Make a hang plan"
         icon="add"
         onPress={() => setCompose(true)}
@@ -244,11 +222,13 @@ export function HangCard() {
           />
         ) : null}
       </Modal>
-    </Card>
+    </View>
   );
 }
 const styles = StyleSheet.create({
-  title: { ...type.heading, color: colors.text },
+  feed: { gap: space.md },
+  composeAction: { backgroundColor: colors.card, borderWidth: 0, borderRadius: radius.md },
+  title: { ...picksTheme.section, color: colors.text },
   body: { ...type.body, color: colors.text },
   muted: { ...type.caption, color: colors.muted },
   input: {

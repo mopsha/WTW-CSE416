@@ -6,7 +6,7 @@ import { Image, StyleSheet, Text, View } from 'react-native';
 
 import { colorForName, initialsFor } from '@/lib/avatar';
 
-import { colors, fonts } from './theme';
+import { colors, fonts, friendsTheme } from './theme';
 
 interface AvatarProps {
   name: string;
@@ -17,6 +17,7 @@ interface AvatarProps {
   userId?: string;
   size?: number;
   neutral?: boolean;
+  variant?: 'default' | 'social';
   /** Small green check, e.g. "finished swiping". */
   done?: boolean;
 }
@@ -33,8 +34,17 @@ function ManagedAvatar(props: AvatarProps) {
   const managed = useAvatarSource(props.avatarRef, props.userId);
   return <AvatarImage {...props} uri={managed ?? (props.avatarRef ? null : props.uri)} />;
 }
-function AvatarImage({ name, uri: source, size = 40, done = false, neutral = false }: AvatarProps) {
+function AvatarImage({
+  name,
+  uri: source,
+  size = 40,
+  done = false,
+  neutral = false,
+  variant = 'default',
+}: AvatarProps) {
   const [failed, setFailed] = useState<string | null>(null);
+  let hash = 0;
+  for (const ch of name.trim().toLowerCase()) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
   return (
     <View
       style={[
@@ -43,7 +53,12 @@ function AvatarImage({ name, uri: source, size = 40, done = false, neutral = fal
           width: size,
           height: size,
           borderRadius: size / 2,
-          backgroundColor: neutral ? colors.cardHi : colorForName(name),
+          backgroundColor:
+            variant === 'social'
+              ? friendsTheme.identities[hash % friendsTheme.identities.length]
+              : neutral
+                ? colors.cardHi
+                : colorForName(name),
         },
       ]}
       accessible
@@ -57,7 +72,20 @@ function AvatarImage({ name, uri: source, size = 40, done = false, neutral = fal
           style={{ width: size, height: size, borderRadius: size / 2 }}
         />
       ) : (
-        <Text style={[styles.initials, { fontSize: size * 0.4 }]}>{initialsFor(name)}</Text>
+        <Text
+          style={[
+            styles.initials,
+            { fontSize: size * 0.4 },
+            variant === 'social' && {
+              fontFamily: fonts.semibold,
+              color: colors.text,
+              fontSize: (size * 23) / 60,
+            },
+          ]}
+          maxFontSizeMultiplier={variant === 'social' ? 1.4 : undefined}
+        >
+          {initialsFor(name)}
+        </Text>
       )}
       {done ? (
         <View style={styles.badge}>
