@@ -16,8 +16,12 @@ insert into public.pick_candidates(pick_id,place_id,snapshot,created_at) values
  ('d0000011-2222-4222-8222-222222222222','gplace','{"placeId":"gplace","name":null,"category":"food","lat":40.9,"lng":-73.1,"provider":"google"}',now()-interval '40 days');
 do $$ begin
  begin
-  update public.pick_candidates set snapshot=snapshot-'lat'-'lng'||'{"provider":"mock"}' where pick_id='d0000011-2222-4222-8222-222222222222';
+  update public.pick_candidates set snapshot=(snapshot-'lat'-'lng')||'{"provider":"mock"}' where pick_id='d0000011-2222-4222-8222-222222222222';
   raise exception 'Mock snapshot lost coordinates';
+ exception when check_violation then null; end;
+ begin
+  update public.pick_candidates set snapshot=snapshot-'lat'-'lng'-'provider' where pick_id='d0000011-2222-4222-8222-222222222222';
+  raise exception 'Snapshot with no provider lost coordinates';
  exception when check_violation then null; end;
 end $$;
 select 'ok 2 - only Google snapshots may lack coordinates';

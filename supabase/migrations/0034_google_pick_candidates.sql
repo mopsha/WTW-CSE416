@@ -6,8 +6,9 @@
 -- Ranking reads coordinates from the snapshot, so they stay required until a Pick has finished.
 alter table public.pick_candidates drop constraint pick_candidates_snapshot_coords;
 alter table public.pick_candidates add constraint pick_candidates_snapshot_coords check (
-  (jsonb_typeof(snapshot -> 'lat') = 'number' and jsonb_typeof(snapshot -> 'lng') = 'number')
-  or (snapshot ->> 'provider' = 'google' and not snapshot ? 'lat' and not snapshot ? 'lng')
+  -- coalesce and "is not distinct from": a missing key is null, and a null check passes.
+  coalesce(jsonb_typeof(snapshot -> 'lat') = 'number' and jsonb_typeof(snapshot -> 'lng') = 'number', false)
+  or (snapshot ->> 'provider' is not distinct from 'google' and not snapshot ? 'lat' and not snapshot ? 'lng')
 );
 
 -- start/refresh copy each snapshot into places, whose columns are required. Nothing reads them
