@@ -157,12 +157,23 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
   };
 }
 
-/** Guard Alan's future snapshot boundary. Google snapshot retention needs a separate design. */
-export function candidateSnapshot(candidate: Candidate): Candidate {
-  if (candidate.provider === 'google' || candidate.retention === 'request') {
-    throw new Error(
-      'Google content cannot be persisted as a Pick snapshot; use an approved ID-only design',
-    );
+/**
+ * What a Pick stores. For Google, only what its terms allow: the ID, and coordinates for ranking,
+ * which purge_google_coordinates removes within 30 days. pickPlaces.ts fetches the rest on read.
+ */
+export function candidateSnapshot(candidate: Candidate): object {
+  if (candidate.provider === 'google') {
+    return {
+      placeId: candidate.placeId,
+      name: null,
+      category: candidate.category,
+      lat: candidate.lat,
+      lng: candidate.lng,
+      provider: 'google',
+    };
+  }
+  if (candidate.retention === 'request') {
+    throw new Error('Request-only content cannot be persisted as a Pick snapshot');
   }
   return structuredClone(candidate);
 }

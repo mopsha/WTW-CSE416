@@ -21,6 +21,19 @@ const FIELDS = [
   'timeZone',
 ];
 export const NEARBY_FIELD_MASK = FIELDS.map((f) => `places.${f}`).join(',');
+/** Enough to show a Pick's place, without the fields Google bills at a higher tier. */
+const PICK_FIELDS = [
+  'id',
+  'displayName',
+  'formattedAddress',
+  'location',
+  'types',
+  'photos',
+  'attributions',
+  'googleMapsUri',
+  'businessStatus',
+];
+export const PICK_SEARCH_MASK = PICK_FIELDS.map((f) => `places.${f}`).join(',');
 const HOURS_MASK =
   'id,regularOpeningHours.periods,currentOpeningHours.openNow,currentOpeningHours.nextCloseTime,businessStatus,timeZone';
 const record = (v: unknown): Record<string, unknown> =>
@@ -211,7 +224,10 @@ export class GoogleProvider implements PlaceProvider {
     );
   }
 
-  async search(query: PlaceSearch, options?: { signal?: AbortSignal }): Promise<Candidate[]> {
+  async search(
+    query: PlaceSearch,
+    options?: { signal?: AbortSignal; mask?: string },
+  ): Promise<Candidate[]> {
     validateSearch(query);
     const types = query.category
       ? categoryMap[query.category]
@@ -219,7 +235,7 @@ export class GoogleProvider implements PlaceProvider {
     const result = record(
       await this.request(
         'places:searchNearby',
-        NEARBY_FIELD_MASK,
+        options?.mask ?? NEARBY_FIELD_MASK,
         {
           method: 'POST',
           body: JSON.stringify({
@@ -264,6 +280,19 @@ export class GoogleProvider implements PlaceProvider {
     );
     if (!uri?.startsWith('https://')) throw new Error('Invalid Google photo response');
     return uri;
+  }
+
+  /** One place, for when it has dropped out of the repeat search. Null if it has closed. */
+  async pickPlace(placeId: string, category: Category): Promise<Candidate | null> {
+    if (!placeId.trim() || placeId.length > 256) throw new Error('Invalid place ID');
+    const place = normalizePlace(
+      await this.request(`places/${encodeURIComponent(placeId)}`, PICK_FIELDS.join(','), {
+        method: 'GET',
+      }),
+      category,
+      this.now().toISOString(),
+    );
+    return place?.placeId === placeId ? place : null;
   }
 
   async fetchHours(placeId: string, options?: { signal?: AbortSignal }): Promise<HoursRecord> {

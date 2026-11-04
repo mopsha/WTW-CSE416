@@ -54,6 +54,11 @@ export function createCacheCleanupStore(): CacheCleanupStore {
         .eq('action', 'message_send')
         .lt('created_at', eventCutoff);
       if (eventError) throw new Error('Rate limit event cleanup failed');
+      // Google allows 30 days; a daily sweep that misses a run still stays inside that.
+      const { error: purgeError } = await createServiceClient().rpc('purge_google_coordinates', {
+        p_cutoff: new Date(Date.parse(`${day}T00:00:00Z`) - 27 * 86_400_000).toISOString(),
+      });
+      if (purgeError) throw new Error('Google coordinate cleanup failed');
       return data as { removed: number; ran: boolean };
     },
   };

@@ -6,7 +6,7 @@ import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useEnrichedPlace } from '@/lib/googlePlaces';
-import { ordinal } from '@/lib/places';
+import { ordinal, googleCredit } from '@/lib/places';
 import type { Candidate } from '@/lib/types';
 
 import { Chips, describePlace, PlacePhoto } from './PlaceCard';
@@ -43,6 +43,8 @@ export function WinnerCard({
             <Chips place={place} light={false} />
             {place.photoCredit ? (
               <Text style={styles.credit}>Photo: {place.photoCredit}</Text>
+            ) : googleCredit(place) ? (
+              <Text style={styles.credit}>{googleCredit(place)}</Text>
             ) : null}
           </View>
         </View>
@@ -102,6 +104,7 @@ export function BigResult({
         <Text style={styles.bigName} numberOfLines={2}>
           {place.name}
         </Text>
+        {googleCredit(place) ? <Text style={styles.credit}>{googleCredit(place)}</Text> : null}
         <Chips place={place} />
         {footer}
       </View>
@@ -135,6 +138,7 @@ export function SmallResult({
         </Text>
         {place.origin === 'group_idea' ? <Text style={styles.smallMeta}>Our Idea</Text> : null}
         {place.cuisine ? <Text style={styles.smallMeta}>{place.cuisine}</Text> : null}
+        {googleCredit(place) ? <Text style={styles.smallMeta}>{googleCredit(place)}</Text> : null}
       </View>
       {onPress ? <Ionicons name="navigate" size={20} color={colors.muted} /> : null}
     </Pressable>

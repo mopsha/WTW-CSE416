@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 
 import { useEnrichedPlace } from '@/lib/googlePlaces';
-import { formatPriceLevel, milesFromCampus, openLabel } from '@/lib/places';
+import { formatPriceLevel, googleCredit, milesFromCampus, openLabel } from '@/lib/places';
 import type { Candidate } from '@/lib/types';
 
 import { colors, fonts } from './theme';
@@ -99,6 +99,9 @@ export function PlaceCard({ place: base, onInfo }: { place: Candidate; onInfo?: 
         <Chips place={place} />
       </View>
       {place.photoCredit ? <Text style={styles.credit}>Photo: {place.photoCredit}</Text> : null}
+      {!place.photoCredit && googleCredit(place) ? (
+        <Text style={styles.credit}>{googleCredit(place)}</Text>
+      ) : null}
     </View>
   );
 }

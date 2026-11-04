@@ -80,6 +80,15 @@ export function createLifecycleStore(): LifecycleStore {
         p_user_id: userId,
       })) as LifecyclePick | null;
     },
+    async finalistIds(pickId) {
+      const { data, error } = await createServiceClient()
+        .from('ranking_results')
+        .select('place_id')
+        .eq('pick_id', pickId)
+        .lte('rank', 3);
+      if (error) mapRpcError(error);
+      return ((data ?? []) as { place_id: string }[]).map((r) => r.place_id);
+    },
     async start(pickId, userId, candidates) {
       await rpc('pick_start', { p_pick_id: pickId, p_user_id: userId, p_candidates: candidates });
     },

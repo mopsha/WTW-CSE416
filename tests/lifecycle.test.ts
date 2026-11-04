@@ -285,15 +285,72 @@ describe('read-time candidate hours', () => {
   });
 });
 
-test('filtered lifecycle forwards constraints and rejects Google snapshots before any write', async () => {
+test('filtered lifecycle forwards constraints and stores only what Google allows', async () => {
   const store = fixture(pick({ priceMax: 2, openNow: true }));
-  const pool = poolOf([{ ...candidate('google'), provider: 'google', retention: 'request' }]);
-  await expect(startPick(store, pool, 'pick', 'host')).rejects.toThrow('cannot be persisted');
+  const pool = poolOf([
+    {
+      ...candidate('google'),
+      provider: 'google',
+      retention: 'request',
+      address: '1 Main St',
+      rating: 4.5,
+    },
+  ]);
+  await startPick(store, pool, 'pick', 'host');
   expect(pool.buildPool).toHaveBeenCalledWith(
     expect.objectContaining({ priceMax: 2, openNow: true }),
   );
-  expect(store.start).not.toHaveBeenCalled();
-  expect(store.refresh).not.toHaveBeenCalled();
+  const [stored] = store.start.mock.calls[0]![2];
+  expect(stored!.snapshot).toEqual({
+    placeId: 'google',
+    name: null,
+    category: candidate('google').category,
+    lat: candidate('google').lat,
+    lng: candidate('google').lng,
+    provider: 'google',
+  });
+});
+
+describe('getPick with Google places', () => {
+  const stored = {
+    placeId: 'g',
+    snapshot: { placeId: 'g', name: null, category: 'food', lat: 1, lng: 2, provider: 'google' },
+  };
+  const shown = [{ ...stored.snapshot, name: 'Shown' }];
+
+  test('swiping fills in names with no photos', async () => {
+    const places = jest.fn(async () => shown);
+    const store = fixture(pick({ state: 'swiping', candidates: [stored] }));
+    const result = await getPick(store, 'pick', 'host', undefined, places);
+    expect(result.candidates).toEqual(shown);
+    expect(places).toHaveBeenCalledWith(expect.objectContaining({ photoIds: new Set() }));
+  });
+
+  test('results ask for finalist and winner photos, and skip Google hours', async () => {
+    const places = jest.fn(async () => shown);
+    const hours = jest.fn(async () => []);
+    const store = {
+      ...fixture(pick({ state: 'completed', candidates: [stored], winnerPlaceId: 'w' })),
+      finalistIds: jest.fn(async () => ['a', 'b']),
+    };
+    await getPick(store, 'pick', 'host', hours, places);
+    expect(places).toHaveBeenCalledWith(
+      expect.objectContaining({ photoIds: new Set(['a', 'b', 'w']) }),
+    );
+    expect(hours).toHaveBeenCalledWith([]);
+  });
+
+  test.each(['draft', 'canceled'] as const)('%s spends nothing on Google', async (state) => {
+    const places = jest.fn(async () => shown);
+    await getPick(
+      fixture(pick({ state, candidates: [stored] })),
+      'pick',
+      'host',
+      undefined,
+      places,
+    );
+    expect(places).not.toHaveBeenCalled();
+  });
 });
 
 test('empty filtered refresh preserves existing answers and candidates', async () => {

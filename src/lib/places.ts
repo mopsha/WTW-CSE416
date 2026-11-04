@@ -27,7 +27,19 @@ export function candidateFromSnapshot(placeId: string, snapshot: unknown): Candi
           groupId: str(s.groupId)!,
         }
       : {}),
-    name: str(s.name) ?? 'Unnamed place',
+    ...(s.provider === 'google'
+      ? {
+          provider: 'google' as const,
+          attributions: Array.isArray(s.attributions)
+            ? s.attributions.flatMap((a: unknown) => {
+                const name = str((a as { provider?: unknown } | null)?.provider);
+                return name ? [{ provider: name }] : [];
+              })
+            : [],
+          googleMapsUri: str(s.googleMapsUri) ?? undefined,
+        }
+      : {}),
+    name: str(s.name) ?? (s.provider === 'google' ? 'Place details unavailable' : 'Unnamed place'),
     photoUrl: str(s.photoUrl),
     priceLevel: num(s.priceLevel),
     rating: num(s.rating),
@@ -49,6 +61,12 @@ export function candidateFromApi(snapshot: unknown): Candidate {
     typeof snapshot === 'object' && snapshot !== null ? (snapshot as Record<string, unknown>) : {};
   const id = typeof s.placeId === 'string' ? s.placeId : typeof s.id === 'string' ? s.id : '';
   return candidateFromSnapshot(id, s);
+}
+
+/** The credit Google requires wherever its content appears, or null for other places. */
+export function googleCredit(place: Pick<Candidate, 'provider' | 'attributions'>): string | null {
+  if (place.provider !== 'google') return null;
+  return ['Google Maps', ...(place.attributions ?? []).map((a) => a.provider)].join(' · ');
 }
 
 /** "Open now · closes 10 PM" / "Closed now", or null when we don't know the hours. */
