@@ -180,7 +180,6 @@ hidden and Google enrichment is skipped. Ranking keeps its existing custom neutr
 zero-distance tie-break convention; no inferred/geocoded location is introduced.
 Images/uploads remain deferred. See the API contract for exact capacity/type rules.
 
-
 ## Direct group invitations require consent
 
 The old owner Add action inserted group membership immediately. Migration 0025 changes
@@ -294,9 +293,9 @@ References: [Supabase OTP](https://supabase.com/docs/reference/javascript/auth-s
 [Apple](https://supabase.com/docs/guides/auth/social-login/auth-apple),
 [Expo auth](https://docs.expo.dev/guides/authentication/).
 
-Published Terms and Privacy Policy remain a release requirement. Signup honestly states
-that they are unavailable; it does not link to internal notes or record fictional legal
-consent. Birthday, photo upload, contacts and phone auth remain deferred: none is needed
+Terms, Privacy Policy and Support live in `site/` and publish to GitHub Pages; signup and
+Settings link to them. They need human review, and a page with a `[[PLACEHOLDER]]` won't publish.
+Birthday, photo upload, contacts and phone auth remain deferred: none is needed
 for this identity flow and no existing supported implementation is extended by adding them.
 Mock auth uses code `123456`: Log In with `demo@wtw.test` exercises a returning account;
 Sign Up with another email exercises new identity and optional setup. Per-email profile

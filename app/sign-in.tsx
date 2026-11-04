@@ -2,6 +2,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -20,6 +21,7 @@ import type { AuthMode } from '@/lib/authTypes';
 import { auth, AuthError } from '@/lib/auth';
 import { USE_MOCK } from '@/lib/config';
 import { messageOf } from '@/lib/errors';
+import { PRIVACY_URL, TERMS_URL } from '@/lib/legal';
 import { MOCK_CODE } from '@/lib/mock/auth';
 
 /** Supabase's default minimum interval between OTP emails to the same address. */
@@ -195,10 +197,24 @@ export default function SignInScreen() {
                 />
                 <Text style={styles.fine}>No passwords. We email you a 6-digit code.</Text>
                 {mode === 'signup' ? (
-                  <Text style={styles.fine}>
-                    Creating an account saves your email and profile details in WTW. Terms and
-                    Privacy Policy have not been published for this build yet.
-                  </Text>
+                  <>
+                    <Text style={styles.fine}>
+                      By creating an account, you agree to the Terms of Use and confirm you’re at
+                      least 13. The Privacy Policy explains how WTW uses your data.
+                    </Text>
+                    <View style={styles.legal}>
+                      <Button
+                        label="Terms of Use"
+                        variant="link"
+                        onPress={() => void Linking.openURL(TERMS_URL).catch(() => {})}
+                      />
+                      <Button
+                        label="Privacy Policy"
+                        variant="link"
+                        onPress={() => void Linking.openURL(PRIVACY_URL).catch(() => {})}
+                      />
+                    </View>
+                  </>
                 ) : null}
                 {/* For a code you got another way (e.g. from the host on wtw-dev, where the
                     email can't carry the code yet), or when sending just hit a limit. */}
@@ -360,4 +376,5 @@ const styles = StyleSheet.create({
   hiddenInput: { position: 'absolute', opacity: 0, height: 1, width: 1 },
   row: { flexDirection: 'row', justifyContent: 'space-between' },
   fine: { fontFamily: fonts.medium, fontSize: 13, color: colors.muted, textAlign: 'center' },
+  legal: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' },
 });
