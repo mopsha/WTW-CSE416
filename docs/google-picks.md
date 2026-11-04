@@ -37,7 +37,8 @@ Google bills a Nearby Search by the most expensive field requested, so `pickSear
   that fails, show as "Place details unavailable".
 - Only the top three and the winner get photos, because each photo is billed separately.
 - Swipe, results and winner screens show the required Google Maps and photo author credit, linking
-  to their sources when Google provides them (`GoogleCredit`).
+  to the place, the photographer and the photo's own page when Google provides them
+  (`GoogleCredit`).
 
 Drafts and canceled Picks skip all of this. Google places don't show ratings, prices or hours,
 which Google bills at a higher tier. History lists the winner as "Winner" and Past Moves as a saved

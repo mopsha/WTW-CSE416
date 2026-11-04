@@ -45,6 +45,32 @@ test('the API credit link survives normalization and opens', async () => {
   await act(async () => tree.unmount());
 });
 
+test('place, photographer and photo each keep their own link', async () => {
+  const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+  open.mockClear();
+  const tree = await mount(
+    candidateFromApi({
+      placeId: 'g',
+      name: 'Cafe',
+      provider: 'google',
+      googleMapsUri: 'https://maps.google.com/place',
+      photoGoogleMapsUri: 'https://maps.google.com/photo',
+      attributions: [{ provider: 'Ana', providerUri: 'https://maps.google.com/author' }],
+    }),
+  );
+  const opened: Record<string, string> = {};
+  for (const link of links(tree)) {
+    await act(async () => link.props.onPress());
+    opened[link.props.accessibilityLabel] = open.mock.lastCall![0];
+  }
+  expect(opened).toEqual({
+    'Google Maps, opens outside WTW': 'https://maps.google.com/place',
+    'Ana, opens outside WTW': 'https://maps.google.com/author',
+    'Photo source, opens outside WTW': 'https://maps.google.com/photo',
+  });
+  await act(async () => tree.unmount());
+});
+
 test('credits without links still show, as plain text', async () => {
   const tree = await mount({ provider: 'google', attributions: [{ provider: 'Ana' }] });
   expect(links(tree)).toHaveLength(0);

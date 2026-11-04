@@ -68,13 +68,15 @@ export function createPickPlaces(source: PickPlaceSource): PickPlaces {
     return candidates.map(({ placeId, snapshot }) => {
       const place = isGoogle(snapshot) ? found.get(placeId) : undefined;
       if (!place) return snapshot;
+      const hasPhoto = photoIds.has(placeId) && !!place.photoUrl;
       return {
         ...snapshot,
         name: place.name,
         address: place.address,
         lat: place.lat,
         lng: place.lng,
-        photoUrl: photoIds.has(placeId) ? (place.photoUrl ?? null) : null,
+        photoUrl: hasPhoto ? place.photoUrl : null,
+        photoGoogleMapsUri: hasPhoto ? place.photos?.[0]?.googleMapsUri : undefined,
         googleMapsUri: place.googleMapsUri,
         attributions: place.attributions ?? [],
       };

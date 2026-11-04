@@ -11,7 +11,7 @@ export function GoogleCredit({
   light = false,
   style,
 }: {
-  place: Pick<Candidate, 'provider' | 'attributions' | 'googleMapsUri'>;
+  place: Pick<Candidate, 'provider' | 'attributions' | 'googleMapsUri' | 'photoGoogleMapsUri'>;
   light?: boolean;
   style?: ViewStyle;
 }) {
@@ -20,6 +20,9 @@ export function GoogleCredit({
   const credits = [
     { provider: 'Google Maps', uri: place.googleMapsUri },
     ...(place.attributions ?? []),
+    ...(place.photoGoogleMapsUri
+      ? [{ provider: 'Photo source', uri: place.photoGoogleMapsUri }]
+      : []),
   ].filter((c) => !seen.has(c.provider) && !!seen.add(c.provider));
   const text = [styles.text, light && styles.light];
   return (

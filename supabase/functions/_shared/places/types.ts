@@ -14,7 +14,11 @@ export interface Candidate extends LatLng {
   types?: string[];
   /** Resolved for one Discover response; never persisted. */
   photoUrl?: string | null;
-  photos?: { name: string; authorAttributions: { displayName: string; uri?: string }[] }[];
+  photos?: {
+    name: string;
+    authorAttributions: { displayName: string; uri?: string }[];
+    googleMapsUri?: string;
+  }[];
   attributions?: { provider: string; providerUri?: string }[];
   googleMapsUri?: string;
   openingHours?: OpeningHours | null;

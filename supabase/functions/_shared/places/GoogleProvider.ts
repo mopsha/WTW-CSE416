@@ -142,6 +142,7 @@ export function normalizePlace(
     return [
       {
         name,
+        googleMapsUri: str(photo.googleMapsUri),
         authorAttributions: (Array.isArray(photo.authorAttributions)
           ? photo.authorAttributions
           : []

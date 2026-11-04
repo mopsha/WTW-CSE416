@@ -38,6 +38,7 @@ export function candidateFromSnapshot(placeId: string, snapshot: unknown): Candi
               })
             : [],
           googleMapsUri: str(s.googleMapsUri) ?? undefined,
+          photoGoogleMapsUri: str(s.photoGoogleMapsUri) ?? undefined,
         }
       : {}),
     name: str(s.name) ?? (s.provider === 'google' ? 'Place details unavailable' : 'Unnamed place'),

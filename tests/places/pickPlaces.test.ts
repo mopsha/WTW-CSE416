@@ -79,6 +79,46 @@ test('only requested places get a photo and its required credit', async () => {
   expect(shown[1]!.photoUrl).toBeNull();
 });
 
+test('a shown photo keeps its own source link, separate from the place and author', async () => {
+  const place = live('a', {
+    googleMapsUri: 'https://maps.example/place',
+    photos: [
+      {
+        name: 'places/a/photos/1',
+        googleMapsUri: 'https://maps.example/photo',
+        authorAttributions: [{ displayName: 'Ana', uri: 'https://maps.example/author' }],
+      },
+    ],
+  });
+  const s = source([place]);
+  const [withPhoto] = await createPickPlaces(s)({
+    center,
+    radiusM: 1000,
+    candidates: [stored('a')],
+    photoIds: new Set(['a']),
+  });
+  expect(withPhoto).toMatchObject({
+    googleMapsUri: 'https://maps.example/place',
+    photoGoogleMapsUri: 'https://maps.example/photo',
+    attributions: [{ provider: 'Ana', providerUri: 'https://maps.example/author' }],
+  });
+  const [noPhoto] = await createPickPlaces(source([place]))({
+    center,
+    radiusM: 1000,
+    candidates: [stored('a')],
+    photoIds: new Set(),
+  });
+  expect((noPhoto as { photoGoogleMapsUri?: string }).photoGoogleMapsUri).toBeUndefined();
+  s.photo.mockRejectedValue(new Error('over cap'));
+  const [failed] = await createPickPlaces(s)({
+    center,
+    radiusM: 1000,
+    candidates: [stored('a')],
+    photoIds: new Set(['a']),
+  });
+  expect((failed as { photoGoogleMapsUri?: string }).photoGoogleMapsUri).toBeUndefined();
+});
+
 test('places missing from the search are looked up, up to the limit', async () => {
   const s = source([]);
   const ids = Array.from({ length: MAX_PLACE_LOOKUPS + 2 }, (_, i) => `p${i}`);
