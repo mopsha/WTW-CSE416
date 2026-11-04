@@ -24,8 +24,8 @@
   <li><strong>Profile and preferences:</strong> favorite cuisine and activity, Discover preferences, saved places and your profile sharing setting.</li>
   <li><strong>Social connections:</strong> friend requests and friendships, groups and group invitations, and people you block.</li>
   <li><strong>Things you write:</strong> group and direct messages, Group Ideas, hang posts, group names, custom plan options and notes, Pick cancel reasons and reports you submit.</li>
-  <li><strong>Pick activity:</strong> Picks you host or join, your swipes, votes, RSVPs, hang responses and "Did you go?" answers.</li>
-  <li><strong>Location:</strong> if you allow it, your device's location while you use the app, to center a Pick or Discover near you. We only store a location when a host chooses it as a Pick's center.</li>
+  <li><strong>Pick activity:</strong> Picks you host or join, your swipes, votes, RSVPs, hang responses and "Did you go?" answers. For Google places, a Pick keeps the place's ID, and keeps its coordinates for up to 30 days.</li>
+  <li><strong>Location:</strong> if you allow it, your device's location while you use the app, to center a Pick or Discover near you. We combine it with place data from Google to show results. We only store a location when a host chooses it as a Pick's center. You can turn off location access at any time in your device settings.</li>
   <li><strong>Device and technical data:</strong> a push notification token if you allow notifications, your in-app notifications, and records of actions used to limit abuse, such as attempts to join with a code.</li>
 </ul>
 <p>We don't collect your contacts or birthday, and you can't upload photos. WTW has no advertising or third-party analytics SDKs. We don't sell your data or use it to track you across other companies' apps or websites.</p>
@@ -46,7 +46,7 @@
   <li><strong>Supabase</strong> hosts our database, sign-in and server functions.</li>
   <li><strong>Resend</strong> delivers sign-in codes, so it receives your email address.</li>
   <li><strong>Expo, Apple and Google</strong> deliver push notifications using your device's push token. Message notifications don't contain the message text.</li>
-  <li><strong>Google Places</strong> provides place results in Discover. Our server sends it your search area, without your name or account details.</li>
+  <li><strong>Google Maps</strong> provides place results, details and photos in Discover and, where available, Picks. Our server sends Google the search area, without your name or account details. Photos load directly from Google, so Google can see your device's IP address. Google may use and retain this data to provide and improve its products, as described in the <a href="https://policies.google.com/privacy">Google Privacy Policy</a>.</li>
 </ul>
 <p>We may also disclose data if the law requires it.</p>
 
