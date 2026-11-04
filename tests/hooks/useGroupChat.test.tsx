@@ -124,3 +124,55 @@ test('an error from an obsolete foreground request cannot revoke a newly queued 
   expect(result.unavailable).toBe(false);
   expect(result.error).toBeNull();
 });
+
+test('manual refresh awaits its queued read behind an in-flight poll', async () => {
+  let pollDone!: (value: { messages: (typeof message)[] }) => void;
+  let manualDone!: (value: { messages: (typeof message)[] }) => void;
+  jest
+    .mocked(api.listGroupMessages)
+    .mockReturnValueOnce(
+      new Promise((resolve) => {
+        pollDone = resolve;
+      }),
+    )
+    .mockReturnValueOnce(
+      new Promise((resolve) => {
+        manualDone = resolve;
+      }),
+    );
+  await act(async () => change());
+  let settled = false;
+  let refresh!: Promise<void>;
+  await act(async () => {
+    refresh = result.refresh().then(() => {
+      settled = true;
+    });
+  });
+  expect(settled).toBe(false);
+  await act(async () => pollDone({ messages: [message] }));
+  expect(settled).toBe(false);
+  await act(async () => manualDone({ messages: [{ ...message, body: 'Manual result' }] }));
+  await refresh;
+  expect(settled).toBe(true);
+  expect(result.messages[0]!.body).toBe('Manual result');
+});
+
+test('background cancellation settles a direct manual refresh and rejects its stale data', async () => {
+  let finish!: (value: { messages: (typeof message)[] }) => void;
+  jest.mocked(api.listGroupMessages).mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  let settled = false;
+  await act(async () => {
+    void result.refresh().then(() => {
+      settled = true;
+    });
+  });
+  expect(settled).toBe(false);
+  await act(async () => state('background'));
+  expect(settled).toBe(true);
+  await act(async () => finish({ messages: [message] }));
+  expect(result.messages).toEqual([]);
+});

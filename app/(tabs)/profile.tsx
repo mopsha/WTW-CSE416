@@ -1,15 +1,19 @@
+import { profileTheme } from '@/components/theme';
+import {
+  ProfileHero,
+  ProfileFavorites,
+  ProfileRow,
+} from '@/components/profile/ProfilePresentation';
 import { PastMoves } from '@/components/PastMoves';
 import type { UserProfile } from '@shared/api/userProfiles.ts';
 import { OwnProfileDetails } from '@/components/OwnProfileDetails';
-import { Ionicons } from '@expo/vector-icons';
-import { ListRow, Sheet } from '@/components/TabUi';
+import { Sheet } from '@/components/TabUi';
 import { DISPLAY_NAME_MAX, validateDisplayName } from '@shared/api/profile.ts';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
-  Avatar,
   Button,
   colors,
   ErrorState,
@@ -77,64 +81,70 @@ export default function ProfileScreen() {
   }
 
   return (
-    <Screen edges={['top', 'left', 'right']} contentStyle={{ flexGrow: 1 }}>
-      <Pressable
-        style={styles.identity}
-        onPress={() => setDraft(displayName ?? suggestedName(session.user.email))}
-        accessibilityRole="button"
+    <Screen edges={['top', 'left', 'right']} contentStyle={styles.content}>
+      <ProfileHero name={name} profile={details} />
+      <Button
+        label="Edit profile"
+        variant="secondary"
+        style={styles.editProfile}
         accessibilityLabel={`Edit profile for ${name}`}
-      >
-        <Avatar name={name} uri={details?.avatarUrl} neutral size={84} />
-        <View style={styles.who}>
-          <Text style={styles.name}>{name}</Text>
-          {details?.username ? <Text style={styles.email}>@{details.username}</Text> : null}
-          <Text style={styles.email}>{email}</Text>
-        </View>
-        <Ionicons name="chevron-forward" size={20} color={colors.muted} />
-      </Pressable>
+        onPress={() => setDraft(displayName ?? suggestedName(session.user.email))}
+      />
+      {!details && !detailsError ? (
+        <ActivityIndicator color={colors.primary} accessibilityLabel="Loading profile details" />
+      ) : null}
       {detailsError ? (
         <ErrorState message={detailsError} onRetry={() => void loadDetails()} />
       ) : null}
-      {details ? <OwnProfileDetails profile={details} onSaved={setDetails} /> : null}
-      <PastMoves key={session.user.id} userId={session.user.id} />
-      <View style={styles.settings}>
-        <ListRow
-          title="Preferences"
-          subtitle={preferencesSummary(preferences)}
-          leading={<Ionicons name="heart-outline" size={25} color={colors.text} />}
-          onPress={() => router.push('/preferences')}
-        />
-        <ListRow
-          title="Notifications"
-          leading={<Ionicons name="notifications-outline" size={25} color={colors.text} />}
-          onPress={() =>
-            router.push({ pathname: '/settings', params: { section: 'notifications' } })
-          }
-        />
-        <ListRow
-          title="Settings"
-          leading={<Ionicons name="settings-outline" size={25} color={colors.text} />}
-          onPress={() => router.push('/settings')}
-        />
-      </View>
-      {error ? <ErrorState message={error} /> : null}
-      <View style={styles.footer}>
-        <ListRow
-          title="Sign out"
-          danger
-          disabled={!!busy}
-          leading={<Ionicons name="log-out-outline" size={23} color={colors.primary} />}
-          right={<View />}
-          onPress={() => void run('logout', () => accountActions.logOut())}
-        />
-        <ListRow
-          title="Delete account"
-          muted
-          disabled={!!busy}
-          leading={<Ionicons name="trash-outline" size={23} color={colors.muted} />}
-          right={busy === 'delete' ? <ActivityIndicator color={colors.primary} /> : <View />}
-          onPress={() => void deleteAccount()}
-        />
+      {details ? <ProfileFavorites profile={details} /> : null}
+      <PastMoves key={session.user.id} userId={session.user.id} variant="profile" />
+      <View style={styles.account}>
+        {details ? (
+          <OwnProfileDetails
+            profile={details}
+            onSaved={setDetails}
+            variant="profile"
+            email={email}
+          />
+        ) : null}
+        <View style={styles.settings}>
+          <ProfileRow
+            title="Preferences"
+            subtitle={preferencesSummary(preferences)}
+            icon="heart-outline"
+            onPress={() => router.push('/preferences')}
+          />
+          <ProfileRow
+            title="Notifications"
+            icon="notifications-outline"
+            onPress={() =>
+              router.push({ pathname: '/settings', params: { section: 'notifications' } })
+            }
+          />
+          <ProfileRow
+            title="Settings"
+            icon="settings-outline"
+            onPress={() => router.push('/settings')}
+          />
+        </View>
+        {error ? <ErrorState message={error} /> : null}
+        <View style={styles.footer}>
+          <ProfileRow
+            title="Sign out"
+            tone="accent"
+            disabled={!!busy}
+            icon="log-out-outline"
+            onPress={() => void run('logout', () => accountActions.logOut())}
+          />
+          <ProfileRow
+            title="Delete account"
+            tone="quiet"
+            disabled={!!busy}
+            icon="trash-outline"
+            loading={busy === 'delete'}
+            onPress={() => void deleteAccount()}
+          />
+        </View>
       </View>
       <Sheet title="Edit profile" visible={draft !== null} onClose={cancel}>
         <Text style={styles.detail}>The name your friends see in Picks.</Text>
@@ -175,21 +185,16 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
-  identity: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.lg,
-    paddingTop: space.xxl + space.xl,
-    paddingBottom: space.xl,
+  content: { gap: space.lg, paddingTop: space.sm },
+  editProfile: {
+    borderRadius: radius.sm,
+    borderWidth: 0,
+    minHeight: MIN_TARGET,
+    paddingVertical: 0,
   },
-  settings: { borderTopWidth: 1, borderTopColor: colors.border },
-  footer: { marginTop: 'auto', paddingTop: space.xxl },
-  row: { flexDirection: 'row', alignItems: 'center', gap: space.lg },
-  who: { flex: 1, gap: 2 },
-  name: { ...type.heading, color: colors.text },
-  email: { ...type.caption, color: colors.muted },
-  edit: { marginTop: space.lg },
-  form: { gap: space.md, marginTop: space.lg },
+  account: { marginTop: space.xl, gap: space.lg },
+  settings: { backgroundColor: profileTheme.surface, borderRadius: radius.md, overflow: 'hidden' },
+  footer: { paddingTop: space.sm, paddingBottom: space.lg },
   input: {
     minHeight: MIN_TARGET + 4,
     borderWidth: 1,

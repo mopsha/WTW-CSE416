@@ -28,7 +28,7 @@ import { Button } from '@/components/Button';
 import { Chips as ChipGroup } from '@/components/Chips';
 import { QuietEmpty, Sheet } from '@/components/TabUi';
 import { describePlace, PlacePhoto } from '@/components/PlaceCard';
-import { colors, fonts, MIN_TARGET, radius, space, surfaces, type } from '@/components/theme';
+import { colors, fonts, MIN_TARGET, radius, space, type } from '@/components/theme';
 import {
   filterDiscover,
   milesLabel,
@@ -84,13 +84,13 @@ function PlaceTile({
     .filter(Boolean)
     .join(' · ');
   return (
-    <View style={[styles.tile, !place.photoUrl && { height: 160 }]}>
+    <View style={styles.tile}>
       <Pressable
         onPress={onPress}
         accessibilityRole="button"
         accessibilityLabel={describePlace(place)}
         accessibilityHint="Shows place details and directions"
-        style={StyleSheet.absoluteFill}
+        style={[styles.tileMain, !place.photoUrl && styles.tileWithoutPhoto]}
       >
         <Cover place={place} style={StyleSheet.absoluteFill} />
         <LinearGradient
@@ -103,9 +103,7 @@ function PlaceTile({
             {place.name}
           </Text>
           <View style={styles.tileMetaRow}>
-            <Text style={styles.tileMeta} numberOfLines={1}>
-              {details}
-            </Text>
+            <Text style={styles.tileMeta}>{details}</Text>
             {place.rating !== null ? (
               <Text style={styles.tileRating}>{formatRating(place.rating)}</Text>
             ) : null}
@@ -371,7 +369,7 @@ export default function DiscoverScreen() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         contentContainerStyle={styles.content}
-        ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+        ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
         renderItem={({ item }) => (
           <PlaceTile
             place={item}
@@ -383,15 +381,15 @@ export default function DiscoverScreen() {
           />
         )}
         ListHeaderComponent={
-          <View style={{ gap: 16, marginBottom: 14 }}>
-            <View style={{ gap: 4 }}>
-              <Text style={styles.eyebrow}>AROUND STONY BROOK</Text>
+          <View style={styles.feedHeader}>
+            <View style={styles.heading}>
               <Text style={styles.h1} accessibilityRole="header">
                 Discover
               </Text>
-              <Text style={styles.sub}>
-                {loading ? 'Finding places…' : 'Find places to eat, hang out, and more.'}
-              </Text>
+              <View style={styles.location}>
+                <Ionicons name="location-outline" size={14} color={colors.muted} />
+                <Text style={styles.eyebrow}>AROUND STONY BROOK</Text>
+              </View>
             </View>
 
             <View style={styles.search}>
@@ -419,8 +417,11 @@ export default function DiscoverScreen() {
               ) : null}
             </View>
 
-            <View
-              style={styles.categories}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.categories}
               accessibilityRole="tablist"
               accessibilityLabel="Discover category"
             >
@@ -431,25 +432,23 @@ export default function DiscoverScreen() {
                   accessibilityLabel={f.label}
                   accessibilityState={{ selected: filter === f.value }}
                   onPress={() => setFilter(f.value)}
-                  style={[
-                    styles.categoryControl,
-                    filter === f.value && {
-                      backgroundColor: colors.primary,
-                      borderColor: colors.primary,
-                    },
-                  ]}
+                  style={[styles.categoryControl, filter === f.value && styles.categorySelected]}
                 >
                   <Ionicons
                     name={
                       i === 0 ? 'sparkles-outline' : i === 1 ? 'restaurant-outline' : 'walk-outline'
                     }
-                    size={18}
-                    color={colors.text}
+                    size={17}
+                    color={filter === f.value ? colors.bg : colors.text}
                   />
-                  <Text style={styles.filterText}>{f.label}</Text>
+                  <Text
+                    style={[styles.categoryText, filter === f.value && styles.categorySelectedText]}
+                  >
+                    {f.label}
+                  </Text>
                 </Pressable>
               ))}
-            </View>
+            </ScrollView>
             <View style={styles.filterRow}>
               <Pressable
                 accessibilityRole="switch"
@@ -463,7 +462,10 @@ export default function DiscoverScreen() {
                   size={19}
                   color={openNow ? colors.primary : colors.text}
                 />
-                <Text style={styles.filterText}>Open Now</Text>
+                <Text style={[styles.filterText, openNow && styles.filterSelectedText]}>
+                  Open Now
+                </Text>
+                {openNow ? <Ionicons name="checkmark" size={16} color={colors.primary} /> : null}
               </Pressable>
               <Pressable
                 accessibilityRole="button"
@@ -482,17 +484,21 @@ export default function DiscoverScreen() {
                 </Text>
               </Pressable>
             </View>
-            {notice ? (
-              <Text style={styles.sub}>{notice}</Text>
-            ) : current && !error ? (
-              <Text style={styles.sub}>Places from Google Maps</Text>
-            ) : null}
             {error ? <ErrorState message={error} onRetry={() => setRetry((n) => n + 1)} /> : null}
-            <Text style={styles.section}>
-              {query.trim()
-                ? `${places.length} result${places.length === 1 ? '' : 's'}`
-                : 'Near campus'}
-            </Text>
+            <View style={styles.feedIntro}>
+              <Text style={styles.feedTitle} accessibilityRole="header">
+                {query.trim()
+                  ? `${places.length} result${places.length === 1 ? '' : 's'}`
+                  : 'Near campus'}
+              </Text>
+              {notice ? (
+                <Text style={styles.sub}>{notice}</Text>
+              ) : current && !error ? (
+                <Text style={styles.sub}>Places from Google Maps</Text>
+              ) : loading ? (
+                <Text style={styles.sub}>Finding places…</Text>
+              ) : null}
+            </View>
           </View>
         }
         ListEmptyComponent={
@@ -561,29 +567,40 @@ export default function DiscoverScreen() {
 }
 
 const styles = StyleSheet.create({
-  categories: { flexDirection: 'row', gap: space.sm },
+  feedHeader: { gap: space.md, marginBottom: space.md },
+  heading: { gap: space.xs },
+  location: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  categories: { flexDirection: 'row', gap: space.sm, paddingRight: space.xs },
   categoryControl: {
-    ...surfaces.control,
-    flex: 1,
+    backgroundColor: colors.card,
     flexDirection: 'row',
     gap: space.sm,
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: MIN_TARGET,
-    borderRadius: radius.pill,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    borderRadius: radius.md,
   },
-  tile: { height: 180, borderRadius: radius.md, overflow: 'hidden', backgroundColor: colors.card },
-  tileInfo: {
-    position: 'absolute',
-    left: space.lg,
-    right: space.lg,
-    bottom: space.lg,
-    gap: space.xs,
-  },
+  categorySelected: { backgroundColor: colors.primary },
+  categoryText: { fontSize: 15, lineHeight: 22, fontWeight: '600', color: colors.text },
+  categorySelectedText: { color: colors.bg },
+  tile: { borderRadius: radius.lg, overflow: 'hidden', backgroundColor: colors.card },
+  // Flowing text sets the height at larger Dynamic Type sizes; imagery remains full-bleed.
+  tileMain: { minHeight: 180, justifyContent: 'flex-end', paddingTop: MIN_TARGET + space.lg },
+  tileWithoutPhoto: { minHeight: 160 },
+  tileInfo: { padding: space.lg, gap: space.xs },
   tileName: { ...type.heading, color: colors.photoText },
-  tileMetaRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  tileMeta: { ...type.caption, color: colors.photoMuted, flex: 1 },
-  tileRating: { ...type.caption, color: colors.photoText },
+  tileMetaRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.sm },
+  tileMeta: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.photoMuted,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 160,
+  },
+  tileRating: { fontSize: 14, lineHeight: 20, fontWeight: '600', color: colors.photoText },
   bookmark: {
     position: 'absolute',
     top: space.sm,
@@ -595,18 +612,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  filterRow: { flexDirection: 'row', gap: space.md },
+  filterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: space.sm,
+  },
   filterControl: {
-    ...surfaces.control,
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
     minHeight: MIN_TARGET,
-    paddingHorizontal: space.lg,
-    borderRadius: radius.pill,
+    paddingHorizontal: space.sm,
+    paddingVertical: space.sm,
+    borderRadius: radius.sm,
   },
-  filterSelected: { borderColor: colors.primary },
-  filterText: { ...type.caption, fontFamily: fonts.semibold, color: colors.text },
+  filterSelected: { backgroundColor: colors.card },
+  filterSelectedText: { color: colors.primary },
+  filterText: { fontSize: 14, lineHeight: 20, fontWeight: '500', color: colors.text },
   searchClear: {
     minWidth: MIN_TARGET,
     minHeight: MIN_TARGET,
@@ -614,27 +637,41 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   safe: { flex: 1, backgroundColor: colors.bg },
-  content: { padding: 20, paddingBottom: 40 },
-  eyebrow: { fontFamily: fonts.bold, fontSize: 13, letterSpacing: 2, color: colors.muted },
-  h1: { fontFamily: fonts.bold, fontSize: 32, lineHeight: 40, color: colors.text },
-  sub: { fontFamily: fonts.medium, fontSize: 15, color: colors.muted },
+  content: { paddingHorizontal: space.xl - space.xs, paddingTop: space.sm, paddingBottom: 40 },
+  eyebrow: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
+    letterSpacing: 0.6,
+    color: colors.muted,
+  },
+  h1: {
+    fontFamily: fonts.bold,
+    fontSize: 28,
+    lineHeight: 36,
+    letterSpacing: -0.6,
+    color: colors.text,
+  },
+  sub: { fontSize: 13, lineHeight: 19, color: colors.muted },
+  feedIntro: { gap: space.xs },
+  feedTitle: { fontSize: 20, lineHeight: 27, fontWeight: '700', color: colors.text },
   section: { fontFamily: fonts.bold, fontSize: 18, color: colors.text },
   search: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    minHeight: MIN_TARGET + 4,
-    paddingHorizontal: 16,
-    borderRadius: 999,
+    gap: space.sm,
+    minHeight: MIN_TARGET,
+    paddingLeft: space.md,
+    paddingRight: space.xs,
+    borderRadius: radius.md,
     backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.border,
   },
   searchInput: {
     flex: 1,
+    minWidth: 0,
     minHeight: MIN_TARGET,
-    fontFamily: fonts.medium,
-    fontSize: 16,
+    paddingVertical: space.sm,
+    fontSize: 17,
     color: colors.text,
   },
   emojiCover: { backgroundColor: colors.cardHi, alignItems: 'center', justifyContent: 'center' },

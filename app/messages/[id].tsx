@@ -1,7 +1,7 @@
-import { useLocalSearchParams } from 'expo-router';
-import { Text, View } from 'react-native';
-import { Avatar, Screen, colors, space, type } from '@/components';
 import { MemberMenu } from '@/components/MemberMenu';
+import { useLocalSearchParams } from 'expo-router';
+import { Screen } from '@/components';
+import { ConversationHeader } from '@/components/ConversationHeader';
 import { MessageThread } from '@/components/MessageThread';
 import { useSession } from '@/hooks/useAuth';
 import { useDirectChat } from '@/hooks/useDirectChat';
@@ -14,34 +14,23 @@ export default function DirectMessageScreen() {
 function Conversation({ id, userId }: { id: string; userId: string }) {
   const chat = useDirectChat(id);
   const peer = chat.conversation?.peer;
+  const peerName = peer
+    ? peer.displayName || (peer.username ? `@${peer.username}` : 'WTW friend')
+    : undefined;
   return (
-    <Screen
-      title="Messages"
-      back
-      onRefresh={() => void chat.refresh()}
-      right={
-        peer ? (
-          <MemberMenu
-            userId={peer.id}
-            name={peer.displayName ?? 'WTW friend'}
-            onBlocked={() => void chat.refresh()}
-          />
-        ) : undefined
-      }
-    >
-      {peer ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
-          <Avatar name={peer.displayName ?? 'WTW friend'} uri={peer.avatarUrl} size={48} />
-          <View>
-            <Text style={{ ...type.heading, color: colors.text }}>
-              {peer.displayName ?? 'WTW friend'}
-            </Text>
-            {peer.username ? (
-              <Text style={{ ...type.caption, color: colors.muted }}>@{peer.username}</Text>
-            ) : null}
-          </View>
-        </View>
-      ) : null}
+    <Screen scroll={false} contentStyle={{ padding: 0, paddingBottom: 0, gap: 0 }}>
+      <ConversationHeader
+        right={
+          peer && peerName ? (
+            <MemberMenu userId={peer.id} name={peerName} onBlocked={() => void chat.refresh()} />
+          ) : undefined
+        }
+        name={peerName}
+        unavailable={chat.unavailable}
+        loading={!peer && !chat.error && !chat.unavailable}
+        uri={peer?.avatarUrl}
+        subtitle={peer?.username ? `@${peer.username}` : undefined}
+      />
       <MessageThread
         userId={userId}
         chat={{ ...chat, unavailable: chat.unavailable || !peer }}

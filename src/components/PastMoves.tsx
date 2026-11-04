@@ -1,13 +1,20 @@
+import { profileTheme } from './theme';
 import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import type { PastMove, PastMovesResult } from '@shared/api/pastMoves.ts';
 import { router } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { Button, Card, colors, ErrorState, space, type } from '@/components';
+import { Button, Card, colors, ErrorState, space, type, radius } from '@/components';
 import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
 
-export function PastMoveCard({ move }: { move: PastMove }) {
+export function PastMoveCard({
+  move,
+  variant = 'default',
+}: {
+  move: PastMove;
+  variant?: 'default' | 'profile';
+}) {
   const date = new Date(move.occurredAt).toLocaleDateString(undefined, {
     year: 'numeric',
     month: 'short',
@@ -15,6 +22,7 @@ export function PastMoveCard({ move }: { move: PastMove }) {
   });
   return (
     <Card
+      style={variant === 'profile' ? s.memory : undefined}
       onPress={() => router.push(`/pick/${move.pickId}`)}
       accessibilityLabel={`${move.winner.name ?? 'Saved place'}, ${date}, Past Move`}
     >
@@ -31,7 +39,13 @@ export function PastMoveCard({ move }: { move: PastMove }) {
     </Card>
   );
 }
-export function PastMoves({ userId }: { userId: string }) {
+export function PastMoves({
+  userId,
+  variant = 'default',
+}: {
+  userId: string;
+  variant?: 'default' | 'profile';
+}) {
   const [data, setData] = useState<PastMovesResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -56,7 +70,7 @@ export function PastMoves({ userId }: { userId: string }) {
   }, []);
   usePrivateRefresh(load, clear);
   return (
-    <View style={{ gap: space.md }}>
+    <View style={[{ gap: space.md }, variant === 'profile' && s.section]}>
       <Text style={s.heading} accessibilityRole="header">
         Past Moves
       </Text>
@@ -67,13 +81,13 @@ export function PastMoves({ userId }: { userId: string }) {
       ) : !data.visible ? (
         <Text style={s.caption}>Past Moves are private.</Text>
       ) : !data.pastMoves.length ? (
-        <Text style={s.caption}>
+        <Text style={[s.caption, variant === 'profile' && s.empty]}>
           No Past Moves to show yet. Attendance is confirmed with “Did you go?” on a past Pick.
         </Text>
       ) : (
         <>
           {data.pastMoves.slice(0, expanded ? 50 : 5).map((move) => (
-            <PastMoveCard key={move.pickId} move={move} />
+            <PastMoveCard key={move.pickId} move={move} variant={variant} />
           ))}
           {data.pastMoves.length > 5 ? (
             <Button
@@ -88,6 +102,24 @@ export function PastMoves({ userId }: { userId: string }) {
   );
 }
 const s = StyleSheet.create({
+  empty: {
+    backgroundColor: profileTheme.surface,
+    borderRadius: radius.md,
+    paddingHorizontal: space.xl,
+    paddingVertical: space.xxl,
+    minHeight: 136,
+    textAlign: 'center',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  section: { paddingVertical: space.sm },
+  memory: {
+    backgroundColor: profileTheme.memory,
+    borderWidth: 0,
+    borderRadius: radius.md,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+  },
   heading: { ...type.heading, color: colors.text },
   caption: { ...type.caption, color: colors.muted },
 });
