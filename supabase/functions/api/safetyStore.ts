@@ -1,3 +1,4 @@
+import { ApiError } from '../_shared/api/errors.ts';
 import type { SafetyStore } from '../_shared/api/safety.ts';
 import { rpcError } from './rpcErrors.ts';
 import { createServiceClient } from './serviceClient.ts';
@@ -49,12 +50,23 @@ export function createSafetyStore(): SafetyStore {
       if (error) rpcError(error);
     },
     async report(userId, input) {
-      const { error } = await createServiceClient().rpc('report_create', {
-        p_user_id: userId,
-        p_kind: input.kind,
-        p_target_id: input.targetId,
-        p_reason: input.reason,
-      });
+      const { error } = await createServiceClient().rpc(
+        input.kind === 'profile_photo' ? 'avatar_report_create' : 'report_create',
+        {
+          p_user_id: userId,
+          ...(input.kind === 'profile_photo'
+            ? { p_revision: input.photoRevision }
+            : { p_kind: input.kind }),
+          p_target_id: input.targetId,
+          p_reason: input.reason,
+        },
+      );
+      if (error?.code === 'PT409' && input.kind === 'profile_photo')
+        throw new ApiError(
+          409,
+          'PHOTO_REPORT_EXPIRED',
+          'The earlier report for this photo has expired. A new report was not submitted. Contact support for further review.',
+        );
       if (error) rpcError(error, 'Nothing to report here');
     },
     async setLobbyLocked(pickId, userId, locked) {

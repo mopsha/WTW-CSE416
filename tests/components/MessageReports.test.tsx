@@ -1,3 +1,5 @@
+import { useAvatarPhoto, usePhotoCapabilities } from '@/hooks/useAvatarSource';
+import { MemberMenu } from '@/components/MemberMenu';
 import React from 'react';
 import { MessageThread, type MessageThreadState } from '@/components/MessageThread';
 import { api } from '@/lib/api';
@@ -11,6 +13,20 @@ const { create, act } = jest.requireActual<{
   create(element: React.ReactElement): Tree;
   act(work: () => void | Promise<void>): Promise<void>;
 }>('react-test-renderer');
+jest.mock('@/hooks/useAvatarSource', () => ({
+  useAvatarPhoto: jest.fn((ref) => ({
+    displayKey: undefined,
+    displayed: !!ref,
+    onDisplay: () => {},
+    uri: ref ? 'data:image/jpeg;base64,photo' : null,
+    ref: ref ?? null,
+  })),
+  usePhotoCapabilities: jest.fn(() => ({
+    uploadsEnabled: true,
+    reportsEnabled: true,
+    refresh: async () => {},
+  })),
+}));
 jest.mock('@/lib/api', () => ({ api: { report: jest.fn(), blockUser: jest.fn() } }));
 jest.mock('@/lib/confirm', () => ({ confirmAction: jest.fn() }));
 jest.mock('@/components/HostMenu', () => {
@@ -74,7 +90,19 @@ async function mount(reportKind: 'group_message' | 'direct_message') {
   });
   return tree;
 }
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  jest.mocked(useAvatarPhoto).mockImplementation((ref) => ({
+    displayKey: undefined,
+    displayed: !!ref,
+    onDisplay: () => {},
+    uri: ref ? 'data:image/jpeg;base64,photo' : null,
+    ref: ref ?? null,
+  }));
+  jest
+    .mocked(usePhotoCapabilities)
+    .mockReturnValue({ uploadsEnabled: true, reportsEnabled: true, refresh: async () => {} });
+});
 
 test.each(['group_message', 'direct_message'] as const)(
   'only other people’s messages can be reported, as %s',
@@ -111,3 +139,201 @@ test('blocking the sender needs confirmation, then refreshes the chat', async ()
   expect(refresh).toHaveBeenCalled();
   await act(async () => tree.unmount());
 });
+
+test('profile photo reports pin displayed revision, handle errors, and close without changing block/report actions', async () => {
+  let tree!: Tree;
+  await act(async () => {
+    tree = create(<MemberMenu userId="ava" name="@ava" photo={{ userId: 'ava', revision: 7 }} />);
+  });
+  const open = tree.root.findAll(
+    (n) =>
+      n.props.accessibilityLabel === 'Options for @ava' && typeof n.props.onPress === 'function',
+  )[0]!;
+  await act(async () => open.props.onPress());
+  expect(item(tree, 'Report')).toBeDefined();
+  expect(item(tree, 'Block')).toBeDefined();
+  await act(async () => item(tree, 'Report profile photo').props.onPress());
+  jest.mocked(api.report).mockRejectedValueOnce(new Error('Photo changed'));
+  await act(async () => item(tree, 'Spam').props.onPress());
+  expect(api.report).toHaveBeenLastCalledWith({
+    kind: 'profile_photo',
+    targetId: 'ava',
+    photoRevision: 7,
+    reason: 'Spam',
+  });
+  expect(item(tree, 'Spam')).toBeDefined(); // Failed submission stays retryable.
+  jest.mocked(api.report).mockResolvedValueOnce({ status: 'ok' });
+  await act(async () => item(tree, 'Spam').props.onPress());
+  expect(item(tree, 'Thanks. We’ll look into this photo.')).toBeDefined();
+  await act(async () => item(tree, 'Thanks. We’ll look into this photo.').props.onPress());
+  await act(async () => tree.unmount());
+});
+
+test('missing/revoked photos expose no photo action and cancellation submits nothing', async () => {
+  let tree!: Tree;
+  await act(async () => {
+    tree = create(<MemberMenu userId="ava" name="Ava" />);
+  });
+  const open = tree.root.findAll(
+    (n) =>
+      n.props.accessibilityLabel === 'Options for Ava' && typeof n.props.onPress === 'function',
+  )[0]!;
+  await act(async () => open.props.onPress());
+  expect(
+    tree.root.findAllByType('test-item').some((n) => n.props.label === 'Report profile photo'),
+  ).toBe(false);
+  const close = tree.root.findAll(
+    (n) => n.props.accessibilityLabel === 'Close options' && typeof n.props.onPress === 'function',
+  )[0]!;
+  await act(async () => close.props.onPress());
+  expect(api.report).not.toHaveBeenCalled();
+  await act(async () => tree.unmount());
+});
+
+test('expired report error stays visible and never shows the actionable-report success message', async () => {
+  let tree!: Tree;
+  await act(async () => {
+    tree = create(<MemberMenu userId="ava" name="Ava" photo={{ userId: 'ava', revision: 7 }} />);
+  });
+  const open = tree.root.findAll(
+    (n) =>
+      n.props.accessibilityLabel === 'Options for Ava' && typeof n.props.onPress === 'function',
+  )[0]!;
+  await act(async () => open.props.onPress());
+  await act(async () => item(tree, 'Report profile photo').props.onPress());
+  const message =
+    'The earlier report for this photo has expired. A new report was not submitted. Contact support for further review.';
+  jest.mocked(api.report).mockRejectedValueOnce(new Error(message));
+  await act(async () => item(tree, 'Spam').props.onPress());
+  expect(
+    tree.root
+      .findAllByType('test-item')
+      .some((n) => n.props.label === 'Thanks. We’ll look into this photo.'),
+  ).toBe(false);
+  expect(tree.root.findAll((n) => n.props.message === message).length).toBeGreaterThan(0);
+  await act(async () => tree.unmount());
+});
+
+test('group/Pick/chat menus derive an authorized displayed photo without loading a friends-only profile', async () => {
+  jest.mocked(useAvatarPhoto).mockReturnValue({
+    displayKey: undefined,
+    displayed: true,
+    onDisplay: () => {},
+    uri: 'data:image/jpeg;base64,photo',
+    ref: { userId: 'group-peer', revision: 9 },
+  });
+  let tree!: Tree;
+  await act(async () => {
+    tree = create(<MemberMenu userId="group-peer" name="Group peer" />);
+  });
+  const trigger = tree.root.findAll(
+    (n) =>
+      n.props.accessibilityLabel === 'Options for Group peer' &&
+      typeof n.props.onPress === 'function',
+  )[0]!;
+  await act(async () => trigger.props.onPress());
+  expect(useAvatarPhoto).toHaveBeenCalledWith(undefined, 'group-peer');
+  await act(async () => item(tree, 'Report profile photo').props.onPress());
+  jest.mocked(api.report).mockResolvedValueOnce({ status: 'ok' });
+  await act(async () => item(tree, 'Spam').props.onPress());
+  expect(api.report).toHaveBeenCalledWith({
+    kind: 'profile_photo',
+    targetId: 'group-peer',
+    photoRevision: 9,
+    reason: 'Spam',
+  });
+  await act(async () => tree.unmount());
+});
+test('generic name/photo complaints stay user reports and never imply photo evidence', async () => {
+  let tree!: Tree;
+  await act(async () => {
+    tree = create(<MemberMenu userId="ava" name="Ava" />);
+  });
+  await act(async () =>
+    tree.root
+      .findAll(
+        (n) =>
+          n.props.accessibilityLabel === 'Options for Ava' && typeof n.props.onPress === 'function',
+      )[0]!
+      .props.onPress(),
+  );
+  await act(async () => item(tree, 'Report').props.onPress());
+  expect(
+    tree.root.findAllByType('test-item').some((n) => n.props.label === 'Offensive name or picture'),
+  ).toBe(false);
+  jest.mocked(api.report).mockResolvedValueOnce({ status: 'ok' });
+  await act(async () => item(tree, 'Offensive name or profile picture').props.onPress());
+  expect(api.report).toHaveBeenCalledWith({
+    kind: 'user',
+    targetId: 'ava',
+    reason: 'Offensive name or profile picture',
+  });
+  await act(async () => tree.unmount());
+});
+test('server-disabled capabilities hide photo action while ordinary reporting stays usable', async () => {
+  jest.mocked(useAvatarPhoto).mockReturnValue({
+    displayKey: undefined,
+    displayed: true,
+    onDisplay: () => {},
+    uri: 'data:image/jpeg;base64,photo',
+    ref: { userId: 'ava', revision: 7 },
+  });
+  jest
+    .mocked(usePhotoCapabilities)
+    .mockReturnValue({ uploadsEnabled: false, reportsEnabled: false, refresh: async () => {} });
+  let tree!: Tree;
+  await act(async () => {
+    tree = create(<MemberMenu userId="ava" name="Ava" />);
+  });
+  await act(async () =>
+    tree.root
+      .findAll(
+        (n) =>
+          n.props.accessibilityLabel === 'Options for Ava' && typeof n.props.onPress === 'function',
+      )[0]!
+      .props.onPress(),
+  );
+  expect(item(tree, 'Report')).toBeDefined();
+  expect(
+    tree.root.findAllByType('test-item').some((n) => n.props.label === 'Report profile photo'),
+  ).toBe(false);
+  await act(async () => tree.unmount());
+});
+
+test(
+  'a user menu without a reportable photo still permits a generic complaint',
+  async () => {
+    jest.mocked(useAvatarPhoto).mockReturnValue({
+      uri: null,
+      ref: null,
+      displayKey: undefined,
+      displayed: false,
+      onDisplay: () => {},
+    });
+    let tree!: Tree;
+    await act(async () => {
+      tree = create(<MemberMenu userId="ava" name="Ava" />);
+    });
+    await act(async () =>
+      tree.root
+        .findAll(
+          (n) =>
+            n.props.accessibilityLabel === 'Options for Ava' &&
+            typeof n.props.onPress === 'function',
+        )[0]!
+        .props.onPress(),
+    );
+    expect(
+      tree.root.findAllByType('test-item').some((n) => n.props.label === 'Report profile photo'),
+    ).toBe(false);
+    await act(async () => item(tree, 'Report').props.onPress());
+    jest.mocked(api.report).mockResolvedValueOnce({ status: 'ok' });
+    await act(async () => item(tree, 'Offensive name or profile picture').props.onPress());
+    expect(api.report).toHaveBeenCalledWith({
+      kind: 'user',
+      targetId: 'ava',
+      reason: 'Offensive name or profile picture',
+    });
+    await act(async () => tree.unmount());
+  },
+);

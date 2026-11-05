@@ -5,11 +5,26 @@ import type { UserProfile } from '@shared/api/userProfiles.ts';
 import { Avatar } from '../Avatar';
 import { colors, fonts, profileTheme, space } from '../theme';
 
-export function ProfileHero({ name, profile }: { name: string; profile: UserProfile | null }) {
+export function ProfileHero({
+  name,
+  profile,
+  userId,
+}: {
+  name: string;
+  profile: UserProfile | null;
+  userId?: string;
+}) {
   return (
     <View style={s.hero}>
       <View style={s.avatarFrame}>
-        <Avatar name={name} uri={profile?.avatarUrl} neutral size={96} />
+        <Avatar
+          name={name}
+          uri={profile?.avatarUrl}
+          userId={profile?.id ?? userId}
+          avatarRef={profile?.avatarRef}
+          neutral
+          size={96}
+        />
       </View>
       <View style={s.identity}>
         <Text style={s.name}>{name}</Text>

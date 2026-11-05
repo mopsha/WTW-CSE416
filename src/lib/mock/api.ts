@@ -5,6 +5,8 @@ import {
   getMockUserProfile,
   handleMockUserProfiles,
   resetOwnMockUserProfile,
+  handleMockAvatarRequest,
+  mockAvatarRef,
 } from './userProfiles';
 import { handleMockGroupInvitations, mockGroupInvitations } from './groupInvitations';
 import { handleMockGroupIdeas } from './groupIdeas';
@@ -13,6 +15,7 @@ import { handleMockGroupIdeas } from './groupIdeas';
 // objects, so src/lib/api.ts runs the exact same parsing and error handling in both modes.
 import type { NotificationRow } from '@shared/api/notify.ts';
 import type { HistoryItem, PlanSummary, RsvpStatus } from '@shared/api/plans.ts';
+import type { FriendsList } from '@shared/api/friends.ts';
 import { explainRank } from '@shared/domain/explainRank.ts';
 import { validateCreatePick, type CreatePickInput } from '@shared/domain/createPick.ts';
 import { parseJoinCode } from '@shared/domain/joinCode.ts';
@@ -586,6 +589,12 @@ function safetyRoute(method: string, path: string, body: unknown): Response | nu
     return json(200, { status: 'ok' });
   }
   if (method === 'POST' && path === '/reports') {
+    if ((body as { kind?: string } | null)?.kind === 'profile_photo')
+      return fail(
+        503,
+        'PHOTO_REPORTING_UNAVAILABLE',
+        'Photo reporting is not configured in mock mode',
+      );
     const { kind, targetId, reason } = (body ?? {}) as Record<string, unknown>;
     const ok =
       (kind === 'user' ||
@@ -616,6 +625,15 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   }
   if (MOCK_FAIL_RATE > 0 && Math.random() < MOCK_FAIL_RATE) {
     return fail(503, 'UNAVAILABLE', 'WTW is having trouble right now (mock failure).');
+  }
+  try {
+    const photo = handleMockAvatarRequest(method, path, init);
+    if (photo) return photo;
+  } catch (e) {
+    const error = errorResponse(e);
+    const response = json(error.status, error.body);
+    response.headers.set('Cache-Control', 'private, no-store');
+    return response;
   }
 
   const hangResponse = await mockHang(method, path, readBody(init), (ids, pickId) => {
@@ -759,6 +777,16 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   if (path.startsWith('/friends')) {
     const session = await mockAuth.getSession();
     const result = handleMockFriends(method, path, readBody(init), session?.user.email ?? null);
+    if (result?.status === 200 && method === 'GET' && path === '/friends') {
+      const list = result.body as FriendsList;
+      return json(200, {
+        ...list,
+        friends: list.friends.map((p) => ({
+          ...p,
+          avatarRef: mockAvatarRef(MOCK_USER_ID, p.userId),
+        })),
+      });
+    }
     return result ? json(result.status, result.body) : fail(404, 'NOT_FOUND', 'Route not found');
   }
   if (method === 'GET' && path === '/history') return json(200, { picks: historyOf() });

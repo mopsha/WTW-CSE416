@@ -1,3 +1,4 @@
+import type { AvatarRef } from '@shared/api/avatars.ts';
 import type { ReactNode } from 'react';
 import { SocialIdentity } from './friends/SocialRow';
 import { router } from 'expo-router';
@@ -7,6 +8,8 @@ import { colors, MIN_TARGET, space } from './theme';
 export function ConversationHeader({
   name,
   uri,
+  userId,
+  avatarRef,
   subtitle,
   onPress,
   loading = false,
@@ -15,6 +18,8 @@ export function ConversationHeader({
 }: {
   name?: string;
   uri?: string | null;
+  userId?: string;
+  avatarRef?: AvatarRef | null;
   subtitle?: string;
   onPress?: () => void;
   loading?: boolean;
@@ -24,7 +29,7 @@ export function ConversationHeader({
   const identity = (
     <>
       {name ? (
-        <SocialIdentity name={name} uri={uri} size={40} />
+        <SocialIdentity name={name} uri={uri} userId={userId} avatarRef={avatarRef} size={40} />
       ) : loading ? (
         <ActivityIndicator color={colors.muted} accessibilityLabel="Loading conversation" />
       ) : null}

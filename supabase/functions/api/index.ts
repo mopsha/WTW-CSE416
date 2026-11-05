@@ -1,4 +1,5 @@
 import { createPastMovesStore } from './pastMovesStore.ts';
+import { createAvatarStore } from './avatarStore.ts';
 import { createDirectChatStore } from './directChatStore.ts';
 import { createGroupChatStore } from './groupChatStore.ts';
 import { createUserProfilesStore } from './userProfilesStore.ts';
@@ -17,7 +18,7 @@ import { createProfileStore } from './profileStore.ts';
 import { createGroupsStore } from './groupsStore.ts';
 import { createSafetyStore } from './safetyStore.ts';
 import { createInviteStore } from './inviteStore.ts';
-import { createAccountStore } from './accountStore.ts';
+import { createAccountStore, retryPendingAccountDeletions } from './accountStore.ts';
 import { createSweepStore } from './sweepStore.ts';
 import { createNotifyStore } from './notifyStore.ts';
 import { createPlansStore } from './plansStore.ts';
@@ -69,6 +70,8 @@ const app = createApp(
     safetyStore: createSafetyStore(),
     inviteStore: createInviteStore(),
     accountStore: createAccountStore(),
+    retryAccountDeletions: retryPendingAccountDeletions,
+    avatarStore: createAvatarStore(),
     refreshHours: refreshCandidateHours,
   },
   '/api',

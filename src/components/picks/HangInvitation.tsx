@@ -1,3 +1,4 @@
+import { MemberMenu } from '../MemberMenu';
 import type { HangPost, HangStatus } from '@shared/api/hang.ts';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { haptic } from '@/lib/haptics';
@@ -22,7 +23,7 @@ export function HangInvitation({
   return (
     <View style={s.invitation}>
       <View style={s.authorRow}>
-        <Avatar name={author} neutral size={36} />
+        <Avatar name={author} userId={post.authorId} neutral size={36} />
         <View style={s.authorDetails}>
           <Text style={s.author}>{author}</Text>
           <Text style={s.caption}>
@@ -35,6 +36,9 @@ export function HangInvitation({
           </Text>
         </View>
         <Text style={s.count}>{post.downCount ?? 0} down</Text>
+        {userId && post.authorId !== userId ? (
+          <MemberMenu userId={post.authorId} name={author} />
+        ) : null}
       </View>
       <Text style={s.activity}>{post.activity}</Text>
       <View style={s.responses}>

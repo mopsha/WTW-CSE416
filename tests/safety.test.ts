@@ -146,3 +146,18 @@ describe('invite links', () => {
     expect(link.url).toBe('wtw://i/AbCdEfGhIjKlMnOpQrStU_');
   });
 });
+
+test('photo reports require an exact safe nonnegative revision', () => {
+  expect(
+    parseReport({ kind: 'profile_photo', targetId: OTHER, photoRevision: 7, reason: ' Spam ' }),
+  ).toEqual({
+    kind: 'profile_photo',
+    targetId: OTHER,
+    photoRevision: 7,
+    reason: 'Spam',
+  });
+  for (const photoRevision of [undefined, null, -1, 1.5, '7', Number.MAX_SAFE_INTEGER + 1])
+    expect(() =>
+      parseReport({ kind: 'profile_photo', targetId: OTHER, photoRevision, reason: 'Abuse' }),
+    ).toThrow();
+});

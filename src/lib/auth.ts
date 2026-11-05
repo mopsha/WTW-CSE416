@@ -85,3 +85,11 @@ export const auth: AuthService = USE_MOCK ? mockAuth : supabaseAuth;
 export async function getAccessToken(): Promise<string | null> {
   return (await auth.getSession())?.accessToken ?? null;
 }
+
+/** Explicit, single retry for protected photo requests; existing auth flows are unchanged. */
+export async function refreshPhotoSession(): Promise<AuthSession | null> {
+  if (USE_MOCK) return mockAuth.getSession();
+  const { data, error } = await getSupabase().auth.refreshSession();
+  if (error) return null;
+  return toSession(data.session);
+}

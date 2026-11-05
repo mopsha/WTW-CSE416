@@ -7,11 +7,13 @@
 // shapes the list. Nobody's email is ever returned.
 
 import { ApiError } from './errors.ts';
+import type { AvatarRef } from './avatars.ts';
 
 export type FriendStatus = 'pending' | 'accepted';
 
 /** One friend_list row: the other person, and which way the request went. */
 export interface FriendRow {
+  avatarRef?: AvatarRef | null;
   userId: string;
   displayName: string | null;
   status: FriendStatus;
@@ -21,6 +23,7 @@ export interface FriendRow {
 }
 
 export interface FriendPerson {
+  avatarRef?: AvatarRef | null;
   userId: string;
   displayName: string | null;
   /** When they became friends (friends) or when the request was sent (requests). */
@@ -79,6 +82,7 @@ export function groupFriends(rows: readonly FriendRow[]): FriendsList {
   const person = (r: FriendRow): FriendPerson => ({
     userId: r.userId,
     displayName: r.displayName,
+    ...(r.avatarRef === undefined ? {} : { avatarRef: r.avatarRef }),
     since: r.status === 'accepted' ? (r.acceptedAt ?? r.createdAt) : r.createdAt,
   });
   const newest = (a: FriendPerson, b: FriendPerson) => b.since.localeCompare(a.since);
