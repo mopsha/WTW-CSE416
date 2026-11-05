@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { Modal, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import type { AvatarRef } from '@shared/api/avatars.ts';
 import type { ReportKind } from '@shared/api/safety.ts';
 
 import { useAction } from '@/hooks/useAction';
@@ -39,12 +40,14 @@ interface SheetProps {
   /** What Report files; defaults to the person. */
   target?: { kind: ReportKind; id: string };
   onBlocked?(): void;
+  photo?: AvatarRef;
 }
 
 /** Mount it to open it, so every opening starts on a clean menu. */
-export function SafetySheet({ onClose, userId, name, target, onBlocked }: SheetProps) {
+export function SafetySheet({ onClose, userId, name, target, onBlocked, photo }: SheetProps) {
   const [step, setStep] = useState<'menu' | 'report' | 'done'>('menu');
   const [message, setMessage] = useState('');
+  const [photoReport, setPhotoReport] = useState<AvatarRef | null>(null);
   const action = useAction();
   const reportsMessage = target?.kind === 'group_message' || target?.kind === 'direct_message';
 
@@ -56,13 +59,24 @@ export function SafetySheet({ onClose, userId, name, target, onBlocked }: SheetP
 
   const report = async (reason: string) => {
     const ok = await action.run('report', () =>
-      api.report({ kind: target?.kind ?? 'user', targetId: target?.id ?? userId, reason }),
+      api.report(
+        photoReport
+          ? {
+              kind: 'profile_photo',
+              targetId: photoReport.userId,
+              photoRevision: photoReport.revision,
+              reason,
+            }
+          : { kind: target?.kind ?? 'user', targetId: target?.id ?? userId, reason },
+      ),
     );
     if (ok)
       finish(
-        reportsMessage
-          ? 'Thanks. We’ll look into this message.'
-          : `Thanks. We’ll look into ${name}.`,
+        photoReport
+          ? 'Thanks. We’ll look into this photo.'
+          : reportsMessage
+            ? 'Thanks. We’ll look into this message.'
+            : `Thanks. We’ll look into ${name}.`,
       );
   };
 
@@ -86,7 +100,13 @@ export function SafetySheet({ onClose, userId, name, target, onBlocked }: SheetP
       <SafeAreaView edges={['bottom']} style={menuStyles.sheet}>
         <View style={menuStyles.handle} />
         <Text style={menuStyles.title} accessibilityRole="header">
-          {step === 'report' ? (reportsMessage ? 'Report message' : `Report ${name}`) : name}
+          {step === 'report'
+            ? photoReport
+              ? 'Report profile photo'
+              : reportsMessage
+                ? 'Report message'
+                : `Report ${name}`
+            : name}
         </Text>
         {action.error ? <ErrorBanner message={action.error} onRetry={action.clearError} /> : null}
         {step === 'menu' ? (
@@ -97,6 +117,17 @@ export function SafetySheet({ onClose, userId, name, target, onBlocked }: SheetP
               hint="Tell us something isn’t right"
               onPress={() => setStep('report')}
             />
+            {photo ? (
+              <MenuItem
+                icon="flag"
+                label="Report profile photo"
+                hint="Report the photo currently shown"
+                onPress={() => {
+                  setPhotoReport(photo);
+                  setStep('report');
+                }}
+              />
+            ) : null}
             <MenuItem
               icon="hand-left"
               label={reportsMessage ? `Block ${name}` : 'Block'}
@@ -108,7 +139,7 @@ export function SafetySheet({ onClose, userId, name, target, onBlocked }: SheetP
           </>
         ) : null}
         {step === 'report'
-          ? (reportsMessage ? MESSAGE_REASONS : USER_REASONS).map((r) => (
+          ? (reportsMessage || photoReport ? MESSAGE_REASONS : USER_REASONS).map((r) => (
               <MenuItem
                 key={r.reason}
                 icon="chevron-forward"
@@ -131,10 +162,12 @@ export function MemberMenu({
   userId,
   name,
   onBlocked,
+  photo,
 }: {
   userId: string;
   name: string;
   onBlocked?(): void;
+  photo?: AvatarRef;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -158,6 +191,7 @@ export function MemberMenu({
           userId={userId}
           name={name}
           onBlocked={onBlocked}
+          photo={photo}
         />
       ) : null}
     </>

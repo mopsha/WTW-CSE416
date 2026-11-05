@@ -98,6 +98,7 @@ function fakeClient() {
     async rpc(name: string, args: Record<string, unknown>) {
       calls.push(name);
       if (name === 'consume_avatar_limit') return { data: true, error: null };
+      if (name === 'avatar_expire_evidence') return { data: null, error: null };
       if (name === 'avatar_cleanup_claim') return { data: 'claim', error: null };
       if (name === 'avatar_cleanup_finish') return { data: null, error: null };
       if (name === 'avatar_orphans')

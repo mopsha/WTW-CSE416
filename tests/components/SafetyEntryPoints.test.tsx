@@ -1,8 +1,12 @@
+import { useAvatarPhoto } from '@/hooks/useAvatarSource';
 import React from 'react';
 import GroupScreen from '../../app/groups/[id]';
 import UserScreen from '../../app/users/[id]';
 import { queries } from '@/lib/queries';
 import { api } from '@/lib/api';
+jest.mock('@/hooks/useAvatarSource', () => ({
+  useAvatarPhoto: jest.fn(() => ({ uri: null, ref: null })),
+}));
 const { create, act } = jest.requireActual('react-test-renderer');
 jest.mock('expo-router', () => ({
   router: { push: jest.fn() },
@@ -41,6 +45,7 @@ jest.mock('@/components', () => ({
   EmptyState: () => null,
   ErrorState: () => null,
 }));
+beforeEach(() => jest.mocked(useAvatarPhoto).mockReturnValue({ uri: null, ref: null }));
 test('group member safety menus exclude self and refresh group access after blocking', async () => {
   jest.mocked(queries.getGroup).mockResolvedValue({
     id: 'fixture',
@@ -64,16 +69,14 @@ test('group member safety menus exclude self and refresh group access after bloc
   await act(async () => tree.unmount());
 });
 test.each([false, true])('profile safety menu respects ownership (owner=%s)', async (isOwner) => {
-  jest
-    .mocked(api.getUserProfile)
-    .mockResolvedValue({
-      id: isOwner ? 'me' : 'ava',
-      displayName: 'Ava',
-      username: 'ava',
-      avatarUrl: null,
-      isOwner,
-      metadataVisible: false,
-    } as Awaited<ReturnType<typeof api.getUserProfile>>);
+  jest.mocked(api.getUserProfile).mockResolvedValue({
+    id: isOwner ? 'me' : 'ava',
+    displayName: 'Ava',
+    username: 'ava',
+    avatarUrl: null,
+    isOwner,
+    metadataVisible: false,
+  } as Awaited<ReturnType<typeof api.getUserProfile>>);
   let tree: any;
   await act(async () => {
     tree = create(<UserScreen />);
@@ -86,5 +89,34 @@ test.each([false, true])('profile safety menu respects ownership (owner=%s)', as
     await act(async () => menus[0].props.onBlocked());
     expect(api.getUserProfile).toHaveBeenCalledTimes(calls + 1);
   }
+  await act(async () => tree.unmount());
+});
+
+test('profile forwards only the currently rendered authorized photo to the existing menu', async () => {
+  jest
+    .mocked(api.getUserProfile)
+    .mockResolvedValue({
+      id: 'ava',
+      displayName: 'Ava',
+      username: 'ava',
+      avatarUrl: null,
+      avatarRef: null,
+      isOwner: false,
+      metadataVisible: false,
+    } as Awaited<ReturnType<typeof api.getUserProfile>>);
+  jest
+    .mocked(useAvatarPhoto)
+    .mockReturnValue({ uri: 'data:image/jpeg;base64,photo', ref: { userId: 'ava', revision: 7 } });
+  let tree: any;
+  await act(async () => {
+    tree = create(<UserScreen />);
+  });
+  expect(tree.root.findByType('test-member-menu').props.photo).toEqual({
+    userId: 'ava',
+    revision: 7,
+  });
+  jest.mocked(useAvatarPhoto).mockReturnValue({ uri: null, ref: null });
+  await act(async () => tree.update(<UserScreen />));
+  expect(tree.root.findByType('test-member-menu').props.photo).toBeUndefined();
   await act(async () => tree.unmount());
 });

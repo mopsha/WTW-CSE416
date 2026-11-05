@@ -89,6 +89,7 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
   return {
     setViewer,
     update,
+    currentRef: effective,
     subscribe(fn: () => void) {
       listeners.add(fn);
       return () => {

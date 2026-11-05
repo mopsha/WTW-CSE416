@@ -70,7 +70,9 @@ the reference. Stale revisions return 409. Storage/validation failures preserve
 the previous reference. Remove clears the reference before physical cleanup.
 Revision changes immediately invalidate older image requests.
 
-The previous object is removed through Storage after a successful commit.
+The previous object is removed through Storage after a successful commit unless
+an unexpired photo report pins that revision as private evidence. Phase B expiry
+and operator review/removal are described in `moderation.md`.
 Cleanup failure does not report a committed replacement as failed. An uncertain
 commit reply never triggers deletion of a potentially active candidate: clients
 must reload owner details to resolve that outcome instead of blindly overwriting.

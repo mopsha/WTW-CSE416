@@ -49,48 +49,31 @@ Mike verified wtw-dev history and absence of photo objects before the rename;
 no deployed migration was rewritten. PR #48 reserves 0034 and must precede 0035
 unless the team coordinates numbering.
 
-## Phase B — proposed implementation, NOT authorized or implemented
+## Phase B — implemented, policy enablement pending
 
-Inspected #44 at `bea341a`: it already owns `reports`, `reported_user_id`, the
-private moderation queue, service-only report creation, rate limits, review state,
-and the moderation runbook. Reuse that infrastructure after integration; do not
-create a parallel report system. #45 at `45d24e0` owns published disclosures.
+Reuses #44's reports table, shared 10/day report limiter, private queue, existing
+operator trust boundary and report/block sheet. Revision-specific photo reports
+require current read eligibility, reject self reports, and lock the owner profile.
+Duplicate reporter/owner/revision submissions do not renew expiry or consume the
+quota again. Normal message reporting remains unchanged.
 
-Concrete proposal:
+Unexpired reports pin the immutable private original. Replacement/removal and
+orphan cleanup exclude it. Service-only operator RPCs retrieve evidence and remove
+only the reported current revision; removal advances the revision so stale uploads
+fail. `scripts/moderate-profile-photo.mjs` uses existing operator credentials,
+private 0600 local files and no signed URLs. Expiry and deletion intent deny
+operator lookup. The existing Storage-before-Auth account adapter includes evidence.
 
-1. Add `profile_photo` to the existing report kind union/validation/SQL constraints.
-   Report the displayed owner's ID and immutable photo revision. The verified
-   reporter must be authorized for that revision; never trust a client object path.
-2. In one server-only reporting transaction, lock the owner's profile and attach
-   the current immutable object path/revision to the report, with reported_user_id
-   set for #44's account-deletion cascade. A stale revision conflicts rather than
-   accidentally reporting a newer image. This keeps evidence of the specific file.
-3. Retain that referenced object privately. Replacement/removal cleanup and orphan
-   queries must exclude report evidence. A report attaches only while the locked
-   revision is current, so it cannot race a retired-object deletion decision.
-   Reuse the immutable original rather than copying image pipelines or storing
-   image bytes in report JSON. Add real replacement/report/sweep race tests.
-4. Provide a service-only moderator tool using existing authorized operator
-   credentials, existing private queue, and authenticated Storage download. No
-   public URLs or mobile service credentials. Log report/action IDs, never bytes,
-   paths or signed credentials. The runbook must cover private viewing and access.
-5. Moderator removal locks the profile, verifies the reviewed revision, clears the
-   reference and advances revision. Existing stale owner uploads then conflict.
-   Removing an old reported revision must not silently remove a different new
-   picture. Whether to suspend future uploads is a separate team decision;
-   revision checks prevent stale restoration, not a deliberate new re-upload.
-6. Account deletion removes owner-prefix evidence through Storage API before Auth
-   deletion and cascades reports as #44 defines. Reporter deletion drops its report
-   reference; unreferenced retired evidence becomes eligible for cleanup. Decide
-   evidence retention after review and cleanup timing before implementing these
-   rules. Do not invent a retention period or contradict existing deletion promises.
-7. Extend #44's existing report/block sheet with a photo-specific action carrying
-   the displayed revision. Use the integrated #43 identity surfaces when Phase B is approved.
+`private.photo_moderation_config.retention_seconds` defaults NULL, so valid photo
+reports return 503 until an authorized operator records a team-approved interval.
+No production retention period, moderator roster, alerting, access delegation,
+local-copy policy, upload-suspension policy or final disclosure text is assumed.
+Expired paths are released to the existing bounded orphan sweep; physical erasure
+is not promised at the expiry instant. Report metadata follows #44 cascades.
 
-Required team approval: evidence audience/tool access, retention after review or
-reporter deletion, moderation owner/response commitment, upload suspension policy,
-and disclosure language. A separate report-after-block exception needs an explicit
-policy and proof of eligibility; do not infer it from #44's historical DM policy.
+See `moderation.md` for the concrete workflow and PR #45 file-level follow-ups.
+Real Storage/HTTP, concurrency and native testing remain rollout gates. Nothing
+was deployed or changed in a shared project during implementation.
 
 ## Disclosures and Phase C integration
 
@@ -99,7 +82,7 @@ cleanup/retry state and draft Photos or Videos label mapping. This is factual
 inventory, not finalized legal text. In #45 remove "you can't upload photos", add
 photo collection/purpose/audience/deletion and approved evidence retention, and
 have the responsible team review the final policy and App Store Connect labels.
-Do not claim moderation evidence exists before Phase B lands.
+The implementation exists on this branch but is not deployed or policy-enabled.
 
 PR #43/#44 main integration now uses one authenticated loading/cache path:
 SocialIdentity delegates to Avatar's opt-in social presentation variant, preserving
@@ -107,7 +90,7 @@ its size, colors, labels, and initials. ConversationHeader, ProfilePresentation,
 Friends and group-message senders forward person IDs and optional photo refs.
 Group monograms remain unmanaged. OwnProfileDetails retains its redesign variant
 and photo busy guards. Root account/background invalidation and the three chat
-send/draft/header fixes remain intact. Phase B moderation is not implemented.
+send/draft/header fixes remain intact. Phase B is implemented but requires explicit retention configuration and team policy approval.
 
 Mike confirmed through read-only wtw-dev queries that the photo migration had
 never been applied and that no photo schema/bucket/policies/functions existed.
@@ -120,7 +103,7 @@ Only this unapplied feature migration was renamed to 0035. Main's deployed
 
 Merge: land or coordinate #48 migration 0034 before photo migration 0035;
 review Phase A and obtain green real SQL/Storage/HTTP/concurrency CI.
-App Store release: approve and implement Phase B, publish accurate reviewed #45
+App Store release: approve and configure Phase B, publish accurate reviewed #45
 policy/labels, assign moderation ownership, verify deployed maintenance, and test
 native selection/HEIC/permissions/private rendering/account switching. Passing
 mocks, local Deno codecs or Android export is not proof of Storage enforcement.
@@ -156,3 +139,24 @@ Exact files changed:
 - `tests/db/avatar_concurrency.py`
 - `tests/lib/avatarCache.test.ts`
 - `docs/profile-photos-review-plan.md`
+
+
+## Targeted Phase B correctness follow-up
+
+Live duplicate reports remain idempotent; expired/cleaned reports now return an
+explicit PHOTO_REPORT_EXPIRED conflict after normal authorization, without quota
+consumption or an invented new retention cycle. Moderator removal locks owner then
+report, re-reads authoritative report data, uses wall-clock expiry, and requires
+exactly one review update. Expiry only locks reports and does not reverse that order.
+The operator CLI requires an explicit hosted/local mode, a separately approved
+hosted project reference, and recognized modern or legacy service credentials
+before any network request. Deterministic SQL tests force both report/retirement
+orderings, concurrent duplicate accounting, and removal versus deletion/expiry/
+replacement instead of relying on an uncontrolled race.
+
+Finding 5 remains an approval gate: no established evidence-read audit mechanism
+was found in source. Mike must approve a private audit sink, minimal report/action/
+time/project/outcome events, verified operator identity, retention, staff access and
+incident handling. Shared service keys and self-asserted operator names are not
+accountable human identity. Platform audit coverage must be demonstrated, not
+assumed. See moderation.md; no audit mechanism or final policy was invented here.

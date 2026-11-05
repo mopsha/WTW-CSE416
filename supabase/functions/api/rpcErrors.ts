@@ -5,6 +5,12 @@ export function rpcError(error: { code?: string }, notFound = 'Not found'): neve
   switch (error.code) {
     case 'PGRST202':
       throw new ApiError(503, 'DATABASE_NOT_READY', 'This feature is not installed yet');
+    case 'PT503':
+      throw new ApiError(
+        503,
+        'PHOTO_REPORTING_UNAVAILABLE',
+        'Photo reporting is not configured yet',
+      );
     case 'PT400':
       throw new ApiError(400, 'INVALID_INPUT', 'That request isn’t valid');
     case 'PT403':

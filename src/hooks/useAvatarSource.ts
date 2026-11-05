@@ -10,7 +10,7 @@ import { useAuth } from './useAuth';
 export const avatarCache = createAvatarCache(api);
 
 /** Data URIs keep private network responses out of native URL/disk image caches. */
-export function useAvatarSource(ref?: AvatarRef | null, userId?: string) {
+export function useAvatarPhoto(ref?: AvatarRef | null, userId?: string) {
   const { session } = useAuth();
   const viewer = session?.user.id;
   useSyncExternalStore(avatarCache.subscribe, avatarCache.snapshot, avatarCache.snapshot);
@@ -49,7 +49,18 @@ export function useAvatarSource(ref?: AvatarRef | null, userId?: string) {
       active = false;
     };
   }, [viewer, target, revision, key]);
-  return key && image?.key === key ? image.uri : null;
+  const uri = key && image?.key === key ? image.uri : null;
+  return {
+    uri,
+    ref:
+      uri && viewer && target && revision !== undefined
+        ? avatarCache.currentRef(viewer, { userId: target, revision })
+        : null,
+  };
+}
+
+export function useAvatarSource(ref?: AvatarRef | null, userId?: string) {
+  return useAvatarPhoto(ref, userId).uri;
 }
 
 /** One visibility poll for focused identities, not one metadata call per row. */

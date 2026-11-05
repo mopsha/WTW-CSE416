@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -15,6 +16,23 @@ test(
     const bytes = await readFile(new URL('./avatar-fixture.jpg', import.meta.url));
     const run = randomUUID();
     const users = [];
+    let priorEvidenceRetention;
+    const sql = (query) =>
+      execFileSync(
+        'psql',
+        [
+          'postgresql://postgres:postgres@127.0.0.1:54322/postgres',
+          '-X',
+          '-q',
+          '-A',
+          '-t',
+          '-v',
+          'ON_ERROR_STOP=1',
+          '-c',
+          query,
+        ],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000 },
+      ).trim();
     const groups = [];
     const picks = [];
     const db = (path, options = {}) =>
@@ -362,8 +380,106 @@ test(
       await getPhoto(owner, friend, 2, 404);
       assert.equal((await upload(owner, 3)).status, 200);
       const final = await state(owner);
+      // Local-only fixture policy; not a production retention recommendation.
+      priorEvidenceRetention = sql(
+        "select coalesce(retention_seconds::text,'null') from private.photo_moderation_config",
+      );
+      assert.match(priorEvidenceRetention, /^(null|[0-9]+)$/);
+      sql('update private.photo_moderation_config set retention_seconds=null');
+      const photoReport = {
+        kind: 'profile_photo',
+        targetId: owner.id,
+        photoRevision: 4,
+        reason: 'Spam',
+      };
+      requireStatus(
+        await api('/reports', friend.token, 'POST', photoReport),
+        503,
+        'reporting needs explicit policy',
+      );
+      sql('update private.photo_moderation_config set retention_seconds=3600');
+      for (const denied of [owner, pending, stranger])
+        requireStatus(
+          await api('/reports', denied.token, 'POST', photoReport),
+          404,
+          'unauthorized photo report',
+        );
+      requireStatus(
+        await api('/reports', friend.token, 'POST', photoReport),
+        201,
+        'report exact photo',
+      );
+      requireStatus(
+        await api('/reports', friend.token, 'POST', photoReport),
+        201,
+        'duplicate report',
+      );
+      const reports = requireStatus(
+        await db(
+          `reports?reporter_id=eq.${friend.id}&target_kind=eq.profile_photo&target_id=eq.${owner.id}&select=id`,
+        ),
+        200,
+        'private report lookup',
+      );
+      assert.equal(reports.length, 1);
+      const rid = reports[0].id;
+      sql(
+        `update public.reports set photo_expires_at=clock_timestamp()-interval '1 second' where id='${rid}'`,
+      );
+      const expiredReport = requireStatus(
+        await api('/reports', friend.token, 'POST', photoReport),
+        409,
+        'expired report rejects false success',
+      );
+      assert.equal(expiredReport.error.code, 'PHOTO_REPORT_EXPIRED');
+      requireStatus(
+        await api('/reports', stranger.token, 'POST', photoReport),
+        404,
+        'expired metadata remains private',
+      );
+      const evidenceExpiry = await db('rpc/avatar_expire_evidence', { method: 'POST', body: {} });
+      assert.ok([200, 204].includes(evidenceExpiry.status), 'release expired evidence');
+      requireStatus(
+        await api('/reports', friend.token, 'POST', photoReport),
+        409,
+        'cleaned report stays explicitly expired',
+      );
+      // Restore only this disposable fixture for the independent moderator tests.
+      assert.match(final.avatar_path, new RegExp(`^${owner.id}/[0-9a-f-]+\\.jpg$`));
+      sql(
+        `update public.reports set photo_path='${final.avatar_path}', photo_expires_at=clock_timestamp()+interval '1 hour' where id='${rid}'`,
+      );
+
+      const deniedModeration = await request(config, '/rest/v1/rpc/avatar_moderation_evidence', {
+        token: friend.token,
+        method: 'POST',
+        body: { p_report_id: rid },
+      });
+      assert.ok([401, 403, 404].includes(deniedModeration.status));
+      assert.equal(
+        requireStatus(
+          await db('rpc/avatar_moderation_evidence', {
+            method: 'POST',
+            body: { p_report_id: rid },
+          }),
+          200,
+          'operator evidence',
+        ),
+        final.avatar_path,
+      );
+      requireStatus(
+        await db('rpc/avatar_moderation_remove', { method: 'POST', body: { p_report_id: rid } }),
+        200,
+        'operator removal',
+      );
+      await getPhoto(owner, friend, 4, 404);
+      assert.equal((await upload(owner, 4)).status, 409);
+      assert.equal(await storageExists(final.avatar_path), true); // Evidence is private and pinned.
+      assert.equal((await upload(owner, 5)).status, 200);
+      const afterModeration = await state(owner);
       requireStatus(await api('/me', owner.token, 'DELETE'), 200, 'delete photo account');
       assert.equal(await storageExists(final.avatar_path), false);
+      assert.equal(await storageExists(afterModeration.avatar_path), false);
       await getPhoto(owner, friend, 4, 404);
       assert.equal(
         requireStatus(await db(`profiles?id=eq.${owner.id}&select=id`), 200, 'deleted profile')
@@ -371,41 +487,52 @@ test(
         0,
       );
     } finally {
-      // Include abandoned concurrent candidates; never leave fixture objects behind.
-      for (const id of users) {
-        const listed = await request(config, '/storage/v1/object/list/profile-photos', {
-          method: 'POST',
-          key: config.service,
-          token: config.service,
-          body: { prefix: id, limit: 100 },
-        });
-        if (listed.status === 200 && listed.data.length)
+      try {
+        // Include abandoned concurrent candidates; never leave fixture objects behind.
+        for (const id of users) {
+          const listed = await request(config, '/storage/v1/object/list/profile-photos', {
+            method: 'POST',
+            key: config.service,
+            token: config.service,
+            body: { prefix: id, limit: 100 },
+          });
+          if (listed.status === 200 && listed.data.length)
+            requireStatus(
+              await request(config, '/storage/v1/object/profile-photos', {
+                method: 'DELETE',
+                key: config.service,
+                token: config.service,
+                body: { prefixes: listed.data.map((o) => `${id}/${o.name}`) },
+              }),
+              200,
+              'clean photo fixtures',
+            );
+        }
+        for (const id of picks)
           requireStatus(
-            await request(config, '/storage/v1/object/profile-photos', {
-              method: 'DELETE',
-              key: config.service,
-              token: config.service,
-              body: { prefixes: listed.data.map((o) => `${id}/${o.name}`) },
-            }),
-            200,
-            'clean photo fixtures',
+            await db(`picks?id=eq.${id}`, { method: 'DELETE' }),
+            204,
+            'clean photo Pick',
           );
-      }
-      for (const id of picks)
-        requireStatus(await db(`picks?id=eq.${id}`, { method: 'DELETE' }), 204, 'clean photo Pick');
-      for (const id of groups)
-        requireStatus(
-          await db(`groups?id=eq.${id}`, { method: 'DELETE' }),
-          204,
-          'clean photo group',
-        );
-      for (const id of users) {
-        const result = await request(config, `/auth/v1/admin/users/${id}`, {
-          method: 'DELETE',
-          key: config.service,
-          token: config.service,
-        });
-        assert.ok([200, 404].includes(result.status));
+        for (const id of groups)
+          requireStatus(
+            await db(`groups?id=eq.${id}`, { method: 'DELETE' }),
+            204,
+            'clean photo group',
+          );
+        for (const id of users) {
+          const result = await request(config, `/auth/v1/admin/users/${id}`, {
+            method: 'DELETE',
+            key: config.service,
+            token: config.service,
+          });
+          assert.ok([200, 404].includes(result.status));
+        }
+      } finally {
+        if (priorEvidenceRetention !== undefined && /^(null|[0-9]+)$/.test(priorEvidenceRetention))
+          sql(
+            `update private.photo_moderation_config set retention_seconds=${priorEvidenceRetention}`,
+          );
       }
     }
   },

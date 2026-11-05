@@ -96,3 +96,35 @@ test('invite_create and invite_revoke', async () => {
   mockRpc.mockResolvedValue({ data: null, error: { code: 'PT404' } });
   expect((await errorOf(createInviteStore().revoke('t', 'me')))?.status).toBe(404);
 });
+
+test('photo reports use the verified reporter and exact revision without exposing object paths', async () => {
+  mockRpc.mockResolvedValue({ data: 'report-id', error: null });
+  await createSafetyStore().report('me', {
+    kind: 'profile_photo',
+    targetId: 'owner',
+    photoRevision: 7,
+    reason: 'Abuse',
+  });
+  expect(mockRpc).toHaveBeenCalledWith('avatar_report_create', {
+    p_user_id: 'me',
+    p_target_id: 'owner',
+    p_revision: 7,
+    p_reason: 'Abuse',
+  });
+});
+
+test('expired photo reports surface a truthful, sanitized conflict rather than Pick wording', async () => {
+  mockRpc.mockResolvedValue({ data: null, error: { code: 'PT409', message: 'PRIVATE PATH' } });
+  const response = await errorOf(
+    createSafetyStore().report('me', {
+      kind: 'profile_photo',
+      targetId: 'owner',
+      photoRevision: 7,
+      reason: 'Spam',
+    }),
+  );
+  expect(response?.status).toBe(409);
+  expect(response?.body.error.code).toBe('PHOTO_REPORT_EXPIRED');
+  expect(response?.body.error.message).toContain('A new report was not submitted');
+  expect(JSON.stringify(response)).not.toContain('PRIVATE PATH');
+});

@@ -589,6 +589,12 @@ function safetyRoute(method: string, path: string, body: unknown): Response | nu
     return json(200, { status: 'ok' });
   }
   if (method === 'POST' && path === '/reports') {
+    if ((body as { kind?: string } | null)?.kind === 'profile_photo')
+      return fail(
+        503,
+        'PHOTO_REPORTING_UNAVAILABLE',
+        'Photo reporting is not configured in mock mode',
+      );
     const { kind, targetId, reason } = (body ?? {}) as Record<string, unknown>;
     const ok =
       (kind === 'user' ||

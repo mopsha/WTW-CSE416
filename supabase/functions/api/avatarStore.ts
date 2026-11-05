@@ -111,6 +111,7 @@ export function createAvatarStore(
       if (!token) return;
       let success = false;
       try {
+        await rpc('avatar_expire_evidence', {});
         await removeObjects((await rpc('avatar_orphans', {})) as string[]);
         success = true;
       } finally {

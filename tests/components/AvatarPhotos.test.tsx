@@ -2,7 +2,7 @@ import { SocialIdentity } from '@/components/friends/SocialRow';
 import React from 'react';
 import { Image } from 'react-native';
 import { Avatar } from '@/components/Avatar';
-import { avatarCache, useAvatarLifecycle } from '@/hooks/useAvatarSource';
+import { avatarCache, useAvatarLifecycle, useAvatarPhoto } from '@/hooks/useAvatarSource';
 import { photoChanged } from '@/lib/photoEvents';
 import { api } from '@/lib/api';
 import type { AuthSession } from '@/lib/authTypes';
@@ -199,4 +199,28 @@ test('social identity waits for authoritative metadata before downloading a miss
   expect(tree!.root.findAllByType(Image)).toHaveLength(0);
   await act(async () => finish({ friend: { revision: 1, avatarRef: ref } }));
   expect(tree!.root.findAllByType(Image)).toHaveLength(1);
+});
+
+test('reportable photo identity follows rendered cache revision, not stale profile metadata', async () => {
+  let reportedRevision: number | undefined;
+  function ReportHarness() {
+    useAvatarLifecycle('A', '/profile', 'a@example.com');
+    const photo = useAvatarPhoto(ref, 'friend');
+    React.useEffect(() => {
+      reportedRevision = photo.ref?.revision;
+    }, [photo.ref]);
+    return <SocialIdentity name="Ava" userId="friend" avatarRef={ref} />;
+  }
+  await act(async () => {
+    tree = create(<ReportHarness />);
+  });
+  expect(reportedRevision).toBe(1);
+  await act(async () =>
+    photoChanged('friend', { revision: 2, avatarRef: { userId: 'friend', revision: 2 } }),
+  );
+  expect(reportedRevision).toBe(2);
+  jest.mocked(api.resolveAvatarRefs).mockRejectedValueOnce({ status: 403 });
+  await act(async () => avatarCache.revalidate());
+  expect(reportedRevision).toBeUndefined();
+  expect(tree!.root.findAllByType(Image)).toHaveLength(0);
 });

@@ -10,6 +10,7 @@ import time
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
+from photo_moderation_races import exercise_photo_moderation_races
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--dsn', required=True)
@@ -23,6 +24,7 @@ if (parsed_dsn.scheme not in ('postgres', 'postgresql')
     parser.error('Expected disposable local Supabase PostgreSQL on port 54322')
 base = ['psql', args.dsn, '-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1']
 user = str(uuid.uuid4())
+reporter = str(uuid.uuid4())
 paths = [f'{user}/{uuid.uuid4()}.jpg' for _ in range(2)]
 
 
@@ -42,6 +44,7 @@ def storage_fixtures(action):
 
 
 user_created = False
+reporter_created = False
 storage_started = False
 try:
     query(f"""
@@ -74,6 +77,22 @@ try:
     if len(buckets) == 1:
         assert sum(int(value) for value in usage) == 120, 'Concurrent cap not enforced'
 
+    # Real Storage fixtures plus two PostgreSQL connections: report pins revision 1
+    # before retirement, or retirement wins and reporting must return PT404.
+    query(f"insert into auth.users(id,raw_user_meta_data) values('{reporter}','{{}}');")
+    reporter_created = True
+    query(f"insert into public.friendships(requester_id,addressee_id,status,accepted_at) "
+          f"values('{reporter}','{user}','accepted',now());")
+    retention = query("select coalesce(retention_seconds::text,'null') from private.photo_moderation_config;").stdout.strip()
+    assert retention == 'null' or retention.isdigit()
+    try:
+        query("update private.photo_moderation_config set retention_seconds=3600;")  # Test fixture, not policy.
+        replacement_path = next(path for path in paths if path != active)
+        exercise_photo_moderation_races(query, base, user, reporter, active, replacement_path)
+    finally:
+        query(f"update private.photo_moderation_config set retention_seconds={retention};")
+    current_revision = int(query(f"select avatar_revision from public.profiles where id='{user}';").stdout.strip())
+
     # Observe the deletion transaction holding the row lock before submitting a
     # competing update. This exercises PostgreSQL wait/recheck, not a mock lock.
     app_name = f'avatar_delete_{uuid.uuid4().hex}'
@@ -90,21 +109,21 @@ try:
             time.sleep(0.01)
         else:
             raise AssertionError('Deletion lock holder never became ready')
-        result = query(f"set role service_role; select public.avatar_change('{user}',1,null);", False)
+        result = query(f"set role service_role; select public.avatar_change('{user}',{current_revision},null);", False)
         assert result.returncode != 0 and 'Photo changed' in result.stderr, 'Deletion must reject pending update'
         assert holder.wait(timeout=5) == 0
     finally:
         if holder.poll() is None:
             holder.terminate()
             holder.wait(timeout=5)
-    result = query(f"set role service_role; select public.avatar_read('{user}','{user}',2);", False)
+    result = query(f"set role service_role; select public.avatar_read('{user}','{user}',{current_revision + 1});", False)
     assert result.returncode != 0 and 'Photo unavailable' in result.stderr
     assert query(f"select avatar_path from public.profiles where id='{user}';").stdout.strip() == active
     # Durable retry claims must not hand the same deletion to concurrent workers.
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
         claims = list(pool.map(lambda _: query("set role service_role; select public.avatar_pending_deletions();").stdout, range(2)))
     assert sum(user in claim for claim in claims) == 1, 'Deletion retry must have one claimant'
-    print('PASS concurrent replacements: one winner; deletion race: no late mutation or photo read')
+    print('PASS concurrent replacements: one winner; report/retirement binds exact revision; deletion race: no late mutation or photo read')
 finally:
     # Separate connections require committed fixtures, so one enclosing rollback
     # cannot clean this test. Remove binaries and metadata through Storage instead.
@@ -117,3 +136,5 @@ finally:
     finally:
         if user_created:
             query(f"delete from auth.users where id='{user}';")
+        if reporter_created:
+            query(f"delete from auth.users where id='{reporter}';")
