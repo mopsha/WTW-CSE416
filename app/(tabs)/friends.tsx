@@ -1,3 +1,4 @@
+import { UsernameFriendSearch } from '@/components/friends/UsernameFriendSearch';
 import {
   RequestsEntry,
   SocialRow,
@@ -7,19 +8,18 @@ import {
   SocialSectionTitle,
 } from '@/components/friends/SocialRow';
 import { GroupInvitations } from '@/components/GroupInvitations';
-// Friends, in the live-demo style: add someone by the email they sign in with, answer requests,
+// Friends: discover public usernames, answer requests,
 // and see who you're friends with. Every write goes through the API (src/lib/api.ts).
 // Joining a Pick still happens by code; inviting friends to a Pick comes later.
-import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Keyboard, StyleSheet, Text, View } from 'react-native';
 
 import type { FriendPerson, FriendsList } from '@shared/api/friends.ts';
 
 import { Button, colors, ErrorState, fonts, MIN_TARGET, radius, Screen, space } from '@/components';
 import { useAction } from '@/hooks/useAction';
 import { api } from '@/lib/api';
-import { USE_MOCK } from '@/lib/config';
 import { confirmAction } from '@/lib/confirm';
 import { messageOf } from '@/lib/errors';
 import { haptic } from '@/lib/haptics';
@@ -37,83 +37,26 @@ function day(iso: string): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function AddFriendCard({ onAdded }: { onAdded: () => void }) {
-  const [email, setEmail] = useState('');
-  const [done, setDone] = useState<string | null>(null);
-  const { busy, error, run, clearError } = useAction();
-
-  const submit = async () => {
-    if (busy || !email.trim()) return;
-    setDone(null);
-    let message = '';
-    const ok = await run('add', async () => {
-      await api.addFriend(email.trim());
-      message = 'If they’re on WTW, they’ll see your request.';
-    });
-    if (!ok) return;
-    haptic.success();
-    setEmail('');
-    setDone(message);
-    onAdded();
-  };
-
-  return (
-    <View style={styles.addForm}>
-      <Text style={styles.caption}>Use the email they sign in to WTW with.</Text>
-      <TextInput
-        style={styles.input}
-        value={email}
-        onChangeText={(t) => {
-          setEmail(t);
-          if (error) clearError();
-          if (done) setDone(null);
-        }}
-        placeholder="friend@stonybrook.edu"
-        placeholderTextColor={colors.muted}
-        keyboardType="email-address"
-        autoCapitalize="none"
-        autoCorrect={false}
-        autoComplete="email"
-        spellCheck={false}
-        maxLength={254}
-        returnKeyType="send"
-        onSubmitEditing={() => void submit()}
-        editable={!busy}
-        accessibilityLabel="Friend's email"
-        accessibilityHint="The email address your friend signs in with"
-      />
-      <Button
-        variant="paper"
-        label="Send request"
-        onPress={() => void submit()}
-        loading={!!busy}
-        disabled={!email.trim()}
-        style={styles.send}
-      />
-      {error ? (
-        <Text style={styles.error} accessibilityRole="alert" accessibilityLiveRegion="polite">
-          {error}
-        </Text>
-      ) : null}
-      {done ? (
-        <Text style={styles.done} accessibilityLiveRegion="polite">
-          {done}
-        </Text>
-      ) : null}
-      {USE_MOCK ? (
-        <Text style={styles.caption}>
-          Demo mode: any email works; one starting with nobody@ has no account.
-        </Text>
-      ) : null}
-    </View>
-  );
-}
-
 export default function FriendsScreen() {
+  const { requests } = useLocalSearchParams<{ requests?: string }>();
   const session = useSession();
   const [tab, setTab] = useState<'friends' | 'groups'>('friends');
   const [adding, setAdding] = useState(false);
   const [requestsOpen, setRequestsOpen] = useState(false);
+  const handoff = useRef<{ kind: 'requests' } | { kind: 'profile'; id: string } | null>(null);
+  useEffect(
+    () => () => {
+      handoff.current = null;
+    },
+    [session.user.id],
+  );
+  const finishHandoff = useCallback(() => {
+    const target = handoff.current;
+    handoff.current = null;
+    if (target?.kind === 'requests') setRequestsOpen(true);
+    else if (target?.kind === 'profile')
+      router.push({ pathname: '/p/[id]', params: { id: target.id } });
+  }, []);
   const [groups, setGroups] = useState<GroupSummary[] | null>(null);
   const [groupError, setGroupError] = useState<string | null>(null);
   const [list, setList] = useState<FriendsList | null>(null);
@@ -206,7 +149,14 @@ export default function FriendsScreen() {
               error={error}
               onPress={() => setRequestsOpen(true)}
             />
-            <Sheet visible={requestsOpen} title="Requests" onClose={() => setRequestsOpen(false)}>
+            <Sheet
+              visible={!adding && (requestsOpen || requests === '1')}
+              title="Requests"
+              onClose={() => {
+                setRequestsOpen(false);
+                if (requests) router.setParams({ requests: undefined });
+              }}
+            >
               {action.error ? <ErrorState message={action.error} /> : null}
               {list?.incoming.length ? (
                 <View style={styles.group}>
@@ -215,7 +165,7 @@ export default function FriendsScreen() {
                     <SocialRow
                       key={p.userId}
                       title={nameOf(p)}
-                      subtitle="Request sent by email"
+                      subtitle="Friend request"
                       leading={
                         <SocialIdentity
                           name={nameOf(p)}
@@ -340,7 +290,7 @@ export default function FriendsScreen() {
             <QuietEmpty
               icon="people-outline"
               title="No friends here yet"
-              body="Add a friend by email. When they accept, they’ll show up here."
+              body="Add a friend by username. When they accept, they’ll show up here."
             />
           ) : null}
         </>
@@ -387,8 +337,24 @@ export default function FriendsScreen() {
           />
         </>
       )}
-      <Sheet visible={adding} title="Add a friend" onClose={() => setAdding(false)}>
-        <AddFriendCard onAdded={() => void load()} />
+      <Sheet
+        visible={adding}
+        title="Add a friend"
+        onClose={() => {
+          handoff.current = null;
+          Keyboard.dismiss();
+          setAdding(false);
+        }}
+        onDismiss={finishHandoff}
+      >
+        <UsernameFriendSearch
+          onAdded={() => void load()}
+          onNavigate={(target) => {
+            Keyboard.dismiss();
+            handoff.current = target;
+            setAdding(false);
+          }}
+        />
       </Sheet>
     </Screen>
   );
@@ -410,19 +376,6 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   caption: { fontSize: 14, lineHeight: 20, color: colors.muted },
-  addForm: { gap: space.md },
-  input: {
-    minHeight: MIN_TARGET,
-    paddingVertical: space.sm,
-    paddingHorizontal: space.md,
-    borderRadius: radius.md,
-    fontSize: 17,
-    color: colors.text,
-    backgroundColor: colors.card,
-  },
-  send: { marginTop: space.xs },
-  error: { fontSize: 14, lineHeight: 20, color: colors.danger },
-  done: { fontSize: 14, lineHeight: 20, color: colors.yes },
   group: { gap: space.sm },
   sectionHead: {
     flexDirection: 'row',

@@ -1,3 +1,4 @@
+import type { PersonIdentity } from '@shared/api/people.ts';
 import type { PastMovesResult } from '@shared/api/pastMoves.ts';
 import type { DirectConversation, DirectMessage, DirectHistory } from '@shared/api/directChat.ts';
 import type { GroupMessage, GroupMessageInput } from '@shared/api/groupChat.ts';
@@ -573,6 +574,16 @@ export function createApiClient({
       request<StatusResponse>('POST', `${pickPath(pickId)}/close-vote`),
 
     /** My friends, requests to me, and requests I sent (names only, never emails). */
+    searchPeople: (query: string) =>
+      request<{ people: PersonIdentity[] }>(
+        'GET',
+        `/friends/search?q=${encodeURIComponent(query)}`,
+      ),
+    getPerson: (id: string) => request<PersonIdentity>('GET', `/people/${encodeURIComponent(id)}`),
+    addFriendByUsername: (username: string, targetId: string) =>
+      request<StatusResponse>('POST', '/friends/username-requests', {
+        body: { username, targetId },
+      }),
     listFriends: () => request<FriendsList>('GET', '/friends'),
     /**
      * Ask someone by the exact email they sign in with. Always { status: 'sent' }, so this can't

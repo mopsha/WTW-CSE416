@@ -1,3 +1,4 @@
+import type { PersonIdentity } from '../_shared/api/people.ts';
 import { ApiError } from '../_shared/api/errors.ts';
 import type { FriendRequestResult, FriendRow, FriendsStore } from '../_shared/api/friends.ts';
 import { takeFriendRequestLimit } from './friendRequestLimit.ts';
@@ -12,6 +13,8 @@ function fail(error: { code?: string }): never {
       throw new ApiError(400, 'CANNOT_FRIEND_SELF', 'You cannot add yourself');
     case 'PT404':
       throw new ApiError(404, 'NOT_FOUND', 'No WTW account matches that');
+    case 'PT429':
+      throw new ApiError(429, 'RATE_LIMITED', 'Too many profile searches. Try again shortly.');
     case 'PT403':
       throw new ApiError(403, 'FORBIDDEN', 'Your account is not ready yet; try again');
     default:
@@ -21,7 +24,30 @@ function fail(error: { code?: string }): never {
 
 /** Service-role adapter for the friend_* RPCs in 0008_friendships.sql. */
 export function createFriendsStore(): FriendsStore {
+  async function peopleRpc(name: string, args: Record<string, unknown>, viewer: string) {
+    const { data, error } = await createServiceClient().rpc(name, args);
+    if (error) fail(error);
+    if (data == null) throw new ApiError(404, 'PROFILE_NOT_FOUND', 'Profile unavailable');
+    const rows = (Array.isArray(data) ? data : [data]) as PersonIdentity[];
+    const refs = await avatarMetadata(
+      viewer,
+      rows.map((p) => p.userId),
+    );
+    return rows.map((p) => ({ ...p, avatarRef: refs[p.userId]?.avatarRef ?? null }));
+  }
   return {
+    search: (viewer, query) =>
+      peopleRpc('username_search', { p_user_id: viewer, p_query: query }, viewer),
+    person: async (viewer, target) =>
+      (await peopleRpc('person_lookup', { p_user_id: viewer, p_target_id: target }, viewer))[0]!,
+    async requestUsername(viewer, username, targetId) {
+      const { error } = await createServiceClient().rpc('friend_request_username', {
+        p_user_id: viewer,
+        p_username: username,
+        p_target_id: targetId,
+      });
+      if (error) fail(error);
+    },
     takeFriendRequestLimit,
     async list(userId) {
       const { data, error } = await createServiceClient().rpc('friend_list', {

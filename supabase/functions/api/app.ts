@@ -1,3 +1,5 @@
+import { normalizeUsername, RESERVED_USERNAMES } from '../_shared/api/usernames.ts';
+import { parseFriendId } from '../_shared/api/friends.ts';
 import type { PastMovesStore } from '../_shared/api/pastMoves.ts';
 import { sendDirectMessage, type DirectChatStore } from '../_shared/api/directChat.ts';
 import { sendGroupMessage, type GroupChatStore } from '../_shared/api/groupChat.ts';
@@ -442,6 +444,31 @@ export function createApp(
     if (!deps.friendsStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Friends are not available');
     return { user, store: deps.friendsStore };
   };
+  app.get('/friends/search', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await friends(c);
+    const query = normalizeUsername(c.req.query('q'), true);
+    if (!store.search) throw new ApiError(503, 'NOT_CONFIGURED', 'Username search unavailable');
+    return c.json({ people: await store.search(user.id, query) });
+  });
+  app.get('/people/:id', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await friends(c);
+    if (!store.person) throw new ApiError(503, 'NOT_CONFIGURED', 'Profile lookup unavailable');
+    return c.json(await store.person(user.id, parseFriendId(c.req.param('id'))));
+  });
+  app.post('/friends/username-requests', async (c) => {
+    const { user, store } = await friends(c);
+    const body = (await readJsonBody(c)) as { username?: unknown; targetId?: unknown } | null;
+    const username = normalizeUsername(body?.username, true);
+    const targetId = parseFriendId(typeof body?.targetId === 'string' ? body.targetId : '');
+    if (!store.requestUsername)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Username requests unavailable');
+    if (!(await store.takeFriendRequestLimit(user.id)))
+      throw new ApiError(429, 'RATE_LIMITED', 'Too many friend requests today');
+    await store.requestUsername(user.id, username, targetId);
+    return c.json({ status: 'sent' });
+  });
   app.get('/friends', async (c) => {
     c.header('Cache-Control', 'private, no-store');
     const { user, store } = await friends(c);
@@ -748,7 +775,15 @@ export function createApp(
   });
   app.post('/me/details', async (c) => {
     const { user, store } = await userProfiles(c);
-    return c.json(await store.update(user.id, parseProfileDetails(await readJsonBody(c))));
+    const body = await readJsonBody(c);
+    const requested =
+      body && typeof body === 'object' ? (body as Record<string, unknown>).username : undefined;
+    const reserved =
+      typeof requested === 'string' &&
+      RESERVED_USERNAMES.includes(requested.trim().replace(/^@/, '').toLowerCase());
+    // The caller cannot supply this exception: verify the owner's stored name.
+    const currentUsername = reserved ? (await store.get(user.id, user.id)).username : undefined;
+    return c.json(await store.update(user.id, parseProfileDetails(body, currentUsername)));
   });
   app.get('/users/:id/profile', async (c) => {
     c.header('Cache-Control', 'private, no-store');

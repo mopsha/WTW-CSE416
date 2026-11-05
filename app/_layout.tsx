@@ -1,3 +1,4 @@
+import { resumePendingProfile } from '@/lib/pendingProfile';
 import { hasRequiredIdentity } from '@shared/api/userProfiles.ts';
 import {
   Poppins_400Regular,
@@ -10,7 +11,7 @@ import {
 import { router, Stack, usePathname } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { Button, ErrorState, Screen } from '@/components';
@@ -20,7 +21,7 @@ import { useAvatarLifecycle } from '@/hooks/useAvatarSource';
 import { ProfileProvider, useProfile } from '@/hooks/useProfile';
 import { auth } from '@/lib/auth';
 import { configureNotifications, onNotificationTap } from '@/lib/notify';
-import { takePendingInvite } from '@/lib/pendingInvite';
+import { takePendingInvite, setPendingInvite } from '@/lib/pendingInvite';
 import { takePendingJoin } from '@/lib/pendingJoin';
 import { registerForPush } from '@/lib/push';
 
@@ -57,6 +58,15 @@ function RootStack() {
   const pathname = usePathname();
   useAvatarLifecycle(session?.user.id, pathname, session?.user.email);
   const offered = useRef<string | null>(null);
+  const resuming = useRef(false);
+  const mounted = useRef(true);
+  const [resumeRetry, setResumeRetry] = useState(0);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const userId = session?.user.id;
 
   useEffect(() => {
@@ -94,11 +104,36 @@ function RootStack() {
       router.push({ pathname: '/join/[code]', params: { code } });
       return;
     }
-    // Invite links are parked in SecureStore, so they survive a restart during sign-in.
-    void takePendingInvite().then((token) => {
-      if (token) router.push({ pathname: '/i/[token]', params: { token } });
-    });
-  }, [ready, inApp, userId, session, profile.optionalSetupPending, pathname]);
+    if (resuming.current) return;
+    resuming.current = true;
+    let current = true;
+    let retry = false;
+    void (async () => {
+      const token = await takePendingInvite();
+      if (token) {
+        if (current) router.push({ pathname: '/i/[token]', params: { token } });
+        else {
+          await setPendingInvite(token);
+          retry = true;
+        }
+        return;
+      }
+      retry = await resumePendingProfile(
+        () => current,
+        (id) => router.push({ pathname: '/p/[id]', params: { id } }),
+      );
+    })()
+      .catch(() => {
+        /* Keep navigation failures from becoming unhandled rejections. */
+      })
+      .finally(() => {
+        resuming.current = false;
+        if ((retry || !current) && mounted.current) setResumeRetry((n) => n + 1);
+      });
+    return () => {
+      current = false;
+    };
+  }, [ready, inApp, userId, session, profile.optionalSetupPending, pathname, resumeRetry]);
 
   // Keep the splash up until the stored session and fonts are loaded. Rendering the
   // guarded Stack earlier treats a signed-in user as signed out for a moment, which
@@ -163,6 +198,7 @@ function RootStack() {
         {/* Join and invite links open signed in or out; the screen sends you to sign-in if needed.
             Listed last so it is never the guard's fallback screen. */}
         <Stack.Screen name="join/[code]" options={{ animation: 'fade' }} />
+        <Stack.Screen name="p/[id]" options={{ animation: 'fade' }} />
         <Stack.Screen name="i/[token]" options={{ animation: 'fade' }} />
       </Stack>
     </>

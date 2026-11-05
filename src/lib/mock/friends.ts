@@ -128,3 +128,24 @@ export function handleMockFriends(
   rows = rows.filter((r) => r.userId !== userId);
   return ok({ status: 'ok' });
 }
+
+/** Shared fixture graph; username discovery does not create a second friendship store. */
+export const mockFriendRows = () => rows;
+export function requestMockUsername(userId: string) {
+  const row = rows.find((r) => r.userId === userId);
+  if (row) {
+    if (row.status === 'pending' && row.direction === 'in') {
+      row.status = 'accepted';
+      row.acceptedAt = new Date().toISOString();
+    }
+    return;
+  }
+  rows.push({
+    userId,
+    displayName: null,
+    status: 'pending',
+    direction: 'out',
+    createdAt: new Date().toISOString(),
+    acceptedAt: null,
+  });
+}

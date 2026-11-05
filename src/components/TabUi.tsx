@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -214,14 +214,30 @@ export function Sheet({
   title,
   onClose,
   children,
+  onDismiss,
 }: {
   visible: boolean;
   title: string;
   onClose: () => void;
   children: ReactNode;
+  onDismiss?: () => void;
 }) {
+  const wasVisible = useRef(visible);
+  useEffect(() => {
+    // Android removes the dialog when visible becomes false; no slide animation
+    // is used for an opted-in handoff. RN exposes native onDismiss only on iOS.
+    const dismissed = wasVisible.current && !visible;
+    wasVisible.current = visible;
+    if (dismissed && Platform.OS !== 'ios') onDismiss?.();
+  }, [visible, onDismiss]);
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType={onDismiss && Platform.OS !== 'ios' ? 'none' : 'slide'}
+      onDismiss={Platform.OS === 'ios' ? onDismiss : undefined}
+      onRequestClose={onClose}
+    >
       <KeyboardAvoidingView
         style={s.modal}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
