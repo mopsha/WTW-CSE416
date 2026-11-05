@@ -1,11 +1,22 @@
 import Slider from '@react-native-community/slider';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useState, type ReactNode } from 'react';
-import { StyleSheet, Switch, Text, View } from 'react-native';
+import { useRef, useState, type ReactNode } from 'react';
+import {
+  AccessibilityInfo,
+  Keyboard,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+} from 'react-native';
 
 import {
   Button,
-  Card,
+  IconButton,
+  radius,
   Chips,
   colors,
   ErrorState,
@@ -36,10 +47,10 @@ import {
 import type { LatLng } from '@shared/domain/geo.ts';
 
 const CATEGORIES: readonly ChipOption<PickCategory>[] = [
-  { value: 'food', label: '🍜 Food' },
-  { value: 'activities', label: '🎳 Activities' },
-  { value: 'both', label: 'Food + activities' },
-  { value: 'custom', label: '✨ Custom' },
+  { value: 'food', label: 'Food' },
+  { value: 'activities', label: 'Activities' },
+  { value: 'both', label: 'Food + Activities' },
+  { value: 'custom', label: 'Custom' },
 ];
 
 const POOL_SIZES: readonly ChipOption<number>[] = [10, 15, 20, 25, 30].map((n) => ({
@@ -92,6 +103,24 @@ export default function CreatePickScreen() {
   const [createdForOthers, setCreatedForOthers] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  const [moreOptions, setMoreOptions] = useState(false);
+  const [expandedMap, setExpandedMap] = useState(false);
+  const sending = useRef(false);
+  const form = useRef<ScrollView>(null);
+  const revealError = useRef(false);
+  const optionSummary = [
+    miles !== 2 ? `${miles.toFixed(1)} mi` : '',
+    includeSaved ? 'Saved places' : '',
+    includeGroupIdeas && groupId && !hangId ? 'Group Ideas' : '',
+    priceMax >= 0 ? (priceMax === 0 ? 'Free' : '$'.repeat(priceMax)) : '',
+    openNow ? 'Open now' : '',
+    category !== 'custom' && poolSize !== DEFAULT_POOL_SIZE ? `${poolSize} places` : '',
+    deadlineMin !== 60 ? DEADLINES.find((d) => d.value === deadlineMin)?.label : '',
+    closeThreshold !== 100 ? `${closeThreshold}% finished` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
   const moveCenter = (next: LatLng, label = 'Dropped pin') => {
     setCenter(next);
     setPlaceLabel(label);
@@ -99,6 +128,7 @@ export default function CreatePickScreen() {
   };
 
   const submit = async () => {
+    if (sending.current) return;
     const input: CreatePickInput = {
       category,
       center,
@@ -125,11 +155,16 @@ export default function CreatePickScreen() {
     const found = validateCreatePick(input);
     setProblems(Object.fromEntries(found.map((p) => [p.field, p.message])));
     if (found.length > 0) {
+      if (found.some((p) => !['category', 'center', 'customOptions'].includes(p.field)))
+        setMoreOptions(true);
       haptic.tap();
       return;
     }
 
+    sending.current = true;
+    Keyboard.dismiss();
     setSubmitting(true);
+    revealError.current = false;
     setSubmitError(null);
     try {
       if (hangId) {
@@ -147,8 +182,10 @@ export default function CreatePickScreen() {
       // Straight to the Lobby, replacing this form so Back goes to Picks.
       router.replace({ pathname: '/pick/[id]/lobby', params: { id: pickId } });
     } catch (e) {
+      revealError.current = true;
       setSubmitError(messageOf(e));
     } finally {
+      sending.current = false;
       setSubmitting(false);
     }
   };
@@ -163,187 +200,250 @@ export default function CreatePickScreen() {
       </Screen>
     );
   return (
-    <Screen
-      title="New Pick"
-      subtitle={
-        hangId
-          ? `For ${hangActivity ?? 'your hang'}`
-          : groupId
-            ? `For ${groupName ?? 'your group'}`
-            : "Where's the group headed?"
-      }
-      back
-    >
-      {groupId ? (
-        <Card variant="flat">
-          <Text style={styles.hint}>
-            Everyone in {groupName ?? 'the group'} is added as soon as you create it.
-          </Text>
-        </Card>
-      ) : null}
-      <Section title="What are we picking?" error={problems.category}>
-        <Chips
-          options={CATEGORIES}
-          value={category}
-          onChange={setCategory}
-          accessibilityLabel="Category"
-        />
-      </Section>
-
-      {category === 'custom' ? (
-        <Section
-          title="Your options"
-          error={problems.customOptions}
-          hint="Add 2–20 ideas. Everyone swipes and votes as usual."
-        >
-          <CustomPlanEditor options={customOptions} onChange={setCustomOptions} />
-          <Chips
-            options={[
-              { value: 'none' as const, label: 'Only my ideas' },
-              { value: 'food' as const, label: 'Add nearby food' },
-              { value: 'activities' as const, label: 'Add nearby activities' },
-            ]}
-            value={mix}
-            onChange={setMix}
-            accessibilityLabel="Mix nearby places"
-          />
-        </Section>
-      ) : null}
-      <Card>
-        <View style={styles.sectionHead}>
-          <Text style={styles.sectionTitle}>
-            {hangId ? 'Include the host’s saved places' : 'Include my saved places'}
-          </Text>
-          <Switch
-            value={includeSaved}
-            onValueChange={setIncludeSaved}
-            accessibilityLabel={
-              hangId
-                ? 'Include the Pick host’s saved places inside the radius'
-                : 'Include my saved places inside the radius'
-            }
-          />
-        </View>
-      </Card>
-      {groupId && !hangId ? (
-        <Card>
-          <View style={styles.sectionHead}>
-            <Text style={styles.sectionTitle}>Include Group Ideas</Text>
-            <Switch
-              style={{ minHeight: MIN_TARGET, minWidth: MIN_TARGET }}
-              disabled={submitting}
-              value={includeGroupIdeas}
-              onValueChange={setIncludeGroupIdeas}
-              accessibilityLabel="Include Group Ideas"
-            />
-          </View>
-          <Text style={styles.hint}>
-            Mix your group’s matching ideas into this Pick. Distance, price and Open Now apply to
-            public places only.
-          </Text>
-          {problems.includeGroupIdeas ? <ErrorState message={problems.includeGroupIdeas} /> : null}
-        </Card>
-      ) : null}
-      <Section title="Where" error={problems.center}>
-        <LocationSearch label={placeLabel} onPick={moveCenter} />
-        <MapPicker
-          center={center}
-          radiusM={milesToMeters(miles)}
-          onChangeCenter={(c) => moveCenter(c)}
-        />
-      </Section>
-
-      <Section
-        title="How far"
-        value={`${miles.toFixed(1)} mi`}
-        hint="Places within this distance of the pin."
-        error={problems.radiusM}
-      >
-        <Slider
-          minimumValue={MIN_MILES}
-          maximumValue={MAX_MILES}
-          step={0.5}
-          value={miles}
-          onValueChange={setMiles}
-          onSlidingComplete={() => haptic.tick()}
-          minimumTrackTintColor={colors.primary}
-          maximumTrackTintColor={colors.border}
-          thumbTintColor={colors.primary}
-          style={styles.slider}
-          accessibilityLabel="Search radius in miles"
-          accessibilityValue={{
-            min: MIN_MILES,
-            max: MAX_MILES,
-            now: miles,
-            text: `${miles} miles`,
+    <Screen scroll={false} contentStyle={styles.frame}>
+      <View style={styles.header}>
+        <IconButton
+          icon="chevron-back"
+          accessibilityLabel="Back"
+          onPress={() => {
+            if (router.canGoBack()) router.back();
+            else router.replace('/');
           }}
         />
-      </Section>
-
-      <Section
-        title="Place filters"
-        hint="Unknown prices or hours are excluded when that filter is set."
-        error={problems.priceMax}
+        <View style={styles.identity}>
+          <Text style={styles.pageTitle} accessibilityRole="header">
+            New Pick
+          </Text>
+          {hangId || groupId ? (
+            <Text style={styles.hint}>
+              {hangId ? `For ${hangActivity ?? 'your hang'}` : `For ${groupName ?? 'your group'}`}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+      <ScrollView
+        ref={form}
+        onContentSizeChange={() => {
+          if (!revealError.current || !submitError) return;
+          revealError.current = false;
+          form.current?.scrollToEnd({ animated: false });
+          // ErrorState's live region handles Android; announce the new error on iOS.
+          if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(submitError);
+        }}
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
       >
-        <PlaceFilterControls
-          priceMax={priceMax}
-          openNow={openNow}
-          onPrice={setPriceMax}
-          onOpen={setOpenNow}
-        />
-      </Section>
-      {category !== 'custom' ? (
-        <Section
-          title="How many places"
-          hint="Fewer is faster to swipe; more gives more options."
-          error={problems.poolSize}
-        >
+        <Section title="What are we doing?" error={problems.category}>
           <Chips
-            options={POOL_SIZES}
-            value={poolSize}
-            onChange={setPoolSize}
-            accessibilityLabel="Pool size"
+            options={CATEGORIES}
+            value={category}
+            onChange={setCategory}
+            accessibilityLabel="Category"
           />
         </Section>
-      ) : null}
 
-      <Section
-        title="Deadline"
-        hint="Swiping closes then, even if not everyone is done."
-        error={problems.deadlineAt}
-      >
-        <Chips
-          options={DEADLINES}
-          value={deadlineMin}
-          onChange={setDeadlineMin}
-          accessibilityLabel="Deadline"
+        {category === 'custom' ? (
+          <Section
+            title="Your options"
+            error={problems.customOptions}
+            hint="Add 2–20 ideas. Everyone swipes and votes as usual."
+          >
+            <CustomPlanEditor options={customOptions} onChange={setCustomOptions} />
+            <Chips
+              options={[
+                { value: 'none' as const, label: 'Only my ideas' },
+                { value: 'food' as const, label: 'Add nearby food' },
+                { value: 'activities' as const, label: 'Add nearby activities' },
+              ]}
+              value={mix}
+              onChange={setMix}
+              accessibilityLabel="Mix nearby places"
+            />
+          </Section>
+        ) : null}
+        <Section title="Where" error={problems.center}>
+          <LocationSearch label={placeLabel} onPick={moveCenter} />
+          <MapPicker
+            height={expandedMap ? 320 : Platform.OS === 'web' ? 240 : 144}
+            center={center}
+            radiusM={milesToMeters(miles)}
+            onChangeCenter={(c) => moveCenter(c)}
+          />
+          <Pressable
+            style={styles.textAction}
+            accessibilityRole="button"
+            accessibilityLabel={expandedMap ? 'Collapse map' : 'Expand map'}
+            accessibilityState={{ expanded: expandedMap }}
+            onPress={() => {
+              Keyboard.dismiss();
+              setExpandedMap((v) => !v);
+            }}
+          >
+            <Text style={styles.actionText}>{expandedMap ? 'Collapse map' : 'Expand map'}</Text>
+          </Pressable>
+        </Section>
+        <Section title="Who's joining?">
+          <Text style={styles.hint}>
+            {hangId
+              ? 'The Pick is for the people who are down.'
+              : groupId
+                ? `Everyone in ${groupName ?? 'the group'} is added as soon as you create it.`
+                : 'Invite friends after creating your Pick.'}
+          </Text>
+        </Section>
+        <Pressable
+          style={styles.disclosure}
+          accessibilityRole="button"
+          accessibilityLabel="More options"
+          accessibilityValue={optionSummary ? { text: optionSummary } : undefined}
+          accessibilityState={{ expanded: moreOptions }}
+          onPress={() => setMoreOptions((v) => !v)}
+        >
+          <View style={styles.identity}>
+            <Text style={styles.sectionTitle}>More options</Text>
+            <Text style={styles.hint}>
+              {optionSummary || 'Radius, saved places, filters and timing'}
+            </Text>
+          </View>
+          <Text style={styles.actionText}>{moreOptions ? '−' : '+'}</Text>
+        </Pressable>
+        {moreOptions ? (
+          <View style={styles.options}>
+            <View style={styles.section}>
+              <View style={styles.sectionHead}>
+                <Text style={styles.sectionTitle}>
+                  {hangId ? 'Include the host’s saved places' : 'Include my saved places'}
+                </Text>
+                <Switch
+                  style={{ minHeight: MIN_TARGET, minWidth: MIN_TARGET }}
+                  value={includeSaved}
+                  onValueChange={setIncludeSaved}
+                  accessibilityLabel={
+                    hangId
+                      ? 'Include the Pick host’s saved places inside the radius'
+                      : 'Include my saved places inside the radius'
+                  }
+                />
+              </View>
+            </View>
+            {groupId && !hangId ? (
+              <View style={styles.section}>
+                <View style={styles.sectionHead}>
+                  <Text style={styles.sectionTitle}>Include Group Ideas</Text>
+                  <Switch
+                    style={{ minHeight: MIN_TARGET, minWidth: MIN_TARGET }}
+                    disabled={submitting}
+                    value={includeGroupIdeas}
+                    onValueChange={setIncludeGroupIdeas}
+                    accessibilityLabel="Include Group Ideas"
+                  />
+                </View>
+                <Text style={styles.hint}>
+                  Mix your group’s matching ideas into this Pick. Distance, price and Open Now apply
+                  to public places only.
+                </Text>
+                {problems.includeGroupIdeas ? (
+                  <ErrorState message={problems.includeGroupIdeas} />
+                ) : null}
+              </View>
+            ) : null}
+
+            <Section
+              title="How far"
+              value={`${miles.toFixed(1)} mi`}
+              hint="Places within this distance of the pin."
+              error={problems.radiusM}
+            >
+              <Slider
+                minimumValue={MIN_MILES}
+                maximumValue={MAX_MILES}
+                step={0.5}
+                value={miles}
+                onValueChange={setMiles}
+                onSlidingComplete={() => haptic.tick()}
+                minimumTrackTintColor={colors.primary}
+                maximumTrackTintColor={colors.border}
+                thumbTintColor={colors.primary}
+                style={styles.slider}
+                accessibilityLabel="Search radius in miles"
+                accessibilityValue={{
+                  min: MIN_MILES,
+                  max: MAX_MILES,
+                  now: miles,
+                  text: `${miles} miles`,
+                }}
+              />
+            </Section>
+
+            <Section
+              title="Place filters"
+              hint="Unknown prices or hours are excluded when that filter is set."
+              error={problems.priceMax}
+            >
+              <PlaceFilterControls
+                priceMax={priceMax}
+                openNow={openNow}
+                onPrice={setPriceMax}
+                onOpen={setOpenNow}
+              />
+            </Section>
+            {category !== 'custom' ? (
+              <Section
+                title="How many places"
+                hint="Fewer is faster to swipe; more gives more options."
+                error={problems.poolSize}
+              >
+                <Chips
+                  options={POOL_SIZES}
+                  value={poolSize}
+                  onChange={setPoolSize}
+                  accessibilityLabel="Pool size"
+                />
+              </Section>
+            ) : null}
+
+            <Section
+              title="Deadline"
+              hint="Swiping closes then, even if not everyone is done."
+              error={problems.deadlineAt}
+            >
+              <Chips
+                options={DEADLINES}
+                value={deadlineMin}
+                onChange={setDeadlineMin}
+                accessibilityLabel="Deadline"
+              />
+            </Section>
+
+            <Section
+              title="Close early when"
+              hint="…this many people have finished swiping."
+              error={problems.closeThreshold}
+            >
+              <Chips
+                options={THRESHOLDS}
+                value={closeThreshold}
+                onChange={setCloseThreshold}
+                accessibilityLabel="Close threshold"
+              />
+            </Section>
+          </View>
+        ) : null}
+        {submitError ? (
+          <ErrorState message={submitError} onRetry={() => void submit()} retryLabel="Try again" />
+        ) : null}
+      </ScrollView>
+      <View style={styles.footer}>
+        <Button
+          label="Create Pick"
+          icon="flame"
+          loading={submitting}
+          onPress={() => void submit()}
+          accessibilityHint="Creates the Pick so you can invite friends"
         />
-      </Section>
-
-      <Section
-        title="Close early when"
-        hint="…this many people have finished swiping."
-        error={problems.closeThreshold}
-      >
-        <Chips
-          options={THRESHOLDS}
-          value={closeThreshold}
-          onChange={setCloseThreshold}
-          accessibilityLabel="Close threshold"
-        />
-      </Section>
-
-      {submitError ? (
-        <ErrorState message={submitError} onRetry={() => void submit()} retryLabel="Try again" />
-      ) : null}
-
-      <Button
-        label="Create Pick"
-        icon="flame"
-        loading={submitting}
-        onPress={() => void submit()}
-        accessibilityHint="Creates the Pick so you can invite friends"
-      />
+      </View>
     </Screen>
   );
 }
@@ -362,7 +462,7 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <Card>
+    <View style={styles.section}>
       <View style={styles.sectionHead}>
         <Text style={styles.sectionTitle} accessibilityRole="header">
           {title}
@@ -376,15 +476,59 @@ function Section({
           {error}
         </Text>
       ) : null}
-    </Card>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  sectionHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
-  sectionTitle: { fontFamily: fonts.bold, fontSize: 17, color: colors.text },
+  frame: { padding: 0, paddingBottom: 0, gap: 0 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+  },
+  identity: { flex: 1, gap: space.xs },
+  pageTitle: { ...type.heading, color: colors.text },
+  scroll: { flex: 1 },
+  content: { padding: space.lg, gap: space.xl, paddingBottom: space.xl },
+  section: { gap: space.md },
+  sectionHead: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.sm,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  disclosure: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    minHeight: MIN_TARGET,
+    paddingVertical: space.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  options: {
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    padding: space.lg,
+    gap: space.xl,
+  },
+  textAction: { minHeight: MIN_TARGET, justifyContent: 'center', alignSelf: 'flex-start' },
+  actionText: { ...type.body, color: colors.primary },
+  footer: {
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+    gap: space.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    backgroundColor: colors.bg,
+  },
+  sectionTitle: { fontFamily: fonts.bold, fontSize: 17, color: colors.text, flexShrink: 1 },
   sectionValue: { fontFamily: fonts.bold, fontSize: 17, color: colors.primary },
-  hint: { ...type.caption, color: colors.muted, marginTop: -space.xs },
+  hint: { ...type.caption, color: colors.muted },
   slider: { height: 44 },
   error: { ...type.caption, color: colors.danger },
 });
