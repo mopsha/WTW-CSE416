@@ -312,3 +312,35 @@ test('stale in-flight capability responses cannot enable another account', async
   await pending;
   expect(cache.capabilities('B').uploadsEnabled).toBe(false);
 });
+
+test('capabilities refresh when remaining lifetime equals the UI polling interval', async () => {
+  let clock = 100;
+  const { loader } = fixture();
+  const getAvatarCapabilities = jest
+    .fn()
+    .mockResolvedValue({ uploadsEnabled: true, reportsEnabled: true });
+  const cache = createAvatarCache({ ...loader, getAvatarCapabilities }, () => clock);
+  cache.setViewer('A');
+  await cache.refreshCapabilities();
+  clock += 14_999;
+  await cache.refreshCapabilities();
+  expect(getAvatarCapabilities).toHaveBeenCalledTimes(1);
+  clock++;
+  await cache.refreshCapabilities();
+  expect(getAvatarCapabilities).toHaveBeenCalledTimes(2);
+  clock = 30_101; // Past the first lease, within the renewed lease.
+  expect(cache.capabilities('A').uploadsEnabled).toBe(true);
+  clock = 45_100;
+  expect(cache.capabilities('A').uploadsEnabled).toBe(false);
+});
+
+test('avatar authorization revalidation never fetches moderation capabilities', async () => {
+  const { loader } = fixture();
+  const getAvatarCapabilities = jest.fn();
+  const cache = createAvatarCache({ ...loader, getAvatarCapabilities });
+  cache.watch('A', ref);
+  await cache.revalidate();
+  await cache.revalidate();
+  expect(loader.resolveAvatarRefs).toHaveBeenCalled();
+  expect(getAvatarCapabilities).not.toHaveBeenCalled();
+});

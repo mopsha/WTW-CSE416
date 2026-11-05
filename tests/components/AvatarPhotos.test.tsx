@@ -3,16 +3,19 @@ import { SocialIdentity } from '@/components/friends/SocialRow';
 import React from 'react';
 import { Image } from 'react-native';
 import { Avatar } from '@/components/Avatar';
-import { avatarCache, useAvatarLifecycle, useAvatarPhoto } from '@/hooks/useAvatarSource';
+import {
+  avatarCache,
+  useAvatarLifecycle,
+  useAvatarPhoto,
+  usePhotoCapabilities,
+} from '@/hooks/useAvatarSource';
 import { photoChanged } from '@/lib/photoEvents';
 import { api } from '@/lib/api';
 import type { AuthSession } from '@/lib/authTypes';
 type Tree = {
   root: {
     findAllByProps(p: object): { props: { onPress(): void } }[];
-    findAllByType(
-      t: unknown,
-    ): {
+    findAllByType(t: unknown): {
       props: {
         source: { uri: string };
         onError(): void;
@@ -281,4 +284,37 @@ test('native loading/error and server capabilities govern the real shared photo 
     .mockResolvedValue({ uploadsEnabled: false, reportsEnabled: false });
   await act(async () => avatarCache.refreshCapabilities(true));
   expect(photoActions()).toHaveLength(0);
+});
+
+function CapabilityHarness() {
+  usePhotoCapabilities();
+  return null;
+}
+
+test('ordinary avatars do not poll capabilities; only a mounted capability consumer does', async () => {
+  jest.useFakeTimers();
+  const refresh = jest.spyOn(avatarCache, 'refreshCapabilities').mockResolvedValue();
+  try {
+    await mount();
+    await act(async () => {
+      jest.advanceTimersByTime(60_000);
+    });
+    expect(refresh).not.toHaveBeenCalled();
+    await act(async () => tree!.update(<CapabilityHarness />));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      jest.advanceTimersByTime(15_000);
+    });
+    expect(refresh).toHaveBeenCalledTimes(2);
+    await act(async () => tree!.update(<></>));
+    await act(async () => {
+      jest.advanceTimersByTime(60_000);
+    });
+    expect(refresh).toHaveBeenCalledTimes(2);
+  } finally {
+    await act(async () => tree?.unmount());
+    tree = undefined;
+    refresh.mockRestore();
+    jest.useRealTimers();
+  }
 });

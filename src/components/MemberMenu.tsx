@@ -22,7 +22,10 @@ import { colors } from './theme';
 
 const USER_REASONS = [
   { reason: 'Harassment or bullying', hint: 'They were mean or threatening' },
-  { reason: 'Offensive name or profile text', hint: 'Their name or profile text isn’t OK' },
+  {
+    reason: 'Offensive name or profile picture',
+    hint: 'General report; does not save photo evidence',
+  },
   { reason: 'Spam or a fake account', hint: 'They aren’t a real person or keep spamming' },
 ] as const;
 

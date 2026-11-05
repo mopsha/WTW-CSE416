@@ -66,7 +66,8 @@ Changing this value affects new reports, not existing evidence deadlines. Settin
 it back to NULL pauses new photo reports without deleting existing evidence.
 Authenticated `/avatars/capabilities` exposes the actual upload/report readiness
 (and disables uploads for a deletion-pending account). The account-scoped client
-checks on focus and foreground polls, expires capability state after 30 seconds,
+checks on focus/resume and polls every 15 seconds only while editor/report UI is
+focused, refreshes when 15 seconds or less remain, expires capability state after 30 seconds,
 and fails closed on errors, backgrounding and account change. Submission/finalization
 always rechecks SQL readiness; UI state is never authorization. The fixed-search-path
 `private.require_photo_moderation` helper uses narrowly scoped SECURITY DEFINER only
@@ -296,3 +297,33 @@ choose approved staff access, audit event fields/sink/retention, content-specifi
 retention/local-copy rules, incident ownership, response commitments, receipt/grace
 policy and #45 disclosure updates. No roster, identity mechanism or policy period
 was invented, and no operator permissions or shared-project settings were changed.
+
+
+### Generic complaints versus revision-specific photo evidence
+
+The existing #44 `report_create(..., 'user', ...)` contract permits a generic report
+against another existing profile even after either-direction blocking or group
+removal. The ordinary member/profile/DM-header menu's “Offensive name or profile
+picture” reason uses that contract and says it does not save photo evidence. It
+remains usable when photo reporting is disabled or the image is inaccessible.
+It never pins photo bytes, records a photo revision, restores image access, or
+asserts that moderators can recover what was previously displayed. A former viewer
+still needs an available user-menu entry point (for example a still-open sheet);
+this change does not add historical user discovery after a row disappears.
+
+Revision-specific reports retain current photo authorization and readiness checks.
+The receipt/grace policy above remains necessary if the team wants to preserve
+specific photo evidence after loss of access; generic complaints do not solve that.
+
+### Why both moderator removal entry points remain
+
+`avatar_moderation_remove(report_id)` permits removal only while the report's
+historical evidence is unexpired and matches the current revision/path.
+`avatar_moderation_remove_current(report_id, revision, path)` instead binds the
+operator's freshly verified current-photo snapshot, allowing an expired report to
+identify that same still-current revision. It never restores expired evidence.
+Dropping either validation would silently change an existing CLI operation's
+security contract. Both already delegate to `private.remove_reported_photo`, which
+owns the shared owner/report locks, revision advancement, exact-report resolution,
+and note-preserving outcomes. Keep the two small public wrappers and existing CLI
+commands; no additional mutation pipeline is needed.

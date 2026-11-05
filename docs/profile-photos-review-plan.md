@@ -191,3 +191,15 @@ or TTL was invented. See moderation.md for receipt alternatives and the comparis
 of restricted CLI versus Dashboard across both message and photo evidence. Mike
 must approve the unified access/audit/retention/incident policy and receipt scope
 before readiness is enabled or the feature ships.
+
+
+Latest review follow-up: generic user complaints now explicitly include profile
+pictures with a no-photo-evidence hint. SQL tests verify the existing #44 contract
+after both block directions and group removal; private photo access remains denied.
+Revision-specific post-revocation evidence reports still need the approved bounded
+receipt/grace policy. Unavailable upload controls/empty sections are hidden, while
+owner removal remains usable. Capabilities are polled only by focused editor/report
+UI every 15 seconds, refreshed at <=15 seconds remaining on a 30-second lease.
+Avatar authorization polling does not fetch capabilities. Historical-evidence and
+current-photo operator removals retain distinct validation contracts and share the
+existing private mutation helper; their CLI semantics remain unchanged.

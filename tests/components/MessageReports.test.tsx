@@ -244,7 +244,7 @@ test('group/Pick/chat menus derive an authorized displayed photo without loading
   });
   await act(async () => tree.unmount());
 });
-test('name/profile complaints stay user reports and never imply photo evidence', async () => {
+test('generic name/photo complaints stay user reports and never imply photo evidence', async () => {
   let tree!: Tree;
   await act(async () => {
     tree = create(<MemberMenu userId="ava" name="Ava" />);
@@ -262,11 +262,11 @@ test('name/profile complaints stay user reports and never imply photo evidence',
     tree.root.findAllByType('test-item').some((n) => n.props.label === 'Offensive name or picture'),
   ).toBe(false);
   jest.mocked(api.report).mockResolvedValueOnce({ status: 'ok' });
-  await act(async () => item(tree, 'Offensive name or profile text').props.onPress());
+  await act(async () => item(tree, 'Offensive name or profile picture').props.onPress());
   expect(api.report).toHaveBeenCalledWith({
     kind: 'user',
     targetId: 'ava',
-    reason: 'Offensive name or profile text',
+    reason: 'Offensive name or profile picture',
   });
   await act(async () => tree.unmount());
 });
@@ -299,3 +299,41 @@ test('server-disabled capabilities hide photo action while ordinary reporting st
   ).toBe(false);
   await act(async () => tree.unmount());
 });
+
+test(
+  'a user menu without a reportable photo still permits a generic complaint',
+  async () => {
+    jest.mocked(useAvatarPhoto).mockReturnValue({
+      uri: null,
+      ref: null,
+      displayKey: undefined,
+      displayed: false,
+      onDisplay: () => {},
+    });
+    let tree!: Tree;
+    await act(async () => {
+      tree = create(<MemberMenu userId="ava" name="Ava" />);
+    });
+    await act(async () =>
+      tree.root
+        .findAll(
+          (n) =>
+            n.props.accessibilityLabel === 'Options for Ava' &&
+            typeof n.props.onPress === 'function',
+        )[0]!
+        .props.onPress(),
+    );
+    expect(
+      tree.root.findAllByType('test-item').some((n) => n.props.label === 'Report profile photo'),
+    ).toBe(false);
+    await act(async () => item(tree, 'Report').props.onPress());
+    jest.mocked(api.report).mockResolvedValueOnce({ status: 'ok' });
+    await act(async () => item(tree, 'Offensive name or profile picture').props.onPress());
+    expect(api.report).toHaveBeenCalledWith({
+      kind: 'user',
+      targetId: 'ava',
+      reason: 'Offensive name or profile picture',
+    });
+    await act(async () => tree.unmount());
+  },
+);

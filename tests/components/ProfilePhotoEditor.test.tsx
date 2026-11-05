@@ -268,13 +268,39 @@ test('disabled moderation hides upload capability while preserving removal and a
     .mocked(usePhotoCapabilities)
     .mockReturnValue({ uploadsEnabled: false, reportsEnabled: false, refresh: async () => {} });
   await mount({ ...profile, avatarRevision: 1, avatarRef: { userId: 'A', revision: 1 } });
-  expect(tree!.root.findAllByProps({ label: 'Change photo' })[0]!.props).toMatchObject({
-    disabled: true,
-  });
-  await press('Change photo'); // Bypass the disabled UI handler intentionally.
+  expect(tree!.root.findAllByProps({ label: 'Change photo' })).toHaveLength(0);
   expect(pickProfilePhoto).not.toHaveBeenCalled();
   jest.mocked(api.removeAvatar).mockResolvedValueOnce({ revision: 2, avatarRef: null });
   await press('Remove photo');
   expect(api.removeAvatar).toHaveBeenCalledWith('A', 1);
+  expect(api.uploadAvatar).not.toHaveBeenCalled();
+});
+
+test('disabled uploads with no persisted photo render no photo section', async () => {
+  jest
+    .mocked(usePhotoCapabilities)
+    .mockReturnValue({ uploadsEnabled: false, reportsEnabled: false, refresh: async () => {} });
+  await mount();
+  expect(tree!.root.findAllByType('photo-button')).toHaveLength(0);
+  expect(tree!.root.findAllByType('photo-avatar')).toHaveLength(0);
+});
+
+test('capability changes hide upload actions without losing an unsaved preview', async () => {
+  picked.mockResolvedValueOnce(selected);
+  await mount();
+  await press('Change photo');
+  jest
+    .mocked(usePhotoCapabilities)
+    .mockReturnValue({ uploadsEnabled: false, reportsEnabled: false, refresh: async () => {} });
+  await act(async () => tree!.update(<Harness />));
+  expect(tree!.root.findAllByProps({ label: 'Change photo' })).toHaveLength(0);
+  expect(tree!.root.findAllByProps({ label: 'Save photo' })).toHaveLength(0);
+  expect(tree!.root.findAllByProps({ label: 'Cancel photo change' }).length).toBeGreaterThan(0);
+  expect(tree!.root.findAllByType('photo-avatar')[0]!.props.uri).toBe(selected.previewUri);
+  jest
+    .mocked(usePhotoCapabilities)
+    .mockReturnValue({ uploadsEnabled: true, reportsEnabled: true, refresh: async () => {} });
+  await act(async () => tree!.update(<Harness />));
+  expect(tree!.root.findAllByProps({ label: 'Save photo' }).length).toBeGreaterThan(0);
   expect(api.uploadAvatar).not.toHaveBeenCalled();
 });

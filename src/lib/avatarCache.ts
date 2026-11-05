@@ -1,5 +1,6 @@
 import type { AvatarChange, AvatarRef, AvatarCapabilities } from '@shared/api/avatars.ts';
 
+export const CAPABILITY_POLL_MS = 15_000;
 const noCapabilities: AvatarCapabilities = { uploadsEnabled: false, reportsEnabled: false };
 interface PhotoLoader {
   getAvatarCapabilities?(viewer: string, signal: AbortSignal): Promise<AvatarCapabilities>;
@@ -101,7 +102,7 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
   async function refreshCapabilities(force = false): Promise<void> {
     if (!viewer || !active || !loader.getAvatarCapabilities) return;
     if (capabilityRequest) return capabilityRequest.promise;
-    if (!force && capabilityUntil > now() + 5000) return;
+    if (!force && capabilityUntil > now() + CAPABILITY_POLL_MS) return;
     const id = viewer;
     const capturedEpoch = epoch;
     const controller = new AbortController();
@@ -278,7 +279,6 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
       return promise;
     },
     async revalidate() {
-      void refreshCapabilities();
       expire();
       if (!viewer || !active || manifest || !watches.size) return;
       const id = viewer;

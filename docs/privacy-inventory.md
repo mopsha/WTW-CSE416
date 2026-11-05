@@ -139,9 +139,18 @@ linkage, retention and final policy language require human approval before relea
 
 Review follow-up: authenticated capability state is account-scoped and short-lived;
 no new server-side photo-view receipt/history is collected. Post-block/removal
-reporting remains a bounded-receipt/grace-policy decision. Privileged current-photo
+revision-specific evidence reporting remains a bounded-receipt/grace-policy decision.
+Generic user complaints remain permitted after blocking/group removal under #44;
+they preserve no photo bytes or revision and grant no access. Privileged current-photo
 review after evidence expiry never restores historical evidence or broadens ordinary
 photo/profile access. Current removal appends an operational outcome to all exact-
 revision reports while preserving notes; staff identity/access auditing is still an
 approval gate. PR #45 must explain these actual distinctions and any subsequently
 approved receipt retention before release; no permanent viewing history is assumed.
+
+Capabilities are fetched on focus/resume and polled only while editor/report UI is
+active, independently of avatar authorization checks. A 15-second polling interval
+refreshes at 15 seconds or less remaining on the 30-second request-start lease;
+expiry/failure remains fail-closed. Request completion and JS scheduling can still
+delay updates. Disabled uploads hide the upload controls; existing owner photos
+remain removable. No new viewing-history or retention policy was introduced.

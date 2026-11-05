@@ -1,15 +1,9 @@
 import type { AvatarRef } from '@shared/api/avatars.ts';
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useState,
-  useSyncExternalStore,
-} from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { AppState } from 'react-native';
 import { api } from '@/lib/api';
-import { createAvatarCache } from '@/lib/avatarCache';
+import { CAPABILITY_POLL_MS, createAvatarCache } from '@/lib/avatarCache';
 import { subscribePhotoChanges } from '@/lib/photoEvents';
 import { useAuth } from './useAuth';
 
@@ -92,7 +86,16 @@ export function usePhotoCapabilities() {
     useCallback(() => {
       if (!viewer) return;
       avatarCache.setViewer(viewer, scope ?? viewer);
-      void avatarCache.refreshCapabilities();
+      void avatarCache.refreshCapabilities(true);
+      const timer = setInterval(() => void avatarCache.refreshCapabilities(), CAPABILITY_POLL_MS);
+      const sub = AppState.addEventListener('change', (state) => {
+        avatarCache.setActive(state === 'active');
+        if (state === 'active') void avatarCache.refreshCapabilities(true);
+      });
+      return () => {
+        clearInterval(timer);
+        sub.remove();
+      };
     }, [viewer, scope]),
   );
   return {

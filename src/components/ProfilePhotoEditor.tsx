@@ -169,6 +169,15 @@ function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: Photo
       }
     }, true);
   }
+  // Keep capability fetching mounted, but do not advertise an unavailable feature.
+  if (
+    !capabilities.uploadsEnabled &&
+    !profile.avatarRef &&
+    !profile.avatarUrl &&
+    !selected &&
+    !busy
+  )
+    return null;
   return (
     <View style={{ gap: space.sm }}>
       <Text style={{ ...type.body, color: colors.text }}>Profile photo</Text>
@@ -179,30 +188,31 @@ function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: Photo
         avatarRef={selected ? undefined : profile.avatarRef}
         userId={selected ? undefined : profile.id}
       />
-      <Button
-        label="Change photo"
-        icon="image-outline"
-        variant="secondary"
-        disabled={disabled || busy || !capabilities.uploadsEnabled}
-        onPress={() => void choose()}
-      />
-      {!capabilities.uploadsEnabled ? (
-        <Text style={{ ...type.caption, color: colors.muted }}>
-          Photo uploads are currently unavailable.
-        </Text>
+      {capabilities.uploadsEnabled ? (
+        <Button
+          label="Change photo"
+          icon="image-outline"
+          variant="secondary"
+          disabled={disabled || busy || !capabilities.uploadsEnabled}
+          onPress={() => void choose()}
+        />
       ) : null}
       {selected ? (
         <>
-          <Text style={{ ...type.caption, color: colors.muted }}>
-            Preview — save to update your profile photo.
-          </Text>
-          <Button
-            label="Save photo"
-            variant="secondary"
-            loading={busy}
-            disabled={disabled || !capabilities.uploadsEnabled}
-            onPress={() => void save()}
-          />
+          {capabilities.uploadsEnabled ? (
+            <Text style={{ ...type.caption, color: colors.muted }}>
+              Preview — save to update your profile photo.
+            </Text>
+          ) : null}
+          {capabilities.uploadsEnabled ? (
+            <Button
+              label="Save photo"
+              variant="secondary"
+              loading={busy}
+              disabled={disabled || !capabilities.uploadsEnabled}
+              onPress={() => void save()}
+            />
+          ) : null}
           <Button
             label="Cancel photo change"
             variant="link"
