@@ -1,6 +1,7 @@
 import { parseProfileUpdate, validateDisplayName } from './profile.ts';
 import { ApiError } from './errors.ts';
 import { requireCleanText } from './text.ts';
+import type { AvatarRef } from './avatars.ts';
 export interface ProfileDetailsInput {
   username: string | null;
   favoriteCuisine: string | null;
@@ -12,6 +13,9 @@ export interface UserProfile {
   displayName: string | null;
   username: string | null;
   avatarUrl: string | null;
+  avatarRef?: AvatarRef | null;
+  /** Included for the owner even when there is no photo. */
+  avatarRevision?: number;
   isOwner: boolean;
   metadataVisible: boolean;
   shareMetadata?: boolean;

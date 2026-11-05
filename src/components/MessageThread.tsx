@@ -214,7 +214,13 @@ export function MessageThread({
               {group && !own ? (
                 <View style={s.senderAvatar}>
                   {!grouped ? (
-                    <SocialIdentity name={name} uri={message.senderAvatarUrl} size={28} />
+                    <SocialIdentity
+                      name={name}
+                      uri={message.senderAvatarUrl}
+                      userId={message.senderId}
+                      avatarRef={message.senderAvatarRef}
+                      size={28}
+                    />
                   ) : null}
                 </View>
               ) : null}

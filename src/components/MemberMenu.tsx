@@ -1,3 +1,4 @@
+import { useAvatarPhoto, usePhotoCapabilities } from '@/hooks/useAvatarSource';
 // Report or block someone. MemberMenu is the "…" on another person's row or profile; SafetySheet
 // is the same bottom sheet (like HostMenu), also opened for a single chat message. Blocking is
 // silent: they aren't told, and they can no longer friend or message you, join your Picks, or be
@@ -7,6 +8,7 @@ import { useState } from 'react';
 import { Modal, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import type { AvatarRef } from '@shared/api/avatars.ts';
 import type { ReportKind } from '@shared/api/safety.ts';
 
 import { useAction } from '@/hooks/useAction';
@@ -20,7 +22,10 @@ import { colors } from './theme';
 
 const USER_REASONS = [
   { reason: 'Harassment or bullying', hint: 'They were mean or threatening' },
-  { reason: 'Offensive name or picture', hint: 'Their name or photo isn’t OK' },
+  {
+    reason: 'Offensive name or profile picture',
+    hint: 'General report; does not save photo evidence',
+  },
   { reason: 'Spam or a fake account', hint: 'They aren’t a real person or keep spamming' },
 ] as const;
 
@@ -39,13 +44,24 @@ interface SheetProps {
   /** What Report files; defaults to the person. */
   target?: { kind: ReportKind; id: string };
   onBlocked?(): void;
+  photo?: AvatarRef;
 }
 
 /** Mount it to open it, so every opening starts on a clean menu. */
-export function SafetySheet({ onClose, userId, name, target, onBlocked }: SheetProps) {
+export function SafetySheet({ onClose, userId, name, target, onBlocked, photo }: SheetProps) {
+  const displayed = useAvatarPhoto(photo, userId);
+  const capabilities = usePhotoCapabilities();
+  const reportablePhoto = capabilities.reportsEnabled && displayed.displayed ? displayed.ref : null;
   const [step, setStep] = useState<'menu' | 'report' | 'done'>('menu');
   const [message, setMessage] = useState('');
+  const [photoReport, setPhotoReport] = useState<AvatarRef | null>(null);
   const action = useAction();
+  const selectedPhotoAvailable =
+    !photoReport ||
+    (displayed.displayed &&
+      displayed.ref?.userId === photoReport.userId &&
+      displayed.ref?.revision === photoReport.revision);
+  const canSubmitPhoto = capabilities.reportsEnabled && selectedPhotoAvailable;
   const reportsMessage = target?.kind === 'group_message' || target?.kind === 'direct_message';
 
   const finish = (text: string) => {
@@ -55,14 +71,34 @@ export function SafetySheet({ onClose, userId, name, target, onBlocked }: SheetP
   };
 
   const report = async (reason: string) => {
+    if (photoReport && !canSubmitPhoto) {
+      await action.run('report', async () => {
+        throw new Error(
+          'Photo reporting or the selected photo is currently unavailable. No report was submitted.',
+        );
+      });
+      return;
+    }
     const ok = await action.run('report', () =>
-      api.report({ kind: target?.kind ?? 'user', targetId: target?.id ?? userId, reason }),
+      api.report(
+        photoReport
+          ? {
+              kind: 'profile_photo',
+              targetId: photoReport.userId,
+              photoRevision: photoReport.revision,
+              reason,
+            }
+          : { kind: target?.kind ?? 'user', targetId: target?.id ?? userId, reason },
+      ),
     );
+    if (!ok && photoReport) void capabilities.refresh();
     if (ok)
       finish(
-        reportsMessage
-          ? 'Thanks. We’ll look into this message.'
-          : `Thanks. We’ll look into ${name}.`,
+        photoReport
+          ? 'Thanks. We’ll look into this photo.'
+          : reportsMessage
+            ? 'Thanks. We’ll look into this message.'
+            : `Thanks. We’ll look into ${name}.`,
       );
   };
 
@@ -86,7 +122,13 @@ export function SafetySheet({ onClose, userId, name, target, onBlocked }: SheetP
       <SafeAreaView edges={['bottom']} style={menuStyles.sheet}>
         <View style={menuStyles.handle} />
         <Text style={menuStyles.title} accessibilityRole="header">
-          {step === 'report' ? (reportsMessage ? 'Report message' : `Report ${name}`) : name}
+          {step === 'report'
+            ? photoReport
+              ? 'Report profile photo'
+              : reportsMessage
+                ? 'Report message'
+                : `Report ${name}`
+            : name}
         </Text>
         {action.error ? <ErrorBanner message={action.error} onRetry={action.clearError} /> : null}
         {step === 'menu' ? (
@@ -97,6 +139,17 @@ export function SafetySheet({ onClose, userId, name, target, onBlocked }: SheetP
               hint="Tell us something isn’t right"
               onPress={() => setStep('report')}
             />
+            {reportablePhoto ? (
+              <MenuItem
+                icon="flag"
+                label="Report profile photo"
+                hint="Report the photo currently shown"
+                onPress={() => {
+                  setPhotoReport(reportablePhoto);
+                  setStep('report');
+                }}
+              />
+            ) : null}
             <MenuItem
               icon="hand-left"
               label={reportsMessage ? `Block ${name}` : 'Block'}
@@ -107,8 +160,11 @@ export function SafetySheet({ onClose, userId, name, target, onBlocked }: SheetP
             />
           </>
         ) : null}
-        {step === 'report'
-          ? (reportsMessage ? MESSAGE_REASONS : USER_REASONS).map((r) => (
+        {step === 'report' && photoReport && !canSubmitPhoto && !action.error ? (
+          <ErrorBanner message="Photo reporting or the selected photo is currently unavailable. No report was submitted." />
+        ) : null}
+        {step === 'report' && (!photoReport || canSubmitPhoto)
+          ? (reportsMessage || photoReport ? MESSAGE_REASONS : USER_REASONS).map((r) => (
               <MenuItem
                 key={r.reason}
                 icon="chevron-forward"
@@ -131,10 +187,12 @@ export function MemberMenu({
   userId,
   name,
   onBlocked,
+  photo,
 }: {
   userId: string;
   name: string;
   onBlocked?(): void;
+  photo?: AvatarRef;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -158,6 +216,7 @@ export function MemberMenu({
           userId={userId}
           name={name}
           onBlocked={onBlocked}
+          photo={photo}
         />
       ) : null}
     </>

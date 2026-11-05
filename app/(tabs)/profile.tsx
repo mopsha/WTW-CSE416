@@ -82,7 +82,7 @@ export default function ProfileScreen() {
 
   return (
     <Screen edges={['top', 'left', 'right']} contentStyle={styles.content}>
-      <ProfileHero name={name} profile={details} />
+      <ProfileHero name={name} profile={details} userId={session.user.id} />
       <Button
         label="Edit profile"
         variant="secondary"

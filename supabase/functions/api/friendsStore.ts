@@ -2,6 +2,7 @@ import { ApiError } from '../_shared/api/errors.ts';
 import type { FriendRequestResult, FriendRow, FriendsStore } from '../_shared/api/friends.ts';
 import { takeFriendRequestLimit } from './friendRequestLimit.ts';
 import { createServiceClient } from './serviceClient.ts';
+import { avatarMetadata } from './avatarMetadata.ts';
 
 function fail(error: { code?: string }): never {
   switch (error.code) {
@@ -27,7 +28,15 @@ export function createFriendsStore(): FriendsStore {
         p_user_id: userId,
       });
       if (error) fail(error);
-      return (data ?? []) as FriendRow[];
+      const rows = (data ?? []) as FriendRow[];
+      const refs = await avatarMetadata(
+        userId,
+        rows.filter((r) => r.status === 'accepted').map((r) => r.userId),
+      );
+      return rows.map((row) => ({
+        ...row,
+        avatarRef: row.status === 'accepted' ? (refs[row.userId]?.avatarRef ?? null) : null,
+      }));
     },
     async request(userId, email) {
       const { data, error } = await createServiceClient().rpc('friend_request', {

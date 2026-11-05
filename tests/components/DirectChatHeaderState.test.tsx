@@ -5,6 +5,14 @@ import DirectMessageScreen from '../../app/messages/[id]';
 import { useDirectChat } from '@/hooks/useDirectChat';
 const { create, act } = jest.requireActual('react-test-renderer');
 jest.mock('expo-router', () => ({ useLocalSearchParams: () => ({ id: 'conversation' }) }));
+jest.mock('@/hooks/useAvatarSource', () => ({
+  useAvatarPhoto: () => ({ uri: null, ref: null }),
+  usePhotoCapabilities: () => ({
+    uploadsEnabled: false,
+    reportsEnabled: false,
+    refresh: async () => {},
+  }),
+}));
 jest.mock('@/hooks/useAuth', () => ({ useSession: () => ({ user: { id: 'me' } }) }));
 jest.mock('@/hooks/useDirectChat', () => ({ useDirectChat: jest.fn() }));
 jest.mock('@/components', () => ({
@@ -79,18 +87,16 @@ test('a verified peer retains their actual identity and messages remain availabl
 
 test('verified direct-chat peer menu reports and blocks the peer, then refreshes access', async () => {
   const refresh = jest.fn().mockResolvedValue(undefined);
-  jest
-    .mocked(useDirectChat)
-    .mockReturnValue({
-      ...base,
-      loading: false,
-      refresh,
-      conversation: {
-        id: 'conversation',
-        createdAt: '2026-11-03',
-        peer: { id: 'friend', displayName: 'Ava', username: 'ava', avatarUrl: null },
-      },
-    });
+  jest.mocked(useDirectChat).mockReturnValue({
+    ...base,
+    loading: false,
+    refresh,
+    conversation: {
+      id: 'conversation',
+      createdAt: '2026-11-03',
+      peer: { id: 'friend', displayName: 'Ava', username: 'ava', avatarUrl: null },
+    },
+  });
   jest.mocked(api.report).mockResolvedValue({ status: 'ok' });
   jest.mocked(api.blockUser).mockResolvedValue({ status: 'ok' });
   jest.mocked(confirmAction).mockResolvedValue(true);
@@ -129,17 +135,15 @@ test.each([
 ])(
   'header and peer menu share the label for displayName=%s username=%s',
   async (displayName, username, label) => {
-    jest
-      .mocked(useDirectChat)
-      .mockReturnValue({
-        ...base,
-        loading: false,
-        conversation: {
-          id: 'conversation',
-          createdAt: '2026-11-03',
-          peer: { id: 'friend', displayName, username, avatarUrl: null },
-        },
-      });
+    jest.mocked(useDirectChat).mockReturnValue({
+      ...base,
+      loading: false,
+      conversation: {
+        id: 'conversation',
+        createdAt: '2026-11-03',
+        peer: { id: 'friend', displayName, username, avatarUrl: null },
+      },
+    });
     let tree: any;
     await act(async () => {
       tree = create(<DirectMessageScreen />);

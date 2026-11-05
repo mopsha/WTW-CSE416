@@ -29,6 +29,8 @@ function Conversation({ id, userId }: { id: string; userId: string }) {
         unavailable={chat.unavailable}
         loading={!peer && !chat.error && !chat.unavailable}
         uri={peer?.avatarUrl}
+        userId={peer?.id}
+        avatarRef={peer?.avatarRef}
         subtitle={peer?.username ? `@${peer.username}` : undefined}
       />
       <MessageThread

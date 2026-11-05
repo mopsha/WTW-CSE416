@@ -1,6 +1,9 @@
 import { parseProfileDetails } from '@shared/api/userProfiles.ts';
 import type { UserProfilesStore } from '@shared/api/userProfiles.ts';
 const mockRpc = jest.fn();
+jest.mock('../supabase/functions/api/avatarMetadata.ts', () => ({
+  avatarMetadata: jest.fn(async () => ({})),
+}));
 jest.mock('../supabase/functions/api/serviceClient.ts', () => ({
   createServiceClient: () => ({ rpc: mockRpc }),
 }));
@@ -67,4 +70,31 @@ test.each([
 ])('adapter sanitizes %s', (code, status) => {
   mockRpc.mockResolvedValue({ data: null, error: { code, message: 'SECRET' } });
   return expect(createUserProfilesStore().get('me', 'friend')).rejects.toMatchObject({ status });
+});
+
+test('photo references are additive, revision is owner-only, and legacy avatar URL remains unchanged', async () => {
+  const { avatarMetadata } = jest.requireMock<{ avatarMetadata: jest.Mock }>(
+    '../supabase/functions/api/avatarMetadata.ts',
+  );
+  avatarMetadata.mockResolvedValueOnce({
+    me: { revision: 4, avatarRef: { userId: 'me', revision: 4 } },
+  });
+  mockRpc.mockResolvedValueOnce({
+    data: { id: 'me', isOwner: true, avatarUrl: null },
+    error: null,
+  });
+  await expect(createUserProfilesStore().get('me', 'me')).resolves.toMatchObject({
+    avatarUrl: null,
+    avatarRef: { userId: 'me', revision: 4 },
+    avatarRevision: 4,
+  });
+  avatarMetadata.mockResolvedValueOnce({ friend: { revision: 7, avatarRef: null } });
+  mockRpc.mockResolvedValueOnce({
+    data: { id: 'friend', isOwner: false, avatarUrl: 'https://example.com/legacy.jpg' },
+    error: null,
+  });
+  const profile = await createUserProfilesStore().get('me', 'friend');
+  expect(profile.avatarUrl).toBe('https://example.com/legacy.jpg');
+  expect(profile.avatarRef).toBeNull();
+  expect(profile).not.toHaveProperty('avatarRevision');
 });

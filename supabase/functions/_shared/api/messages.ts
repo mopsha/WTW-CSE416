@@ -1,4 +1,5 @@
 import { ApiError } from './errors.ts';
+import type { AvatarRef } from './avatars.ts';
 import { requireCleanText } from './text.ts';
 export const MESSAGE_MAX = 1000;
 export const MESSAGE_LIMIT = 50;
@@ -12,6 +13,7 @@ export interface Message {
   senderName: string | null;
   senderUsername: string | null;
   senderAvatarUrl: string | null;
+  senderAvatarRef?: AvatarRef | null;
   body: string;
   createdAt: string;
 }

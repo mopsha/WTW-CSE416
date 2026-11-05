@@ -1,4 +1,5 @@
 import { parseMessage, type Message, type MessageInput } from './messages.ts';
+import type { AvatarRef } from './avatars.ts';
 import type { Notifier } from './notify.ts';
 export interface DirectConversation {
   id: string;
@@ -8,6 +9,7 @@ export interface DirectConversation {
     displayName: string | null;
     username: string | null;
     avatarUrl: string | null;
+    avatarRef?: AvatarRef | null;
   };
 }
 export interface DirectMessage extends Message {

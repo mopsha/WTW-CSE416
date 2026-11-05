@@ -216,7 +216,13 @@ export default function FriendsScreen() {
                       key={p.userId}
                       title={nameOf(p)}
                       subtitle="Request sent by email"
-                      leading={<SocialIdentity name={nameOf(p)} />}
+                      leading={
+                        <SocialIdentity
+                          name={nameOf(p)}
+                          userId={p.userId}
+                          avatarRef={p.avatarRef}
+                        />
+                      }
                       actions={
                         <>
                           <Button
@@ -287,7 +293,9 @@ export default function FriendsScreen() {
                     }
                     title={nameOf(p)}
                     subtitle={`Friends since ${day(p.since)}`}
-                    leading={<SocialIdentity name={nameOf(p)} />}
+                    leading={
+                      <SocialIdentity name={nameOf(p)} userId={p.userId} avatarRef={p.avatarRef} />
+                    }
                     actions={
                       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                         {action.busy === `message:${p.userId}` ? (

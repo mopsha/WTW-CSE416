@@ -1,6 +1,7 @@
 import { ApiError } from '../_shared/api/errors.ts';
 import type { GroupChatStore, GroupMessage } from '../_shared/api/groupChat.ts';
 import { createServiceClient } from './serviceClient.ts';
+import { avatarMetadata } from './avatarMetadata.ts';
 export function createGroupChatStore(): GroupChatStore {
   async function rpc(action: string, userId: string, groupId: string, input = {}) {
     const { data, error } = await createServiceClient().rpc('group_chat', {
@@ -24,7 +25,15 @@ export function createGroupChatStore(): GroupChatStore {
     return data;
   }
   return {
-    list: async (u, g) => (await rpc('list', u, g)) as GroupMessage[],
+    list: async (u, g) => {
+      const messages = (await rpc('list', u, g)) as GroupMessage[];
+      const refs = await avatarMetadata(
+        u,
+        messages.map((m) => m.senderId),
+      );
+      return messages.map((m) => ({ ...m, senderAvatarRef: refs[m.senderId]?.avatarRef ?? null }));
+    },
+    // Keep sends independent of photo metadata reads after the write commits.
     send: async (u, g, input) =>
       (await rpc('send', u, g, input)) as { message: GroupMessage; recipientIds: string[] },
   };

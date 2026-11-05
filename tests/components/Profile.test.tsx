@@ -5,6 +5,20 @@ import { api } from '@/lib/api';
 import { router } from 'expo-router';
 import { accountActions } from '@/lib/accountActions';
 import type { UserProfile } from '@shared/api/userProfiles.ts';
+jest.mock('@/hooks/useAvatarSource', () => ({
+  useAvatarSource: () => null,
+  useAvatarPhoto: () => ({
+    uri: null,
+    ref: null,
+    displayed: false,
+    displayKey: undefined,
+    onDisplay: () => {},
+  }),
+}));
+jest.mock('@/components/ProfilePhotoEditor', () => ({
+  ProfilePhotoEditor: (p: object) =>
+    jest.requireActual('react').createElement('test-photo-editor', p),
+}));
 const { create, act } = jest.requireActual('react-test-renderer');
 const mockSaveName = jest.fn();
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));

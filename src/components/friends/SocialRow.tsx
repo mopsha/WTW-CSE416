@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import type { ReactNode } from 'react';
-import { ActivityIndicator, Pressable, Image, StyleSheet, Text, View } from 'react-native';
-import { colors, fonts, MIN_TARGET, friendsTheme, radius, space } from '../theme';
-import { initialsFor } from '@/lib/avatar';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { colors, MIN_TARGET, friendsTheme, radius, space } from '../theme';
+import { Avatar } from '../Avatar';
+import type { AvatarRef } from '@shared/api/avatars.ts';
 
 /** Optional metadata is presentation-only; rows never load conversation/profile data. */
 export function SocialRow({
@@ -57,40 +58,26 @@ export function SocialIdentity({
   name,
   uri,
   size = 60,
+  userId,
+  avatarRef,
+  group = false,
 }: {
   name: string;
   group?: boolean;
   uri?: string | null;
   size?: number;
+  userId?: string;
+  avatarRef?: AvatarRef | null;
 }) {
-  let hash = 0;
-  for (const ch of name.trim().toLowerCase()) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
   return (
-    <View
-      style={[
-        s.monogram,
-        {
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          backgroundColor: friendsTheme.identities[hash % friendsTheme.identities.length],
-        },
-      ]}
-      accessible
-      accessibilityRole="image"
-      accessibilityLabel={name}
-    >
-      {uri ? (
-        <Image
-          source={{ uri }}
-          style={[s.photo, { width: size, height: size, borderRadius: size / 2 }]}
-        />
-      ) : (
-        <Text style={[s.initials, { fontSize: (size * 23) / 60 }]} maxFontSizeMultiplier={1.4}>
-          {initialsFor(name)}
-        </Text>
-      )}
-    </View>
+    <Avatar
+      name={name}
+      uri={uri}
+      size={size}
+      variant="social"
+      userId={group ? undefined : userId}
+      avatarRef={group ? undefined : avatarRef}
+    />
   );
 }
 
@@ -228,16 +215,7 @@ const s = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: colors.border,
   },
-  photo: { width: 60, height: 60, borderRadius: 30 },
   message: { backgroundColor: friendsTheme.message, borderRadius: radius.md },
-  monogram: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  initials: { fontFamily: fonts.semibold, fontSize: 23, color: colors.text },
   iconTarget: {
     minWidth: MIN_TARGET,
     minHeight: MIN_TARGET,
