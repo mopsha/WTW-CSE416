@@ -4,7 +4,16 @@ import { api } from '@/lib/api';
 import { queries } from '@/lib/queries';
 import { router } from 'expo-router';
 import { confirmAction } from '@/lib/confirm';
-jest.mock('@/hooks/useAvatarSource', () => ({ useAvatarSource: () => null }));
+jest.mock('@/hooks/useAvatarSource', () => ({
+  useAvatarSource: () => null,
+  useAvatarPhoto: () => ({
+    uri: null,
+    ref: null,
+    displayed: false,
+    displayKey: undefined,
+    onDisplay: () => {},
+  }),
+}));
 const { create, act } = jest.requireActual('react-test-renderer');
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('expo-router', () => ({

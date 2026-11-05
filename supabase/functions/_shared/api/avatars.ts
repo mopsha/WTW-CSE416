@@ -9,7 +9,12 @@ export interface AvatarChange {
   revision: number;
   avatarRef: AvatarRef | null;
 }
+export interface AvatarCapabilities {
+  uploadsEnabled: boolean;
+  reportsEnabled: boolean;
+}
 export interface AvatarStore {
+  capabilities?(userId: string): Promise<AvatarCapabilities>;
   upload(userId: string, revision: number, bytes: Uint8Array): Promise<AvatarChange>;
   remove(userId: string, revision: number): Promise<AvatarChange>;
   read(viewerId: string, targetId: string, revision: number): Promise<Uint8Array>;

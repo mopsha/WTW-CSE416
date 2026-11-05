@@ -6,10 +6,11 @@ import { localConfig, request, requireStatus } from '../api/local.mjs';
 const [action, ...paths] = process.argv.slice(2);
 if (
   !['create', 'remove'].includes(action) ||
-  paths.length !== 2 ||
+  paths.length < 1 ||
+  paths.length > 3 ||
   paths.some((path) => !/^[0-9a-f-]{36}\/[0-9a-f-]{36}\.jpg$/.test(path))
 ) {
-  throw new Error('Expected fixture action and two generated photo paths');
+  throw new Error('Expected fixture action and one to three generated photo paths');
 }
 const config = localConfig(); // Fixed loopback ports only; credentials stay in memory.
 if (action === 'create') {

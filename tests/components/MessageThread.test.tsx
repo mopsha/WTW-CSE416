@@ -10,7 +10,16 @@ import {
 } from 'react-native';
 import { MessageThread, type MessageThreadState } from '@/components/MessageThread';
 import { MESSAGE_MAX } from '@shared/api/messages.ts';
-jest.mock('@/hooks/useAvatarSource', () => ({ useAvatarSource: () => null }));
+jest.mock('@/hooks/useAvatarSource', () => ({
+  useAvatarSource: () => null,
+  useAvatarPhoto: () => ({
+    uri: null,
+    ref: null,
+    displayed: false,
+    displayKey: undefined,
+    onDisplay: () => {},
+  }),
+}));
 const { create, act } = jest.requireActual('react-test-renderer');
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('@/components', () => ({

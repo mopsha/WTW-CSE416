@@ -48,21 +48,37 @@ Reporters aren't told the outcome, and the reported person isn't told who report
 
 ## Profile-photo reports (#49)
 
-Implemented but **disabled until policy configuration**. This is not an approval of
+Implemented but **uploads and photo reporting are disabled until explicit moderation readiness is approved**. This is not an approval of
 retention, staffing, or new staff access. Before enabling photo uploads for release,
 the team must assign the queue, approve evidence retention and local-copy handling,
 review disclosures, and validate this workflow against real Supabase Storage.
 
 Only an existing authorized project operator may configure
 `private.photo_moderation_config.retention_seconds` using the SQL editor. It starts
-NULL; photo reports fail closed with HTTP 503 until a positive, team-approved
-number of seconds is recorded. There is deliberately no production default.
+NULL and `moderation_ready` starts false. Both a positive approved retention
+interval and an explicit `moderation_ready=true` assertion are required for new
+uploads, replacements and photo reports. Retention alone never enables them.
+Readiness must attest approved staffing, audit/access controls, response ownership,
+retention/disclosures and a working review/removal workflow. Nothing enables it
+automatically; there is no production retention default. Existing photo reads,
+owner removal, account cleanup and authorized operator actions remain available.
 Changing this value affects new reports, not existing evidence deadlines. Setting
 it back to NULL pauses new photo reports without deleting existing evidence.
-Mock mode also returns 503 rather than pretending to preserve moderation evidence.
+Authenticated `/avatars/capabilities` exposes the actual upload/report readiness
+(and disables uploads for a deletion-pending account). The account-scoped client
+checks on focus and foreground polls, expires capability state after 30 seconds,
+and fails closed on errors, backgrounding and account change. Submission/finalization
+always rechecks SQL readiness; UI state is never authorization. The fixed-search-path
+`private.require_photo_moderation` helper uses narrowly scoped SECURITY DEFINER only
+to acquire a shared configuration-row lock without granting service-role configuration
+writes. Only project operators can change readiness. Mock capability state stays
+disabled; its existing fixture store is not proof of production moderation security.
 
 Users report a managed photo from the existing options menu on another person's
-profile. The action appears only after authenticated photo loading succeeds. It
+profile, group member/Pick participant menus, or existing chat options. These menus
+resolve only photo identity, not a friends-only profile. The photo action appears
+only for an authorized current image that has loaded natively, while report capability
+is enabled; initials, loading, decode errors and revoked images do not qualify. It
 captures the displayed revision; the server locks the owner's profile and verifies
 current photo access and the exact revision. Self reports, guessed IDs, pending
 requests, revoked relationships and either-direction blocks do not grant access.
@@ -118,8 +134,10 @@ signed URLs, bytes or server error bodies.
 
    The service-only RPC locks the owner profile, checks the reported revision/path,
    re-reads and locks the report after the owner lock, checks wall-clock expiry,
-   clears the current reference and advances its revision, then marks exactly that report
-   reviewed with the removal action. A report about an older photo cannot remove a
+   clears the current reference and advances its revision, then resolves all eligible
+   reports for that exact owner/revision/path. Existing notes and review dates are
+   preserved; an action timestamp and source-report reference are appended. This is
+   an operational outcome, not attribution to the reporter or proof of staff identity. A report about an older photo cannot remove a
    newer one. Stale owner uploads conflict. A deliberate new upload is still allowed;
    upload suspension or account sanctions remain team decisions.
 4. For no-action or obsolete-photo reports, use the existing reviewed_at/review_note
@@ -163,8 +181,15 @@ retention answers with the responsible team; this document does not finalize the
 
 ### Lock order and evidence-access audit release gate
 
-SQL operations that need both records lock the **owner profile first, report row
-second**. Report creation locks the owner before attaching evidence. Moderator
+SQL operations that need both records lock the **owner profile first, report rows
+second**. Photo reporting uses FOR NO KEY UPDATE for the owner: this serializes
+replacement/deletion but is compatible with the reporter-profile KEY SHARE locks
+needed by rate-limit/report foreign keys. The former FOR UPDATE lock reproduced
+40P01 under concurrent mutual reports in disposable PostgreSQL. Forced regression
+tests cover both participants. Moderator changes still take an owner FOR UPDATE lock,
+then lock matching report rows by ID. Expiry takes only a bounded report batch with
+SKIP LOCKED and never subsequently locks owners, avoiding a reverse acquisition
+cycle with multi-report resolution. Report creation locks the owner before attaching evidence. Moderator
 removal does only a nonauthoritative owner-ID lookup first, then obtains those
 locks and revalidates the report. Evidence expiry locks only report rows and never
 then acquires an owner lock. Account cleanup freezes the owner in a separate
@@ -195,3 +220,79 @@ was implemented in this correction pass. This remains a release/access prerequis
 not a claim that platform logging already meets it. Keep photo reporting disabled
 until approved retention exists, and do not ship uploads/moderator operations until
 all moderation release gates (including this audit decision) are satisfied.
+
+
+### Reviewing a still-current photo after historical evidence expires
+
+Historical `view` still refuses expired evidence. Expired public report submissions
+still return PHOTO_REPORT_EXPIRED; no retention period is renewed. Authorized
+operators can instead use:
+
+```sh
+node scripts/moderate-profile-photo.mjs view-current <report-uuid> <new-private-file.jpg>
+node scripts/moderate-profile-photo.mjs remove-current <report-uuid> --confirm
+```
+
+These use service-only current-photo RPCs. They require the reported revision to
+still be the owner's current photo; they never show a newer replacement using an
+old report, restore an expired evidence path, or grant ordinary users access.
+Current viewing verifies the snapshot again after Storage download before writing
+the private file. Current removal binds the verified revision/path under the owner
+and report locks, resolves all matching reports, and preserves prior notes. Account
+deletion intent still denies review/removal. Raw Storage objects are never deleted
+through SQL. Existing orphan/account cleanup performs physical deletion; already
+received operator copies remain subject to the approved handling policy.
+
+### Post-block / group-removal reporting: policy decision, not enabled
+
+The server currently retains no trustworthy per-viewer, per-revision authorization
+receipt. Client image/display/cache state is untrusted and short-lived; minute
+counters and service-role Storage logs cannot establish a verified viewer/revision
+right. Current SQL eligibility is therefore still required. A block or loss of all
+current group/Pick/friend eligibility can prevent a new photo report even if the
+person previously saw it. We did not remove `can_view_avatar` or create a permanent
+viewing-history table.
+
+Mike must approve a bounded receipt design before this exception is implemented:
+- Mint an unforgeable, viewer-bound photo-report-only receipt after a verified
+  authorized photo read/recheck. Bind owner, immutable revision, issue/expiry time
+  and nonce; do not put a Storage path or historical bytes in a client token.
+- Choose a short explicit window, storage/abuse limits and replay/idempotency rules.
+  A receipt must never authorize GET/photo/profile access or outlive account deletion.
+- Decide whether reporting works only while the original object remains available,
+  or whether a bounded retired-file grace period is permitted. The latter changes
+  retention for viewed-but-unreported photos and needs explicit disclosure/approval.
+- Expire/cascade receipts and any approved grace holds; preserve Storage-before-Auth
+  deletion and do not retain photos indefinitely or serve historical bytes to reporters.
+
+The actual #44 contract permits direct-message reports after block/unfriend, and
+group-message reports after blocking while still a member. It denies reporting by
+removed group members. Supporting post-removal photo receipts extends that contract;
+this pass does not rewrite deployed message-report policy.
+
+### One sensitive-evidence policy: CLI versus Dashboard (Mike decision)
+
+| Concern | Restricted CLI | Dashboard/SQL workflow |
+| --- | --- | --- |
+| Credentials | Privileged key in a controlled operator process; never mobile/browser bundles; broad power remains | Named dashboard sign-in can avoid copying a service key, but permitted SQL/Storage privileges may still be broad |
+| Accountable identity | A shared key is not human identity; use an approved named runner/broker and audit linkage | Verify actual organization roles, MFA and which named-user actions are logged; do not assume each data/evidence read is audited |
+| Destination mistakes | Independent expected-project verification, explicit local mode and destructive confirmation | Require an independent project check; project switching and arbitrary SQL can still target the wrong environment |
+| Retention/revision guards | Use the case-scoped evidence/current RPCs and post-download recheck | Raw bucket browsing or direct SQL can bypass the guarded workflow; require approved RPC-based procedures |
+| Practicality | Existing photo tool supports protected viewing/removal and private downloads | Existing message queue is convenient for text; photo review still needs controlled retrieval and local-copy handling |
+
+Recommendation: keep the restricted photo CLI and existing Dashboard queue; place
+both message and photo evidence under one approved operator/access/audit/incident
+policy before enabling readiness. Do not declare Dashboard automatically safer or
+remove the CLI. Prefer accountable named access or an identity-aware operator runner
+rather than distributing a shared service key. Neither a self-entered operator name
+nor generic service-role logs prove who reviewed evidence. Verify platform coverage
+and plan availability instead of assuming it. Supabase documents role capabilities
+at https://supabase.com/docs/guides/platform/access-control.
+
+Message snapshots currently follow #44's report/account cascades with no general
+approved retention interval; photo evidence has an explicit per-report expiry.
+Unifying handling does not silently impose either rule on the other. Mike must
+choose approved staff access, audit event fields/sink/retention, content-specific
+retention/local-copy rules, incident ownership, response commitments, receipt/grace
+policy and #45 disclosure updates. No roster, identity mechanism or policy period
+was invented, and no operator permissions or shared-project settings were changed.

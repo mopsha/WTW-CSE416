@@ -1,3 +1,4 @@
+import { MemberMenu } from '@/components/MemberMenu';
 import { SocialIdentity } from '@/components/friends/SocialRow';
 import React from 'react';
 import { Image } from 'react-native';
@@ -7,7 +8,20 @@ import { photoChanged } from '@/lib/photoEvents';
 import { api } from '@/lib/api';
 import type { AuthSession } from '@/lib/authTypes';
 type Tree = {
-  root: { findAllByType(t: unknown): { props: { source: { uri: string }; onError(): void } }[] };
+  root: {
+    findAllByProps(p: object): { props: { onPress(): void } }[];
+    findAllByType(
+      t: unknown,
+    ): {
+      props: {
+        source: { uri: string };
+        onError(): void;
+        onLoad(): void;
+        label?: string;
+        onPress(): void;
+      };
+    }[];
+  };
   update(e: React.ReactElement): void;
   unmount(): void;
   toJSON(): unknown;
@@ -24,7 +38,15 @@ jest.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ session: mockSession }) 
 jest.mock('expo-router', () => ({
   useFocusEffect: (fn: () => void) => jest.requireActual('react').useEffect(fn, [fn]),
 }));
-jest.mock('@/lib/api', () => ({ api: { getAvatar: jest.fn(), resolveAvatarRefs: jest.fn() } }));
+jest.mock('@/lib/api', () => ({
+  api: {
+    getAvatar: jest.fn(),
+    resolveAvatarRefs: jest.fn(),
+    getAvatarCapabilities: jest.fn(),
+    report: jest.fn(),
+    blockUser: jest.fn(),
+  },
+}));
 const ref = { userId: 'friend', revision: 1 };
 let tree: Tree | undefined;
 function Harness({
@@ -43,6 +65,9 @@ beforeEach(() => {
   avatarCache.setViewer(null);
   avatarCache.setActive(true);
   mockSession = { user: { id: 'A', email: 'a@example.com' }, accessToken: 'token' };
+  jest
+    .mocked(api.getAvatarCapabilities)
+    .mockResolvedValue({ uploadsEnabled: true, reportsEnabled: true });
   jest.mocked(api.getAvatar).mockResolvedValue('data:image/jpeg;base64,/9j/2Q==');
   jest.mocked(api.resolveAvatarRefs).mockResolvedValue({ friend: { revision: 1, avatarRef: ref } });
 });
@@ -223,4 +248,37 @@ test('reportable photo identity follows rendered cache revision, not stale profi
   await act(async () => avatarCache.revalidate());
   expect(reportedRevision).toBeUndefined();
   expect(tree!.root.findAllByType(Image)).toHaveLength(0);
+});
+
+test('native loading/error and server capabilities govern the real shared photo menu', async () => {
+  function MenuHarness() {
+    useAvatarLifecycle('A', '/group', 'a@example.com');
+    return (
+      <>
+        <Avatar name="Ava" userId="friend" avatarRef={ref} />
+        <MemberMenu userId="friend" name="Ava" />
+      </>
+    );
+  }
+  await act(async () => {
+    tree = create(<MenuHarness />);
+  });
+  await act(async () =>
+    tree!.root.findAllByProps({ accessibilityLabel: 'Options for Ava' })[0]!.props.onPress(),
+  );
+  const photoActions = () =>
+    tree!.root
+      .findAllByType(jest.requireActual('@/components/HostMenu').MenuItem)
+      .filter((n) => n.props.label === 'Report profile photo');
+  expect(photoActions()).toHaveLength(0); // Bytes loaded, native image not yet displayed.
+  await act(async () => tree!.root.findAllByType(Image)[0]!.props.onLoad());
+  expect(photoActions()).toHaveLength(1);
+  expect(api.getAvatar).toHaveBeenCalledTimes(1);
+  await act(async () => tree!.root.findAllByType(Image)[0]!.props.onError());
+  expect(photoActions()).toHaveLength(0); // Actual initials fallback, not just missing props.
+  jest
+    .mocked(api.getAvatarCapabilities)
+    .mockResolvedValue({ uploadsEnabled: false, reportsEnabled: false });
+  await act(async () => avatarCache.refreshCapabilities(true));
+  expect(photoActions()).toHaveLength(0);
 });

@@ -9,7 +9,7 @@ export function rpcError(error: { code?: string }, notFound = 'Not found'): neve
       throw new ApiError(
         503,
         'PHOTO_REPORTING_UNAVAILABLE',
-        'Photo reporting is not configured yet',
+        'Photo reporting is unavailable until moderation is ready',
       );
     case 'PT400':
       throw new ApiError(400, 'INVALID_INPUT', 'That request isn’t valid');

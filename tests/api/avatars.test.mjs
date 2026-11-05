@@ -17,6 +17,7 @@ test(
     const run = randomUUID();
     const users = [];
     let priorEvidenceRetention;
+    let priorModerationReadiness;
     const sql = (query) =>
       execFileSync(
         'psql',
@@ -206,6 +207,26 @@ test(
       );
       assert.equal(details.avatarRevision, 0);
       assert.equal(details.avatarRef, null);
+      priorEvidenceRetention = sql(
+        "select coalesce(retention_seconds::text,'null') from private.photo_moderation_config",
+      );
+      priorModerationReadiness = sql(
+        'select moderation_ready from private.photo_moderation_config',
+      );
+      assert.match(priorEvidenceRetention, /^(null|[0-9]+)$/);
+      assert.ok(['t', 'f'].includes(priorModerationReadiness));
+      sql(
+        'update private.photo_moderation_config set retention_seconds=3600,moderation_ready=false',
+      );
+      const disabledCaps = requireStatus(
+        await api('/avatars/capabilities', owner.token),
+        200,
+        'disabled capabilities',
+      );
+      assert.deepEqual(disabledCaps, { uploadsEnabled: false, reportsEnabled: false });
+      assert.equal((await upload(owner, 0)).status, 503); // Raw HTTP bypasses all UI controls.
+      assert.equal((await state(owner)).avatar_revision, 0);
+      sql('update private.photo_moderation_config set moderation_ready=true');
       const first = await upload(owner, 0);
       assert.equal(first.status, 200);
       assert.equal(first.data.revision, 1);
@@ -381,9 +402,7 @@ test(
       assert.equal((await upload(owner, 3)).status, 200);
       const final = await state(owner);
       // Local-only fixture policy; not a production retention recommendation.
-      priorEvidenceRetention = sql(
-        "select coalesce(retention_seconds::text,'null') from private.photo_moderation_config",
-      );
+
       assert.match(priorEvidenceRetention, /^(null|[0-9]+)$/);
       sql('update private.photo_moderation_config set retention_seconds=null');
       const photoReport = {
@@ -444,11 +463,17 @@ test(
         409,
         'cleaned report stays explicitly expired',
       );
-      // Restore only this disposable fixture for the independent moderator tests.
-      assert.match(final.avatar_path, new RegExp(`^${owner.id}/[0-9a-f-]+\\.jpg$`));
-      sql(
-        `update public.reports set photo_path='${final.avatar_path}', photo_expires_at=clock_timestamp()+interval '1 hour' where id='${rid}'`,
+      // Current review is separate from expired historical evidence; no fixture repin.
+      sql('update private.photo_moderation_config set moderation_ready=false');
+      assert.equal((await upload(owner, 4)).status, 503);
+      await getPhoto(owner, friend, 4);
+      const currentVerification = requireStatus(
+        await db('rpc/avatar_moderation_current', { method: 'POST', body: { p_report_id: rid } }),
+        200,
+        'current photo verification',
       );
+      assert.equal(currentVerification.path, final.avatar_path);
+      assert.equal(currentVerification.revision, 4);
 
       const deniedModeration = await request(config, '/rest/v1/rpc/avatar_moderation_evidence', {
         token: friend.token,
@@ -456,27 +481,30 @@ test(
         body: { p_report_id: rid },
       });
       assert.ok([401, 403, 404].includes(deniedModeration.status));
-      assert.equal(
-        requireStatus(
-          await db('rpc/avatar_moderation_evidence', {
-            method: 'POST',
-            body: { p_report_id: rid },
-          }),
-          200,
-          'operator evidence',
-        ),
-        final.avatar_path,
+      requireStatus(
+        await db('rpc/avatar_moderation_evidence', { method: 'POST', body: { p_report_id: rid } }),
+        404,
+        'historical evidence remains expired',
       );
       requireStatus(
-        await db('rpc/avatar_moderation_remove', { method: 'POST', body: { p_report_id: rid } }),
+        await db('rpc/avatar_moderation_remove_current', {
+          method: 'POST',
+          body: {
+            p_report_id: rid,
+            p_revision: currentVerification.revision,
+            p_path: currentVerification.path,
+          },
+        }),
         200,
-        'operator removal',
+        'operator current removal',
       );
       await getPhoto(owner, friend, 4, 404);
       assert.equal((await upload(owner, 4)).status, 409);
       assert.equal(await storageExists(final.avatar_path), true); // Evidence is private and pinned.
+      sql('update private.photo_moderation_config set moderation_ready=true');
       assert.equal((await upload(owner, 5)).status, 200);
       const afterModeration = await state(owner);
+      sql('update private.photo_moderation_config set moderation_ready=false');
       requireStatus(await api('/me', owner.token, 'DELETE'), 200, 'delete photo account');
       assert.equal(await storageExists(final.avatar_path), false);
       assert.equal(await storageExists(afterModeration.avatar_path), false);
@@ -531,7 +559,7 @@ test(
       } finally {
         if (priorEvidenceRetention !== undefined && /^(null|[0-9]+)$/.test(priorEvidenceRetention))
           sql(
-            `update private.photo_moderation_config set retention_seconds=${priorEvidenceRetention}`,
+            `update private.photo_moderation_config set retention_seconds=${priorEvidenceRetention},moderation_ready=${priorModerationReadiness === 't' ? 'true' : 'false'}`,
           );
       }
     }

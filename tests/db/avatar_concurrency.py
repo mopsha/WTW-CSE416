@@ -10,7 +10,7 @@ import time
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
-from photo_moderation_races import exercise_photo_moderation_races
+from photo_moderation_races import exercise_photo_moderation_races, exercise_mutual_photo_reports
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--dsn', required=True)
@@ -25,6 +25,7 @@ if (parsed_dsn.scheme not in ('postgres', 'postgresql')
 base = ['psql', args.dsn, '-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1']
 user = str(uuid.uuid4())
 reporter = str(uuid.uuid4())
+other_reporter = str(uuid.uuid4())
 paths = [f'{user}/{uuid.uuid4()}.jpg' for _ in range(2)]
 
 
@@ -45,6 +46,7 @@ def storage_fixtures(action):
 
 user_created = False
 reporter_created = False
+other_reporter_created = False
 storage_started = False
 try:
     query(f"""
@@ -83,14 +85,26 @@ try:
     reporter_created = True
     query(f"insert into public.friendships(requester_id,addressee_id,status,accepted_at) "
           f"values('{reporter}','{user}','accepted',now());")
+    query(f"insert into auth.users(id,raw_user_meta_data) values('{other_reporter}','{{}}');")
+    other_reporter_created = True
+    query(f"insert into public.friendships(requester_id,addressee_id,status,accepted_at) values('{other_reporter}','{user}','accepted',now());")
     retention = query("select coalesce(retention_seconds::text,'null') from private.photo_moderation_config;").stdout.strip()
     assert retention == 'null' or retention.isdigit()
+    readiness = query("select moderation_ready from private.photo_moderation_config;").stdout.strip()
+    assert readiness in ('t','f')
     try:
-        query("update private.photo_moderation_config set retention_seconds=3600;")  # Test fixture, not policy.
+        query("update private.photo_moderation_config set retention_seconds=3600,moderation_ready=true;")  # Test fixture, not policy.
         replacement_path = next(path for path in paths if path != active)
-        exercise_photo_moderation_races(query, base, user, reporter, active, replacement_path)
+        exercise_photo_moderation_races(query, base, user, reporter, active, replacement_path, other_reporter)
+        # Reuse one retired fixture for the reporter's own current photo.
+        reporter_path = f'{reporter}/{uuid.uuid4()}.jpg'
+        paths.append(reporter_path)
+        extra = subprocess.run(['node', str(Path(__file__).with_name('avatar_storage_fixtures.mjs')), 'create', reporter_path], text=True, capture_output=True, timeout=45)
+        assert extra.returncode == 0, extra.stderr
+        query(f"select public.avatar_change('{reporter}',0,'{reporter_path}');")
+        exercise_mutual_photo_reports(query, base, user, reporter)
     finally:
-        query(f"update private.photo_moderation_config set retention_seconds={retention};")
+        query(f"update private.photo_moderation_config set retention_seconds={retention},moderation_ready={'true' if readiness=='t' else 'false'};")
     current_revision = int(query(f"select avatar_revision from public.profiles where id='{user}';").stdout.strip())
 
     # Observe the deletion transaction holding the row lock before submitting a
@@ -130,11 +144,14 @@ finally:
     try:
         if storage_started:
             storage_fixtures('remove')
+            path_list = ",".join("'" + path + "'" for path in paths)
             remaining = query(f"select count(*) from storage.objects where bucket_id='profile-photos' "
-                              f"and name in ('{paths[0]}','{paths[1]}');").stdout.strip()
+                              f"and name in ({path_list});").stdout.strip()
             assert remaining == '0', 'Storage fixture metadata remained after API cleanup'
     finally:
         if user_created:
             query(f"delete from auth.users where id='{user}';")
         if reporter_created:
             query(f"delete from auth.users where id='{reporter}';")
+        if other_reporter_created:
+            query(f"delete from auth.users where id='{other_reporter}';")

@@ -1,3 +1,4 @@
+import { usePhotoCapabilities } from '@/hooks/useAvatarSource';
 import React, { useState } from 'react';
 import { ProfilePhotoEditor } from '@/components/ProfilePhotoEditor';
 import { api } from '@/lib/api';
@@ -16,6 +17,13 @@ const { create, act } = jest.requireActual<{
   act(fn: () => void | Promise<void>): Promise<void>;
 }>('react-test-renderer');
 let mockSession = { user: { id: 'A', email: 'a@example.com' } };
+jest.mock('@/hooks/useAvatarSource', () => ({
+  usePhotoCapabilities: jest.fn(() => ({
+    uploadsEnabled: true,
+    reportsEnabled: true,
+    refresh: async () => {},
+  })),
+}));
 jest.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ session: mockSession }) }));
 jest.mock('@/lib/pickProfilePhoto', () => ({
   ...jest.requireActual('@/lib/pickProfilePhoto'),
@@ -70,6 +78,9 @@ function Harness({ initial = profile }: { initial?: UserProfile }) {
 }
 beforeEach(() => {
   jest.clearAllMocks();
+  jest
+    .mocked(usePhotoCapabilities)
+    .mockReturnValue({ uploadsEnabled: true, reportsEnabled: true, refresh: async () => {} });
   jest.mocked(api.getMyUserProfile).mockReset().mockResolvedValue(profile);
   tree = undefined;
   mockSession = { user: { id: 'A', email: 'a@example.com' } };
@@ -250,4 +261,20 @@ test('an opening response cannot overwrite a mutation that already started', asy
     userId: 'A',
     revision: 1,
   });
+});
+
+test('disabled moderation hides upload capability while preserving removal and account identity', async () => {
+  jest
+    .mocked(usePhotoCapabilities)
+    .mockReturnValue({ uploadsEnabled: false, reportsEnabled: false, refresh: async () => {} });
+  await mount({ ...profile, avatarRevision: 1, avatarRef: { userId: 'A', revision: 1 } });
+  expect(tree!.root.findAllByProps({ label: 'Change photo' })[0]!.props).toMatchObject({
+    disabled: true,
+  });
+  await press('Change photo'); // Bypass the disabled UI handler intentionally.
+  expect(pickProfilePhoto).not.toHaveBeenCalled();
+  jest.mocked(api.removeAvatar).mockResolvedValueOnce({ revision: 2, avatarRef: null });
+  await press('Remove photo');
+  expect(api.removeAvatar).toHaveBeenCalledWith('A', 1);
+  expect(api.uploadAvatar).not.toHaveBeenCalled();
 });

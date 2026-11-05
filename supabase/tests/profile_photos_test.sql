@@ -2,6 +2,8 @@
 -- separately covered by tests/api/avatars.test.mjs, never inferred from this test.
 begin;
 select '1..16';
+-- Test fixture only: real upload/report readiness remains disabled by default.
+update private.photo_moderation_config set retention_seconds=3600,moderation_ready=true;
 insert into auth.users(id,raw_user_meta_data)
  select ('a733000'||n||'-3333-4333-8333-333333333333')::uuid,jsonb_build_object('display_name','Photo person '||n)
  from generate_series(1,6) n;

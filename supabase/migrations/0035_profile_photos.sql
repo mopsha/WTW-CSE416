@@ -28,11 +28,30 @@ create unique index reports_photo_once on public.reports(reporter_id,target_id,p
 create index reports_photo_evidence on public.reports(photo_path,photo_expires_at) where photo_path is not null;
 create table private.photo_moderation_config (
  singleton boolean primary key default true check(singleton),
- retention_seconds integer check(retention_seconds>0)
+ retention_seconds integer check(retention_seconds>0),
+ moderation_ready boolean not null default false
 );
 insert into private.photo_moderation_config(singleton) values(true);
 revoke all on private.photo_moderation_config from public,anon,authenticated,service_role;
 grant select on private.photo_moderation_config to service_role;
+
+-- Explicit operator readiness assertion includes audit/staffing/response prerequisites;
+-- retention alone never enables new uploads or reports. Reads and removal stay usable.
+create function public.avatar_capabilities(p_user_id uuid default null) returns jsonb
+language sql stable set search_path='' as $$
+ with state as (select coalesce((select moderation_ready and retention_seconds is not null
+  from private.photo_moderation_config where singleton),false)
+  and (p_user_id is null or exists(select 1 from public.profiles where id=p_user_id and not avatar_deletion_pending)) as enabled)
+ select jsonb_build_object('uploadsEnabled',enabled,'reportsEnabled',enabled) from state;
+$$;
+create function private.require_photo_moderation() returns void
+language plpgsql security definer set search_path='' as $$ declare ready boolean; begin
+ select moderation_ready and retention_seconds is not null into ready
+ from private.photo_moderation_config where singleton for share;
+ if ready is distinct from true then raise exception using errcode='PT503',message='Photo moderation unavailable'; end if;
+end $$;
+revoke all on function public.avatar_capabilities(uuid),private.require_photo_moderation() from public,anon,authenticated;
+grant execute on function public.avatar_capabilities(uuid),private.require_photo_moderation() to service_role;
 
 create unique index profiles_avatar_path_unique on public.profiles(avatar_path) where avatar_path is not null;
 
@@ -100,6 +119,7 @@ begin
  if p.avatar_deletion_pending or p.avatar_revision<>p_revision then
   raise exception using errcode='PT409',message='Photo changed';
  end if;
+ perform private.require_photo_moderation();
  if (select count(*) from public.rate_limit_events where user_id=p_user_id and action='avatar_upload'
   and created_at>now()-interval '24 hours')>=20 then
   raise exception using errcode='PT429',message='Too many photo uploads';
@@ -118,6 +138,7 @@ begin
   raise exception using errcode='PT409',message='Photo changed';
  end if;
  if p_path is not null then
+  perform private.require_photo_moderation();
   if p_path !~ ('^'||p_user_id::text||'/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jpg$')
    or not exists(select 1 from storage.objects where bucket_id='profile-photos' and name=p_path
     and created_at>clock_timestamp()-interval '15 minutes') then
@@ -227,11 +248,12 @@ returns uuid language plpgsql set search_path='' as $$
 declare p public.profiles; existing public.reports; result uuid; seconds integer; begin
  if p_revision is null or p_revision<0 or char_length(btrim(coalesce(p_reason,''))) not between 1 and 500 then
   raise exception using errcode='PT400',message='Invalid photo report'; end if;
- select * into p from public.profiles where id=p_target_id for update;
+ select * into p from public.profiles where id=p_target_id for no key update;
  if not found or p_user_id=p_target_id or not private.can_view_avatar(p_user_id,p_target_id)
   or p.avatar_path is null or p.avatar_revision<>p_revision
   or not exists(select 1 from storage.objects where bucket_id='profile-photos' and name=p.avatar_path) then
   raise exception using errcode='PT404',message='Nothing to report here'; end if;
+ perform private.require_photo_moderation();
  select retention_seconds into seconds from private.photo_moderation_config where singleton;
  if seconds is null then raise exception using errcode='PT503',message='Photo reporting is not configured'; end if;
  select * into existing from public.reports where reporter_id=p_user_id and target_kind='profile_photo'
@@ -259,34 +281,71 @@ declare result text; begin
  if result is null then raise exception using errcode='PT404',message='Evidence unavailable'; end if;
  return result;
 end $$;
-create function public.avatar_moderation_remove(p_report_id uuid) returns jsonb
+-- Current review does not retrieve historical evidence or renew its retention.
+create function public.avatar_moderation_current(p_report_id uuid) returns jsonb
 language plpgsql set search_path='' as $$
-declare r public.reports; p public.profiles; owner_id uuid; result jsonb; changed integer; begin
- -- Any operation needing both locks takes owner profile first, report second.
- -- The initial ID lookup is not authoritative; re-read the report after locking.
+declare r public.reports; p public.profiles; owner_id uuid; begin
  select reported_user_id into owner_id from public.reports where id=p_report_id and target_kind='profile_photo';
  if not found then raise exception using errcode='PT404',message='Report unavailable'; end if;
  select * into p from public.profiles where id=owner_id for update;
- if not found or p.avatar_deletion_pending then
-  raise exception using errcode='PT404',message='Evidence unavailable'; end if;
+ if not found or p.avatar_deletion_pending then raise exception using errcode='PT404',message='Photo unavailable'; end if;
  select * into r from public.reports where id=p_report_id and target_kind='profile_photo' for update;
- if not found or r.reported_user_id is distinct from owner_id or r.photo_expires_at<=clock_timestamp() or r.photo_path is null then
-  raise exception using errcode='PT404',message='Evidence unavailable'; end if;
- if p.avatar_revision<>r.photo_revision or p.avatar_path is distinct from r.photo_path then
+ if not found or r.reported_user_id is distinct from owner_id then raise exception using errcode='PT404',message='Report unavailable'; end if;
+ if p.avatar_path is null or p.avatar_revision<>r.photo_revision
+  or (r.photo_path is not null and p.avatar_path is distinct from r.photo_path) then
+  raise exception using errcode='PT409',message='Photo changed'; end if;
+ return jsonb_build_object('userId',p.id,'revision',p.avatar_revision,'path',p.avatar_path);
+end $$;
+create function private.remove_reported_photo(p_report_id uuid,p_current boolean,p_revision bigint,p_path text) returns jsonb
+language plpgsql set search_path='' as $$
+declare r public.reports; p public.profiles; owner_id uuid; result jsonb; changed integer; action_at timestamptz; begin
+ select reported_user_id into owner_id from public.reports where id=p_report_id and target_kind='profile_photo';
+ if not found then raise exception using errcode='PT404',message='Report unavailable'; end if;
+ select * into p from public.profiles where id=owner_id for update;
+ if not found or p.avatar_deletion_pending then raise exception using errcode='PT404',message='Evidence unavailable'; end if;
+ -- Lock all same-revision reports in one order before editing any. The owner
+ -- lock excludes concurrent report creation for this photo; expiry skips locked rows.
+ perform id from public.reports where target_kind='profile_photo' and reported_user_id=owner_id
+  and photo_revision=p.avatar_revision order by id for update;
+ select * into r from public.reports where id=p_report_id and target_kind='profile_photo';
+ if not found or r.reported_user_id is distinct from owner_id then raise exception using errcode='PT404',message='Report unavailable'; end if;
+ if p_current then
+  if p_revision is null or p_path is null or p.avatar_revision<>p_revision or p.avatar_path is distinct from p_path then
+   raise exception using errcode='PT409',message='Photo changed'; end if;
+ elsif r.photo_expires_at<=clock_timestamp() or r.photo_path is null then
+  raise exception using errcode='PT404',message='Evidence unavailable';
+ end if;
+ if p.avatar_path is null or p.avatar_revision<>r.photo_revision
+  or (r.photo_path is not null and p.avatar_path is distinct from r.photo_path) then
   raise exception using errcode='PT409',message='Photo changed; review the current revision'; end if;
  result:=public.avatar_change(p.id,p.avatar_revision,null);
- update public.reports set reviewed_at=clock_timestamp(),review_note='Removed reported current photo revision '||r.photo_revision
- where id=r.id and reported_user_id=owner_id;
+ action_at:=clock_timestamp();
+ update public.reports set reviewed_at=coalesce(reviewed_at,action_at),
+  review_note=concat_ws(E'\n',nullif(review_note,''),'Removed reported current photo revision '||r.photo_revision||'; source report '||r.id||'; action at '||action_at)
+ where target_kind='profile_photo' and reported_user_id=owner_id and target_id=owner_id
+  and photo_revision=r.photo_revision and (photo_path is null or photo_path=p.avatar_path);
  get diagnostics changed=row_count;
- if changed<>1 then raise exception using errcode='PT404',message='Report unavailable'; end if;
- return jsonb_build_object('userId',p.id,'revision',result->'revision','avatarRef',null);
+ if changed<1 or not exists(select 1 from public.reports where id=r.id and reviewed_at is not null) then
+  raise exception using errcode='PT404',message='Report unavailable'; end if;
+ return jsonb_build_object('userId',p.id,'revision',result->'revision','avatarRef',null,
+  'resolvedReports',changed,'sourceReportId',r.id);
 end $$;
+create function public.avatar_moderation_remove(p_report_id uuid) returns jsonb
+language sql set search_path='' as $$ select private.remove_reported_photo(p_report_id,false,null,null); $$;
+create function public.avatar_moderation_remove_current(p_report_id uuid,p_revision bigint,p_path text) returns jsonb
+language sql set search_path='' as $$ select private.remove_reported_photo(p_report_id,true,p_revision,p_path); $$;
+revoke all on function private.remove_reported_photo(uuid,boolean,bigint,text),public.avatar_moderation_current(uuid),
+ public.avatar_moderation_remove_current(uuid,bigint,text) from public,anon,authenticated;
+grant execute on function private.remove_reported_photo(uuid,boolean,bigint,text),public.avatar_moderation_current(uuid),
+ public.avatar_moderation_remove_current(uuid,bigint,text) to service_role;
 -- Expiry takes report locks only and never acquires an owner lock afterwards.
 -- Deletion freezes the owner in its own transaction before Storage/Auth cleanup;
 -- report cascades do not acquire other owners' profile locks.
 create function public.avatar_expire_evidence() returns void
 language sql set search_path='' as $$
- update public.reports set photo_path=null where photo_path is not null and photo_expires_at<=clock_timestamp();
+ with due as(select id from public.reports where photo_path is not null and photo_expires_at<=clock_timestamp()
+  order by id limit 100 for update skip locked)
+ update public.reports r set photo_path=null from due where r.id=due.id;
 $$;
 create or replace view private.report_queue as
 select r.id,r.created_at,r.target_kind,r.target_id,r.reason,r.message_body,r.reported_user_id,

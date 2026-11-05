@@ -1,5 +1,11 @@
 import type { AvatarRef } from '@shared/api/avatars.ts';
-import { useCallback, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { useFocusEffect } from 'expo-router';
 import { AppState } from 'react-native';
 import { api } from '@/lib/api';
@@ -50,17 +56,49 @@ export function useAvatarPhoto(ref?: AvatarRef | null, userId?: string) {
     };
   }, [viewer, target, revision, key]);
   const uri = key && image?.key === key ? image.uri : null;
+  const current =
+    uri && viewer && target && revision !== undefined
+      ? avatarCache.currentRef(viewer, { userId: target, revision })
+      : null;
+  const displayKey = current && viewer ? avatarCache.key(viewer, current) : undefined;
+  const [displayToken] = useState(() => Symbol('native-avatar'));
+  useLayoutEffect(() => {
+    if (!displayKey) return;
+    return () => avatarCache.forgetDisplay(displayToken);
+  }, [displayToken, displayKey]);
   return {
     uri,
-    ref:
-      uri && viewer && target && revision !== undefined
-        ? avatarCache.currentRef(viewer, { userId: target, revision })
-        : null,
+    ref: current,
+    displayKey,
+    displayed: !!(viewer && current && avatarCache.isDisplayed(viewer, current)),
+    onDisplay: (success: boolean) => {
+      if (viewer && current && displayKey)
+        avatarCache.markDisplayed(displayToken, viewer, current, displayKey, success);
+    },
   };
 }
 
 export function useAvatarSource(ref?: AvatarRef | null, userId?: string) {
   return useAvatarPhoto(ref, userId).uri;
+}
+
+/** Account-scoped, short-lived server capabilities; failure and expiry fail closed. */
+export function usePhotoCapabilities() {
+  const { session } = useAuth();
+  const viewer = session?.user.id;
+  const scope = session?.user.email;
+  useSyncExternalStore(avatarCache.subscribe, avatarCache.snapshot, avatarCache.snapshot);
+  useFocusEffect(
+    useCallback(() => {
+      if (!viewer) return;
+      avatarCache.setViewer(viewer, scope ?? viewer);
+      void avatarCache.refreshCapabilities();
+    }, [viewer, scope]),
+  );
+  return {
+    ...avatarCache.capabilities(viewer),
+    refresh: () => avatarCache.refreshCapabilities(true),
+  };
 }
 
 /** One visibility poll for focused identities, not one metadata call per row. */

@@ -61,11 +61,13 @@ Unexpired reports pin the immutable private original. Replacement/removal and
 orphan cleanup exclude it. Service-only operator RPCs retrieve evidence and remove
 only the reported current revision; removal advances the revision so stale uploads
 fail. `scripts/moderate-profile-photo.mjs` uses existing operator credentials,
-private 0600 local files and no signed URLs. Expiry and deletion intent deny
-operator lookup. The existing Storage-before-Auth account adapter includes evidence.
+private 0600 local files and no signed URLs. Expiry denies historical evidence lookup; deletion intent denies both historical and
+current-photo operator lookup. Current-photo review after expiry is revision-bound and does
+not repin historical evidence. The existing Storage-before-Auth account adapter includes evidence.
 
-`private.photo_moderation_config.retention_seconds` defaults NULL, so valid photo
-reports return 503 until an authorized operator records a team-approved interval.
+`private.photo_moderation_config.retention_seconds` defaults NULL and
+`moderation_ready` defaults false. Uploads and valid photo reports return 503 until an
+authorized operator records the approved interval and explicitly confirms readiness.
 No production retention period, moderator roster, alerting, access delegation,
 local-copy policy, upload-suspension policy or final disclosure text is assumed.
 Expired paths are released to the existing bounded orphan sweep; physical erasure
@@ -90,7 +92,7 @@ its size, colors, labels, and initials. ConversationHeader, ProfilePresentation,
 Friends and group-message senders forward person IDs and optional photo refs.
 Group monograms remain unmanaged. OwnProfileDetails retains its redesign variant
 and photo busy guards. Root account/background invalidation and the three chat
-send/draft/header fixes remain intact. Phase B is implemented but requires explicit retention configuration and team policy approval.
+send/draft/header fixes remain intact. Phase B is implemented but requires explicit retention configuration, readiness confirmation, and team policy approval.
 
 Mike confirmed through read-only wtw-dev queries that the photo migration had
 never been applied and that no photo schema/bucket/policies/functions existed.
@@ -160,3 +162,32 @@ time/project/outcome events, verified operator identity, retention, staff access
 incident handling. Shared service keys and self-asserted operator names are not
 accountable human identity. Platform audit coverage must be demonstrated, not
 assumed. See moderation.md; no audit mechanism or final policy was invented here.
+
+
+## Latest review at 38eb2af
+
+Implemented explicit `moderation_ready` plus approved retention as SQL upload/report
+gates, including finalize-time upload rechecks and authenticated short-lived client
+capabilities. Reads, owner/account removal and authorized operator work stay available.
+Existing group/Pick/chat safety menus derive the actual natively displayed photo
+revision through the shared loader; no friends-only profile authorization is widened.
+Generic name/profile complaints remain user reports, distinct from photo evidence.
+
+Service-only current-photo verification/removal now works for the same reported
+revision even when historical evidence has expired. It never returns a replacement
+or revives expired evidence; CLI current viewing rechecks after download. Removal
+resolves every eligible exact-revision report with preserved notes and a source/action
+outcome, not invented operator attribution. Expiry uses a bounded SKIP LOCKED batch.
+
+Mutual reporting reproduced PostgreSQL 40P01 in the former owner FOR UPDATE lock:
+rate-limit event foreign keys needed KEY SHARE locks on the opposite reporter.
+FOR NO KEY UPDATE removes that conflict while still excluding photo changes. The
+regression uses actual PostgreSQL lock contention, not a speculative timing claim.
+
+Deferred: post-block/group-removal report authorization needs a trustworthy bounded
+server receipt and possibly retired-object grace retention. No such record exists;
+client native-load markers are UI state, not server proof. No history/receipt policy
+or TTL was invented. See moderation.md for receipt alternatives and the comparison
+of restricted CLI versus Dashboard across both message and photo evidence. Mike
+must approve the unified access/audit/retention/incident policy and receipt scope
+before readiness is enabled or the feature ships.

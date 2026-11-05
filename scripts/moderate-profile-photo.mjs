@@ -28,12 +28,12 @@ try {
     !url ||
     !key ||
     !uuid.test(reportId ?? '') ||
-    !['view', 'remove'].includes(action) ||
-    (action === 'view' && !output) ||
-    (action === 'remove' && output !== '--confirm')
+    !['view', 'remove', 'view-current', 'remove-current'].includes(action) ||
+    ((action === 'view' || action === 'view-current') && !output) ||
+    ((action === 'remove' || action === 'remove-current') && output !== '--confirm')
   )
     throw new Error(
-      'Usage: view <report UUID> <new private JPEG path> | remove <report UUID> --confirm; set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY',
+      'Usage: view|view-current <report UUID> <new private JPEG path> | remove|remove-current <report UUID> --confirm; set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY',
     );
   if (process.argv.slice(2).length !== 3)
     throw new Error('Operator configuration: expected exactly three command arguments');
@@ -92,18 +92,46 @@ try {
   } else {
     throw new Error('Operator configuration: unsupported privileged credential format');
   }
-  if (action === 'remove') {
-    await request('/rest/v1/rpc/avatar_moderation_remove', { p_report_id: reportId });
-    console.log('Removed the reported current photo; report marked reviewed.');
-  } else {
-    const path = await (
-      await request('/rest/v1/rpc/avatar_moderation_evidence', { p_report_id: reportId })
+  const current = action.endsWith('-current');
+  const currentPhoto = async () =>
+    (await request('/rest/v1/rpc/avatar_moderation_current', { p_report_id: reportId })).json();
+  if (action === 'remove' || action === 'remove-current') {
+    const verified = current ? await currentPhoto() : null;
+    const result = await (
+      await request(
+        current
+          ? '/rest/v1/rpc/avatar_moderation_remove_current'
+          : '/rest/v1/rpc/avatar_moderation_remove',
+        {
+          p_report_id: reportId,
+          ...(current ? { p_revision: verified.revision, p_path: verified.path } : {}),
+        },
+      )
     ).json();
+    console.log(
+      `Removed reported current photo; source report ${reportId}; resolved reports ${result.resolvedReports ?? 1}.`,
+    );
+  } else {
+    const verified = current ? await currentPhoto() : null;
+    const path = current
+      ? verified.path
+      : await (
+          await request('/rest/v1/rpc/avatar_moderation_evidence', { p_report_id: reportId })
+        ).json();
     if (typeof path !== 'string' || !/^[0-9a-f-]{36}\/[0-9a-f-]{36}\.jpg$/.test(path))
       throw new Error('Invalid evidence reference');
     const response = await request(`/storage/v1/object/authenticated/profile-photos/${path}`);
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (!bytes.length || bytes.length > 1048576) throw new Error('Invalid evidence image size');
+    if (current) {
+      const after = await currentPhoto();
+      if (
+        after.path !== path ||
+        after.revision !== verified.revision ||
+        after.userId !== verified.userId
+      )
+        throw new Error('Moderation operation failed: current photo changed during download');
+    }
     const file = await open(output, 'wx', 0o600);
     try {
       await file.writeFile(bytes);

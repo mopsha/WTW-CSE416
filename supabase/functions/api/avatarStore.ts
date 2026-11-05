@@ -10,6 +10,12 @@ export function avatarError(error: { code?: string }): never {
   if (error.code === 'PT404') throw new ApiError(404, 'PHOTO_UNAVAILABLE', 'Photo unavailable');
   if (error.code === 'PT409')
     throw new ApiError(409, 'PHOTO_CONFLICT', 'Photo changed; reload before retrying');
+  if (error.code === 'PT503')
+    throw new ApiError(
+      503,
+      'PHOTO_MODERATION_UNAVAILABLE',
+      'Photo uploads are unavailable until moderation is ready',
+    );
   if (error.code === 'PT400') throw new ApiError(400, 'INVALID_IMAGE', 'Invalid photo');
   if (error.code === 'PT429')
     throw new ApiError(429, 'PHOTO_RATE_LIMITED', 'Too many photo uploads');
@@ -51,6 +57,21 @@ export function createAvatarStore(
     return { revision: result.revision, avatarRef: result.avatarRef };
   }
   return {
+    async capabilities(viewer) {
+      if (
+        (await rpc('consume_avatar_limit', { p_user_id: viewer, p_kind: 'avatar_resolve' })) !==
+        true
+      )
+        throw new ApiError(429, 'PHOTO_RATE_LIMITED', 'Photo request limit reached');
+      const result = (await rpc('avatar_capabilities', { p_user_id: viewer })) as {
+        uploadsEnabled?: boolean;
+        reportsEnabled?: boolean;
+      } | null;
+      return {
+        uploadsEnabled: result?.uploadsEnabled === true,
+        reportsEnabled: result?.reportsEnabled === true,
+      };
+    },
     async resolve(viewer, ids) {
       if (
         (await rpc('consume_avatar_limit', { p_user_id: viewer, p_kind: 'avatar_resolve' })) !==

@@ -1,6 +1,8 @@
-import type { AvatarChange, AvatarRef } from '@shared/api/avatars.ts';
+import type { AvatarChange, AvatarRef, AvatarCapabilities } from '@shared/api/avatars.ts';
 
+const noCapabilities: AvatarCapabilities = { uploadsEnabled: false, reportsEnabled: false };
 interface PhotoLoader {
+  getAvatarCapabilities?(viewer: string, signal: AbortSignal): Promise<AvatarCapabilities>;
   getAvatar(viewer: string, ref: AvatarRef, signal: AbortSignal): Promise<string>;
   resolveAvatarRefs(
     viewer: string,
@@ -25,6 +27,10 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
   let version = 0;
   let generationSequence = 0;
   let manifest: AbortController | null = null;
+  let capabilityState = noCapabilities;
+  let capabilityUntil = 0;
+  let capabilityRequest: { controller: AbortController; promise: Promise<void> } | null = null;
+  const displayed = new Map<symbol, { userId: string; key: string }>();
   const listeners = new Set<() => void>();
   const watches = new Map<string, Map<symbol, AvatarRef>>();
   const latest = new Map<string, AvatarChange>();
@@ -43,11 +49,16 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
   const bump = (id: string) => generations.set(id, ++generationSequence);
   function clearBytes() {
     epoch++;
+    capabilityRequest?.controller.abort();
+    capabilityRequest = null;
+    capabilityState = noCapabilities;
+    capabilityUntil = 0;
     manifest?.abort();
     manifest = null;
     pending.forEach((value) => value.controller.abort());
     pending.clear();
     images.clear();
+    displayed.clear();
     leases.clear();
     failed.clear();
   }
@@ -65,6 +76,7 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
     const previous = latest.get(id);
     if (!authoritative && state && previous && state.revision < previous.revision) return;
     leases.delete(id);
+    for (const [token, value] of displayed) if (value.userId === id) displayed.delete(token);
     if (watches.has(id)) {
       latest.set(id, state ?? { revision: previous?.revision ?? 0, avatarRef: null });
       bump(id);
@@ -86,10 +98,66 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
     const state = latest.get(ref.userId);
     return state ? state.avatarRef : ref;
   }
+  async function refreshCapabilities(force = false): Promise<void> {
+    if (!viewer || !active || !loader.getAvatarCapabilities) return;
+    if (capabilityRequest) return capabilityRequest.promise;
+    if (!force && capabilityUntil > now() + 5000) return;
+    const id = viewer;
+    const capturedEpoch = epoch;
+    const controller = new AbortController();
+    const until = now() + 30_000;
+    const promise = loader
+      .getAvatarCapabilities(id, controller.signal)
+      .then((value) => {
+        if (viewer !== id || epoch !== capturedEpoch || controller.signal.aborted || !active)
+          return;
+        capabilityState = {
+          uploadsEnabled: value.uploadsEnabled === true,
+          reportsEnabled: value.reportsEnabled === true,
+        };
+        capabilityUntil = until;
+        notify();
+      })
+      .catch(() => {
+        if (viewer !== id || epoch !== capturedEpoch || controller.signal.aborted) return;
+        capabilityState = noCapabilities;
+        capabilityUntil = 0;
+        notify();
+      })
+      .finally(() => {
+        if (capabilityRequest?.controller === controller) capabilityRequest = null;
+      });
+    capabilityRequest = { controller, promise };
+    return promise;
+  }
   return {
     setViewer,
     update,
     currentRef: effective,
+    markDisplayed(token: symbol, id: string, ref: AvatarRef, key: string, success: boolean) {
+      if (!success) {
+        if (displayed.delete(token)) notify();
+        return;
+      }
+      if (!effective(id, ref) || this.key(id, ref) !== key) return;
+      if (displayed.get(token)?.key === key) return;
+      displayed.set(token, { userId: ref.userId, key });
+      notify();
+    },
+    forgetDisplay(token: symbol) {
+      if (displayed.delete(token)) notify();
+    },
+    isDisplayed(id: string, ref: AvatarRef) {
+      const key = this.key(id, ref);
+      return (
+        !!effective(id, ref) &&
+        [...displayed.values()].some((value) => value.userId === ref.userId && value.key === key)
+      );
+    },
+    refreshCapabilities,
+    capabilities(id: string | undefined) {
+      return active && viewer === id && capabilityUntil > now() ? capabilityState : noCapabilities;
+    },
     subscribe(fn: () => void) {
       listeners.add(fn);
       return () => {
@@ -210,6 +278,7 @@ export function createAvatarCache(loader: PhotoLoader, now = Date.now) {
       return promise;
     },
     async revalidate() {
+      void refreshCapabilities();
       expire();
       if (!viewer || !active || manifest || !watches.size) return;
       const id = viewer;

@@ -537,3 +537,37 @@ Deno.test(
     assert(Number(f.objects.size) === 0);
   },
 );
+
+Deno.test(
+  'readiness rejection blocks raw uploads before Storage I/O and capabilities require authentication',
+  async () => {
+    const f = fakeClient();
+    const blocked = {
+      ...f.client,
+      rpc: async (name: string) => {
+        assert(name === 'avatar_prepare');
+        return { data: null, error: { code: 'PT503' } };
+      },
+    } as unknown as ReturnType<typeof createServiceClient>;
+    await rejects(
+      () => createAvatarStore(() => blocked).upload(owner, 0, image()),
+      'PHOTO_MODERATION_UNAVAILABLE',
+    );
+    assert(!f.calls.includes('upload'));
+    let resolvedFor = '';
+    const store = {
+      ...createAvatarStore(() => f.client),
+      capabilities: async (viewer: string) => {
+        resolvedFor = viewer;
+        return { uploadsEnabled: false, reportsEnabled: false };
+      },
+    };
+    const response = await setup(store).request('/avatars/capabilities');
+    assert(
+      response.status === 200 && response.headers.get('Cache-Control') === 'private, no-store',
+    );
+    assert(resolvedFor === owner);
+    await response.json();
+    assert((await setup(store, false).request('/avatars/capabilities')).status === 401);
+  },
+);

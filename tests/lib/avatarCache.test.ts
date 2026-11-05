@@ -267,3 +267,48 @@ test('an authorization response arriving after its lease cannot revive expired p
   await pending;
   expect(await cache.load('A', ref)).toBeNull();
 });
+
+test('capabilities are deduplicated, short-lived, account-scoped and fail closed independently of photos', async () => {
+  let clock = 100;
+  const getAvatarCapabilities = jest
+    .fn()
+    .mockResolvedValue({ uploadsEnabled: true, reportsEnabled: true });
+  const { loader } = fixture();
+  const cache = createAvatarCache({ ...loader, getAvatarCapabilities }, () => clock);
+  cache.watch('A', ref);
+  await cache.load('A', ref);
+  await Promise.all([cache.refreshCapabilities(), cache.refreshCapabilities()]);
+  expect(getAvatarCapabilities).toHaveBeenCalledTimes(1);
+  expect(cache.capabilities('A').reportsEnabled).toBe(true);
+  expect(cache.capabilities('B').reportsEnabled).toBe(false);
+  clock = 30_101;
+  expect(cache.capabilities('A').reportsEnabled).toBe(false);
+  getAvatarCapabilities.mockRejectedValueOnce(new Error('offline'));
+  await cache.refreshCapabilities();
+  expect(cache.capabilities('A').uploadsEnabled).toBe(false);
+  expect(await cache.load('A', ref)).toBe('A:photo-1'); // Capability failure does not revoke a valid photo lease.
+  getAvatarCapabilities.mockResolvedValue({ uploadsEnabled: false, reportsEnabled: false });
+  await cache.refreshCapabilities(true);
+  expect(cache.capabilities('A').reportsEnabled).toBe(false);
+  cache.setActive(false);
+  expect(cache.capabilities('A').uploadsEnabled).toBe(false);
+  cache.setViewer('B');
+  expect(cache.capabilities('B').reportsEnabled).toBe(false);
+});
+test('stale in-flight capability responses cannot enable another account', async () => {
+  const { loader } = fixture();
+  let finish!: (value: { uploadsEnabled: boolean; reportsEnabled: boolean }) => void;
+  const getAvatarCapabilities = jest.fn(
+    () =>
+      new Promise<{ uploadsEnabled: boolean; reportsEnabled: boolean }>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const cache = createAvatarCache({ ...loader, getAvatarCapabilities });
+  cache.setViewer('A');
+  const pending = cache.refreshCapabilities();
+  cache.setViewer('B');
+  finish({ uploadsEnabled: true, reportsEnabled: true });
+  await pending;
+  expect(cache.capabilities('B').uploadsEnabled).toBe(false);
+});

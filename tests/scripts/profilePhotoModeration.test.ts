@@ -13,16 +13,30 @@ const legacy = [
   Buffer.from(JSON.stringify({ role: 'service_role', ref: projectRef })).toString('base64url'),
   'synthetic_signature',
 ].join('.');
-function run(args: string[], overrides: Record<string, string | undefined> = {}, fail = false) {
+function run(
+  args: string[],
+  overrides: Record<string, string | undefined> = {},
+  fail = false,
+  changeDuringRead = false,
+) {
   const credential = overrides.SUPABASE_SERVICE_ROLE_KEY ?? modern;
   const stub = `process.argv = ['node', ${JSON.stringify(script)}, ...${JSON.stringify(args)}];
-    let calls=0;
+    let calls=0, currentReads=0;
     globalThis.fetch = async (url, options) => {
       calls++;
       if (options.headers.apikey !== ${JSON.stringify(credential)} ||
           options.headers.Authorization !== ${JSON.stringify(credential === legacy ? `Bearer ${legacy}` : undefined)})
         throw Error('Header mismatch');
       if (${fail}) return new Response('PRIVATE_SERVER_DETAILS', {status:403});
+      if (url.includes('avatar_moderation_current')) {
+        currentReads++;
+        return Response.json({userId:${JSON.stringify(reportId)},revision:(${changeDuringRead} && currentReads>1)?8:7,path:${JSON.stringify(objectPath)}});
+      }
+      if (url.includes('avatar_moderation_remove_current')) {
+        const input=JSON.parse(options.body);
+        if (input.p_revision!==7 || input.p_path!==${JSON.stringify(objectPath)}) throw Error('Current verification binding mismatch');
+        return Response.json({revision:8,resolvedReports:2});
+      }
       if (url.includes('avatar_moderation_evidence')) return Response.json(${JSON.stringify(objectPath)});
       if (url.includes('/storage/')) return new Response(new Uint8Array([255,216,255,217]));
       if (url.includes('avatar_moderation_remove')) return Response.json({revision:8});
@@ -117,3 +131,25 @@ test.each([modern, legacy])(
       expect(result.stderr).not.toContain(secret);
   },
 );
+
+test('current-photo review rechecks after downloading and current removal binds the verified revision', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wtw-current-review-'));
+  try {
+    const file = join(dir, 'current.jpg');
+    const viewed = run(['view-current', reportId, file]);
+    expect(viewed.status).toBe(0);
+    expect(viewed.stdout).toContain('TEST_NETWORK_CALLS=3');
+    const changed = join(dir, 'changed.jpg');
+    const result = run(['view-current', reportId, changed], {}, false, true);
+    expect(result.status).not.toBe(0);
+    expect(() => readFileSync(changed)).toThrow();
+    const removed = run(['remove-current', reportId, '--confirm']);
+    expect(removed.status).toBe(0);
+    expect(removed.stdout).toContain('resolved reports 2');
+    const unconfirmed = run(['remove-current', reportId]);
+    expect(unconfirmed.status).not.toBe(0);
+    expect(unconfirmed.stdout).toContain('TEST_NETWORK_CALLS=0');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

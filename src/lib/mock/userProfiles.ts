@@ -124,6 +124,11 @@ export function handleMockAvatarRequest(
 ): Response | null {
   const url = new URL(path, 'https://mock.wtw.local');
   const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' };
+  if (method === 'GET' && url.pathname === '/avatars/capabilities')
+    return new Response(JSON.stringify({ uploadsEnabled: false, reportsEnabled: false }), {
+      status: 200,
+      headers,
+    });
   const target = /^\/users\/([^/]+)\/avatar$/.exec(url.pathname);
   if (method === 'POST' && url.pathname === '/avatars/resolve') {
     const input = JSON.parse(String(init.body)) as { userIds?: unknown };

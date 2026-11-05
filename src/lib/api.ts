@@ -187,7 +187,7 @@ export function createApiClient({
             redirect: 'error',
             headers: {
               Authorization: `Bearer ${current.accessToken}`,
-              Accept: method === 'GET' ? 'image/jpeg' : 'application/json',
+              Accept: method === 'GET' && !jsonBody ? 'image/jpeg' : 'application/json',
               ...(body === undefined
                 ? {}
                 : { 'Content-Type': jsonBody ? 'application/json' : 'image/jpeg' }),
@@ -287,6 +287,20 @@ export function createApiClient({
   const groupPath = (groupId: string) => `/groups/${encodeURIComponent(groupId)}`;
 
   return {
+    async getAvatarCapabilities(
+      viewer: string,
+      signal?: AbortSignal,
+    ): Promise<import('@shared/api/avatars.ts').AvatarCapabilities> {
+      return photoRequest(
+        viewer,
+        '/avatars/capabilities',
+        'GET',
+        (res) => res.json(),
+        undefined,
+        signal,
+        true,
+      );
+    },
     async uploadAvatar(viewer: string, revision: number, bytes: Uint8Array): Promise<AvatarChange> {
       if (!bytes.length || bytes.length > AVATAR_MAX_BYTES || bytes[0] !== 255 || bytes[1] !== 216)
         throw new ApiError('INVALID_IMAGE', 'Choose a JPEG photo under 1 MiB.', 400);

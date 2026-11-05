@@ -26,7 +26,7 @@ end $$;
 select 'ok 1 - no default evidence retention or implicit enablement';
 reset role;
 -- Test fixture ONLY: this is not a recommended production retention period.
-update private.photo_moderation_config set retention_seconds=3600;
+update private.photo_moderation_config set retention_seconds=3600,moderation_ready=true;
 set local role service_role;
 do $$ declare first_id uuid; second_id uuid; deadline timestamptz; begin
  first_id:=public.avatar_report_create('b7350002-3333-4333-8333-333333333333','b7350001-3333-4333-8333-333333333333',1,'Abuse');

@@ -112,7 +112,7 @@ local block/remove events, sign-out and backgrounding invalidate immediately.
 Already delivered pixels cannot be remotely erased from another user's device.
 
 Photo-specific moderation is implemented but photo reports are disabled until the
-team configures an approved retention interval. `public.reports` now stores the
+team configures an approved retention interval and explicitly attests moderation readiness. Uploads/replacements share that server-enforced gate; retention alone is insufficient. `public.reports` now stores the
 owner and exact revision, a private immutable evidence path, and an expiry; no
 paths/bytes appear in client report responses. Existing report RLS and cascades
 apply. Only existing authorized project operators using service credentials/SQL
@@ -134,3 +134,13 @@ See `moderation.md` for the actual workflow. PR #45 must update
 no-upload statement. Describe the actual photo audience, evidence access, expiry,
 cleanup delays and deletion behavior. Photos or Videos/User Content label purpose,
 linkage, retention and final policy language require human approval before release.
+
+
+Review follow-up: authenticated capability state is account-scoped and short-lived;
+no new server-side photo-view receipt/history is collected. Post-block/removal
+reporting remains a bounded-receipt/grace-policy decision. Privileged current-photo
+review after evidence expiry never restores historical evidence or broadens ordinary
+photo/profile access. Current removal appends an operational outcome to all exact-
+revision reports while preserving notes; staff identity/access auditing is still an
+approval gate. PR #45 must explain these actual distinctions and any subsequently
+approved receipt retention before release; no permanent viewing history is assumed.

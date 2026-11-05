@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import type { AvatarRef } from '@shared/api/avatars.ts';
-import { useAvatarSource } from '@/hooks/useAvatarSource';
+import { useAvatarPhoto } from '@/hooks/useAvatarSource';
 import { Image, StyleSheet, Text, View } from 'react-native';
 
 import { colorForName, initialsFor } from '@/lib/avatar';
@@ -31,8 +31,15 @@ export function Avatar(props: AvatarProps) {
   );
 }
 function ManagedAvatar(props: AvatarProps) {
-  const managed = useAvatarSource(props.avatarRef, props.userId);
-  return <AvatarImage {...props} uri={managed ?? (props.avatarRef ? null : props.uri)} />;
+  const managed = useAvatarPhoto(props.avatarRef, props.userId);
+  return (
+    <AvatarImage
+      {...props}
+      uri={managed.uri ?? (props.avatarRef ? null : props.uri)}
+      imageKey={managed.displayKey}
+      onDisplay={managed.onDisplay}
+    />
+  );
 }
 function AvatarImage({
   name,
@@ -41,7 +48,9 @@ function AvatarImage({
   done = false,
   neutral = false,
   variant = 'default',
-}: AvatarProps) {
+  imageKey,
+  onDisplay,
+}: AvatarProps & { imageKey?: string; onDisplay?: (success: boolean) => void }) {
   const [failed, setFailed] = useState<string | null>(null);
   let hash = 0;
   for (const ch of name.trim().toLowerCase()) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
@@ -67,8 +76,13 @@ function AvatarImage({
     >
       {source && source !== failed ? (
         <Image
+          key={imageKey}
+          onLoad={() => onDisplay?.(true)}
           source={{ uri: source }}
-          onError={() => setFailed(source)}
+          onError={() => {
+            setFailed(source);
+            onDisplay?.(false);
+          }}
           style={{ width: size, height: size, borderRadius: size / 2 }}
         />
       ) : (

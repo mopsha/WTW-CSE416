@@ -157,6 +157,13 @@ export function createApp(
   });
   app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404));
   app.get('/health', (c) => c.json({ status: 'ok' }));
+  app.get('/avatars/capabilities', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.avatarStore?.capabilities)
+      throw new ApiError(503, 'PHOTO_UNAVAILABLE', 'Photo capabilities unavailable');
+    return c.json(await deps.avatarStore.capabilities(user.id));
+  });
   app.post('/avatars/resolve', async (c) => {
     c.header('Cache-Control', 'private, no-store');
     const user = await deps.getUser(c.req.raw);

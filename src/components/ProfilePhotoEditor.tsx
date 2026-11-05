@@ -1,3 +1,4 @@
+import { usePhotoCapabilities } from '@/hooks/useAvatarSource';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Linking, Text, View } from 'react-native';
 import type { UserProfile } from '@shared/api/userProfiles.ts';
@@ -29,6 +30,7 @@ export function ProfilePhotoEditor(props: PhotoEditorProps) {
   );
 }
 function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: PhotoEditorProps) {
+  const capabilities = usePhotoCapabilities();
   const [selected, setSelected] = useState<SelectedPhoto | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -101,6 +103,7 @@ function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: Photo
     } catch (e) {
       if (request === epoch.current) {
         setError(messageOf(e));
+        void capabilities.refresh();
         setPermission(e instanceof PhotoSelectionError && e.permission);
         // Refresh the revision after a conflict/uncertain commit. Do not retry an
         // overwrite automatically or discard the user's unsaved preview.
@@ -131,6 +134,7 @@ function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: Photo
     }
   }
   async function choose() {
+    if (!capabilities.uploadsEnabled) return;
     await run(async () => {
       const request = epoch.current;
       const photo = await pickProfilePhoto();
@@ -138,6 +142,7 @@ function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: Photo
     });
   }
   async function save(remove = false) {
+    if (!remove && !capabilities.uploadsEnabled) return;
     await run(async () => {
       mutationVersion.current++;
       if (profile.avatarRevision === undefined)
@@ -178,9 +183,14 @@ function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: Photo
         label="Change photo"
         icon="image-outline"
         variant="secondary"
-        disabled={disabled || busy}
+        disabled={disabled || busy || !capabilities.uploadsEnabled}
         onPress={() => void choose()}
       />
+      {!capabilities.uploadsEnabled ? (
+        <Text style={{ ...type.caption, color: colors.muted }}>
+          Photo uploads are currently unavailable.
+        </Text>
+      ) : null}
       {selected ? (
         <>
           <Text style={{ ...type.caption, color: colors.muted }}>
@@ -190,7 +200,7 @@ function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: Photo
             label="Save photo"
             variant="secondary"
             loading={busy}
-            disabled={disabled}
+            disabled={disabled || !capabilities.uploadsEnabled}
             onPress={() => void save()}
           />
           <Button
