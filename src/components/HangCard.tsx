@@ -1,120 +1,18 @@
+import { useReducedMotion } from 'react-native-reanimated';
+import { HangPlanComposer } from './HangPlanComposer';
 import { picksTheme } from './theme';
 import { HangInvitation } from './picks/HangInvitation';
 import { router, useFocusEffect } from 'expo-router';
-import { queries } from '@/lib/queries';
-import type { GroupSummary } from '@/lib/groups';
 import { useCallback, useEffect, useState } from 'react';
-import { Modal, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Modal, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
-import { CUSTOM_TEMPLATES } from '@shared/domain/customPlans.ts';
 import type { HangPost } from '@shared/api/hang.ts';
-import {
-  Button,
-  Chips,
-  colors,
-  ErrorState,
-  IconButton,
-  MIN_TARGET,
-  radius,
-  Screen,
-  space,
-  type,
-} from './index';
+import { Button, colors, ErrorState, radius, space, type } from './index';
 
-function Compose({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const userId = useAuth().session?.user.id;
-  const [groups, setGroups] = useState<GroupSummary[]>([]);
-  const [audience, setAudience] = useState('all_friends');
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    if (userId)
-      void queries
-        .listMyGroups(userId)
-        .then((g) => {
-          if (active) setGroups(g);
-        })
-        .catch((e) => {
-          if (active) setError(`Could not load groups: ${messageOf(e)}`);
-        });
-    return () => {
-      active = false;
-    };
-  }, [userId]);
-  const [activity, setActivity] = useState('');
-  const [hours, setHours] = useState(1);
-  const [busy, setBusy] = useState(false);
-  return (
-    <Screen
-      title="Who's down?"
-      right={<IconButton icon="close" accessibilityLabel="Close compose" onPress={onClose} />}
-    >
-      <Text style={styles.muted}>
-        Ask your friends who’s down, then make a Pick with the people who are in.
-      </Text>
-      <Chips
-        options={CUSTOM_TEMPLATES.map((value) => ({ value, label: value }))}
-        value={activity}
-        onChange={setActivity}
-        accessibilityLabel="Hang activity templates"
-      />
-      <Chips
-        options={[
-          { value: 'all_friends', label: 'All friends' },
-          ...groups.map((g) => ({ value: g.id, label: g.name })),
-        ]}
-        value={audience}
-        onChange={setAudience}
-        accessibilityLabel="Hang audience"
-      />
-      <TextInput
-        value={activity}
-        onChangeText={setActivity}
-        maxLength={60}
-        placeholder="What do you want to do?"
-        placeholderTextColor={colors.muted}
-        style={styles.input}
-        accessibilityLabel="Hang activity"
-      />
-      <Chips
-        options={[
-          { value: 1, label: 'In 1 hour' },
-          { value: 3, label: 'In 3 hours' },
-          { value: 24, label: 'Tomorrow' },
-        ]}
-        value={hours}
-        onChange={setHours}
-        accessibilityLabel="Hang start time"
-      />
-      {error ? <ErrorState message={error} /> : null}
-      <Button
-        label="Save hang plan"
-        loading={busy}
-        disabled={!activity.trim()}
-        onPress={() => {
-          setBusy(true);
-          setError(null);
-          const starts = Date.now() + hours * 3600000;
-          void api
-            .createHang({
-              activity,
-              audience: audience === 'all_friends' ? 'all_friends' : 'group',
-              groupId: audience === 'all_friends' ? null : audience,
-              startsAt: new Date(starts).toISOString(),
-              expiresAt: new Date(starts + 4 * 3600000).toISOString(),
-            })
-            .then(onCreated)
-            .catch((e) => setError(messageOf(e)))
-            .finally(() => setBusy(false));
-        }}
-      />
-    </Screen>
-  );
-}
 export function HangCard() {
+  const reduceMotion = useReducedMotion();
   const userId = useAuth().session?.user.id;
   const [now, setNow] = useState(() => Date.now());
   const [compose, setCompose] = useState(false);
@@ -207,12 +105,12 @@ export function HangCard() {
       />
       <Modal
         visible={compose}
-        animationType="slide"
+        animationType={reduceMotion ? 'none' : 'slide'}
         presentationStyle="pageSheet"
         onRequestClose={() => setCompose(false)}
       >
         {compose ? (
-          <Compose
+          <HangPlanComposer
             key={userId}
             onClose={() => setCompose(false)}
             onCreated={() => {
@@ -231,13 +129,4 @@ const styles = StyleSheet.create({
   title: { ...picksTheme.section, color: colors.text },
   body: { ...type.body, color: colors.text },
   muted: { ...type.caption, color: colors.muted },
-  input: {
-    ...type.body,
-    minHeight: MIN_TARGET,
-    padding: space.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    color: colors.text,
-  },
 });
