@@ -571,3 +571,32 @@ Deno.test(
     assert((await setup(store, false).request('/avatars/capabilities')).status === 401);
   },
 );
+
+Deno.test('Google/cache maintenance failure does not skip avatar or account-deletion cleanup', async () => {
+  let photos = 0;
+  let deletions = 0;
+  const app = createApp({
+    store: {} as never,
+    lifecycleStore: {} as never,
+    poolBuilder: {} as never,
+    closingStore: {} as never,
+    getUser: async () => ({ id: owner }),
+    cronSecret: 'test-only',
+    sweepStore: { expiredPage: async () => [] },
+    cacheCleanupStore: { deleteExpiredOnce: async () => { throw new Error('Google coordinate cleanup failed'); } },
+    avatarStore: {
+      upload: async () => { throw new Error('Unexpected upload'); },
+      remove: async () => { throw new Error('Unexpected removal'); },
+      read: async () => { throw new Error('Unexpected read'); },
+      cleanup: async () => { photos++; },
+    },
+    retryAccountDeletions: async () => { deletions++; return { attempted: 1, failed: 0 }; },
+  });
+  const response = await app.request('/internal/sweep', {
+    method: 'POST', headers: { 'x-cron-secret': 'test-only' },
+  });
+  const result = await response.json();
+  assert(response.status === 503 && result.status === 'partial_failure');
+  assert(result.cacheCleanup.status === 'partial_failure' && result.avatarCleanup === 'ok');
+  assert(photos === 1 && deletions === 1 && result.accountDeletionCleanup.failed === 0);
+});

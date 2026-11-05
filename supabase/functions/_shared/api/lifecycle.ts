@@ -19,6 +19,7 @@ import { canTransition, type PickState } from '../domain/pickState.ts';
 import { shuffleForUser } from '../domain/shuffle.ts';
 import type { LatLng } from '../domain/geo.ts';
 import { candidateSnapshot, NoCandidatesError, type PoolBuilder } from '../places/pool.ts';
+import type { PickPlaces } from '../places/pickPlaces.ts';
 import { validFilters, type PlaceFilters } from '../domain/placeFilters.ts';
 import type { HoursMetadata } from '../places/refreshOpenHours.ts';
 import type { Candidate } from '../places/types.ts';
@@ -97,6 +98,8 @@ export interface LifecycleStore {
   savedCandidates?(hostId: string): Promise<Candidate[]>;
   groupIdeas?(groupId: string, hostId: string): Promise<GroupIdea[]>;
   candidateUuid?(): string;
+  /** The top three ranked places, which are the ones worth paying for photos of. */
+  finalistIds?(pickId: string): Promise<string[]>;
   /** Tells the other participants when the host starts or cancels. Optional in tests. */
   notifier?: Notifier;
 }
@@ -439,13 +442,17 @@ export async function getPick(
   pickId: string,
   userId: string,
   refreshHours?: (candidates: CandidateSnapshot[]) => Promise<HoursMetadata[]>,
+  pickPlaces?: PickPlaces,
 ) {
   const pick = await loadAsParticipant(store, pickId, userId);
   // Membership is checked before any provider access. Metadata never changes snapshots.
   let candidateHours: HoursMetadata[] = [];
   if (refreshHours && (pick.state === 'completed' || pick.state === 'final_vote')) {
     try {
-      candidateHours = await refreshHours(pick.candidates);
+      // Google bills hours per place at its top tier, so Google places don't show them.
+      candidateHours = await refreshHours(
+        pick.candidates.filter((c) => (c.snapshot as { provider?: unknown }).provider !== 'google'),
+      );
     } catch {
       /* Optional metadata only. */
     }
@@ -456,6 +463,20 @@ export async function getPick(
     userId,
   );
   const byId = new Map(pick.candidates.map((c) => [c.placeId, c.snapshot]));
+  // A draft's places are replaced at start and nobody sees them, so they cost nothing to skip.
+  if (pickPlaces && pick.state !== 'draft' && pick.state !== 'canceled') {
+    const revealed = pick.state === 'final_vote' || pick.state === 'completed';
+    const finalists = revealed ? ((await store.finalistIds?.(pickId)) ?? []) : [];
+    const shown = await pickPlaces({
+      center: pick.center,
+      radiusM: pick.radiusM,
+      candidates: pick.candidates,
+      photoIds: new Set(
+        pick.winnerPlaceId && revealed ? [...finalists, pick.winnerPlaceId] : finalists,
+      ),
+    });
+    pick.candidates.forEach((c, i) => byId.set(c.placeId, shown[i]!));
+  }
   return {
     id: pick.id,
     state: pick.state,

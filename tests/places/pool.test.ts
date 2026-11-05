@@ -218,14 +218,29 @@ test('fallback never poisons Google cache; telemetry/cache failures cannot preve
   expect(set).not.toHaveBeenCalled();
 });
 test('snapshot guard rejects Google; owned candidates copied deeply', () => {
-  expect(() => candidateSnapshot(candidate('a', { provider: 'google' }))).toThrow(
+  const google = candidate('a', {
+    provider: 'google',
+    retention: 'request',
+    address: '1 Main St',
+    rating: 4.5,
+    photos: [{ name: 'p', authorAttributions: [] }],
+  });
+  expect(candidateSnapshot(google)).toEqual({
+    placeId: 'a',
+    name: null,
+    category: google.category,
+    lat: google.lat,
+    lng: google.lng,
+    provider: 'google',
+  });
+  expect(() => candidateSnapshot(candidate('b', { retention: 'request' }))).toThrow(
     'cannot be persisted',
   );
   expect(() =>
     cacheEntry('k', 'q', [candidate('a', { retention: 'request' })], 'mock', clock().toISOString()),
   ).toThrow('Restricted');
   const original = candidate('m', { types: ['cafe'] });
-  const copy = candidateSnapshot(original);
+  const copy = candidateSnapshot(original) as typeof original;
   copy.types!.push('changed');
   expect(original.types).toEqual(['cafe']);
 });

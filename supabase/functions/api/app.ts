@@ -32,6 +32,7 @@ import {
 import { closePick, type ClosingStore } from '../_shared/api/closing.ts';
 import { castVote, closeVote, type VotingStore } from '../_shared/api/voting.ts';
 import type { PoolBuilder } from '../_shared/places/pool.ts';
+import type { PickPlaces } from '../_shared/places/pickPlaces.ts';
 import { joinPick, type JoinStore } from '../_shared/api/join.ts';
 import { authorizeSweep, sweepDeadlines, type SweepStore } from '../_shared/api/sweep.ts';
 import {
@@ -103,6 +104,7 @@ export function createApp(
     progressStore?: ProgressStore;
     lifecycleStore: LifecycleStore;
     poolBuilder: PoolBuilder;
+    pickPlaces?: PickPlaces;
     closingStore: ClosingStore & VotingStore;
     joinStore?: JoinStore;
     friendsStore?: FriendsStore;
@@ -372,7 +374,13 @@ export function createApp(
     c.header('Cache-Control', 'private, no-store');
     const user = await deps.getUser(c.req.raw);
     return c.json(
-      await getPick(deps.lifecycleStore, c.req.param('id'), user.id, deps.refreshHours),
+      await getPick(
+        deps.lifecycleStore,
+        c.req.param('id'),
+        user.id,
+        deps.refreshHours,
+        deps.pickPlaces,
+      ),
     );
   });
   app.post('/picks/:id/start', async (c) => {

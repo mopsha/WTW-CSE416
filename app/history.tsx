@@ -104,10 +104,10 @@ export default function HistoryScreen() {
               ) : null}
               <Text style={styles.winner}>👑 {item.winner?.name ?? 'Winner'}</Text>
               {item.finalists
-                .filter((f) => f.placeId !== item.winner?.placeId)
+                .filter((f) => f.placeId !== item.winner?.placeId && f.name)
                 .map((f) => (
                   <Text key={f.placeId} style={styles.finalist}>
-                    #{f.rank} {f.name ?? ''}
+                    #{f.rank} {f.name}
                   </Text>
                 ))}
               <View style={styles.footer}>
