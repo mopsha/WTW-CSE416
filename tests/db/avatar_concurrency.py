@@ -48,6 +48,28 @@ user_created = False
 reporter_created = False
 other_reporter_created = False
 storage_started = False
+retention = None
+readiness = None
+
+
+def photo_cas_results():
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(query,
+            f"set role service_role; select public.avatar_change('{user}',0,'{path}');", False)
+            for path in paths]
+        return [future.result() for future in futures]
+
+
+def describe_workers(label, results):
+    # Never print raw psql stderr: connection failures can contain DSNs/credentials.
+    # Only these fixed production error messages may reach the CI log.
+    known = ('Photo moderation unavailable', 'Photo changed', 'Invalid photo object')
+    for index, result in enumerate(results, 1):
+        error = next((text for text in known if text in result.stderr),
+                     'none' if result.returncode == 0 else 'unclassified (details withheld)')
+        print(f'{label} worker {index}: returncode={result.returncode}; error={error}', flush=True)
+
+
 try:
     query(f"""
       insert into auth.users(id,raw_user_meta_data) values('{user}','{{"display_name":"Photo race"}}');
@@ -55,11 +77,20 @@ try:
     user_created = True
     storage_started = True  # Also clean up if only the first upload succeeds.
     storage_fixtures('create')
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(query,
-            f"set role service_role; select public.avatar_change('{user}',0,'{path}');", False)
-            for path in paths]
-        results = [future.result() for future in futures]
+    retention = query("select coalesce(retention_seconds::text,'null') from private.photo_moderation_config;").stdout.strip()
+    assert retention == 'null' or retention.isdigit()
+    readiness = query("select moderation_ready from private.photo_moderation_config;").stdout.strip()
+    assert readiness in ('t', 'f')
+    # Isolated local fixture only. Retention alone must not permit either CAS write.
+    query("update private.photo_moderation_config set retention_seconds=3600,moderation_ready=false;")
+    disabled = photo_cas_results()
+    describe_workers('readiness disabled', disabled)
+    assert all(result.returncode != 0 and 'Photo moderation unavailable' in result.stderr
+               for result in disabled), 'Disabled readiness must reject both real writes'
+    assert query(f"select avatar_revision=0 and avatar_path is null from public.profiles where id='{user}';").stdout.strip() == 't'
+    query("update private.photo_moderation_config set moderation_ready=true;")
+    results = photo_cas_results()
+    describe_workers('readiness enabled', results)
     assert sum(result.returncode == 0 for result in results) == 1, 'CAS must have one winner'
     assert any('Photo changed' in result.stderr for result in results), 'Loser must conflict'
     assert query(f"select avatar_revision from public.profiles where id='{user}';").stdout.strip() == '1'
@@ -88,23 +119,15 @@ try:
     query(f"insert into auth.users(id,raw_user_meta_data) values('{other_reporter}','{{}}');")
     other_reporter_created = True
     query(f"insert into public.friendships(requester_id,addressee_id,status,accepted_at) values('{other_reporter}','{user}','accepted',now());")
-    retention = query("select coalesce(retention_seconds::text,'null') from private.photo_moderation_config;").stdout.strip()
-    assert retention == 'null' or retention.isdigit()
-    readiness = query("select moderation_ready from private.photo_moderation_config;").stdout.strip()
-    assert readiness in ('t','f')
-    try:
-        query("update private.photo_moderation_config set retention_seconds=3600,moderation_ready=true;")  # Test fixture, not policy.
-        replacement_path = next(path for path in paths if path != active)
-        exercise_photo_moderation_races(query, base, user, reporter, active, replacement_path, other_reporter)
-        # Reuse one retired fixture for the reporter's own current photo.
-        reporter_path = f'{reporter}/{uuid.uuid4()}.jpg'
-        paths.append(reporter_path)
-        extra = subprocess.run(['node', str(Path(__file__).with_name('avatar_storage_fixtures.mjs')), 'create', reporter_path], text=True, capture_output=True, timeout=45)
-        assert extra.returncode == 0, extra.stderr
-        query(f"select public.avatar_change('{reporter}',0,'{reporter_path}');")
-        exercise_mutual_photo_reports(query, base, user, reporter)
-    finally:
-        query(f"update private.photo_moderation_config set retention_seconds={retention},moderation_ready={'true' if readiness=='t' else 'false'};")
+    replacement_path = next(path for path in paths if path != active)
+    exercise_photo_moderation_races(query, base, user, reporter, active, replacement_path, other_reporter)
+    # Reuse one retired fixture for the reporter's own current photo.
+    reporter_path = f'{reporter}/{uuid.uuid4()}.jpg'
+    paths.append(reporter_path)
+    extra = subprocess.run(['node', str(Path(__file__).with_name('avatar_storage_fixtures.mjs')), 'create', reporter_path], text=True, capture_output=True, timeout=45)
+    assert extra.returncode == 0, extra.stderr
+    query(f"select public.avatar_change('{reporter}',0,'{reporter_path}');")
+    exercise_mutual_photo_reports(query, base, user, reporter)
     current_revision = int(query(f"select avatar_revision from public.profiles where id='{user}';").stdout.strip())
 
     # Observe the deletion transaction holding the row lock before submitting a
@@ -149,6 +172,9 @@ finally:
                               f"and name in ({path_list});").stdout.strip()
             assert remaining == '0', 'Storage fixture metadata remained after API cleanup'
     finally:
+        # Restore the original policy even when CAS assertions or Storage cleanup fail.
+        if retention is not None and readiness in ('t', 'f'):
+            query(f"update private.photo_moderation_config set retention_seconds={retention},moderation_ready={'true' if readiness=='t' else 'false'};")
         if user_created:
             query(f"delete from auth.users where id='{user}';")
         if reporter_created:
