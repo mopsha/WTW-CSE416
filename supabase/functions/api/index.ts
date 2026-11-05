@@ -23,17 +23,13 @@ import { createNotifyStore } from './notifyStore.ts';
 import { createPlansStore } from './plansStore.ts';
 import { createNotifier } from '../_shared/api/notify.ts';
 import { refreshCandidateHours } from './hours.ts';
-import { createPoolBuilder } from '../_shared/places/pool.ts';
-import { MockProvider } from '../_shared/places/MockProvider.ts';
-import { placesPoolBuilder, resolveDiscoverPhoto } from './places.ts';
+import { pickPlaces, pickPoolBuilder, placesPoolBuilder, resolveDiscoverPhoto } from './places.ts';
 import { createDiscoverStore } from './discoverStore.ts';
 import { checkUserLimit } from './limits.ts';
-import { createPlaceCache, createCacheCleanupStore } from './placeCacheStore.ts';
+import { createCacheCleanupStore } from './placeCacheStore.ts';
 
-// Discover uses configured Google/mock selection with a shared atomic HTTP budget.
-// Group Picks still require persistable snapshots and frozen ranking coordinates;
-// see docs/m4-josh-phase1.md for the remaining Google lifecycle dependency.
-const poolBuilder = createPoolBuilder(new MockProvider(), { cache: createPlaceCache() });
+// Discover and Picks have separate Google/mock switches but share an atomic HTTP budget.
+// See docs/google-picks.md for what a Pick may store.
 
 // One notifier for every Pick event; inbox rows + Expo push (no Expo access token needed
 // unless "enhanced push security" is turned on in the Expo project).
@@ -55,7 +51,8 @@ const app = createApp(
     plansStore: { ...createPlansStore(), notifier },
     pastMovesStore: createPastMovesStore(),
     cronSecret: Deno.env.get('CRON_SECRET'),
-    poolBuilder,
+    poolBuilder: pickPoolBuilder,
+    pickPlaces,
     discoverPool: placesPoolBuilder,
     discoverPhoto: resolveDiscoverPhoto,
     discoverStore: createDiscoverStore(),

@@ -39,6 +39,11 @@ export interface Candidate {
   closesAt?: string | null;
   note?: string | null;
   provider?: 'mock' | 'google' | 'custom';
+  /** Credits Google requires next to its content. */
+  attributions?: { provider: string; uri?: string }[];
+  googleMapsUri?: string;
+  /** The shown photo's page on Google Maps, which is separate from the place's. */
+  photoGoogleMapsUri?: string;
   origin?: 'group_idea';
   groupIdeaId?: string;
   groupId?: string;
