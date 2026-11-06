@@ -214,14 +214,17 @@ export function Sheet({
   title,
   onClose,
   children,
+  animationType = 'slide',
 }: {
   visible: boolean;
   title: string;
   onClose: () => void;
   children: ReactNode;
+  /** Opt-in motion preference; other sheets retain their existing transition. */
+  animationType?: 'none' | 'slide' | 'fade';
 }) {
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType={animationType} onRequestClose={onClose}>
       <KeyboardAvoidingView
         style={s.modal}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
