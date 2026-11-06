@@ -215,12 +215,15 @@ export function Sheet({
   onClose,
   children,
   onDismiss,
+  animationType = 'slide',
 }: {
   visible: boolean;
   title: string;
   onClose: () => void;
   children: ReactNode;
   onDismiss?: () => void;
+  /** Opt-in motion preference; other sheets retain their existing transition. */
+  animationType?: 'none' | 'slide' | 'fade';
 }) {
   const wasVisible = useRef(visible);
   useEffect(() => {
@@ -234,7 +237,7 @@ export function Sheet({
     <Modal
       visible={visible}
       transparent
-      animationType={onDismiss && Platform.OS !== 'ios' ? 'none' : 'slide'}
+      animationType={onDismiss && Platform.OS !== 'ios' ? 'none' : animationType}
       onDismiss={Platform.OS === 'ios' ? onDismiss : undefined}
       onRequestClose={onClose}
     >

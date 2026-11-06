@@ -79,7 +79,8 @@
         {
           "locationWhenInUsePermission": "WTW uses your location to center a Pick on where you are."
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Keyboard, Platform } from 'react-native';
+import { Keyboard, Modal, Platform } from 'react-native';
 import { Sheet } from '@/components/TabUi';
 import FriendsScreen from '../../app/(tabs)/friends';
 import { api } from '@/lib/api';
@@ -114,3 +114,45 @@ test('Android handoff follows the committed nonanimated hide without a timer', a
   expect(router.push).toHaveBeenCalledWith({ pathname: '/p/[id]', params: { id: 'target' } });
   await act(async () => tree.unmount());
 });
+
+test.each(['ios', 'android'] as const)(
+  '%s Sheet preserves motion overrides together with safe dismissal callbacks',
+  async (platform) => {
+    Object.defineProperty(Platform, 'OS', { value: platform, configurable: true });
+    const dismissed = jest.fn(),
+      close = jest.fn();
+    let tree: any;
+    const render = (visible: boolean, motion: 'none' | 'slide' | 'fade', handoff = true) => (
+      <Sheet
+        visible={visible}
+        title="Combined sheet"
+        onClose={close}
+        animationType={motion}
+        onDismiss={handoff ? dismissed : undefined}
+      >
+        {null}
+      </Sheet>
+    );
+    await act(async () => {
+      tree = create(render(true, 'none'));
+    });
+    const modal = () => tree.root.findByType(Modal);
+    expect(modal().props.animationType).toBe('none');
+    await act(async () => tree.update(render(true, 'fade')));
+    expect(modal().props.animationType).toBe(platform === 'ios' ? 'fade' : 'none');
+    await act(async () => modal().props.onRequestClose());
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(dismissed).not.toHaveBeenCalled();
+    await act(async () => tree.update(render(false, 'fade')));
+    if (platform === 'ios') {
+      expect(dismissed).not.toHaveBeenCalled();
+      await act(async () => modal().props.onDismiss());
+    }
+    expect(dismissed).toHaveBeenCalledTimes(1);
+    await act(async () => tree.update(render(false, 'fade')));
+    expect(dismissed).toHaveBeenCalledTimes(1);
+    await act(async () => tree.update(render(true, 'fade', false)));
+    expect(modal().props.animationType).toBe('fade');
+    await act(async () => tree.unmount());
+  },
+);
