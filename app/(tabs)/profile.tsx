@@ -1,3 +1,4 @@
+import { ProfileActions } from '@/components/profile/ProfileActions';
 import { profileTheme } from '@/components/theme';
 import {
   ProfileHero,
@@ -35,7 +36,7 @@ import { preferencesSummary } from '@/lib/preferences';
 // account deletion (App Store 5.1.1(v): reachable from here in two taps).
 export default function ProfileScreen() {
   const session = useSession();
-  const { displayName, preferences, saveDisplayName } = useProfile();
+  const { displayName, username, preferences, saveDisplayName } = useProfile();
   const email = session.user.email ?? 'you';
   const name = displayName || suggestedName(session.user.email) || email;
   const [details, setDetails] = useState<UserProfile | null>(null);
@@ -83,12 +84,11 @@ export default function ProfileScreen() {
   return (
     <Screen edges={['top', 'left', 'right']} contentStyle={styles.content}>
       <ProfileHero name={name} profile={details} userId={session.user.id} />
-      <Button
-        label="Edit profile"
-        variant="secondary"
-        style={styles.editProfile}
-        accessibilityLabel={`Edit profile for ${name}`}
-        onPress={() => setDraft(displayName ?? suggestedName(session.user.email))}
+      <ProfileActions
+        userId={session.user.id}
+        name={details?.displayName ?? displayName}
+        username={details?.username ?? username}
+        onEdit={() => setDraft(displayName ?? suggestedName(session.user.email))}
       />
       {!details && !detailsError ? (
         <ActivityIndicator color={colors.primary} accessibilityLabel="Loading profile details" />
@@ -186,12 +186,6 @@ export default function ProfileScreen() {
 
 const styles = StyleSheet.create({
   content: { gap: space.lg, paddingTop: space.sm },
-  editProfile: {
-    borderRadius: radius.sm,
-    borderWidth: 0,
-    minHeight: MIN_TARGET,
-    paddingVertical: 0,
-  },
   account: { marginTop: space.xl, gap: space.lg },
   settings: { backgroundColor: profileTheme.surface, borderRadius: radius.md, overflow: 'hidden' },
   footer: { paddingTop: space.sm, paddingBottom: space.lg },

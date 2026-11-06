@@ -1,3 +1,4 @@
+import { normalizeUsername } from './usernames.ts';
 import { parseProfileUpdate, validateDisplayName } from './profile.ts';
 import { ApiError } from './errors.ts';
 import { requireCleanText } from './text.ts';
@@ -40,18 +41,17 @@ export function parseIdentity(body: unknown): IdentityInput {
 }
 /** Required access depends on identity, never optional survey/permission state. */
 export function hasRequiredIdentity(displayName: string | null, username: string | null): boolean {
-  return (
-    !('error' in validateDisplayName(displayName)) &&
-    !!username &&
-    /^[a-z0-9_]{3,24}$/.test(username)
-  );
+  return !('error' in validateDisplayName(displayName)) && !!username;
 }
 export interface UserProfilesStore {
   completeIdentity?(userId: string, input: IdentityInput): Promise<UserProfile>;
   get(viewerId: string, targetId: string): Promise<UserProfile>;
   update(userId: string, input: ProfileDetailsInput): Promise<UserProfile>;
 }
-export function parseProfileDetails(body: unknown): ProfileDetailsInput {
+export function parseProfileDetails(
+  body: unknown,
+  currentUsername?: string | null,
+): ProfileDetailsInput {
   if (!body || typeof body !== 'object' || Array.isArray(body))
     throw new ApiError(400, 'INVALID_INPUT', 'Expected profile details');
   const b = body as Record<string, unknown>;
@@ -70,13 +70,7 @@ export function parseProfileDetails(body: unknown): ProfileDetailsInput {
     return text || null;
   };
   const username =
-    optionalText(b.username, 'username', 25)?.replace(/^@/, '').toLowerCase() ?? null;
-  if (username !== null && !/^[a-z0-9_]{3,24}$/.test(username))
-    throw new ApiError(
-      400,
-      'INVALID_INPUT',
-      'Username must be 3–24 letters, numbers or underscores',
-    );
+    b.username == null ? null : normalizeUsername(b.username, false, currentUsername);
   if (typeof b.shareMetadata !== 'boolean')
     throw new ApiError(400, 'INVALID_INPUT', 'Choose whether to share profile metadata');
   return {

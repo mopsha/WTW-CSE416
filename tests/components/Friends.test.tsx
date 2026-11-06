@@ -17,6 +17,7 @@ jest.mock('@/hooks/useAvatarSource', () => ({
 const { create, act } = jest.requireActual('react-test-renderer');
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('expo-router', () => ({
+  useLocalSearchParams: () => ({}),
   router: { push: jest.fn() },
   useFocusEffect: (effect: () => void) => jest.requireActual('react').useEffect(effect, [effect]),
 }));
@@ -144,21 +145,8 @@ test('empty and failed lists remain actionable without placeholder conversations
   expect(JSON.stringify(tree.toJSON())).toContain('No friends here yet');
   jest.mocked(queries.listMyGroups).mockResolvedValue([]);
   await act(async () => press(tree, 'Add a friend'));
-  expect(JSON.stringify(tree.toJSON())).toContain("Friend's email");
+  expect(JSON.stringify(tree.toJSON())).toContain("Friend's username");
   expect(api.openDirectConversation).not.toHaveBeenCalled();
-  await act(async () => tree.unmount());
-});
-
-test('add friend sheet retains trimmed-email submission and success notice', async () => {
-  const tree = await mount();
-  await act(async () => press(tree, 'Add a friend'));
-  const input = tree.root
-    .findAllByProps({ accessibilityLabel: "Friend's email" })
-    .find((n: any) => typeof n.props.onChangeText === 'function');
-  await act(async () => input.props.onChangeText('  friend@example.test  '));
-  await act(async () => button(tree, 'Send request').props.onPress());
-  expect(api.addFriend).toHaveBeenCalledWith('friend@example.test');
-  expect(JSON.stringify(tree.toJSON())).toContain('If they’re on WTW, they’ll see your request.');
   await act(async () => tree.unmount());
 });
 

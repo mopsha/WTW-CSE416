@@ -2,12 +2,7 @@
 // (supabase/functions/_shared/api/friends.ts), backed by an in-memory list. Ava, Ben and Cam
 // (the bots from the Pick demo, same ids) are already friends, and Jordan has sent a request
 // so Accept/Decline can be shown. Resets with the app, or via resetMockFriends().
-import {
-  groupFriends,
-  parseFriendRequest,
-  type FriendRow,
-  type FriendsList,
-} from '@shared/api/friends.ts';
+import { groupFriends, type FriendRow, type FriendsList } from '@shared/api/friends.ts';
 
 import { FRIENDS } from '@/components/theme';
 import { mockBlocks } from './store';
@@ -51,12 +46,6 @@ const fail = (status: number, code: string, message: string): Result => ({
   body: { error: { code, message } },
 });
 
-/** "dana.lee@x.com" -> "Dana" (the mock has no real profiles to read a name from). */
-function nameFromEmail(email: string): string {
-  const word = (email.split('@')[0] ?? '').split(/[^a-zA-Z]/)[0] ?? '';
-  return word ? word[0]!.toUpperCase() + word.slice(1) : 'New friend';
-}
-
 export function mockFriendsList(): FriendsList {
   return groupFriends(rows.filter((row) => !mockBlocks.has(row.userId)));
 }
@@ -69,45 +58,12 @@ export function handleMockFriends(
   method: string,
   path: string,
   body: unknown,
-  myEmail: string | null,
+  _myEmail: string | null,
 ): Result | null {
   if (method === 'GET' && path === '/friends') return ok(mockFriendsList());
 
   if (method === 'POST' && path === '/friends/requests') {
-    if (body === undefined) return fail(400, 'INVALID_JSON', 'Request body must be valid JSON');
-    let email: string;
-    try {
-      email = parseFriendRequest(body);
-    } catch {
-      return fail(400, 'INVALID_INPUT', 'Expected an email address');
-    }
-    if (myEmail && email === myEmail.toLowerCase()) {
-      return fail(400, 'CANNOT_FRIEND_SELF', 'You cannot add yourself');
-    }
-    if (email.startsWith(MOCK_UNKNOWN_EMAIL_PREFIX)) {
-      // Like the API: the same answer whether or not the email has an account.
-      return ok({ status: 'sent' });
-    }
-    const displayName = nameFromEmail(email);
-    const userId = `mock-${email}`;
-    if (mockBlocks.has(userId)) return ok({ status: 'sent' });
-    const existing = rows.find((r) => r.userId === userId);
-    if (existing) {
-      if (existing.status === 'pending' && existing.direction === 'in') {
-        existing.status = 'accepted';
-        existing.acceptedAt = new Date().toISOString();
-      }
-      return ok({ status: 'sent' });
-    }
-    rows.push({
-      userId,
-      displayName,
-      status: 'pending',
-      direction: 'out',
-      createdAt: new Date().toISOString(),
-      acceptedAt: null,
-    });
-    return ok({ status: 'sent' });
+    return fail(410, 'EMAIL_REQUESTS_RETIRED', 'Find friends by username instead');
   }
 
   const match = /^\/friends\/([^/]+)\/(accept|remove)$/.exec(path);
@@ -127,4 +83,25 @@ export function handleMockFriends(
   }
   rows = rows.filter((r) => r.userId !== userId);
   return ok({ status: 'ok' });
+}
+
+/** Shared fixture graph; username discovery does not create a second friendship store. */
+export const mockFriendRows = () => rows;
+export function requestMockUsername(userId: string) {
+  const row = rows.find((r) => r.userId === userId);
+  if (row) {
+    if (row.status === 'pending' && row.direction === 'in') {
+      row.status = 'accepted';
+      row.acceptedAt = new Date().toISOString();
+    }
+    return;
+  }
+  rows.push({
+    userId,
+    displayName: null,
+    status: 'pending',
+    direction: 'out',
+    createdAt: new Date().toISOString(),
+    acceptedAt: null,
+  });
 }

@@ -42,7 +42,7 @@ export function OwnProfileDetails({
     setBusy(true);
     setError(null);
     try {
-      const input = parseProfileDetails(draft);
+      const input = parseProfileDetails(draft, profile.username);
       if (profile.username && !input.username) throw new Error('Username is required');
       const updated = await api.updateProfileDetails(input);
       onSaved(updated);

@@ -1,3 +1,4 @@
+import type { PersonIdentity } from './people.ts';
 // Friends (Mike, M3). One row per pair in public.friendships (0008_friendships.sql):
 //   GET  /friends                 -> { friends, incoming }
 //   POST /friends/requests        { email } -> { status: 'sent' }
@@ -44,6 +45,13 @@ export interface FriendRequestResult {
 
 /** Database adapter. Rejects unknown emails (404), yourself (400), and missing requests (404). */
 export interface FriendsStore {
+  search?(viewer: string, query: string): Promise<PersonIdentity[]>;
+  person?(viewer: string, target: string): Promise<PersonIdentity>;
+  requestUsername?(
+    viewer: string,
+    username: string,
+    targetId: string,
+  ): Promise<{ status: 'sent'; relationship?: 'requested' | 'friends' }>;
   list(userId: string): Promise<FriendRow[]>;
   request(userId: string, email: string): Promise<FriendRequestResult>;
   accept(userId: string, friendId: string): Promise<void>;
