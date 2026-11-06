@@ -1,10 +1,11 @@
 import { useFocusEffect, useLocalSearchParams, router } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { AppState, Platform, Text, View } from 'react-native';
+import { AppState, Linking, Platform, Text, View } from 'react-native';
 import { Button, Card, ErrorState, Screen, colors, space, type } from '@/components';
 import { ListRow, SectionHeading, Sheet } from '@/components/TabUi';
 import { useAction } from '@/hooks/useAction';
 import { accountActions } from '@/lib/accountActions';
+import { PRIVACY_URL, SUPPORT_URL, TERMS_URL } from '@/lib/legal';
 import { ensureNotificationPermission } from '@/lib/notify';
 import { registerForPush } from '@/lib/push';
 import {
@@ -147,6 +148,18 @@ export default function SettingsScreen() {
       <Card>
         <ListRow title="Help" onPress={() => open('help')} />
         <ListRow title="Data & privacy information" onPress={() => open('data')} />
+        <ListRow
+          title="Support"
+          onPress={() => void Linking.openURL(SUPPORT_URL).catch(() => {})}
+        />
+        <ListRow
+          title="Privacy Policy"
+          onPress={() => void Linking.openURL(PRIVACY_URL).catch(() => {})}
+        />
+        <ListRow
+          title="Terms of Use"
+          onPress={() => void Linking.openURL(TERMS_URL).catch(() => {})}
+        />
       </Card>
       <Sheet
         title={
@@ -238,14 +251,14 @@ export default function SettingsScreen() {
               </Text>
               <Text style={{ ...type.body, color: colors.muted }}>
                 If something fails, check your connection and use Retry. For notification or
-                location access, check the relevant device permission. Feedback submission is not
-                connected.
+                location access, check the relevant device permission. For anything else, open
+                Support in Settings.
               </Text>
             </>
           ) : panel === 'data' ? (
             <>
               <Text style={{ ...type.body, color: colors.text }}>
-                This is a summary of WTW’s current controls, not a published legal policy.
+                This is a short summary. The Privacy Policy in Settings has the full details.
               </Text>
               <Text style={{ ...type.body, color: colors.muted }}>
                 Your email is used for sign-in. Your profile, preferences, group memberships, saved
