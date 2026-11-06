@@ -1,6 +1,6 @@
 import Slider from '@react-native-community/slider';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import {
   AccessibilityInfo,
   Keyboard,
@@ -65,7 +65,7 @@ const DEADLINES: readonly ChipOption<number>[] = [
   { value: 60, label: '1 hr' },
   { value: 180, label: '3 hr' },
   { value: 1440, label: '1 day' },
-  { value: 0, label: 'None', accessibilityLabel: 'No deadline' },
+  { value: 0, label: 'No deadline', accessibilityLabel: 'No deadline' },
 ];
 
 const THRESHOLDS: readonly ChipOption<number>[] = [
@@ -73,6 +73,10 @@ const THRESHOLDS: readonly ChipOption<number>[] = [
   { value: 75, label: '75%' },
   { value: 100, label: 'Everyone' },
 ];
+
+// RN 0.86 exports this component-ref accessor at runtime, but omits it from
+// ScrollView.d.ts. getInnerViewNode() is a numeric handle and is not Fabric-safe.
+type FormScrollView = ScrollView & { getInnerViewRef(): View | null };
 
 const MIN_MILES = 0.5;
 const MAX_MILES = 10;
@@ -106,8 +110,11 @@ export default function CreatePickScreen() {
   const [moreOptions, setMoreOptions] = useState(false);
   const [expandedMap, setExpandedMap] = useState(false);
   const sending = useRef(false);
-  const form = useRef<ScrollView>(null);
-  const revealError = useRef(false);
+  const form = useRef<FormScrollView>(null);
+  const attempt = useRef(0);
+  const [reveal, setReveal] = useState<{ field: CreatePickField | 'submit'; id: number } | null>(
+    null,
+  );
   const optionSummary = [
     miles !== 2 ? `${miles.toFixed(1)} mi` : '',
     includeSaved ? 'Saved places' : '',
@@ -129,6 +136,8 @@ export default function CreatePickScreen() {
 
   const submit = async () => {
     if (sending.current) return;
+    const id = ++attempt.current;
+    setReveal(null);
     const input: CreatePickInput = {
       category,
       center,
@@ -157,6 +166,8 @@ export default function CreatePickScreen() {
     if (found.length > 0) {
       if (found.some((p) => !['category', 'center', 'customOptions'].includes(p.field)))
         setMoreOptions(true);
+      Keyboard.dismiss();
+      setReveal({ field: found[0]!.field, id });
       haptic.tap();
       return;
     }
@@ -164,7 +175,6 @@ export default function CreatePickScreen() {
     sending.current = true;
     Keyboard.dismiss();
     setSubmitting(true);
-    revealError.current = false;
     setSubmitError(null);
     try {
       if (hangId) {
@@ -182,8 +192,8 @@ export default function CreatePickScreen() {
       // Straight to the Lobby, replacing this form so Back goes to Picks.
       router.replace({ pathname: '/pick/[id]/lobby', params: { id: pickId } });
     } catch (e) {
-      revealError.current = true;
       setSubmitError(messageOf(e));
+      setReveal({ field: 'submit', id });
     } finally {
       sending.current = false;
       setSubmitting(false);
@@ -223,19 +233,17 @@ export default function CreatePickScreen() {
       </View>
       <ScrollView
         ref={form}
-        onContentSizeChange={() => {
-          if (!revealError.current || !submitError) return;
-          revealError.current = false;
-          form.current?.scrollToEnd({ animated: false });
-          // ErrorState's live region handles Android; announce the new error on iOS.
-          if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(submitError);
-        }}
         style={styles.scroll}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
       >
-        <Section title="What are we doing?" error={problems.category}>
+        <Section
+          title="What are we doing?"
+          error={problems.category}
+          revealId={reveal?.field === 'category' ? reveal.id : undefined}
+          form={form}
+        >
           <Chips
             options={CATEGORIES}
             value={category}
@@ -248,6 +256,8 @@ export default function CreatePickScreen() {
           <Section
             title="Your options"
             error={problems.customOptions}
+            revealId={reveal?.field === 'customOptions' ? reveal.id : undefined}
+            form={form}
             hint="Add 2–20 ideas. Everyone swipes and votes as usual."
           >
             <CustomPlanEditor options={customOptions} onChange={setCustomOptions} />
@@ -263,7 +273,12 @@ export default function CreatePickScreen() {
             />
           </Section>
         ) : null}
-        <Section title="Where" error={problems.center}>
+        <Section
+          title="Where"
+          error={problems.center}
+          revealId={reveal?.field === 'center' ? reveal.id : undefined}
+          form={form}
+        >
           <LocationSearch label={placeLabel} onPick={moveCenter} />
           <MapPicker
             height={expandedMap ? 320 : Platform.OS === 'web' ? 240 : 144}
@@ -345,7 +360,12 @@ export default function CreatePickScreen() {
                   to public places only.
                 </Text>
                 {problems.includeGroupIdeas ? (
-                  <ErrorState message={problems.includeGroupIdeas} />
+                  <Problem
+                    message={problems.includeGroupIdeas}
+                    label="Include Group Ideas"
+                    form={form}
+                    revealId={reveal?.field === 'includeGroupIdeas' ? reveal.id : undefined}
+                  />
                 ) : null}
               </View>
             ) : null}
@@ -355,6 +375,8 @@ export default function CreatePickScreen() {
               value={`${miles.toFixed(1)} mi`}
               hint="Places within this distance of the pin."
               error={problems.radiusM}
+              revealId={reveal?.field === 'radiusM' ? reveal.id : undefined}
+              form={form}
             >
               <Slider
                 minimumValue={MIN_MILES}
@@ -381,6 +403,8 @@ export default function CreatePickScreen() {
               title="Place filters"
               hint="Unknown prices or hours are excluded when that filter is set."
               error={problems.priceMax}
+              revealId={reveal?.field === 'priceMax' ? reveal.id : undefined}
+              form={form}
             >
               <PlaceFilterControls
                 priceMax={priceMax}
@@ -394,6 +418,8 @@ export default function CreatePickScreen() {
                 title="How many places"
                 hint="Fewer is faster to swipe; more gives more options."
                 error={problems.poolSize}
+                revealId={reveal?.field === 'poolSize' ? reveal.id : undefined}
+                form={form}
               >
                 <Chips
                   options={POOL_SIZES}
@@ -408,6 +434,8 @@ export default function CreatePickScreen() {
               title="Deadline"
               hint="Swiping closes then, even if not everyone is done."
               error={problems.deadlineAt}
+              revealId={reveal?.field === 'deadlineAt' ? reveal.id : undefined}
+              form={form}
             >
               <Chips
                 options={DEADLINES}
@@ -421,6 +449,8 @@ export default function CreatePickScreen() {
               title="Close early when"
               hint="…this many people have finished swiping."
               error={problems.closeThreshold}
+              revealId={reveal?.field === 'closeThreshold' ? reveal.id : undefined}
+              form={form}
             >
               <Chips
                 options={THRESHOLDS}
@@ -432,7 +462,18 @@ export default function CreatePickScreen() {
           </View>
         ) : null}
         {submitError ? (
-          <ErrorState message={submitError} onRetry={() => void submit()} retryLabel="Try again" />
+          <Problem
+            message={submitError}
+            label="Could not create Pick"
+            form={form}
+            revealId={reveal?.field === 'submit' ? reveal.id : undefined}
+          >
+            <ErrorState
+              message={submitError}
+              onRetry={() => void submit()}
+              retryLabel="Try again"
+            />
+          </Problem>
         ) : null}
       </ScrollView>
       <View style={styles.footer}>
@@ -454,12 +495,16 @@ function Section({
   hint,
   error,
   children,
+  revealId,
+  form,
 }: {
   title: string;
   value?: string;
   hint?: string;
   error?: string;
   children: ReactNode;
+  revealId?: number;
+  form?: RefObject<FormScrollView | null>;
 }) {
   return (
     <View style={styles.section}>
@@ -470,12 +515,82 @@ function Section({
         {value ? <Text style={styles.sectionValue}>{value}</Text> : null}
       </View>
       {hint ? <Text style={styles.hint}>{hint}</Text> : null}
+      {error ? <Problem message={error} label={title} revealId={revealId} form={form} /> : null}
       {children}
-      {error ? (
-        <Text style={styles.error} accessibilityRole="alert">
-          {error}
+    </View>
+  );
+}
+
+// A new keyed native view receives layout even when consecutive errors have the
+// same size. Each attempt reveals once; later form resizing cannot replay it.
+interface ProblemProps {
+  message: string;
+  label: string;
+  revealId?: number;
+  form?: RefObject<FormScrollView | null>;
+  children?: ReactNode;
+}
+function Problem({ message, label, revealId, form, children }: ProblemProps) {
+  return (
+    <ProblemAnchor key={revealId ?? 'idle'} {...{ message, label, revealId, form, children }} />
+  );
+}
+function ProblemAnchor({ message, label, revealId, form, children }: ProblemProps) {
+  const anchor = useRef<View>(null);
+  const handled = useRef(false);
+  const active = useRef(true);
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+    };
+  }, []);
+  return (
+    <View
+      ref={anchor}
+      collapsable={false}
+      accessible={!children}
+      accessibilityRole={children ? undefined : 'alert'}
+      accessibilityLiveRegion={children ? undefined : 'polite'}
+      tabIndex={Platform.OS === 'web' && !children ? -1 : undefined}
+      accessibilityLabel={children ? undefined : `${label}. ${message}`}
+      onLayout={() => {
+        if (revealId === undefined || handled.current) return;
+        handled.current = true;
+        const node = anchor.current;
+        const scroll = form?.current;
+        const inner = scroll?.getInnerViewRef();
+        let completed = false;
+        const announceFailure = () => {
+          if (completed) return;
+          completed = true;
+          if (active.current) AccessibilityInfo.announceForAccessibility(`${label}. ${message}`);
+        };
+        if (!node || !scroll || !inner) {
+          announceFailure();
+          return;
+        }
+        node.measureLayout(
+          inner,
+          (_, y) => {
+            if (completed || !active.current) return;
+            completed = true;
+            scroll.scrollTo({ y: Math.max(0, y - space.md), animated: false });
+            if (children) {
+              // ErrorState already announces its Android live region.
+              if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(message);
+            } else if (Platform.OS === 'web') node.focus();
+            else AccessibilityInfo.sendAccessibilityEvent(node, 'focus');
+          },
+          announceFailure,
+        );
+      }}
+    >
+      {children ?? (
+        <Text style={styles.error} accessible={false}>
+          {message}
         </Text>
-      ) : null}
+      )}
     </View>
   );
 }
