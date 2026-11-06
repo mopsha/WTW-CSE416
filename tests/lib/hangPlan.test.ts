@@ -35,3 +35,40 @@ test('crossing a local daylight-saving boundary preserves the selected wall cloc
   expect(input.startsAt).toBe(start.toISOString());
   expect(Date.parse(input.expiresAt) - start.getTime()).toBe(4 * 3600000);
 });
+
+test.each([
+  new Date(2026, 0, 15, 12, 34, 45),
+  new Date(2026, 11, 31, 23, 59, 50),
+  new Date(2026, 2, 1, 23, 30), // Spring-forward occurs inside the elapsed seven days.
+  new Date(2026, 9, 25, 23, 30), // Fall-back occurs inside the elapsed seven days.
+])('selectable final local day clamps to a valid instant: %s', (today) => {
+  const now = today.getTime();
+  const last = new Date(now + 7 * 86400000);
+  const late = new Date(today);
+  late.setHours(23, 59, 0, 0);
+  const result = changeHangDate(late, last, 'date', now);
+  expect(result.getTime()).toBeLessThanOrEqual(last.getTime());
+  expect(result.getTime()).toBeGreaterThan(now);
+  expect([result.getFullYear(), result.getMonth(), result.getDate()]).toEqual([
+    last.getFullYear(),
+    last.getMonth(),
+    last.getDate(),
+  ]);
+  expect(result.getTime()).toBe(
+    Math.min(
+      changeHangDate(late, last, 'date').getTime(),
+      Math.floor(last.getTime() / 60000) * 60000,
+    ),
+  );
+  const input = hangPlanInput('Cookout', result, 'all_friends', now);
+  expect(Date.parse(input.expiresAt) - result.getTime()).toBe(4 * 3600000);
+});
+
+test('near-midnight minimum advances to the next valid minute and near-limit time stays in range', () => {
+  const now = new Date(2026, 0, 15, 23, 59, 50).getTime();
+  const result = changeHangDate(new Date(now), new Date(now), 'date', now);
+  expect(result.getTime()).toBe(Math.floor(now / 60000) * 60000 + 60000);
+  const last = new Date(now + 7 * 86400000);
+  const time = changeHangDate(last, new Date(2026, 0, 1, 23, 59), 'time', now);
+  expect(hangTimeProblem(time, now)).toBeNull();
+});

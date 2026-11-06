@@ -23,7 +23,7 @@ import {
   HANG_START_HORIZON_MS,
 } from '@/lib/hangPlan';
 import { queries } from '@/lib/queries';
-import { Button, ErrorState, IconButton, Screen } from './index';
+import { Button, ErrorState, Screen } from './index';
 import { Sheet } from './TabUi';
 import { colors, MIN_TARGET, picksTheme, radius, space } from './theme';
 
@@ -38,7 +38,15 @@ const ACTIVITIES = [
 ];
 type Picker = 'date' | 'time';
 
-export function HangPlanComposer({ onClose, onCreated }: { onClose(): void; onCreated(): void }) {
+export function HangPlanComposer({
+  onClose,
+  onCreated,
+  onSavingChange,
+}: {
+  onClose(): void;
+  onCreated(): void;
+  onSavingChange?(saving: boolean): void;
+}) {
   const reduceMotion = useReducedMotion();
   const userId = useAuth().session?.user.id;
   const [activity, setActivity] = useState('');
@@ -109,7 +117,8 @@ export function HangPlanComposer({ onClose, onCreated }: { onClose(): void; onCr
     if (pending.current) return;
     Keyboard.dismiss();
     setError(null);
-    setNow(Date.now());
+    const openedAt = Date.now();
+    setNow(openedAt);
     if (Platform.OS === 'android') {
       androidPicker.current = mode;
       DateTimePickerAndroid.open({
@@ -117,11 +126,14 @@ export function HangPlanComposer({ onClose, onCreated }: { onClose(): void; onCr
         mode,
         display: 'default',
         ...(mode === 'date'
-          ? { minimumDate: new Date(), maximumDate: new Date(Date.now() + HANG_START_HORIZON_MS) }
+          ? {
+              minimumDate: new Date(Math.floor(openedAt / 60000) * 60000 + 60000),
+              maximumDate: new Date(openedAt + HANG_START_HORIZON_MS),
+            }
           : {}),
         onValueChange: (_, date) => {
           androidPicker.current = null;
-          if (mounted.current) setStart(changeHangDate(start, date, mode));
+          if (mounted.current) setStart(changeHangDate(start, date, mode, Date.now()));
         },
         onDismiss: () => {
           androidPicker.current = null;
@@ -147,6 +159,7 @@ export function HangPlanComposer({ onClose, onCreated }: { onClose(): void; onCr
       return;
     }
     pending.current = true;
+    onSavingChange?.(true);
     setBusy(true);
     Keyboard.dismiss();
     setPicker(null);
@@ -157,7 +170,10 @@ export function HangPlanComposer({ onClose, onCreated }: { onClose(): void; onCr
       if (mounted.current) setError(messageOf(e));
     } finally {
       pending.current = false;
-      if (mounted.current) setBusy(false);
+      if (mounted.current) {
+        onSavingChange?.(false);
+        setBusy(false);
+      }
     }
   }
   return (
@@ -166,7 +182,18 @@ export function HangPlanComposer({ onClose, onCreated }: { onClose(): void; onCr
         <Text accessibilityRole="header" style={styles.heading}>
           Make a hang plan
         </Text>
-        <IconButton icon="close" accessibilityLabel="Close compose" onPress={onClose} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close compose"
+          accessibilityState={{ disabled: busy }}
+          disabled={busy}
+          onPress={() => {
+            if (!pending.current) onClose();
+          }}
+          style={[styles.close, busy && styles.disabled]}
+        >
+          <Ionicons name="close" size={22} color={colors.text} />
+        </Pressable>
       </View>
       <ScrollView
         style={styles.scroll}
@@ -253,10 +280,12 @@ export function HangPlanComposer({ onClose, onCreated }: { onClose(): void; onCr
                 themeVariant="dark"
                 textColor={colors.text}
                 accentColor={colors.primary}
-                minimumDate={picker === 'date' ? new Date(now) : undefined}
+                minimumDate={
+                  picker === 'date' ? new Date(Math.floor(now / 60000) * 60000 + 60000) : undefined
+                }
                 maximumDate={picker === 'date' ? new Date(now + HANG_START_HORIZON_MS) : undefined}
                 onValueChange={(_, date) =>
-                  setStart((current) => changeHangDate(current, date, picker))
+                  setStart((current) => changeHangDate(current, date, picker, Date.now()))
                 }
                 accessibilityLabel={`Hang ${picker}`}
                 style={styles.wheel}
@@ -404,6 +433,14 @@ const styles = StyleSheet.create({
     gap: space.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
+  },
+  close: {
+    width: MIN_TARGET,
+    height: MIN_TARGET,
+    borderRadius: MIN_TARGET / 2,
+    backgroundColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   heading: { ...picksTheme.section, color: colors.text, flex: 1 },
   scroll: { flex: 1 },

@@ -4,11 +4,28 @@ export const HANG_START_HORIZON_MS = 7 * 86400000;
 const HANG_DURATION_MS = 4 * 3600000;
 
 /** Work in the device's local calendar; only serialize to UTC at the API boundary. */
-export function changeHangDate(current: Date, selected: Date, mode: 'date' | 'time'): Date {
+export function changeHangDate(
+  current: Date,
+  selected: Date,
+  mode: 'date' | 'time',
+  now?: number,
+): Date {
   const next = new Date(current);
   if (mode === 'date')
     next.setFullYear(selected.getFullYear(), selected.getMonth(), selected.getDate());
   else next.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
+  if (now !== undefined) {
+    const last = new Date(now + HANG_START_HORIZON_MS);
+    const day = (date: Date) =>
+      new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    // Keep invalid/out-of-range dates subject to validation. Within selectable local
+    // dates, retain the clock when possible, otherwise choose a valid picker minute.
+    if (day(next) >= day(new Date(now)) && day(next) <= day(last)) {
+      const firstMinute = Math.floor(now / 60000) * 60000 + 60000;
+      const lastMinute = Math.floor(last.getTime() / 60000) * 60000;
+      return new Date(Math.max(firstMinute, Math.min(next.getTime(), lastMinute)));
+    }
+  }
   return next;
 }
 export function hangTimeProblem(start: Date, now: number): string | null {

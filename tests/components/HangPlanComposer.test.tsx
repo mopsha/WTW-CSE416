@@ -1,6 +1,7 @@
 import React from 'react';
-import { Keyboard, Platform, TextInput } from 'react-native';
+import { Keyboard, Modal, Platform, TextInput } from 'react-native';
 import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
+import { HangCard } from '@/components/HangCard';
 import { HangPlanComposer } from '@/components/HangPlanComposer';
 import { api } from '@/lib/api';
 import { queries } from '@/lib/queries';
@@ -10,7 +11,8 @@ let mockReduceMotion = false;
 jest.mock('react-native-reanimated', () => ({ useReducedMotion: () => mockReduceMotion }));
 const { act, create } = jest.requireActual('react-test-renderer');
 jest.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ session: { user: { id: 'me' } } }) }));
-jest.mock('@/lib/api', () => ({ api: { createHang: jest.fn() } }));
+jest.mock('@/lib/api', () => ({ api: { createHang: jest.fn(), getHang: jest.fn() } }));
+jest.mock('expo-router', () => ({ router: { push: jest.fn() }, useFocusEffect: jest.fn() }));
 jest.mock('@/lib/queries', () => ({ queries: { listMyGroups: jest.fn() } }));
 jest.mock('@react-native-community/datetimepicker', () => ({
   __esModule: true,
@@ -18,6 +20,7 @@ jest.mock('@react-native-community/datetimepicker', () => ({
   DateTimePickerAndroid: { open: jest.fn(), dismiss: jest.fn().mockResolvedValue(true) },
 }));
 jest.mock('@/components/index', () => ({
+  ...jest.requireActual('@/components/theme'),
   Screen: ({ children }: { children: React.ReactNode }) => children,
   Button: (props: object) => jest.requireActual('react').createElement('kit-button', props),
   ErrorState: (props: object) => jest.requireActual('react').createElement('kit-error', props),
@@ -43,6 +46,7 @@ type Tree = {
 let tree: Tree;
 const onCreated = jest.fn();
 const onClose = jest.fn();
+const onSavingChange = jest.fn();
 const groupId = 'a0000001-2222-4222-8222-222222222222';
 const originalOS = Platform.OS;
 beforeEach(() => {
@@ -57,6 +61,7 @@ beforeEach(() => {
       { id: groupId, name: 'Weekend friends', ownerId: 'me', isOwner: true, memberCount: 4 },
     ]);
   jest.mocked(api.createHang).mockResolvedValue({} as never);
+  jest.mocked(api.getHang).mockResolvedValue({ posts: [], notice: '', sharedAvailable: true });
 });
 afterEach(async () => {
   await act(async () => tree?.unmount());
@@ -66,7 +71,9 @@ afterEach(async () => {
 });
 async function mount() {
   await act(async () => {
-    tree = create(<HangPlanComposer onClose={onClose} onCreated={onCreated} />);
+    tree = create(
+      <HangPlanComposer onClose={onClose} onCreated={onCreated} onSavingChange={onSavingChange} />,
+    );
   });
 }
 function node(label: string) {
@@ -211,8 +218,16 @@ test('duplicate taps are blocked while sending and an API failure preserves sele
   });
   expect(api.createHang).toHaveBeenCalledTimes(1);
   expect(save().props.loading).toBe(true);
+  expect(onSavingChange).toHaveBeenLastCalledWith(true);
+  expect(node('Close compose').props.disabled).toBe(true);
+  expect(node('Close compose').props.accessibilityState).toEqual({ disabled: true });
+  // Directly invoke the handler as well: the synchronous guard must resist stale taps.
+  await press('Close compose');
+  expect(onClose).not.toHaveBeenCalled();
   await act(async () => fail(new Error('Offline. Try again.')));
   expect(onCreated).not.toHaveBeenCalled();
+  expect(onSavingChange).toHaveBeenLastCalledWith(false);
+  expect(node('Close compose').props.disabled).toBe(false);
   expect(tree.root.findAllByType('kit-error')[0]!.props.message).toBe('Offline. Try again.');
   expect(node('Activity, Basketball')).toBeDefined();
   await act(async () => save().props.onPress());
@@ -259,4 +274,122 @@ test('selection sheets respect the existing reduced-motion setting', async () =>
   await mount();
   await press('Activity, Choose an activity');
   expect(tree.root.findAllByType('selection-sheet')[0]!.props.animationType).toBe('none');
+});
+
+test.each(['ios', 'android'] as const)(
+  '%s final selectable date and later clock choices clamp to the seven-day limit',
+  async (platform) => {
+    Object.defineProperty(Platform, 'OS', { value: platform, configurable: true });
+    jest.setSystemTime(new Date(2026, 0, 15, 12, 34, 45));
+    await mount();
+    await choose('Cookout');
+    await openDate();
+    const select = async (mode: 'date' | 'time', date: Date) => {
+      if (platform === 'ios') await act(async () => picker().props.onValueChange({}, date));
+      else {
+        const calls = jest.mocked(DateTimePickerAndroid.open).mock.calls;
+        const props = calls[calls.length - 1]![0];
+        expect(props.mode).toBe(mode);
+        await act(async () =>
+          props.onValueChange?.({ nativeEvent: { timestamp: date.getTime(), utcOffset: 0 } }, date),
+        );
+      }
+    };
+    const last = new Date(Date.now() + 7 * 86400000);
+    await select('date', last);
+    expect(save().props.disabled).toBe(false);
+    await openTime();
+    await select('time', new Date(2026, 0, 15, 23, 59));
+    expect(save().props.disabled).toBe(false);
+    await act(async () => save().props.onPress());
+    const input = jest.mocked(api.createHang).mock.calls[0]![0];
+    expect(Date.parse(input.startsAt)).toBe(Math.floor(last.getTime() / 60000) * 60000);
+    expect(Date.parse(input.expiresAt) - Date.parse(input.startsAt)).toBe(4 * 3600000);
+  },
+);
+
+test('successful in-flight save keeps Close guarded and reports completion exactly once', async () => {
+  let finish!: () => void;
+  jest.mocked(api.createHang).mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = () => resolve({} as never);
+    }),
+  );
+  await mount();
+  await choose('Game night');
+  const staleClose = node('Close compose').props.onPress;
+  await act(async () => {
+    save().props.onPress();
+    staleClose();
+    save().props.onPress();
+  });
+  expect(onClose).not.toHaveBeenCalled();
+  expect(api.createHang).toHaveBeenCalledTimes(1);
+  await act(async () => finish());
+  expect(onCreated).toHaveBeenCalledTimes(1);
+  expect(onSavingChange.mock.calls.map(([value]) => value)).toEqual([true, false]);
+});
+
+test.each(['ios', 'android'] as const)(
+  '%s parent dismissal stays blocked until save completes and feed refreshes',
+  async (platform) => {
+    Object.defineProperty(Platform, 'OS', { value: platform, configurable: true });
+    let finish!: () => void;
+    jest.mocked(api.createHang).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = () => resolve({} as never);
+      }),
+    );
+    await act(async () => {
+      tree = create(<HangCard />);
+    });
+    const compose = tree.root
+      .findAllByType('kit-button')
+      .find((n) => n.props.label === 'Make a hang plan')!;
+    await act(async () => compose.props.onPress());
+    const modal = () => tree.root.findAllByType(Modal)[0]!;
+    const staleRequestClose = modal().props.onRequestClose;
+    expect(modal().props.allowSwipeDismissal).toBe(true);
+    await choose('Game night');
+    const reads = jest.mocked(api.getHang).mock.calls.length;
+    await act(async () => {
+      save().props.onPress();
+      staleRequestClose();
+      save().props.onPress();
+    });
+    expect(modal().props.visible).toBe(true);
+    expect(modal().props.allowSwipeDismissal).toBe(false);
+    await act(async () => modal().props.onRequestClose());
+    await press('Close compose');
+    expect(modal().props.visible).toBe(true);
+    expect(api.createHang).toHaveBeenCalledTimes(1);
+    await act(async () => finish());
+    expect(modal().props.visible).toBe(false);
+    expect(api.getHang).toHaveBeenCalledTimes(reads + 1);
+  },
+);
+
+test('parent dismissal unlocks after failed save without losing the draft', async () => {
+  let fail!: (error: Error) => void;
+  jest.mocked(api.createHang).mockReturnValueOnce(
+    new Promise((_, reject) => {
+      fail = reject;
+    }),
+  );
+  await act(async () => {
+    tree = create(<HangCard />);
+  });
+  await act(async () =>
+    tree.root
+      .findAllByType('kit-button')
+      .find((n) => n.props.label === 'Make a hang plan')!
+      .props.onPress(),
+  );
+  await choose('Movie night');
+  await act(async () => save().props.onPress());
+  await act(async () => fail(new Error('Offline')));
+  expect(tree.root.findAllByType(Modal)[0]!.props.allowSwipeDismissal).toBe(true);
+  expect(node('Activity, Movie night')).toBeDefined();
+  await press('Close compose');
+  expect(tree.root.findAllByType(Modal)[0]!.props.visible).toBe(false);
 });

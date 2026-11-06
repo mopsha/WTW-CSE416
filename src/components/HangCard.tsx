@@ -3,7 +3,7 @@ import { HangPlanComposer } from './HangPlanComposer';
 import { picksTheme } from './theme';
 import { HangInvitation } from './picks/HangInvitation';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/lib/api';
@@ -16,6 +16,11 @@ export function HangCard() {
   const userId = useAuth().session?.user.id;
   const [now, setNow] = useState(() => Date.now());
   const [compose, setCompose] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const closeComposer = () => {
+    if (!savingRef.current) setCompose(false);
+  };
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
@@ -107,12 +112,17 @@ export function HangCard() {
         visible={compose}
         animationType={reduceMotion ? 'none' : 'slide'}
         presentationStyle="pageSheet"
-        onRequestClose={() => setCompose(false)}
+        allowSwipeDismissal={!saving}
+        onRequestClose={closeComposer}
       >
         {compose ? (
           <HangPlanComposer
             key={userId}
-            onClose={() => setCompose(false)}
+            onClose={closeComposer}
+            onSavingChange={(value) => {
+              savingRef.current = value;
+              setSaving(value);
+            }}
             onCreated={() => {
               setCompose(false);
               setRetry((n) => n + 1);
