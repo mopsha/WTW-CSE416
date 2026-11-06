@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import MapView, { Circle, Marker, type LatLng as MapLatLng } from 'react-native-maps';
 
@@ -22,15 +22,21 @@ const toCoord = ({ lat, lng }: LatLng) => ({ latitude: lat, longitude: lng });
 export function MapPicker({ center, radiusM, onChangeCenter, height = 240 }: MapPickerProps) {
   const map = useRef<MapView>(null);
 
-  // Keep the whole circle in view when the pin or radius changes.
-  useEffect(() => {
-    const latDelta = (radiusM * 2.6) / 111_320;
-    const lngDelta = latDelta / Math.max(0.2, Math.cos((center.lat * Math.PI) / 180));
+  const ready = useRef(false);
+  const size = useRef({ width: 0, height: 0 });
+  const fit = useCallback(() => {
+    const { width, height } = size.current;
+    if (!ready.current || !width || !height) return;
+    const span = (radiusM * 2.6) / 111_320;
+    const latDelta = span * Math.max(1, height / width);
+    const lngDelta =
+      (span * Math.max(1, width / height)) / Math.max(0.2, Math.cos((center.lat * Math.PI) / 180));
     map.current?.animateToRegion(
       { ...toCoord(center), latitudeDelta: latDelta, longitudeDelta: lngDelta },
       250,
     );
   }, [center, radiusM]);
+  useEffect(fit, [fit]);
 
   // Map taps and pin drags both report the new spot as nativeEvent.coordinate.
   const move = (e: { nativeEvent: { coordinate: MapLatLng } }) => {
@@ -45,6 +51,15 @@ export function MapPicker({ center, radiusM, onChangeCenter, height = 240 }: Map
     >
       <MapView
         ref={map}
+        onMapReady={() => {
+          ready.current = true;
+          fit();
+        }}
+        onLayout={({ nativeEvent: { layout } }) => {
+          if (layout.width === size.current.width && layout.height === size.current.height) return;
+          size.current = { width: layout.width, height: layout.height };
+          fit();
+        }}
         style={StyleSheet.absoluteFill}
         initialRegion={{ ...toCoord(center), latitudeDelta: 0.08, longitudeDelta: 0.08 }}
         userInterfaceStyle="dark"
