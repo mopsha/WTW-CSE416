@@ -41,7 +41,7 @@ do $$ declare result jsonb; begin
  perform public.friend_remove('a0360001-3333-4333-8333-333333333333','a0360002-3333-4333-8333-333333333333');
  update public.profiles set username='two_renamed' where id='a0360002-3333-4333-8333-333333333333';
  update public.profiles set username='two_person' where id='a0360003-3333-4333-8333-333333333333';
- perform public.friend_request_username('a0360001-3333-4333-8333-333333333333','two_person','a0360002-3333-4333-8333-333333333333');
+ begin perform public.friend_request_username('a0360001-3333-4333-8333-333333333333','two_person','a0360002-3333-4333-8333-333333333333'); raise exception 'Unavailable request succeeded'; exception when sqlstate 'PT404' then null; end;
  if exists(select 1 from public.friendships where requester_id='a0360001-3333-4333-8333-333333333333') then raise exception 'Stale search targeted a different identity'; end if;
  if public.person_lookup('a0360001-3333-4333-8333-333333333333','a0360002-3333-4333-8333-333333333333')->>'username'<>'two_renamed' then raise exception 'Shared ID broke after rename'; end if;
  update public.profiles set username=null where id='a0360003-3333-4333-8333-333333333333';
@@ -53,7 +53,7 @@ do $$ begin
  if public.username_search('a0360001-3333-4333-8333-333333333333','two')<>'[]'::jsonb
   or public.person_lookup('a0360001-3333-4333-8333-333333333333','a0360002-3333-4333-8333-333333333333') is not null
   or public.person_lookup('a0360002-3333-4333-8333-333333333333','a0360001-3333-4333-8333-333333333333') is not null then raise exception 'Block bypassed'; end if;
- perform public.friend_request_username('a0360001-3333-4333-8333-333333333333','two_person','a0360002-3333-4333-8333-333333333333');
+ begin perform public.friend_request_username('a0360001-3333-4333-8333-333333333333','two_person','a0360002-3333-4333-8333-333333333333'); raise exception 'Unavailable request succeeded'; exception when sqlstate 'PT404' then null; end;
  if exists(select 1 from public.friendships where requester_id='a0360001-3333-4333-8333-333333333333') then raise exception 'Blocked request created'; end if;
 end $$;
 select 'ok 4 - either-direction blocking denies lookup and requests';

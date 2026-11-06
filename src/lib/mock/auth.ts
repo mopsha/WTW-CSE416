@@ -1,3 +1,4 @@
+import { clearPendingProfile } from '../pendingProfile';
 import { AuthError, type AuthService, type AuthSession, type AuthMode } from '../authTypes';
 
 export const MOCK_CODE = '123456';
@@ -111,6 +112,7 @@ export const mockAuth: AuthService = {
     throw new AuthError('unknown', 'Password sign-in isn’t available in demo mode.');
   },
   async signOut() {
+    await clearPendingProfile();
     await saveCurrent();
     setSession(null);
   },

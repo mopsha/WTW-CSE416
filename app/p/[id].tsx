@@ -6,7 +6,7 @@ import { ActivityIndicator, Text, View } from 'react-native';
 import type { PersonIdentity } from '@shared/api/people.ts';
 import { useAuth } from '@/hooks/useAuth';
 import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
-import { api } from '@/lib/api';
+import { ApiError, api } from '@/lib/api';
 import { profileTarget } from '@/lib/profileSharing';
 import { setPendingProfile } from '@/lib/pendingProfile';
 import { messageOf } from '@/lib/errors';
@@ -41,6 +41,7 @@ export default function SharedProfile() {
           setError(null);
         }
       } catch (e) {
+        if (reconcile && !(e instanceof ApiError && [403, 404].includes(e.status))) throw e;
         if (request === latest.current) {
           setResult(null);
           setError(messageOf(e));
@@ -60,8 +61,8 @@ export default function SharedProfile() {
     if (!target || profile.loading || profile.failed) return;
     if (!session || !ready || profile.optionalSetupPending) {
       let active = true;
-      void setPendingProfile(target).then(() => {
-        if (active && (!session || !ready)) router.replace(session ? '/welcome' : '/sign-in');
+      void setPendingProfile(target, session?.user.id).then(() => {
+        if (active) router.replace(!session ? '/sign-in' : !ready ? '/welcome' : '/onboarding');
       });
       return () => {
         active = false;

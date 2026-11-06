@@ -153,7 +153,7 @@ test('neutral acknowledgement does not invent a Requested relationship', async (
     loading: false,
   });
 });
-test('reconciliation failure releases the guard and exposes retry feedback', async () => {
+test('neutral acknowledgement with failed reconciliation does not invent a successful request', async () => {
   await act(async () => {
     tree = create(
       <PersonFriendAction
@@ -166,7 +166,8 @@ test('reconciliation failure releases the guard and exposes retry feedback', asy
   });
   await act(async () => tree.root.findByType('test-button').props.onPress());
   expect(tree.root.findByType('test-button').props.loading).toBe(false);
-  expect(JSON.stringify(tree.toJSON())).toContain('Refresh failed');
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Refresh failed');
+  expect(tree.root.findByType('test-button').props.label).toBe('Add friend');
 });
 
 test('equal-width native share/edit controls preserve edit action and prevent repeated share taps', async () => {
@@ -208,4 +209,47 @@ test('native share failures have visible feedback', async () => {
     .find((n: any) => n.props.onPress);
   await act(async () => button.props.onPress());
   expect(JSON.stringify(tree.toJSON())).toContain('Sharing unavailable');
+});
+
+test('confirmed success survives a quota-limited refresh and later authoritative decline', async () => {
+  jest
+    .mocked(api.addFriendByUsername)
+    .mockResolvedValue({ status: 'sent', relationship: 'requested' });
+  const refresh = jest.fn().mockRejectedValue(new Error('429 Discovery limit reached'));
+  await act(async () => {
+    tree = create(<PersonFriendAction person={person} onChanged={refresh} />);
+  });
+  await act(async () => tree.root.findByType('test-button').props.onPress());
+  expect(tree.root.findByType('test-button').props).toMatchObject({
+    label: 'Requested',
+    disabled: true,
+  });
+  await act(async () => tree.root.findByType('test-button').props.onPress());
+  expect(api.addFriendByUsername).toHaveBeenCalledTimes(1);
+  await act(async () =>
+    tree.update(<PersonFriendAction person={{ ...person }} onChanged={refresh} />),
+  );
+  expect(tree.root.findByType('test-button').props.label).toBe('Add friend');
+});
+
+test('a projection received during submission cannot erase the later confirmed receipt', async () => {
+  let finish!: (value: { status: 'sent'; relationship: 'requested' }) => void;
+  jest.mocked(api.addFriendByUsername).mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  const refresh = jest.fn().mockRejectedValue(new Error('429'));
+  await act(async () => {
+    tree = create(<PersonFriendAction person={person} onChanged={refresh} />);
+  });
+  await act(async () => tree.root.findByType('test-button').props.onPress());
+  await act(async () =>
+    tree.update(<PersonFriendAction person={{ ...person }} onChanged={refresh} />),
+  );
+  await act(async () => finish({ status: 'sent', relationship: 'requested' }));
+  expect(tree.root.findByType('test-button').props).toMatchObject({
+    label: 'Requested',
+    disabled: true,
+  });
 });

@@ -14,6 +14,7 @@ const native = Platform.OS !== 'web';
 
 let queue: Promise<void> = Promise.resolve();
 let writeVersion = 0;
+let boundary = 0;
 let intentSequence = 0;
 let lastConsumedRaw: string | null = null;
 function serialize<T>(work: () => Promise<T>): Promise<T> {
@@ -24,12 +25,17 @@ function serialize<T>(work: () => Promise<T>): Promise<T> {
   );
   return result;
 }
-let memory: { target: string; savedAt: number; version: number } | null = null;
+let memory: { target: string; savedAt: number; version: number; owner?: string } | null = null;
 
-async function save(target: string): Promise<void> {
+async function save(target: string, owner?: string): Promise<void> {
   const parsed = profileTarget(target);
   if (!parsed) return;
-  memory = { target: parsed, savedAt: Date.now(), version: ++intentSequence };
+  memory = {
+    target: parsed,
+    savedAt: Date.now(),
+    version: ++intentSequence,
+    ...(owner ? { owner } : {}),
+  };
   if (!native) return;
   try {
     await SecureStore.setItemAsync(KEY, JSON.stringify(memory));
@@ -39,10 +45,15 @@ async function save(target: string): Promise<void> {
 }
 
 /** The parked target, cleared so it's resumed at most once. */
-async function take(now: number): Promise<string | null> {
+async function take(now: number, viewer?: string): Promise<string | null> {
   const pending = memory;
   let target =
-    pending && pending.savedAt <= now && now - pending.savedAt < MAX_AGE_MS ? pending.target : null;
+    pending &&
+    (!pending.owner || pending.owner === viewer) &&
+    pending.savedAt <= now &&
+    now - pending.savedAt < MAX_AGE_MS
+      ? pending.target
+      : null;
   memory = null;
   if (native) {
     try {
@@ -51,12 +62,15 @@ async function take(now: number): Promise<string | null> {
       if (stored) lastConsumedRaw = stored;
       await SecureStore.deleteItemAsync(KEY);
       if (!target && raw) {
-        const saved = JSON.parse(raw) as { target?: unknown; savedAt?: unknown };
+        const saved = JSON.parse(raw) as { target?: unknown; savedAt?: unknown; owner?: string };
         const fresh =
           typeof saved.savedAt === 'number' &&
           saved.savedAt <= now &&
           now - saved.savedAt < MAX_AGE_MS;
-        target = fresh && typeof saved.target === 'string' ? saved.target : null;
+        target =
+          fresh && (!saved.owner || saved.owner === viewer) && typeof saved.target === 'string'
+            ? saved.target
+            : null;
       }
     } catch {
       // A subsequent reader must not replay the persisted copy of a memory intent.
@@ -66,31 +80,65 @@ async function take(now: number): Promise<string | null> {
   return target ? profileTarget(target) : null;
 }
 
-export function setPendingProfile(target: string): Promise<void> {
+export function setPendingProfile(target: string, owner?: string): Promise<void> {
   if (!profileTarget(target)) return Promise.resolve();
   writeVersion++;
-  return serialize(() => save(target));
+  return serialize(() => save(target, owner));
 }
-export function takePendingProfile(now = Date.now()): Promise<string | null> {
+export function takePendingProfile(now = Date.now(), viewer?: string): Promise<string | null> {
   // Serialize consumers, not their results: only the first gets the stored target.
-  return serialize(() => take(now));
+  const epoch = boundary;
+  return serialize(async () => {
+    const target = await take(now, viewer);
+    return epoch === boundary ? target : null;
+  });
 }
 /** Return true when stale work restored an intent and a current effect should retry. */
 export async function resumePendingProfile(
   isCurrent: () => boolean,
   navigate: (id: string) => void,
+  viewer?: string,
 ): Promise<boolean> {
   if (!isCurrent()) return false;
   const version = writeVersion;
-  const target = await takePendingProfile();
-  if (!target) return false;
+  const epoch = boundary;
+  const target = await takePendingProfile(Date.now(), viewer);
+  if (!target || epoch !== boundary) return false;
   if (isCurrent()) {
     navigate(target);
     return false;
   }
   await serialize(async () => {
     // Do not overwrite a newer link arriving while this read was pending.
-    if (writeVersion === version) await save(target);
+    if (writeVersion === version && epoch === boundary) await save(target, viewer);
   });
   return true;
+}
+
+/** Invalidate in-flight consumers immediately, then clear the persisted copy in order. */
+export function clearPendingProfile(): Promise<void> {
+  boundary++;
+  writeVersion++;
+  memory = null;
+  return serialize(async () => {
+    memory = null;
+    if (!native) return;
+    try {
+      lastConsumedRaw = await SecureStore.getItemAsync(KEY);
+      if (!lastConsumedRaw || lastConsumedRaw === 'null') return;
+    } catch {
+      /* Clear without a read. */
+    }
+    try {
+      await SecureStore.deleteItemAsync(KEY);
+      return;
+    } catch {
+      /* Try a persisted tombstone. */
+    }
+    try {
+      await SecureStore.setItemAsync(KEY, 'null');
+    } catch {
+      throw new Error('Could not clear the pending profile link. Please try signing out again.');
+    }
+  });
 }

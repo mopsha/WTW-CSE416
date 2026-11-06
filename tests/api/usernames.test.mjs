@@ -68,6 +68,18 @@ test(
         400,
         'reserved handle',
       );
+      for (const email of [prefix + '-2@example.invalid', prefix + '-missing@example.invalid']) {
+        requireStatus(
+          await api('/friends/requests', a.token, 'POST', { email }),
+          410,
+          'retired email probe',
+        );
+      }
+      assert.equal(
+        requireStatus(await api('/people/' + b.id, a.token), 200, 'identity after probes')
+          .relationship,
+        'none',
+      );
       let found = requireStatus(
         await api(`/friends/search?q=%40${prefix.toUpperCase()}`, a.token),
         200,
@@ -134,7 +146,38 @@ test(
       );
       requireStatus(await api(`/people/${b.id}`, a.token), 404, 'blocked shared identity');
       requireStatus(await api(`/people/${a.id}`, b.token), 404, 'reverse blocked identity');
-      requireStatus(await api(`/friends/search?q=${prefix}`), 401, 'anonymous discovery');
+      requireStatus(
+        await api('/friends/username-requests', a.token, 'POST', {
+          username: prefix + '_two',
+          targetId: b.id,
+        }),
+        404,
+        'blocked and stale target cannot report success',
+      );
+      requireStatus(
+        await api('/friends/username-requests', a.token, 'POST', {
+          username: prefix + '_one',
+          targetId: a.id,
+        }),
+        400,
+        'self request rejected',
+      );
+      let exhausted = false;
+      for (let i = 0; i <= 30; i++) {
+        const response = await api('/people/' + b.id, a.token);
+        if (response.status === 429) {
+          exhausted = true;
+          break;
+        }
+        requireStatus(response, 404, 'missing or blocked identity spends quota');
+      }
+      assert.equal(exhausted, true);
+      requireStatus(
+        await api('/friends/search?q=' + prefix, a.token),
+        429,
+        'cross-route shared quota',
+      );
+      requireStatus(await api('/friends/search?q=' + prefix), 401, 'anonymous discovery');
     } finally {
       for (const id of users)
         requireStatus(

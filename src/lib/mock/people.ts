@@ -7,6 +7,7 @@ import { mockFriendRows, requestMockUsername } from './friends';
 
 let bucket = 0;
 let reads = 0;
+let dailyReads: number[] = [];
 let requestDay = 0;
 let requests = 0;
 function limited() {
@@ -15,11 +16,16 @@ function limited() {
     bucket = minute;
     reads = 0;
   }
-  return ++reads > 30;
+  dailyReads = dailyReads.filter((at) => at > Date.now() - 86400000);
+  if (reads >= 30 || dailyReads.length >= 150) return true;
+  reads++;
+  dailyReads.push(Date.now());
+  return false;
 }
 export function resetMockPeople() {
   bucket = 0;
   reads = 0;
+  dailyReads = [];
   requestDay = 0;
   requests = 0;
 }
@@ -77,23 +83,42 @@ export function mockPeopleRoute(method: string, path: string, body: unknown) {
   }
   if (method === 'POST' && path === '/friends/username-requests') {
     const username = normalizeUsername((body as { username?: unknown } | null)?.username, true);
+    const targetId = (body as { targetId?: unknown } | null)?.targetId;
+    if (targetId === MOCK_USER_ID)
+      return {
+        status: 400,
+        body: { error: { code: 'CANNOT_FRIEND_SELF', message: 'You cannot add yourself' } },
+      };
+    const target =
+      typeof targetId === 'string' &&
+      mockUserProfiles.get(targetId)?.username === username &&
+      !mockBlocks.has(targetId)
+        ? targetId
+        : null;
+    if (!target)
+      return {
+        status: 404,
+        body: { error: { code: 'NOT_FOUND', message: 'Profile unavailable' } },
+      };
+    const previous = mockPerson(target)?.relationship;
+    if (previous === 'friends' || previous === 'requested')
+      return { status: 200, body: { status: 'sent', relationship: previous } };
     const day = Math.floor(Date.now() / 86400000);
     if (day !== requestDay) {
       requestDay = day;
       requests = 0;
     }
-    if (++requests > 20)
+    if (requests >= 20)
       return {
         status: 429,
         body: { error: { code: 'RATE_LIMITED', message: 'Too many friend requests today' } },
       };
-    const targetId = (body as { targetId?: unknown } | null)?.targetId;
-    const target =
-      typeof targetId === 'string' && mockUserProfiles.get(targetId)?.username === username
-        ? targetId
-        : undefined;
-    if (target && target !== MOCK_USER_ID && !mockBlocks.has(target)) requestMockUsername(target);
-    return { status: 200, body: { status: 'sent' } };
+    requests++;
+    requestMockUsername(target);
+    return {
+      status: 200,
+      body: { status: 'sent', relationship: mockPerson(target)?.relationship },
+    };
   }
   return null;
 }

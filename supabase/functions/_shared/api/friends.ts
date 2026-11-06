@@ -47,7 +47,11 @@ export interface FriendRequestResult {
 export interface FriendsStore {
   search?(viewer: string, query: string): Promise<PersonIdentity[]>;
   person?(viewer: string, target: string): Promise<PersonIdentity>;
-  requestUsername?(viewer: string, username: string, targetId: string): Promise<void>;
+  requestUsername?(
+    viewer: string,
+    username: string,
+    targetId: string,
+  ): Promise<{ status: 'sent'; relationship?: 'requested' | 'friends' }>;
   list(userId: string): Promise<FriendRow[]>;
   request(userId: string, email: string): Promise<FriendRequestResult>;
   accept(userId: string, friendId: string): Promise<void>;

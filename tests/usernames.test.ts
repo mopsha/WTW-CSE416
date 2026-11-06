@@ -31,3 +31,9 @@ test('only the unchanged verified current reserved name is grandfathered', () =>
   );
   expect(() => parseIdentity({ displayName: 'New', username: 'admin' })).toThrow('reserved');
 });
+
+test('unchanged legacy syntax is preserved, but new claims remain invalid', () => {
+  expect(normalizeUsername('legacy-name', false, 'legacy-name')).toBe('legacy-name');
+  expect(() => normalizeUsername('legacy-name')).toThrow();
+  expect(() => normalizeUsername('another-name', false, 'legacy-name')).toThrow();
+});

@@ -1143,3 +1143,18 @@ preserving historical Pick associations for surviving groups.
 
 Shared Screen Back uses the existing stack when available and otherwise replaces with Picks,
 so a cold-start group/profile/message/settings/history route has a working exit.
+
+### PR #51 username discovery contract (0036 + 0037)
+
+Supersedes the legacy email-add and no-directory descriptions above. Apply 0036 and
+0037 before deploying the new API. Authenticated GET /friends/search?q=prefix and
+GET /people/:UUID expose basic identity, relationship, and separately authorized avatar
+metadata only; both share 30/UTC-minute and 150/rolling-24-hour quotas (429). Search is
+bounded to ten results, usernames are discoverable by default, and blocking/deletion
+restrictions apply. POST /friends/username-requests binds username to targetId and
+returns {status:'sent',relationship:'requested'|'friends'} only after a valid atomic
+write/idempotent confirmation. Missing, stale, deleted and blocked targets return the
+same unavailable error (404); self is 400. Friend-request accounting is inside this RPC.
+POST /friends/requests is retired: all authenticated bodies return 410
+EMAIL_REQUESTS_RETIRED without an email lookup. Historical pending requests remain
+acceptable but their email-created outgoing state is not exposed by discovery.

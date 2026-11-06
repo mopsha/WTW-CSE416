@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 
+import { clearPendingProfile } from '@/lib/pendingProfile';
 import { auth, type AuthSession } from '@/lib/auth';
 
 interface AuthState {
@@ -17,6 +18,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let active = true;
     let unsubscribe = () => {};
     let authChanged = false;
+    let previousAccount: string | null = null;
     let timer: ReturnType<typeof setTimeout>;
     // If the backend is unreachable, refreshing a stored session can hang for a long time.
     // Don't sit on a blank screen: after 4 s treat it as signed out (the listener below
@@ -25,12 +27,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       timer = setTimeout(() => resolve(null), 4000);
     });
     Promise.race([auth.getSession(), timeout])
-      .then((session) => active && !authChanged && setState({ session, loading: false }))
+      .then((session) => {
+        if (active && !authChanged) {
+          previousAccount = session?.user.id ?? null;
+          setState({ session, loading: false });
+        }
+      })
       // Misconfigured env (no Supabase URL): fall through to sign-in, which shows the error.
       .catch(() => active && !authChanged && setState({ session: null, loading: false }))
       .finally(() => clearTimeout(timer));
     try {
       unsubscribe = auth.onChange((session) => {
+        if (previousAccount && previousAccount !== session?.user.id)
+          void clearPendingProfile().catch(() => {
+            /* In-memory consumers were invalidated synchronously. */
+          });
+        previousAccount = session?.user.id ?? null;
         authChanged = true;
         if (active) setState({ session, loading: false });
       });

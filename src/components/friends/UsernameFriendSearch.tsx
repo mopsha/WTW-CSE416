@@ -22,6 +22,10 @@ export function PersonFriendAction({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pending = useRef(false);
+  const latestPerson = useRef(person);
+  useEffect(() => {
+    latestPerson.current = person;
+  }, [person]);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -29,7 +33,11 @@ export function PersonFriendAction({
       mounted.current = false;
     };
   }, []);
-  const relationship = person.relationship;
+  const [confirmed, setConfirmed] = useState<{
+    person: PersonIdentity;
+    relationship: 'requested' | 'friends';
+  } | null>(null);
+  const relationship = confirmed?.person === person ? confirmed.relationship : person.relationship;
   const label = {
     none: 'Add friend',
     requested: 'Requested',
@@ -49,9 +57,15 @@ export function PersonFriendAction({
     setBusy(true);
     setError(null);
     try {
-      await api.addFriendByUsername(person.username, person.userId);
+      const result = await api.addFriendByUsername(person.username, person.userId);
       if (mounted.current) {
-        await onChanged();
+        if (result.relationship)
+          setConfirmed({ person: latestPerson.current, relationship: result.relationship });
+        try {
+          await onChanged();
+        } catch {
+          /* A failed read cannot undo a confirmed write. */
+        }
       }
     } catch (e) {
       if (mounted.current) setError(messageOf(e));
@@ -167,9 +181,9 @@ export function UsernameFriendSearch({
               person={person}
               onRespond={() => onNavigate?.({ kind: 'requests' })}
               onChanged={async () => {
+                onAdded();
                 const { people } = await api.searchPeople(query);
                 setResult({ key, people });
-                onAdded();
               }}
             />
           }

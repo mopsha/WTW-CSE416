@@ -28,7 +28,9 @@ Deno.test(
         },
         accept: async () => {},
         remove: async () => {},
-        takeFriendRequestLimit: async () => allowed,
+        takeFriendRequestLimit: async () => {
+          throw new Error('Do not double-charge the RPC-owned quota');
+        },
         search: async (id, q) => {
           assert(id === viewer && q === 'some_user');
           calls++;
@@ -45,7 +47,9 @@ Deno.test(
         },
         requestUsername: async (id, q, targetId) => {
           assert(id === viewer && q === 'some_user' && targetId === target);
+          if (!allowed) throw new ApiError(429, 'RATE_LIMITED', 'Too many friend requests today');
           requested++;
+          return { status: 'sent', relationship: 'requested' };
         },
       },
     });
@@ -114,4 +118,27 @@ Deno.test('reserved metadata exception comes only from the verified owner profil
   assert((await send('support')).status === 400 && writes === 1);
   stored = 'ordinary';
   assert((await send('admin')).status === 400 && writes === 1);
+});
+
+Deno.test('retired email probing is uniform and never touches identity stores', async () => {
+  const app = createApp({
+    store: {} as never,
+    lifecycleStore: {} as never,
+    poolBuilder: {} as never,
+    closingStore: {} as never,
+    getUser: async () => ({ id: viewer }),
+  });
+  let expected: unknown;
+  for (const body of [
+    '{"email":"known@example.invalid"}',
+    '{"email":"missing@example.invalid"}',
+    '{',
+    '{}',
+  ]) {
+    const response = await app.request('/friends/requests', { method: 'POST', body });
+    assert(response.status === 410);
+    const result = await response.json();
+    if (!expected) expected = result;
+    assert(JSON.stringify(result) === JSON.stringify(expected));
+  }
 });

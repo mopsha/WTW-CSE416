@@ -95,7 +95,7 @@ function RootStack() {
     if (!profile.optionalSetupPending) offered.current = null;
     if (profile.optionalSetupPending && offered.current !== userId) {
       offered.current = userId ?? null;
-      if (pathname !== '/onboarding') router.push('/onboarding');
+      if (pathname !== '/onboarding' && !pathname.startsWith('/p/')) router.push('/onboarding');
       return;
     }
     if (pathname === '/onboarding') return;
@@ -120,7 +120,12 @@ function RootStack() {
       }
       retry = await resumePendingProfile(
         () => current,
-        (id) => router.push({ pathname: '/p/[id]', params: { id } }),
+        (id) => {
+          const route = { pathname: '/p/[id]' as const, params: { id } };
+          if (pathname.startsWith('/p/')) router.replace(route);
+          else router.push(route);
+        },
+        userId,
       );
     })()
       .catch(() => {

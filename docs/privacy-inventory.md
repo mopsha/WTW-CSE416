@@ -165,3 +165,47 @@ sharing sends only public identity text and an ID-backed custom-scheme link to t
 OS-selected recipient/app. A pending sign-in profile target is stored locally for
 up to 24 hours and consumed once. Review corresponding disclosures before release;
 no public web domain, universal-link service or new legal promise is introduced.
+
+## Username discovery and profile links (0036–0037, PR #51)
+
+This section supersedes older Friends discovery descriptions above. It is an implementation
+inventory, not a claim that a Privacy Policy or App Store disclosure has been published.
+
+- Authenticated accounts with a username are discoverable by default. There is no separate
+  discovery opt-out. The existing profile-metadata sharing switch does not hide basic identity.
+- Prefix search (optional @, at least three characters, escaped literal underscores) returns
+  at most ten matches: display name, username, stable user UUID and relationship state.
+  UUID-backed wtw://p/<UUID> links use the same safe identity projection after sign-in.
+  Emails, preferences, social counts and private profile metadata are not search results.
+- Either-direction blocks and deletion-pending/deleted targets prevent discovery. Photo
+  references are optional and require the existing independent photo authorization and quota;
+  pending requests alone do not grant photo access. Sharing never includes private image URLs.
+- Relationship states are self, friends, incoming, requested, or none. Existing pending
+  rows are conservatively treated as legacy because their origin was not recorded. Outgoing pending state
+  is returned only for explicitly UUID-bound username requests. Historical email-created
+  pending requests are concealed from their sender by discovery, but are preserved for the
+  recipient to accept; accepted friendships are unchanged.
+- Authenticated POST /friends/requests is retired and returns the same 410 response without
+  inspecting email/body or performing account lookup. OTP authentication and other email
+  invitation flows are unchanged. The privileged service-only historical friend_request RPC
+  remains for internal compatibility; anon/authenticated roles cannot execute it. Older
+  clients using the retired HTTP friend-creation route must upgrade.
+- Both username-prefix and UUID lookups share an atomic database budget: 30 per UTC minute
+  and 150 discovery lookups per rolling 24 hours, per authenticated account.
+  Missing/blocked UUID lookups also consume budget. Quota exhaustion returns generic 429;
+  the API does not promise a fixed Retry-After because the two windows reset differently.
+- Lookup accounting is server-only. Minute counters are pruned during subsequent lookups;
+  rolling events expire logically after 24 hours and are pruned on that viewer's next lookup.
+  Inactive-viewer event rows persist until another lookup or account deletion (cascade).
+- Pending profile intents use SecureStore (memory on web), are eligible to resume for
+  24 hours, and are scoped to their authenticated owner when present. Expiry is checked
+  on consumption; expired persisted entries are removed on a later read or logout, not
+  by a background expiry job. Sign-out/account boundaries invalidate consumption and
+  clear storage; explicit sign-out fails safely if a persisted intent cannot be cleared.
+  Unauthenticated link entry survives sign-in and required username setup.
+
+Before release, the team must reconcile the published Privacy Policy and App Store privacy
+answers with default social discoverability, public-to-authenticated identity identifiers,
+relationship states, photo authorization and local deep-link retention. Publication and
+legal approval are not verified by this code change; do not promise an opt-out or retention
+schedule beyond what the implementation actually enforces.

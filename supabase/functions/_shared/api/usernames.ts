@@ -16,6 +16,13 @@ export function normalizeUsername(
   currentUsername?: string | null,
 ): string {
   const username = typeof value === 'string' ? value.trim().replace(/^@/, '').toLowerCase() : '';
+  if (
+    !search &&
+    typeof value === 'string' &&
+    currentUsername != null &&
+    (value === currentUsername || username === currentUsername)
+  )
+    return currentUsername;
   if (!/^[a-z0-9_]{3,24}$/.test(username))
     throw new ApiError(
       400,

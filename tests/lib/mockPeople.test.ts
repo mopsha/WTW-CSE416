@@ -25,3 +25,22 @@ test('mock lookup budget is shared between ID lookup and username search', () =>
     expect(mockPeopleRoute('GET', '/people/missing', null)!.status).toBe(404);
   expect(mockPeopleRoute('GET', '/friends/search?q=ava', null)!.status).toBe(429);
 });
+
+test('rolling daily lookup quota is shared across routes and expires after 24 hours', () => {
+  const clock = jest.spyOn(Date, 'now');
+  const now = Date.now();
+  try {
+    for (let i = 0; i < 150; i++) {
+      clock.mockReturnValue(now + i * 60000);
+      expect(
+        mockPeopleRoute('GET', i % 2 ? '/people/missing' : '/friends/search?q=ava', null)!.status,
+      ).not.toBe(429);
+    }
+    clock.mockReturnValue(now + 151 * 60000);
+    expect(mockPeopleRoute('GET', '/people/missing', null)!.status).toBe(429);
+    clock.mockReturnValue(now + 86400000);
+    expect(mockPeopleRoute('GET', '/people/missing', null)!.status).toBe(404);
+  } finally {
+    clock.mockRestore();
+  }
+});

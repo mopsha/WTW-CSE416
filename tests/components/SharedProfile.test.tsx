@@ -1,6 +1,6 @@
 import React from 'react';
 import SharedProfile from '../../app/p/[id]';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { router } from 'expo-router';
 import { setPendingProfile } from '@/lib/pendingProfile';
 const { create, act } = jest.requireActual('react-test-renderer');
@@ -26,7 +26,10 @@ jest.mock('@/hooks/usePrivateRefresh', () => ({
       return clear;
     }, [load, clear]),
 }));
-jest.mock('@/lib/api', () => ({ api: { getPerson: jest.fn() } }));
+jest.mock('@/lib/api', () => ({
+  ApiError: jest.requireActual('@/lib/api').ApiError,
+  api: { getPerson: jest.fn() },
+}));
 jest.mock('@/lib/pendingProfile', () => ({ setPendingProfile: jest.fn(async () => {}) }));
 jest.mock('@/components', () => ({
   Screen: ({ children }: any) => children,
@@ -66,14 +69,14 @@ async function mount() {
 test('signed-out entry parks the stable target and navigates to existing sign-in', async () => {
   mockSession = null;
   await mount();
-  expect(setPendingProfile).toHaveBeenCalledWith(id);
+  expect(setPendingProfile).toHaveBeenCalledWith(id, mockSession?.user.id);
   expect(router.replace).toHaveBeenCalledWith('/sign-in');
   expect(api.getPerson).not.toHaveBeenCalled();
 });
 test('a missing username goes through required identity setup before any lookup', async () => {
   mockIdentity.username = null;
   await mount();
-  expect(setPendingProfile).toHaveBeenCalledWith(id);
+  expect(setPendingProfile).toHaveBeenCalledWith(id, mockSession?.user.id);
   expect(router.replace).toHaveBeenCalledWith('/welcome');
   expect(api.getPerson).not.toHaveBeenCalled();
 });
@@ -107,7 +110,33 @@ test('malformed targets do not reach lookup or persist a sign-in intent', async 
 test('optional setup preserves the link intent until the root finishes offering onboarding', async () => {
   mockIdentity.optionalSetupPending = true;
   await mount();
-  expect(setPendingProfile).toHaveBeenCalledWith(id);
+  expect(setPendingProfile).toHaveBeenCalledWith(id, mockSession?.user.id);
   expect(api.getPerson).not.toHaveBeenCalled();
-  expect(router.replace).not.toHaveBeenCalled();
+  expect(router.replace).toHaveBeenCalledWith('/onboarding');
+});
+
+test('a limited reconciliation preserves identity and the mounted confirmed friend action', async () => {
+  await mount();
+  jest.mocked(api.getPerson).mockRejectedValueOnce(new Error('Discovery quota exhausted'));
+  await act(async () => {
+    await expect(tree.root.findByType('test-request').props.onChanged()).rejects.toThrow(
+      'Discovery quota exhausted',
+    );
+  });
+  expect(tree.root.findAllByType('test-identity')).toHaveLength(1);
+  expect(tree.root.findAllByType('test-request')).toHaveLength(1);
+  expect(tree.root.findAllByType('test-error')).toHaveLength(0);
+});
+
+test('confirmed denial during reconciliation removes the identity', async () => {
+  await mount();
+  jest
+    .mocked(api.getPerson)
+    .mockRejectedValueOnce(new ApiError('PROFILE_NOT_FOUND', 'Profile unavailable', 404));
+  await act(async () => {
+    await expect(tree.root.findByType('test-request').props.onChanged()).rejects.toThrow(
+      'Profile unavailable',
+    );
+  });
+  expect(tree.root.findAllByType('test-identity')).toHaveLength(0);
 });

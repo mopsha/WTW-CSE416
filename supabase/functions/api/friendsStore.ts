@@ -5,7 +5,7 @@ import { takeFriendRequestLimit } from './friendRequestLimit.ts';
 import { createServiceClient } from './serviceClient.ts';
 import { avatarMetadata } from './avatarMetadata.ts';
 
-function fail(error: { code?: string }): never {
+function fail(error: { code?: string; message?: string }): never {
   switch (error.code) {
     case 'PGRST202':
       throw new ApiError(503, 'DATABASE_NOT_READY', 'Friends are not installed');
@@ -14,7 +14,13 @@ function fail(error: { code?: string }): never {
     case 'PT404':
       throw new ApiError(404, 'NOT_FOUND', 'No WTW account matches that');
     case 'PT429':
-      throw new ApiError(429, 'RATE_LIMITED', 'Too many profile searches. Try again shortly.');
+      throw new ApiError(
+        429,
+        'RATE_LIMITED',
+        error.message === 'Too many friend requests today'
+          ? error.message
+          : 'Discovery limit reached. Try again later.',
+      );
     case 'PT403':
       throw new ApiError(403, 'FORBIDDEN', 'Your account is not ready yet; try again');
     default:
@@ -41,12 +47,13 @@ export function createFriendsStore(): FriendsStore {
     person: async (viewer, target) =>
       (await peopleRpc('person_lookup', { p_user_id: viewer, p_target_id: target }, viewer))[0]!,
     async requestUsername(viewer, username, targetId) {
-      const { error } = await createServiceClient().rpc('friend_request_username', {
+      const { data, error } = await createServiceClient().rpc('friend_request_username', {
         p_user_id: viewer,
         p_username: username,
         p_target_id: targetId,
       });
       if (error) fail(error);
+      return data as { status: 'sent'; relationship: 'requested' | 'friends' };
     },
     takeFriendRequestLimit,
     async list(userId) {

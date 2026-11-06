@@ -1,4 +1,4 @@
-import { normalizeUsername, RESERVED_USERNAMES } from '../_shared/api/usernames.ts';
+import { normalizeUsername } from '../_shared/api/usernames.ts';
 import { parseFriendId } from '../_shared/api/friends.ts';
 import type { PastMovesStore } from '../_shared/api/pastMoves.ts';
 import { sendDirectMessage, type DirectChatStore } from '../_shared/api/directChat.ts';
@@ -86,7 +86,6 @@ import {
   type InviteStore,
 } from '../_shared/api/invites.ts';
 import { deleteAccount, type AccountStore } from '../_shared/api/account.ts';
-import { requestFriendSafely } from '../_shared/api/friendRequests.ts';
 import { parseAvatarRevision, readAvatarBody, type AvatarStore } from '../_shared/api/avatars.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
@@ -464,10 +463,7 @@ export function createApp(
     const targetId = parseFriendId(typeof body?.targetId === 'string' ? body.targetId : '');
     if (!store.requestUsername)
       throw new ApiError(503, 'NOT_CONFIGURED', 'Username requests unavailable');
-    if (!(await store.takeFriendRequestLimit(user.id)))
-      throw new ApiError(429, 'RATE_LIMITED', 'Too many friend requests today');
-    await store.requestUsername(user.id, username, targetId);
-    return c.json({ status: 'sent' });
+    return c.json(await store.requestUsername(user.id, username, targetId));
   });
   app.get('/friends', async (c) => {
     c.header('Cache-Control', 'private, no-store');
@@ -475,18 +471,8 @@ export function createApp(
     return c.json(await listFriends(store, user.id));
   });
   app.post('/friends/requests', async (c) => {
-    const { user, store } = await friends(c);
-    // Same answer whether or not the email has an account (or blocked the caller).
-    return c.json(
-      await requestFriendSafely(
-        {
-          takeFriendRequestLimit: (id) => store.takeFriendRequestLimit(id),
-          request: (id, email) => store.request(id, email.toLowerCase()),
-        },
-        user.id,
-        await readJsonBody(c),
-      ),
-    );
+    await deps.getUser(c.req.raw);
+    throw new ApiError(410, 'EMAIL_REQUESTS_RETIRED', 'Find friends by username instead');
   });
   app.post('/friends/:id/accept', async (c) => {
     const { user, store } = await friends(c);
@@ -778,11 +764,14 @@ export function createApp(
     const body = await readJsonBody(c);
     const requested =
       body && typeof body === 'object' ? (body as Record<string, unknown>).username : undefined;
-    const reserved =
-      typeof requested === 'string' &&
-      RESERVED_USERNAMES.includes(requested.trim().replace(/^@/, '').toLowerCase());
-    // The caller cannot supply this exception: verify the owner's stored name.
-    const currentUsername = reserved ? (await store.get(user.id, user.id)).username : undefined;
+    let currentUsername: string | null | undefined;
+    if (typeof requested === 'string') {
+      try {
+        normalizeUsername(requested);
+      } catch {
+        currentUsername = (await store.get(user.id, user.id)).username;
+      }
+    }
     return c.json(await store.update(user.id, parseProfileDetails(body, currentUsername)));
   });
   app.get('/users/:id/profile', async (c) => {

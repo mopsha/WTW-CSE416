@@ -41,11 +41,7 @@ export function parseIdentity(body: unknown): IdentityInput {
 }
 /** Required access depends on identity, never optional survey/permission state. */
 export function hasRequiredIdentity(displayName: string | null, username: string | null): boolean {
-  return (
-    !('error' in validateDisplayName(displayName)) &&
-    !!username &&
-    /^[a-z0-9_]{3,24}$/.test(username)
-  );
+  return !('error' in validateDisplayName(displayName)) && !!username;
 }
 export interface UserProfilesStore {
   completeIdentity?(userId: string, input: IdentityInput): Promise<UserProfile>;

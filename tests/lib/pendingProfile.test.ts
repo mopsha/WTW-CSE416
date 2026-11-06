@@ -95,3 +95,25 @@ test('a transient SecureStore read failure cannot replay the memory intent to an
     store.getItemAsync = original;
   }
 });
+
+test('sign-out clears persisted intents and prevents stale consumer restoration', async () => {
+  const p = load();
+  await p.setPendingProfile(TOKEN, 'account-a');
+  let current = true;
+  const navigate = jest.fn();
+  const work = p.resumePendingProfile(() => current, navigate, 'account-a');
+  current = false;
+  await p.clearPendingProfile();
+  await work;
+  expect(navigate).not.toHaveBeenCalled();
+  jest.resetModules();
+  expect(await load().takePendingProfile(Date.now(), 'account-b')).toBeNull();
+});
+test('cold-start account switching cannot consume another owner intent; logged-out handoff works', async () => {
+  await load().setPendingProfile(TOKEN, 'account-a');
+  jest.resetModules();
+  expect(await load().takePendingProfile(Date.now(), 'account-b')).toBeNull();
+  await load().setPendingProfile(TOKEN);
+  jest.resetModules();
+  expect(await load().takePendingProfile(Date.now(), 'account-b')).toBe(TOKEN);
+});

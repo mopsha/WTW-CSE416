@@ -1,3 +1,4 @@
+import { clearPendingProfile } from './pendingProfile';
 import { USE_MOCK } from './config';
 import { mockAuth } from './mock/auth';
 import { AuthError, type AuthService, type AuthSession } from './authTypes';
@@ -75,6 +76,7 @@ const supabaseAuth: AuthService = {
     return session;
   },
   async signOut() {
+    await clearPendingProfile();
     const { error } = await getSupabase().auth.signOut();
     if (error) throw new AuthError('unknown', 'Could not sign out. Please try again.');
   },
