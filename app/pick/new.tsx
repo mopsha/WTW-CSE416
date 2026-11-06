@@ -74,6 +74,10 @@ const THRESHOLDS: readonly ChipOption<number>[] = [
   { value: 100, label: 'Everyone' },
 ];
 
+// RN 0.86 exports this component-ref accessor at runtime, but omits it from
+// ScrollView.d.ts. getInnerViewNode() is a numeric handle and is not Fabric-safe.
+type FormScrollView = ScrollView & { getInnerViewRef(): View | null };
+
 const MIN_MILES = 0.5;
 const MAX_MILES = 10;
 
@@ -106,7 +110,7 @@ export default function CreatePickScreen() {
   const [moreOptions, setMoreOptions] = useState(false);
   const [expandedMap, setExpandedMap] = useState(false);
   const sending = useRef(false);
-  const form = useRef<ScrollView>(null);
+  const form = useRef<FormScrollView>(null);
   const attempt = useRef(0);
   const [reveal, setReveal] = useState<{ field: CreatePickField | 'submit'; id: number } | null>(
     null,
@@ -500,7 +504,7 @@ function Section({
   error?: string;
   children: ReactNode;
   revealId?: number;
-  form?: RefObject<ScrollView | null>;
+  form?: RefObject<FormScrollView | null>;
 }) {
   return (
     <View style={styles.section}>
@@ -523,7 +527,7 @@ interface ProblemProps {
   message: string;
   label: string;
   revealId?: number;
-  form?: RefObject<ScrollView | null>;
+  form?: RefObject<FormScrollView | null>;
   children?: ReactNode;
 }
 function Problem({ message, label, revealId, form, children }: ProblemProps) {
@@ -546,6 +550,8 @@ function ProblemAnchor({ message, label, revealId, form, children }: ProblemProp
       ref={anchor}
       collapsable={false}
       accessible={!children}
+      accessibilityRole={children ? undefined : 'alert'}
+      accessibilityLiveRegion={children ? undefined : 'polite'}
       tabIndex={Platform.OS === 'web' && !children ? -1 : undefined}
       accessibilityLabel={children ? undefined : `${label}. ${message}`}
       onLayout={() => {
@@ -553,11 +559,22 @@ function ProblemAnchor({ message, label, revealId, form, children }: ProblemProp
         handled.current = true;
         const node = anchor.current;
         const scroll = form?.current;
-        if (!node || !scroll) return;
+        const inner = scroll?.getInnerViewRef();
+        let completed = false;
+        const announceFailure = () => {
+          if (completed) return;
+          completed = true;
+          if (active.current) AccessibilityInfo.announceForAccessibility(`${label}. ${message}`);
+        };
+        if (!node || !scroll || !inner) {
+          announceFailure();
+          return;
+        }
         node.measureLayout(
-          scroll.getInnerViewNode(),
+          inner,
           (_, y) => {
-            if (!active.current) return;
+            if (completed || !active.current) return;
+            completed = true;
             scroll.scrollTo({ y: Math.max(0, y - space.md), animated: false });
             if (children) {
               // ErrorState already announces its Android live region.
@@ -565,14 +582,12 @@ function ProblemAnchor({ message, label, revealId, form, children }: ProblemProp
             } else if (Platform.OS === 'web') node.focus();
             else AccessibilityInfo.sendAccessibilityEvent(node, 'focus');
           },
-          () => {
-            if (active.current) AccessibilityInfo.announceForAccessibility(`${label}. ${message}`);
-          },
+          announceFailure,
         );
       }}
     >
       {children ?? (
-        <Text style={styles.error} accessibilityRole="alert">
+        <Text style={styles.error} accessible={false}>
           {message}
         </Text>
       )}

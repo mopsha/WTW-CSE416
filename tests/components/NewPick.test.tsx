@@ -1,5 +1,13 @@
 import React from 'react';
-import { AccessibilityInfo, Keyboard, Platform, ScrollView, Switch, View } from 'react-native';
+import {
+  AccessibilityInfo,
+  Keyboard,
+  Platform,
+  ScrollView,
+  Switch,
+  Text,
+  View,
+} from 'react-native';
 import { router } from 'expo-router';
 import CreatePickScreen from '../../app/pick/new';
 import { Button, Chips, ErrorState } from '@/components';
@@ -43,7 +51,17 @@ jest.mock('@react-native-community/slider', () => 'test-slider');
 
 let tree: any;
 const mockFocus = jest.fn();
-const mockMeasureLayout = jest.fn((_relative, success) => success(0, 500, 300, 60));
+const mockInnerRef = { nativeComponent: true };
+// Match Fabric's contract: numeric handles (even legacy typings allow them) fail.
+const measureNative = (
+  relative: unknown,
+  success: (...args: number[]) => void,
+  _onFail?: () => void,
+) => {
+  if (relative !== mockInnerRef) throw new Error('Expected the ScrollView native component ref');
+  success(0, 500, 300, 60);
+};
+const mockMeasureLayout = jest.fn(measureNative);
 const button = (label: string) =>
   tree.root.findAllByType(Button).find((n: any) => n.props.label === label);
 const chips = (label: string) =>
@@ -57,6 +75,15 @@ const press = async (label: string) =>
   });
 beforeEach(async () => {
   jest.clearAllMocks();
+  mockMeasureLayout.mockReset().mockImplementation(measureNative);
+  // The preset's ScrollView methods are no-op mocks. Make their distinct runtime
+  // contracts explicit rather than allowing undefined/numeric measurements.
+  jest.spyOn(ScrollView.prototype, 'getInnerViewNode').mockImplementation(() => {
+    throw new Error('Numeric ScrollView handles must not be used for measurement');
+  });
+  jest
+    .spyOn(ScrollView.prototype as ScrollView & { getInnerViewRef(): unknown }, 'getInnerViewRef')
+    .mockReturnValue(mockInnerRef);
   mockParams = {};
   jest.mocked(api.createPick).mockResolvedValue({ pickId: 'pick' } as any);
   jest.mocked(api.createGroupPick).mockResolvedValue({ pickId: 'pick' } as any);
@@ -307,6 +334,11 @@ test('submission error and retry are scrollable; footer contains only Create Pic
   expect(footer.findAllByType(ErrorState)).toHaveLength(0);
   expect(footer.findAllByType(Button).map((n: any) => n.props.label)).toEqual(['Create Pick']);
   await act(async () => error.parent.props.onLayout());
+  expect(mockMeasureLayout).toHaveBeenCalledWith(
+    mockInnerRef,
+    expect.any(Function),
+    expect.any(Function),
+  );
   expect(scrollTo).toHaveBeenCalledWith({ y: 488, animated: false });
   expect(announce).toHaveBeenCalledWith('Offline');
   await act(async () => error.parent.props.onLayout());
@@ -460,4 +492,96 @@ test('web validation focuses its anchor without calling the native-only accessib
   await act(async () => problem.props.onLayout());
   expect(mockFocus).toHaveBeenCalledTimes(1);
   expect(nativeFocus).not.toHaveBeenCalled();
+});
+
+test('the measurement fixture rejects numeric handles instead of hiding the device failure', () => {
+  expect(() => mockMeasureLayout(42, jest.fn())).toThrow('native component ref');
+});
+
+test.each(['ios', 'android'] as const)(
+  '%s validation exposes one accessible alert with its label and readable text',
+  async (platform) => {
+    jest.replaceProperty(Platform, 'OS', platform);
+    jest.spyOn(ScrollView.prototype, 'scrollTo').mockImplementation(() => {});
+    const focus = jest
+      .spyOn(AccessibilityInfo, 'sendAccessibilityEvent')
+      .mockImplementation(() => {});
+    await render();
+    await act(async () => chips('Category').props.onChange('custom'));
+    await act(async () => button('Create Pick').props.onPress());
+    const alert = tree.root
+      .findAllByType(View)
+      .find(
+        (n: any) =>
+          n.props.accessibilityLabel === 'Your options. Option names must be 1–60 characters.',
+      );
+    expect(alert.props).toMatchObject({
+      accessible: true,
+      accessibilityRole: 'alert',
+      accessibilityLiveRegion: 'polite',
+    });
+    const text = alert.findByType(Text);
+    expect(text.props.accessible).toBe(false);
+    expect(text.props.accessibilityRole).toBeUndefined();
+    expect(text.props.children).toBe('Option names must be 1–60 characters.');
+    await act(async () => alert.props.onLayout());
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(mockMeasureLayout.mock.calls[0]![0]).toBe(mockInnerRef);
+  },
+);
+
+test('missing inner ref announces once without scheduling an unexpected later scroll', async () => {
+  const inner = jest.mocked(
+    (ScrollView.prototype as ScrollView & { getInnerViewRef(): unknown }).getInnerViewRef,
+  );
+  inner.mockReturnValue(null);
+  const scroll = jest.spyOn(ScrollView.prototype, 'scrollTo').mockImplementation(() => {});
+  const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+  await render();
+  await act(async () => chips('Category').props.onChange('custom'));
+  await act(async () => button('Create Pick').props.onPress());
+  const alert = () =>
+    tree.root
+      .findAllByType(View)
+      .find((n: any) => n.props.accessibilityLabel?.startsWith('Your options.'));
+  await act(async () => alert().props.onLayout());
+  expect(mockMeasureLayout).not.toHaveBeenCalled();
+  expect(announce).toHaveBeenCalledWith('Your options. Option names must be 1–60 characters.');
+  inner.mockReturnValue(mockInnerRef);
+  await act(async () => alert().props.onLayout());
+  expect(scroll).not.toHaveBeenCalled();
+  await act(async () => button('Create Pick').props.onPress());
+  await act(async () => alert().props.onLayout());
+  expect(scroll).toHaveBeenCalledTimes(1);
+});
+
+test('failed measurement announces once and a late failure after unmount stays silent', async () => {
+  let fail!: () => void;
+  let succeed!: (...args: number[]) => void;
+  mockMeasureLayout.mockImplementationOnce((_relative, _success, onFail?: () => void) => {
+    fail = onFail!;
+    succeed = _success;
+  });
+  const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+  const scroll = jest.spyOn(ScrollView.prototype, 'scrollTo').mockImplementation(() => {});
+  await render();
+  await act(async () => chips('Category').props.onChange('custom'));
+  await act(async () => button('Create Pick').props.onPress());
+  const alert = tree.root
+    .findAllByType(View)
+    .find((n: any) => n.props.accessibilityLabel?.startsWith('Your options.'));
+  await act(async () => alert.props.onLayout());
+  await act(async () => fail());
+  expect(announce).toHaveBeenCalledTimes(1);
+  expect(scroll).not.toHaveBeenCalled();
+  await act(async () => {
+    fail();
+    succeed(0, 500, 300, 60);
+  });
+  expect(scroll).not.toHaveBeenCalled();
+  expect(announce).toHaveBeenCalledTimes(1);
+  await act(async () => tree.unmount());
+  tree = null;
+  await act(async () => fail());
+  expect(announce).toHaveBeenCalledTimes(1);
 });
