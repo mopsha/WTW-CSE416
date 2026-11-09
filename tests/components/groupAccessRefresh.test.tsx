@@ -28,7 +28,8 @@ const { create, act } = jest.requireActual<{
   act(work: () => void | Promise<void>): Promise<void>;
 }>('react-test-renderer');
 jest.mock('expo-router', () => ({
-  router: { push: jest.fn() },
+  router: { push: jest.fn(), setParams: jest.fn() },
+  Stack: { Screen: () => null },
   useLocalSearchParams: () => ({ id: 'group' }),
   useFocusEffect: (effect: () => void) => jest.requireActual('react').useEffect(effect, [effect]),
 }));

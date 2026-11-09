@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafetySheet } from './MemberMenu';
 import { SocialIdentity } from './friends/SocialRow';
 import { messageTheme } from './theme';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -33,6 +33,17 @@ export interface MessageThreadState {
   mode: 'connecting' | 'realtime' | 'polling';
   refresh(): Promise<void>;
 }
+/** Route-owned, memory-only composer state; never contains message history. */
+interface MessageDraftState {
+  body: string;
+  attempt: { body: string; clientId: string } | null;
+  pending: boolean;
+  notify?: () => void;
+}
+export type MessageDraft = { current: MessageDraftState };
+export const emptyMessageDraft = (): MessageDraft => ({
+  current: { body: '', attempt: null, pending: false },
+});
 export function MessageThread({
   userId,
   chat,
@@ -44,7 +55,9 @@ export function MessageThread({
   group = false,
   onRefresh,
   reportKind,
+  composerRef,
 }: {
+  composerRef?: MessageDraft;
   userId: string;
   chat: MessageThreadState;
   onSend(input: MessageInput): Promise<unknown>;
@@ -57,12 +70,31 @@ export function MessageThread({
   onRefresh?: () => void | Promise<void>;
 }) {
   const [flagged, setFlagged] = useState<{ message: Message; name: string } | null>(null);
+  const localComposerRef = useRef(emptyMessageDraft().current);
+  const stateRef = composerRef ?? localComposerRef;
   const [body, setBody] = useState('');
   const [inputHeight, setInputHeight] = useState(MIN_TARGET);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const pending = useRef(false);
-  const draft = useRef('');
+  useLayoutEffect(() => {
+    const current = stateRef.current;
+    const notify = () => {
+      setBody(current.body);
+      setBusy(current.pending);
+    };
+    current.notify = notify;
+    notify();
+    return () => {
+      if (current.notify === notify) current.notify = undefined;
+    };
+  }, [stateRef]);
+  useEffect(() => {
+    if (composerRef && chat.unavailable) {
+      stateRef.current.body = '';
+      stateRef.current.attempt = null;
+      stateRef.current.notify?.();
+    }
+  }, [chat.unavailable, composerRef, stateRef]);
   const [refreshing, setRefreshing] = useState(false);
   const refreshingPending = useRef(false);
   const mounted = useRef(true);
@@ -72,42 +104,42 @@ export function MessageThread({
       mounted.current = false;
     };
   }, []);
-  const attempt = useRef<{ body: string; clientId: string } | null>(null);
   const history = useRef<ScrollView>(null);
   const atBottom = useRef(true);
   async function send() {
-    if (pending.current || chat.unavailable) return;
-    pending.current = true;
+    const current = stateRef.current;
+    if (current.pending || chat.unavailable) return;
+    current.pending = true;
     setBusy(true);
     setError(null);
-    const submittedDraft = draft.current;
+    const submittedDraft = current.body;
     let delivered = false;
     try {
       const text = submittedDraft.trim();
-      if (!attempt.current || attempt.current.body !== text)
-        attempt.current = {
+      if (!current.attempt || current.attempt.body !== text)
+        current.attempt = {
           body: text,
           clientId: `chat-${Date.now().toString(36)}-${++sequence}-${Math.random().toString(36).slice(2)}`,
         };
-      const input = parseMessage(attempt.current);
+      const input = parseMessage(current.attempt);
       await onSend(input);
-      attempt.current = null;
+      current.attempt = null;
       delivered = true;
+      // Only remove the delivered prefix; a rewritten draft belongs to the user.
+      const remaining = current.body.startsWith(submittedDraft)
+        ? current.body.slice(submittedDraft.length)
+        : current.body;
+      current.body = remaining;
+      current.notify?.();
       if (mounted.current) {
-        // Only remove the delivered prefix; a rewritten draft belongs to the user.
-        const remaining = draft.current.startsWith(submittedDraft)
-          ? draft.current.slice(submittedDraft.length)
-          : draft.current;
-        draft.current = remaining;
-        setBody(remaining);
         if (!remaining) setInputHeight(MIN_TARGET);
         atBottom.current = true;
       }
     } catch (e) {
       if (mounted.current) setError(messageOf(e));
     } finally {
-      pending.current = false;
-      if (mounted.current) setBusy(false);
+      current.pending = false;
+      current.notify?.();
     }
     // Delivery is complete: history reconciliation must not hold the send lock.
     if (delivered && mounted.current) {
@@ -142,14 +174,20 @@ export function MessageThread({
   }
   return (
     <View style={s.thread}>
-      <Text style={s.context} accessibilityLiveRegion="polite">
-        {chat.mode === 'realtime'
-          ? 'Live updates'
-          : chat.mode === 'connecting'
-            ? 'Connecting…'
-            : 'Refreshes every 5 seconds'}{' '}
-        · latest 50 messages
-      </Text>
+      {!group ? (
+        <Text style={s.context} accessibilityLiveRegion="polite">
+          {chat.mode === 'realtime'
+            ? 'Live updates'
+            : chat.mode === 'connecting'
+              ? 'Connecting…'
+              : 'Refreshes every 5 seconds'}{' '}
+          · latest 50 messages
+        </Text>
+      ) : chat.mode === 'connecting' ? (
+        <Text style={s.context} accessibilityLiveRegion="polite">
+          Connecting…
+        </Text>
+      ) : null}
       {chat.error ? (
         <View style={s.notice}>
           <ErrorState variant="banner" message={chat.error} onRetry={() => void chat.refresh()} />
@@ -265,7 +303,7 @@ export function MessageThread({
             style={[s.input, { height: inputHeight }]}
             value={body}
             onChangeText={(value) => {
-              draft.current = value;
+              stateRef.current.body = value;
               setBody(value);
             }}
             multiline
