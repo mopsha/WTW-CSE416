@@ -23,7 +23,6 @@ export default function SharedProfile() {
     !!session &&
     !profile.loading &&
     !profile.failed &&
-    !profile.birthdayRequired &&
     hasRequiredIdentity(profile.displayName, profile.username);
   const viewer = ready && !profile.optionalSetupPending ? session?.user.id : undefined;
   const key = `${viewer}:${target}`;

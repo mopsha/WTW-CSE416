@@ -65,7 +65,7 @@ test.each([null, 'valid_user'])(
   },
 );
 
-test('a resumed new account with identity but no birthday remains in required setup', async () => {
+test('a restarted account with identity and skipped birthday does not loop through setup', async () => {
   jest.mocked(useProfile).mockReturnValue({
     failed: false,
     loading: false,
@@ -79,8 +79,8 @@ test('a resumed new account with identity but no birthday remains in required se
   });
   expect(tree.root.findAllByType('test-protected').map((n: any) => n.props.guard)).toEqual([
     false,
-    true,
     false,
+    true,
   ]);
   await act(async () => tree.unmount());
 });

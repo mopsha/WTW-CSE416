@@ -94,6 +94,7 @@ Draft mapping, to confirm against Apple's current categories in App Store Connec
 - **User content → Other user content:** display name, group names, cancel reasons, custom plan options and notes, hang posts, report text; linked; app functionality.
 - **Usage data → Product interaction:** swipes, votes, RSVPs, "Did you go?"; linked; app functionality.
 - **User content → Photos or Videos (draft):** selected profile photos; linked to account ID; app functionality. Confirm this selection and any moderation purpose in App Store Connect before submission. See [Apple’s data-type guidance](https://developer.apple.com/app-store/app-privacy-details/).
+- **Birthday month/day (draft category to confirm):** optional, linked to account ID, used for optional display on accepted friends’ profiles when sharing is enabled. No year, age or full date of birth; no reminders. Users can skip collection or remove it in Edit Profile. Confirm the applicable Apple data type and purpose in App Store Connect before submission; this describes app behavior, not a final label determination.
 - **Tracking:** none. No third-party analytics or advertising SDKs.
 
 ## Managed profile photos (#49; implemented, release gates still open)
@@ -216,9 +217,9 @@ schedule beyond what the implementation actually enforces.
 
 | Data | Storage and purpose | Visibility | Retention and deletion |
 |---|---|---|---|
-| Birthday month/day | `private.profile_birthdays.birth_month` and `birth_day`, constrained small integers. Collected after verified signup to support future celebration/reminder features | Owner through authenticated profile APIs; accepted, unblocked friends only when sharing is enabled. No direct anonymous/authenticated table access; no Auth metadata, search, group or public-sharing projection | Until changed, cleared through the owner API with sharing off, or account deletion. FK cascades from `auth.users` → `profiles`; pending deletion denies reads |
+| Birthday month/day | `private.profile_birthdays.birth_month` and `birth_day`, constrained small integers. Optionally collected after verified signup or in Edit Profile for optional friend-profile display | Owner through authenticated profile APIs; accepted, unblocked friends only when sharing is enabled. No direct anonymous/authenticated table access; no Auth metadata, search, group or public-sharing projection | Until changed, removed in Edit Profile (Save deletes the private row and turns sharing off), or account deletion. FK cascades from `auth.users` → `profiles`; pending deletion denies reads |
 | Birthday sharing | `private.profile_birthdays.share_birthday`, default false | Owner controls this independently from profile metadata sharing. Unfriend/block/pending deletion revokes friend API access | Until edited or account deleted; no reminder subscriptions, jobs or notifications |
-| Required setup marker | `profiles.birthday_required` plus server-only `birthday_setup_required` cohort | Owner receives only the pending boolean in `/me`. Existing profiles stay exempt; new profiles require valid month/day before setup completion | Account lifetime; clearing a birthday before completing new-account setup restores the requirement |
+| Compatibility markers | `profiles.birthday_required` and server-only `birthday_setup_required`, both default false | No birthday requirement for any account; neither setup nor preferences depend on collection | No birthday is invented or backfilled |
 
 **No birth year, complete date of birth, derived age, calendar-year anchor, or age
 verification is collected or stored.** February 29 is always a valid recurring
@@ -231,14 +232,17 @@ focus/resume revalidation clears revoked data. Backend access is rechecked per
 request. Data already seen or captured by a friend cannot be recalled.
 
 Before production, update the Privacy Policy to disclose recurring birthday
-month/day collection (required for new accounts, optional for existing accounts),
-the future celebration purpose, that reminders are not implemented, default-off
+optional month/day collection for all accounts,
+the optional friend-profile display purpose, that reminders are not implemented, default-off
 friend sharing, backend operator access, retention, edits/clearing, and account
 deletion. Explicitly say no birth year or age is collected. Review the App Store
 privacy disclosures for this new account-linked personal data. This change does
 not publish legal policy text or add an age restriction.
 
-The project owner confirmed in this review that 0038 has not been deployed to any
-shared or hosted database. It was therefore updated in place while untracked.
-Migrations 0001–0037 remain unchanged. Local migration-history evidence alone
-cannot establish hosted state; this confirmation is part of the rollout record.
+The repository rollout record contains the owner’s confirmation that 0038 has not
+been deployed to any shared or hosted database. This revision amends 0038 on that
+basis. Migrations 0001–0037 remain unchanged. Live verification was unavailable;
+reconfirm deployment status before rollout. If any copy is deployed, preserve it
+and use a forward-only correction. Cached origin/main ends at 0037; cached pending
+branches use 0039/0040, with no second 0038 filename found. Live pending-PR
+numbering still needs confirmation. No shared database was changed.

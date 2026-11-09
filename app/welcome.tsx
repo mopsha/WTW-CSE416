@@ -38,7 +38,7 @@ function WelcomeForm() {
   const { busy, error, run } = useAction();
   const pending = useRef(false);
 
-  async function save() {
+  async function save(skipBirthday = false) {
     if (pending.current) return;
     const result = validateDisplayName(name);
     if ('error' in result) {
@@ -49,14 +49,12 @@ function WelcomeForm() {
     pending.current = true;
     try {
       await run('save', async () => {
-        if (profile.birthdayRequired && !birthday)
-          throw new Error('Choose your birthday to finish account setup');
         const input = parseIdentity({
           displayName: result.name,
           username,
-          ...(profile.birthdayRequired ? { birthday } : {}),
+          ...(birthday || skipBirthday ? { birthday: skipBirthday ? null : birthday } : {}),
         });
-        if (profile.birthdayRequired)
+        if (birthday || skipBirthday)
           await profile.completeIdentity(input.displayName, input.username, input.birthday);
         else await profile.completeIdentity(input.displayName, input.username);
       });
@@ -123,9 +121,7 @@ function WelcomeForm() {
                 editable={!busy}
               />
               <Text style={styles.fine}>3–24 letters, numbers or underscores.</Text>
-              {profile.birthdayRequired ? (
-                <BirthdayField value={birthday} onChange={setBirthday} disabled={!!busy} />
-              ) : null}
+              <BirthdayField value={birthday} onChange={setBirthday} disabled={!!busy} />
               {invalid ? (
                 <Text style={styles.invalid} accessibilityLiveRegion="polite">
                   {invalid}
@@ -136,6 +132,13 @@ function WelcomeForm() {
                 onPress={() => void save()}
                 loading={busy === 'save'}
                 disabled={!name.trim() || !username.trim()}
+              />
+              <Button
+                label="Skip birthday"
+                accessibilityHint="Saves your name and username without a birthday."
+                variant="link"
+                disabled={!!busy || !name.trim() || !username.trim()}
+                onPress={() => void save(true)}
               />
               <Text style={styles.fine}>You can change it any time on the Profile tab.</Text>
               <Button

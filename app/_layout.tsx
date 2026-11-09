@@ -53,9 +53,7 @@ function RootStack() {
   // A font failure falls back to the system font rather than blocking the app.
   const ready = !loading && !profile.loading && (fontsLoaded || !!fontError);
   const needsName =
-    !!session &&
-    !profile.failed &&
-    (!hasRequiredIdentity(profile.displayName, profile.username) || !!profile.birthdayRequired);
+    !!session && !profile.failed && !hasRequiredIdentity(profile.displayName, profile.username);
   const inApp = !!session && !profile.failed && !needsName;
   const pathname = usePathname();
   useAvatarLifecycle(session?.user.id, pathname, session?.user.email);

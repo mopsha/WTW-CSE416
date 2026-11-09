@@ -93,7 +93,7 @@ test('taken username keeps the form and drafts available for a successful retry'
   await act(async () => tree.unmount());
 });
 
-test('new-account setup requires a valid birthday after OTP without inventing a default', async () => {
+test('new-account setup accepts an optional birthday and Skip discards an invalid draft', async () => {
   const completeIdentity = jest.fn();
   jest.mocked(useProfile).mockReturnValue({
     displayName: 'New',
@@ -112,8 +112,8 @@ test('new-account setup requires a valid birthday after OTP without inventing a 
       .props.onPress();
   expect(tree.root.findAllByType('test-birthday')[0]!.props.value).toBeNull();
   await act(async () => save());
-  expect(completeIdentity).not.toHaveBeenCalled();
-  expect(tree.root.findAllByType('test-error')[0]!.props.message).toContain('Choose your birthday');
+  expect(completeIdentity).toHaveBeenCalledWith('New', 'new_person');
+  completeIdentity.mockClear();
   await act(async () =>
     tree.root.findAllByType('test-birthday')[0]!.props.onChange({ month: 2, day: 30 }),
   );
@@ -124,5 +124,15 @@ test('new-account setup requires a valid birthday after OTP without inventing a 
   );
   await act(async () => save());
   expect(completeIdentity).toHaveBeenCalledWith('New', 'new_person', { month: 2, day: 29 });
+  await act(async () =>
+    tree.root.findAllByType('test-birthday')[0]!.props.onChange({ month: 2, day: 30 }),
+  );
+  await act(async () =>
+    tree.root
+      .findAllByType('test-button')
+      .find((n) => n.props.label === 'Skip birthday')!
+      .props.onPress(),
+  );
+  expect(completeIdentity).toHaveBeenLastCalledWith('New', 'new_person', null);
   await act(async () => tree.unmount());
 });

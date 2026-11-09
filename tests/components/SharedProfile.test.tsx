@@ -141,7 +141,7 @@ test('confirmed denial during reconciliation removes the identity', async () => 
   expect(tree.root.findAllByType('test-identity')).toHaveLength(0);
 });
 
-test('a new account still missing birthday parks a shared profile until required setup finishes', async () => {
+test('an account with identity can open a shared profile without a birthday', async () => {
   mockIdentity = {
     displayName: 'New',
     username: 'new_user',
@@ -150,7 +150,6 @@ test('a new account still missing birthday parks a shared profile until required
     birthdayRequired: true,
   };
   await mount();
-  expect(setPendingProfile).toHaveBeenCalled();
-  expect(router.replace).toHaveBeenCalledWith('/welcome');
-  expect(api.getPerson).not.toHaveBeenCalled();
+  expect(router.replace).not.toHaveBeenCalledWith('/welcome');
+  expect(api.getPerson).toHaveBeenCalled();
 });

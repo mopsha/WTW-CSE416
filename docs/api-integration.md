@@ -1162,12 +1162,11 @@ acceptable but their email-created outgoing state is not exposed by discovery.
 
 ## Birthday fields (migration 0038)
 
-`POST /me/identity` optionally accepts `birthday: {month: 6, day: 15}`. The new
-mobile setup screen requires month/day after OTP for a server-marked new account.
-Identity and birthday commit atomically. Older clients may save identity alone,
-but cannot finish new-account setup or preference completion without a birthday.
-`/me` reports `birthdayRequired: true` while needed and never includes birthday.
-Existing profiles stay exempt; no birthday is invented or backfilled.
+`POST /me/identity` optionally accepts `birthday: {month: 6, day: 15}` or null.
+Signup offers Skip birthday, which saves identity with a null birthday. Identity and
+birthday commit atomically. Birthday never gates setup or preference completion.
+Compatibility flags default false. Existing profiles stay exempt; no date is backfilled.
+`/me` never includes birthday.
 
 `POST /me/details` optionally accepts `birthday` (month/day object or null) and
 `shareBirthday` (boolean). Omitted keys preserve existing birthday state for older
@@ -1186,20 +1185,12 @@ profile authorization and rate-limited username/UUID discovery remain intact.
 The backend service role alone can access private storage/helpers; HTTP routes
 always derive the viewer from authentication.
 
-0038 is untracked and the project owner confirmed it has not been deployed to any
+The repository rollout record states the project owner confirmed it has not been deployed to any
 shared/hosted environment. The month/day implementation replaces its unshipped
 version in place. Historical migrations 0001–0037 are untouched. If another copy
 has since been deployed, stop rollout and use a forward-only corrective migration
 that preserves month/day and removes the unnecessary column; do not rewrite an
 applied migration or retain unnecessary personal data in new backups.
 
-Roll out migration and compatible API before distributing this client. Older
-builds can authenticate but cannot finish new-account setup after the migration;
-plan an update path. Reminder-observation rules for February 29 are future product
-work, not jobs in this PR.
-
-Run `python3 tests/db/birthdays.py` for isolated PostgreSQL migration/privacy tests
-(PostgreSQL tools required; Auth/Storage/cron are minimal stand-ins, no hosted
-project access). Run `supabase/tests/birthdays_test.sql` on an approved local
-Supabase stack for real platform integration. Native-device and real Supabase QA
-remain release checks; this work does not deploy.
+Roll out migration and compatible API before distributing this client. No birthday
+notifications, reminders or other features are introduced.

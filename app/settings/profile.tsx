@@ -272,7 +272,7 @@ function EditProfile({ userId, email }: { userId: string; email?: string }) {
                 value={draft.birthday ?? null}
                 disabled={locked}
                 onChange={(birthday) => {
-                  setDraft({ ...draft, birthday });
+                  setDraft({ ...draft, birthday, ...(!birthday ? { shareBirthday: false } : {}) });
                   setNotice(null);
                 }}
               />
@@ -282,7 +282,7 @@ function EditProfile({ userId, email }: { userId: string; email?: string }) {
                   accessibilityLabel="Show birthday to friends"
                   accessibilityHint="Only accepted, unblocked friends can see your month and day. No birth year is collected."
                   value={draft.shareBirthday ?? false}
-                  disabled={locked}
+                  disabled={locked || !draft.birthday}
                   trackColor={{ false: colors.border, true: colors.primary }}
                   style={s.toggle}
                   onValueChange={(shareBirthday) => {

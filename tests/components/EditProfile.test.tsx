@@ -449,3 +449,26 @@ test('birthday object key order does not cause a metadata write when only the na
   expect(api.updateProfileDetails).not.toHaveBeenCalled();
   expect(mockName).toHaveBeenCalledWith('Ava Edited');
 });
+
+test('Remove birthday saves null and disables sharing, then allows later profile saves', async () => {
+  jest.mocked(api.getMyUserProfile).mockResolvedValue({
+    ...profile,
+    birthday: { month: 2, day: 29 },
+    shareBirthday: true,
+  });
+  await mount();
+  await press('Remove birthday');
+  const sharing = tree.root
+    .findAllByProps({ accessibilityLabel: 'Show birthday to friends' })
+    .find((n: any) => n.props.onValueChange);
+  expect(sharing.props.value).toBe(false);
+  expect(sharing.props.disabled).toBe(true);
+  await press('Save');
+  expect(api.updateProfileDetails).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      birthday: null,
+      shareBirthday: false,
+    }),
+  );
+  expect(button('Save').props.disabled).toBe(true);
+});

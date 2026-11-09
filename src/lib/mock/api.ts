@@ -165,8 +165,6 @@ function updateMe(body: unknown): Response {
 
 /** POST /me/preferences: same validation as the API (shared validatePreferences). */
 function updatePreferences(body: unknown): Response {
-  if (mockProfile.birthdayRequired)
-    return fail(400, 'BIRTHDAY_REQUIRED', 'Add your birthday to finish account setup');
   if (body === undefined) return fail(400, 'INVALID_JSON', 'Request body must be valid JSON');
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     return fail(400, 'INVALID_INPUT', 'Expected a preferences object');
@@ -735,8 +733,6 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   if (method === 'POST' && path === '/picks/join') return joinPick(readBody(init));
   if (method === 'POST' && path === '/me') return updateMe(readBody(init));
   if (method === 'POST' && path === '/me/optional-setup') {
-    if (mockProfile.birthdayRequired)
-      return fail(400, 'BIRTHDAY_REQUIRED', 'Add your birthday to finish account setup');
     mockProfile.optionalSetupPending = false;
     return json(200, { optionalSetupPending: false });
   }
@@ -745,7 +741,7 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     return json(200, {
       displayName,
       preferences,
-      onboarded: !mockProfile.birthdayRequired && onboarded,
+      onboarded: onboarded,
       username: getMockUserProfile(MOCK_USER_ID).username,
       optionalSetupPending: mockProfile.optionalSetupPending,
       ...(mockProfile.birthdayRequired ? { birthdayRequired: true } : {}),

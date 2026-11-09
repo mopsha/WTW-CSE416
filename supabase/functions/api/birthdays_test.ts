@@ -41,14 +41,17 @@ Deno.test(
         update: async (id, input) => {
           assert(
             id === owner &&
-              sameBirthday(input.birthday, { month: 2, day: 29 }) &&
+              (input.birthday === null || sameBirthday(input.birthday, { month: 2, day: 29 })) &&
               input.shareBirthday === false,
           );
           writes++;
           return { ...profile, ...input };
         },
         completeIdentity: async (id, input) => {
-          assert(id === owner && sameBirthday(input.birthday, { month: 2, day: 29 }));
+          assert(
+            id === owner &&
+              (input.birthday === null || sameBirthday(input.birthday, { month: 2, day: 29 })),
+          );
           writes++;
           return { ...profile, birthday: input.birthday, birthdayRequired: false };
         },
@@ -82,6 +85,13 @@ Deno.test(
       assert(sameBirthday((await response.json()).birthday, { month: 2, day: 29 }));
     }
     assert(Number(writes) === 2);
+    // Skip and owner removal both accept null, without weakening authentication.
+    for (const path of ['/me/identity', '/me/details']) {
+      const response = await post(path, { ...body, birthday: null });
+      assert(response.status === 200);
+      assert((await response.json()).birthday === null);
+    }
+    assert(Number(writes) === 4);
     auth = false;
     assert((await post('/me/details', body)).status === 401);
     assert((await post('/me/identity', body)).status === 401);

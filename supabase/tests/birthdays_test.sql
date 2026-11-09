@@ -7,12 +7,12 @@ insert into auth.users(id,email,raw_user_meta_data) values
  ('b0380003-3333-4333-8333-333333333333','birthday-stranger@example.invalid','{}');
 set local role service_role;
 do $$ begin
- if not (select birthday_required from public.profiles where id='b0380001-3333-4333-8333-333333333333') then raise exception 'New account exempt'; end if;
+ if (select birthday_required from public.profiles where id='b0380001-3333-4333-8333-333333333333') then raise exception 'Birthday required'; end if;
  perform public.user_identity_update('b0380001-3333-4333-8333-333333333333','{"displayName":"Owner","username":"birthday_owner"}');
- begin update public.profiles set optional_setup_pending=false where id='b0380001-3333-4333-8333-333333333333'; raise exception 'Setup bypass'; exception when sqlstate 'PT400' then null; end;
- begin update public.profiles set preferences_updated_at=now() where id='b0380001-3333-4333-8333-333333333333'; raise exception 'Survey bypass'; exception when sqlstate 'PT400' then null; end;
+ update public.profiles set optional_setup_pending=false where id='b0380001-3333-4333-8333-333333333333';
+ update public.profiles set preferences_updated_at=now() where id='b0380001-3333-4333-8333-333333333333';
 end $$;
-select 'ok 1 - new accounts cannot finish setup without a birthday, even through legacy paths';
+select 'ok 1 - new accounts can skip birthday and save setup and preferences';
 do $$ declare d jsonb; begin
  foreach d in array array['{"month":2,"day":30}','{"month":4,"day":31}','{"month":0,"day":1}','{"month":1,"day":0}','{"month":13,"day":1}','{"month":2.5,"day":2}','{"month":2,"day":29,"year":2000}','{"month":"2","day":29}','{"month":2}','"2000-02-29"']::jsonb[] loop
   begin perform public.user_identity_update('b0380001-3333-4333-8333-333333333333',jsonb_build_object('displayName','Must rollback','username','birthday_owner','birthday',d)); raise exception 'Invalid birthday accepted'; exception when sqlstate 'PT400' then null; end;
@@ -24,7 +24,9 @@ do $$ declare p jsonb; begin
  p:=public.user_identity_update('b0380001-3333-4333-8333-333333333333','{"displayName":"Owner","username":"birthday_owner","birthday":{"month":2,"day":29}}');
  if p->'birthday'<>'{"month":2,"day":29}'::jsonb or p->>'shareBirthday'<>'false' or p->>'birthdayRequired'<>'false' then raise exception 'Wrong owner birthday/default'; end if;
  perform public.user_profile_update('b0380001-3333-4333-8333-333333333333','{"username":"birthday_owner","shareMetadata":false,"birthday":null,"shareBirthday":false}');
- begin update public.profiles set optional_setup_pending=false where id='b0380001-3333-4333-8333-333333333333'; raise exception 'Clearing birthday bypassed setup'; exception when sqlstate 'PT400' then null; end;
+ update public.profiles set optional_setup_pending=false,preferences_updated_at=now() where id='b0380001-3333-4333-8333-333333333333';
+ if exists(select 1 from private.profile_birthdays where user_id='b0380001-3333-4333-8333-333333333333') then raise exception 'Removal not persisted'; end if;
+ perform public.user_profile_update('b0380001-3333-4333-8333-333333333333','{"username":"birthday_owner","shareMetadata":false}');
  perform public.user_identity_update('b0380001-3333-4333-8333-333333333333','{"displayName":"Owner","username":"birthday_owner","birthday":{"month":2,"day":29}}');
  update public.profiles set optional_setup_pending=false where id='b0380001-3333-4333-8333-333333333333';
  insert into public.friendships(requester_id,addressee_id,status,accepted_at) values('b0380001-3333-4333-8333-333333333333','b0380002-3333-4333-8333-333333333333','accepted',now());
@@ -36,6 +38,10 @@ do $$ declare p jsonb; begin
  p:=public.user_profile_get('b0380002-3333-4333-8333-333333333333','b0380001-3333-4333-8333-333333333333');
  if p->'birthday'<>'{"month":2,"day":29}'::jsonb or p ?| array['birthDate','shareBirthday','birthdayRequired'] or p::text like '%2000%' then raise exception 'Unsafe friend projection'; end if;
  if p->>'metadataVisible'<>'false' then raise exception 'Birthday enabled metadata'; end if;
+ perform public.user_profile_update('b0380001-3333-4333-8333-333333333333','{"username":"birthday_owner","shareMetadata":false,"birthday":null,"shareBirthday":false}');
+ if public.user_profile_get('b0380002-3333-4333-8333-333333333333','b0380001-3333-4333-8333-333333333333') ? 'birthday' then raise exception 'Removed birthday visible'; end if;
+ perform public.user_profile_update('b0380001-3333-4333-8333-333333333333','{"username":"birthday_owner","shareMetadata":false,"birthday":{"month":2,"day":29},"shareBirthday":true}');
+
  begin perform public.user_profile_get('b0380003-3333-4333-8333-333333333333','b0380001-3333-4333-8333-333333333333'); raise exception 'Stranger saw birthday'; exception when sqlstate 'PT404' then null; end;
  if public.person_lookup('b0380002-3333-4333-8333-333333333333','b0380001-3333-4333-8333-333333333333') ?| array['birthDate','birthday','shareBirthday'] then raise exception 'Identity lookup leaked birthday'; end if;
  if (public.username_search('b0380002-3333-4333-8333-333333333333','birthday_owner')->0) ?| array['birthDate','birthday','shareBirthday'] then raise exception 'Search leaked birthday'; end if;

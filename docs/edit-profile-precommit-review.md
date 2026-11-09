@@ -51,24 +51,20 @@ No notification or scheduled reminder is implemented.
 
 ## Signup, migration and rollout
 
-Birthday is requested after OTP in required account setup, never in Auth metadata.
-The server marks only post-migration profiles as requiring birthday. Existing
-accounts remain exempt with no invented values. Interrupted identity and shared
-profile handoffs preserve the requirement; new-account setup cannot complete via
-old optional-setup/preferences paths or by clearing a birthday during unfinished
-setup. Mock snapshots preserve the same per-account behavior.
+Birthday is optional for every account. Signup offers Skip birthday; identity is
+saved with null and no birthday guard redirects on restart. Edit Profile's Remove
+birthday clears the draft and sharing; Save deletes private storage atomically.
+Setup and preferences remain editable without a birthday. Existing accounts are
+unchanged and no date is invented. No birthday notifications are introduced.
 
-The project owner confirmed in this conversation that migration 0038 has not been
-applied to any shared/hosted database. It is untracked and has no Git history in
-this checkout; no Supabase project is linked. That confirmation, rather than a
-claim of remote inspection, authorizes editing 0038 in place. Migrations 0001–0037
-are unchanged. Only temporary isolated PostgreSQL test databases were migrated.
+The repository records the owner's earlier confirmation that 0038 is undeployed.
+This revision amends 0038 on that basis, preserving 0001–0037. Live verification
+was unavailable (GitHub network failure; no linked Supabase project). Cached
+origin/main ends at 0037; cached pending branches use 0039/0040, with no second
+0038 filename found. Reconfirm deployment status and live PR ordering before
+rollout. If any copy is deployed, preserve it and use a forward-only correction.
+No shared database was changed.
 
-Before release, confirm no concurrent deployment has changed that status. Apply
-migration and matching API before the compatible client. Older builds cannot
-finish new-account setup without the new UI; provide an update path. If an older
-0038 copy is discovered deployed, preserve its history and create a forward-only
-correction that removes unnecessary stored data. No deployment was performed.
 Update the Privacy Policy and App Store disclosures for recurring birthday
 month/day collection, purpose, default-off friend sharing, access, retention,
 edits/clearing, and deletion. Explicitly state no birth year or age is collected

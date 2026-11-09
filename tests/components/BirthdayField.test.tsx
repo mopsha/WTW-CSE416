@@ -21,7 +21,10 @@ const day = () =>
   tree.root
     .findAllByProps({ accessibilityLabel: 'Birthday day' })
     .find((n: any) => n.props.onChangeText);
-const month = () => tree.root.findByType('test-button');
+const month = () =>
+  tree.root
+    .findAllByType('test-button')
+    .find((n: any) => n.props.accessibilityLabel === 'Birthday month');
 test('a blank birthday never invents month/day and no picker asks for a year', async () => {
   await mount();
   expect(changed).not.toHaveBeenCalled();
@@ -53,5 +56,23 @@ test('disabled controls reject edits while Save is pending', async () => {
   expect(month().props.disabled).toBe(true);
   expect(day().props.editable).toBe(false);
   await act(async () => day().props.onChangeText('16'));
+  expect(changed).not.toHaveBeenCalled();
+});
+
+test('Remove birthday clears the value, closes choices and respects disabled state', async () => {
+  await mount({ month: 2, day: 29 });
+  const remove = () =>
+    tree.root.findAllByType('test-button').find((n: any) => n.props.label === 'Remove birthday');
+  expect(remove().props.accessibilityHint).toContain('Save');
+  await act(async () => month().props.onPress());
+  await act(async () => remove().props.onPress());
+  expect(changed).toHaveBeenCalledWith(null);
+  expect(tree.root.findAllByProps({ accessibilityRole: 'radiogroup' })).toHaveLength(0);
+  changed.mockClear();
+  await act(async () =>
+    tree.update(<BirthdayField value={{ month: 2, day: 29 }} onChange={changed} disabled />),
+  );
+  expect(remove().props.disabled).toBe(true);
+  await act(async () => remove().props.onPress());
   expect(changed).not.toHaveBeenCalled();
 });

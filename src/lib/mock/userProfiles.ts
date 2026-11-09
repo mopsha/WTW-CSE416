@@ -249,8 +249,7 @@ export function handleMockUserProfiles(method: string, path: string, body: unkno
       mockProfile.birthdayRequired = false;
     } else {
       mockBirthdays.delete(MOCK_USER_ID);
-      mockProfile.birthdayRequired =
-        mockProfile.birthdaySetupRequired && mockProfile.optionalSetupPending;
+      mockProfile.birthdayRequired = false;
     }
     if (identity) mockProfile.displayName = identity.displayName;
     mockUserProfiles.set(MOCK_USER_ID, { ...mockUserProfiles.get(MOCK_USER_ID), ...metadata });

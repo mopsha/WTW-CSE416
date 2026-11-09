@@ -60,7 +60,7 @@ test('privacy is opt-in and omitted birthday fields preserve stored month/day', 
       'month and day only',
     );
 });
-test('new accounts remain incomplete without birthday; existing accounts stay exempt', async () => {
+test('birthday never gates preference completion for new or existing accounts', async () => {
   const getProfile = jest
     .fn()
     .mockResolvedValue({
@@ -70,7 +70,7 @@ test('new accounts remain incomplete without birthday; existing accounts stay ex
       birthdayRequired: true,
     });
   const store = { getProfile } as unknown as ProfileStore;
-  expect(await getMe(store, 'me')).toMatchObject({ onboarded: false, birthdayRequired: true });
+  expect(await getMe(store, 'me')).toMatchObject({ onboarded: true, birthdayRequired: true });
   getProfile.mockResolvedValue({
     displayName: 'Legacy',
     username: 'legacy',

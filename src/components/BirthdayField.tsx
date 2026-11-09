@@ -16,7 +16,7 @@ export function BirthdayField({
   disabled = false,
 }: {
   value: Birthday | null;
-  onChange: (birthday: Birthday) => void;
+  onChange: (birthday: Birthday | null) => void;
   disabled?: boolean;
 }) {
   const [monthsOpen, setMonthsOpen] = useState(false);
@@ -97,12 +97,22 @@ export function BirthdayField({
           Choose a day from 1 to {maxDay ?? 31} for your birthday month.
         </Text>
       ) : null}
+      {value ? (
+        <Button
+          label="Remove birthday"
+          accessibilityHint="Clears the month and day. Save your profile to confirm removal."
+          variant="link"
+          disabled={disabled}
+          onPress={() => {
+            if (disabled) return;
+            setMonthsOpen(false);
+            onChange(null);
+          }}
+        />
+      ) : null}
       <Text style={s.caption}>
-        Add your birthday so we can remind your friends when it&apos;s time to celebrate.
-      </Text>
-      <Text style={s.caption}>
-        Reminders aren’t available yet. We only collect month and day. Sharing with friends is off
-        by default.
+        Optional. Only month and day are collected. Share with accepted friends if you choose.
+        Sharing is off by default. You can remove your birthday later. No reminders are sent.
       </Text>
     </View>
   );

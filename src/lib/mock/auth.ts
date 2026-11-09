@@ -102,8 +102,8 @@ export const mockAuth: AuthService = {
       });
     }
     if (!saved && email !== MOCK_EXISTING_EMAIL) {
-      mockProfile.birthdayRequired = true;
-      mockProfile.birthdaySetupRequired = true;
+      mockProfile.birthdayRequired = false;
+      mockProfile.birthdaySetupRequired = false;
     }
     deleted.delete(email);
     accounts.set(email, {

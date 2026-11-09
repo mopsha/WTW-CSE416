@@ -1,11 +1,7 @@
--- Existing profiles are grandfathered. Only profiles created after this migration
--- require a birthday to finish account setup. Never backfill an invented date.
+-- Birthday is optional for every account. Retain false compatibility flags for
+-- older API/client projections; neither flag gates identity or preferences.
 alter table public.profiles add column birthday_required boolean not null default false;
--- Keep the signup cohort after a date is supplied, so clearing it during setup
--- cannot bypass the requirement. Existing accounts remain exempt.
 alter table public.profiles add column birthday_setup_required boolean not null default false;
-alter table public.profiles alter column birthday_setup_required set default true;
-alter table public.profiles alter column birthday_required set default true;
 
 create table private.profile_birthdays (
  user_id uuid primary key references public.profiles(id) on delete cascade,
@@ -55,7 +51,7 @@ declare m numeric; d numeric; sharing boolean; begin
  if m is null then
   if sharing then raise exception using errcode='PT400',message='Add a birthday before sharing it'; end if;
   delete from private.profile_birthdays where user_id=p_user_id;
-  update public.profiles set birthday_required=birthday_setup_required and optional_setup_pending where id=p_user_id;
+  update public.profiles set birthday_required=false where id=p_user_id;
  else
   insert into private.profile_birthdays(user_id,birth_month,birth_day,share_birthday) values(p_user_id,m::smallint,d::smallint,sharing)
    on conflict(user_id) do update set birth_month=excluded.birth_month,birth_day=excluded.birth_day,share_birthday=excluded.share_birthday;
@@ -64,18 +60,6 @@ declare m numeric; d numeric; sharing boolean; begin
 end $$;
 revoke all on function private.write_profile_birthday(uuid,jsonb) from public,anon,authenticated;
 grant execute on function private.write_profile_birthday(uuid,jsonb) to service_role;
-
--- Older clients cannot mark a new account's onboarding complete by skipping birthday.
-create function private.require_birthday_for_setup() returns trigger
-language plpgsql set search_path='' as $$ begin
- if new.birthday_setup_required and not exists(select 1 from private.profile_birthdays where user_id=new.id)
-  and (not new.optional_setup_pending or new.preferences_updated_at is distinct from old.preferences_updated_at) then
-  raise exception using errcode='PT400',message='Add your birthday to finish account setup'; end if;
- return new;
-end $$;
-revoke all on function private.require_birthday_for_setup() from public,anon,authenticated;
-create trigger require_birthday_for_setup before update of optional_setup_pending,preferences_updated_at on public.profiles
- for each row execute function private.require_birthday_for_setup();
 
 create or replace function public.user_profile_get(p_viewer_id uuid,p_target_id uuid) returns jsonb
 language plpgsql stable set search_path='' as $$

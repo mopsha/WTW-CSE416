@@ -82,7 +82,7 @@ export async function getMe(store: ProfileStore, userId: string): Promise<MeResp
     optionalSetupPending: row?.optionalSetupPending ?? false,
     displayName: row?.displayName?.trim() || null,
     preferences: readPreferences(row?.preferences),
-    onboarded: !row?.birthdayRequired && !!row?.preferencesUpdatedAt,
+    onboarded: !!row?.preferencesUpdatedAt,
   };
 }
 
