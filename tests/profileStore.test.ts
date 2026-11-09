@@ -47,6 +47,7 @@ test('reads only the caller’s row, including the private survey columns', asyn
     data: {
       display_name: 'Ava',
       username: 'ava',
+      birthday_required: true,
       optional_setup_pending: true,
       discover_preferences: { priceMax: 2 },
       preferences_updated_at: '2026-10-30T12:00:00Z',
@@ -55,13 +56,14 @@ test('reads only the caller’s row, including the private survey columns', asyn
   });
   await expect(createProfileStore().getProfile('user-1')).resolves.toEqual({
     displayName: 'Ava',
+    birthdayRequired: true,
     username: 'ava',
     optionalSetupPending: true,
     preferences: { priceMax: 2 },
     preferencesUpdatedAt: '2026-10-30T12:00:00Z',
   });
   expect(mockSelect).toHaveBeenCalledWith(
-    'display_name, username, optional_setup_pending, discover_preferences, preferences_updated_at',
+    'display_name, username, birthday_required, optional_setup_pending, discover_preferences, preferences_updated_at',
   );
   expect(mockEq).toHaveBeenCalledWith('id', 'user-1');
 });

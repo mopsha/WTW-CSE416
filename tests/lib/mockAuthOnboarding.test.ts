@@ -27,7 +27,7 @@ test('unknown login cannot silently create an account; explicit signup can', asy
     code: 'USERNAME_TAKEN',
   });
   expect((await api.getMe()).displayName).toBeNull();
-  await api.completeIdentity(' Josh ', '@Josh_New');
+  await api.completeIdentity(' Josh ', '@Josh_New', { month: 2, day: 29 });
   const me = await api.getMe();
   expect(me).toMatchObject({
     displayName: 'Josh',
@@ -103,4 +103,44 @@ test('username uniqueness also covers other signed-out mock accounts', async () 
     status: 409,
   });
   expect((await api.getMe()).displayName).toBeNull();
+});
+
+test('OTP handoff, interrupted birthday setup, account switching and completion preserve private state', async () => {
+  await mockAuth.sendCode('birthday-resume@example.com', 'signup');
+  await mockAuth.verifyCode('birthday-resume@example.com', MOCK_CODE);
+  expect(await api.getMe()).toMatchObject({ birthdayRequired: true, onboarded: false });
+  await api.completeIdentity('Birthday', 'birthday_resume');
+  await expect(api.finishOptionalSetup()).rejects.toMatchObject({ code: 'BIRTHDAY_REQUIRED' });
+  await mockAuth.signOut();
+  await mockAuth.sendCode('birthday-resume@example.com', 'login');
+  await mockAuth.verifyCode('birthday-resume@example.com', MOCK_CODE);
+  expect(await api.getMe()).toMatchObject({ birthdayRequired: true, username: 'birthday_resume' });
+  await api.completeIdentity('Birthday', 'birthday_resume', { month: 2, day: 29 });
+  await api.updateProfileDetails({
+    username: 'birthday_resume',
+    favoriteCuisine: null,
+    favoriteActivity: null,
+    shareMetadata: false,
+    birthday: null,
+    shareBirthday: false,
+  });
+  await expect(api.finishOptionalSetup()).rejects.toMatchObject({ code: 'BIRTHDAY_REQUIRED' });
+  await api.completeIdentity('Birthday', 'birthday_resume', { month: 2, day: 29 });
+  await api.finishOptionalSetup();
+  expect(await api.getMyUserProfile()).toMatchObject({
+    birthday: { month: 2, day: 29 },
+    shareBirthday: false,
+    birthdayRequired: false,
+  });
+  expect(await api.getMe()).not.toHaveProperty('birthday');
+  await mockAuth.signOut();
+  await mockAuth.sendCode('birthday-other@example.com', 'signup');
+  await mockAuth.verifyCode('birthday-other@example.com', MOCK_CODE);
+  expect(await api.getMyUserProfile()).toMatchObject({ birthday: null, birthdayRequired: true });
+  await mockAuth.signOut();
+  await mockAuth.sendCode('birthday-resume@example.com', 'login');
+  await mockAuth.verifyCode('birthday-resume@example.com', MOCK_CODE);
+  expect(await api.getMyUserProfile()).toMatchObject({ birthday: { month: 2, day: 29 } });
+  await api.deleteMe();
+  expect(await api.getMyUserProfile()).toMatchObject({ birthday: null });
 });

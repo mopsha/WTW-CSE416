@@ -1158,3 +1158,48 @@ same unavailable error (404); self is 400. Friend-request accounting is inside t
 POST /friends/requests is retired: all authenticated bodies return 410
 EMAIL_REQUESTS_RETIRED without an email lookup. Historical pending requests remain
 acceptable but their email-created outgoing state is not exposed by discovery.
+
+
+## Birthday fields (migration 0038)
+
+`POST /me/identity` optionally accepts `birthday: {month: 6, day: 15}`. The new
+mobile setup screen requires month/day after OTP for a server-marked new account.
+Identity and birthday commit atomically. Older clients may save identity alone,
+but cannot finish new-account setup or preference completion without a birthday.
+`/me` reports `birthdayRequired: true` while needed and never includes birthday.
+Existing profiles stay exempt; no birthday is invented or backfilled.
+
+`POST /me/details` optionally accepts `birthday` (month/day object or null) and
+`shareBirthday` (boolean). Omitted keys preserve existing birthday state for older
+clients. Birthday, username, favorites, and privacy update in one transaction.
+Sharing an absent birthday fails; clearing requires sharing off. Both the API and
+database enforce integer months 1–12 and valid days. February 29 is allowed every
+cycle; April 31 and February 30 fail. No birth year, date string, timestamp, age,
+"future date" comparison, or calendar-year anchor is used. Year-bearing and legacy
+complete-date requests are rejected without reflecting the value in errors.
+
+Owner responses include `birthday` (month/day or null), `shareBirthday`, and
+`birthdayRequired`. Accepted, unblocked friend profiles include only `birthday`
+when explicitly shared. This is independent of metadata sharing. No birthday goes
+into other identity projections. There is no new lookup endpoint: existing
+profile authorization and rate-limited username/UUID discovery remain intact.
+The backend service role alone can access private storage/helpers; HTTP routes
+always derive the viewer from authentication.
+
+0038 is untracked and the project owner confirmed it has not been deployed to any
+shared/hosted environment. The month/day implementation replaces its unshipped
+version in place. Historical migrations 0001–0037 are untouched. If another copy
+has since been deployed, stop rollout and use a forward-only corrective migration
+that preserves month/day and removes the unnecessary column; do not rewrite an
+applied migration or retain unnecessary personal data in new backups.
+
+Roll out migration and compatible API before distributing this client. Older
+builds can authenticate but cannot finish new-account setup after the migration;
+plan an update path. Reminder-observation rules for February 29 are future product
+work, not jobs in this PR.
+
+Run `python3 tests/db/birthdays.py` for isolated PostgreSQL migration/privacy tests
+(PostgreSQL tools required; Auth/Storage/cron are minimal stand-ins, no hosted
+project access). Run `supabase/tests/birthdays_test.sql` on an approved local
+Supabase stack for real platform integration. Native-device and real Supabase QA
+remain release checks; this work does not deploy.

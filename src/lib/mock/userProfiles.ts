@@ -1,3 +1,4 @@
+import type { Birthday } from '@shared/api/birthdays.ts';
 import { ApiError } from '@shared/api/errors.ts';
 import {
   parseIdentity,
@@ -16,6 +17,7 @@ import {
 import { photoBytes, photoBase64 } from '../photoBytes';
 import { mockFriendsList } from './friends';
 import { mockAllGroupRecords } from './groups';
+export const mockBirthdays = new Map<string, { birthday: Birthday; shareBirthday: boolean }>();
 const empty = (): ProfileDetailsInput => ({
   username: null,
   favoriteCuisine: null,
@@ -61,7 +63,10 @@ export const mockUserProfiles = new Map<
     { username: 'cam', favoriteCuisine: null, favoriteActivity: null, shareMetadata: true },
   ],
 ]);
-export const resetOwnMockUserProfile = () => mockUserProfiles.delete(MOCK_USER_ID);
+export const resetOwnMockUserProfile = () => {
+  mockUserProfiles.delete(MOCK_USER_ID);
+  mockBirthdays.delete(MOCK_USER_ID);
+};
 export function getMockUserProfile(targetId: string): UserProfile {
   const own = targetId === MOCK_USER_ID;
   const friend = mockFriendsList().friends.find((f) => f.userId === targetId);
@@ -78,6 +83,15 @@ export function getMockUserProfile(targetId: string): UserProfile {
     avatarUrl: p.avatarUrl ?? null,
     avatarRef: mockAvatarRef(MOCK_USER_ID, targetId),
     ...(own ? { avatarRevision: mockUserProfiles.get(targetId)?.avatarRevision ?? 0 } : {}),
+    ...(own
+      ? {
+          birthday: mockBirthdays.get(targetId)?.birthday ?? null,
+          shareBirthday: mockBirthdays.get(targetId)?.shareBirthday ?? false,
+          birthdayRequired: mockProfile.birthdayRequired,
+        }
+      : mockBirthdays.get(targetId)?.shareBirthday
+        ? { birthday: mockBirthdays.get(targetId)!.birthday }
+        : {}),
     isOwner: own,
     metadataVisible: visible,
     ...(own ? { shareMetadata: p.shareMetadata } : {}),
@@ -219,8 +233,27 @@ export function handleMockUserProfiles(method: string, path: string, body: unkno
         ))
     )
       throw new ApiError(409, 'USERNAME_TAKEN', 'That username is already taken');
+    const { birthday, shareBirthday, ...metadata } = input;
+    const current = mockBirthdays.get(MOCK_USER_ID);
+    const chosenBirthday =
+      identity && 'birthday' in identity
+        ? identity.birthday
+        : 'birthday' in input
+          ? birthday
+          : current?.birthday;
+    const sharing = shareBirthday ?? current?.shareBirthday ?? false;
+    if (!chosenBirthday && sharing)
+      throw new ApiError(400, 'INVALID_BIRTHDAY', 'Add a birthday before sharing it');
+    if (chosenBirthday) {
+      mockBirthdays.set(MOCK_USER_ID, { birthday: chosenBirthday, shareBirthday: sharing });
+      mockProfile.birthdayRequired = false;
+    } else {
+      mockBirthdays.delete(MOCK_USER_ID);
+      mockProfile.birthdayRequired =
+        mockProfile.birthdaySetupRequired && mockProfile.optionalSetupPending;
+    }
     if (identity) mockProfile.displayName = identity.displayName;
-    mockUserProfiles.set(MOCK_USER_ID, { ...mockUserProfiles.get(MOCK_USER_ID), ...input });
+    mockUserProfiles.set(MOCK_USER_ID, { ...mockUserProfiles.get(MOCK_USER_ID), ...metadata });
     return getMockUserProfile(MOCK_USER_ID);
   }
   return null;

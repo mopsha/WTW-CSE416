@@ -304,3 +304,17 @@ test('capability changes hide upload actions without losing an unsaved preview',
   expect(tree!.root.findAllByProps({ label: 'Save photo' }).length).toBeGreaterThan(0);
   expect(api.uploadAvatar).not.toHaveBeenCalled();
 });
+
+test('a stale reconciliation response cannot move the displayed photo revision backwards', async () => {
+  const current = { ...profile, avatarRevision: 4, avatarRef: { userId: 'A', revision: 4 } };
+  jest.mocked(api.getMyUserProfile).mockResolvedValue(current);
+  await mount(current);
+  picked.mockResolvedValueOnce(selected);
+  await press('Change photo');
+  jest.mocked(api.uploadAvatar).mockRejectedValueOnce(new Error('Uncertain commit'));
+  jest.mocked(api.getMyUserProfile).mockResolvedValueOnce({ ...profile, avatarRevision: 2 });
+  await press('Save photo');
+  expect(saved).not.toHaveBeenCalled();
+  expect(tree!.root.findAllByType('photo-error')[0]!.props.message).toBe('Uncertain commit');
+  expect(tree!.root.findAllByProps({ label: 'Save photo' }).length).toBeGreaterThan(0);
+});

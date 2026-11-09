@@ -1,7 +1,9 @@
+import type { Birthday } from '@shared/api/birthdays.ts';
+import { BirthdayField } from '@/components/BirthdayField';
 import { parseIdentity } from '@shared/api/userProfiles.ts';
 import { validateDisplayName, DISPLAY_NAME_MAX } from '@shared/api/profile.ts';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -24,23 +26,43 @@ import { auth } from '@/lib/auth';
 // RootStack handles profile lookup failures before mounting this route.
 export default function WelcomeScreen() {
   const session = useSession();
+  return <WelcomeForm key={`${session.user.id}:${session.user.email ?? ''}`} />;
+}
+function WelcomeForm() {
+  const session = useSession();
   const profile = useProfile();
   const [username, setUsername] = useState(profile.username ?? '');
   const [name, setName] = useState(() => profile.displayName ?? suggestedName(session.user.email));
+  const [birthday, setBirthday] = useState<Birthday | null>(null);
   const [invalid, setInvalid] = useState<string | null>(null);
   const { busy, error, run } = useAction();
+  const pending = useRef(false);
 
   async function save() {
+    if (pending.current) return;
     const result = validateDisplayName(name);
     if ('error' in result) {
       setInvalid(result.error);
       return;
     }
     setInvalid(null);
-    await run('save', async () => {
-      const input = parseIdentity({ displayName: result.name, username });
-      await profile.completeIdentity(input.displayName, input.username);
-    });
+    pending.current = true;
+    try {
+      await run('save', async () => {
+        if (profile.birthdayRequired && !birthday)
+          throw new Error('Choose your birthday to finish account setup');
+        const input = parseIdentity({
+          displayName: result.name,
+          username,
+          ...(profile.birthdayRequired ? { birthday } : {}),
+        });
+        if (profile.birthdayRequired)
+          await profile.completeIdentity(input.displayName, input.username, input.birthday);
+        else await profile.completeIdentity(input.displayName, input.username);
+      });
+    } finally {
+      pending.current = false;
+    }
   }
 
   const preview = name.trim() || '?';
@@ -55,7 +77,7 @@ export default function WelcomeScreen() {
       <SafeAreaView style={styles.flex}>
         <KeyboardAvoidingView
           style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
           <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
             <View style={styles.hero}>
@@ -101,6 +123,9 @@ export default function WelcomeScreen() {
                 editable={!busy}
               />
               <Text style={styles.fine}>3–24 letters, numbers or underscores.</Text>
+              {profile.birthdayRequired ? (
+                <BirthdayField value={birthday} onChange={setBirthday} disabled={!!busy} />
+              ) : null}
               {invalid ? (
                 <Text style={styles.invalid} accessibilityLiveRegion="polite">
                   {invalid}

@@ -64,3 +64,23 @@ test.each([null, 'valid_user'])(
     await act(async () => tree.unmount());
   },
 );
+
+test('a resumed new account with identity but no birthday remains in required setup', async () => {
+  jest.mocked(useProfile).mockReturnValue({
+    failed: false,
+    loading: false,
+    username: 'new_person',
+    displayName: 'New',
+    birthdayRequired: true,
+  } as ReturnType<typeof useProfile>);
+  let tree: any;
+  await act(async () => {
+    tree = create(<RootLayout />);
+  });
+  expect(tree.root.findAllByType('test-protected').map((n: any) => n.props.guard)).toEqual([
+    false,
+    true,
+    false,
+  ]);
+  await act(async () => tree.unmount());
+});

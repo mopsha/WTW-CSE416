@@ -18,6 +18,9 @@ interface PhotoEditorProps {
   onSaved: (profile: UserProfile) => void;
   onBusyChange: (busy: boolean) => void;
   disabled?: boolean;
+  variant?: 'default' | 'page';
+  isBlocked?: () => boolean;
+  onSelectionChange?: (selected: boolean) => void;
 }
 export function ProfilePhotoEditor(props: PhotoEditorProps) {
   const { session } = useAuth();
@@ -29,12 +32,24 @@ export function ProfilePhotoEditor(props: PhotoEditorProps) {
     />
   );
 }
-function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: PhotoEditorProps) {
+function PhotoEditor({
+  profile,
+  onSaved,
+  onBusyChange,
+  disabled = false,
+  variant = 'default',
+  isBlocked,
+  onSelectionChange,
+}: PhotoEditorProps) {
   const capabilities = usePhotoCapabilities();
   const [selected, setSelected] = useState<SelectedPhoto | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [permission, setPermission] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  useEffect(() => {
+    onSelectionChange?.(!!selected);
+  }, [selected, onSelectionChange]);
   const pending = useRef(false);
   const epoch = useRef(0);
   const latestProfile = useRef(profile);
@@ -91,11 +106,12 @@ function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: Photo
     [],
   );
   async function run(action: () => Promise<void>, reconcile = false) {
-    if (pending.current || disabled) return;
+    if (pending.current || disabled || isBlocked?.()) return;
     pending.current = true;
     setBusy(true);
     onBusyChange(true);
     setError(null);
+    setStatus(null);
     setPermission(false);
     const request = ++epoch.current;
     try {
@@ -117,7 +133,13 @@ function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: Photo
                 timer = setTimeout(() => reject(new Error('Profile refresh timed out')), 5000);
               }),
             ]);
-            if (request === epoch.current && latest.id === profile.id) onSaved(latest);
+            if (
+              request === epoch.current &&
+              latest.id === profile.id &&
+              latest.avatarRevision !== undefined &&
+              latest.avatarRevision >= (latestProfile.current.avatarRevision ?? 0)
+            )
+              onSaved(latest);
           } finally {
             clearTimeout(timer);
           }
@@ -166,11 +188,13 @@ function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: Photo
               },
         );
         setSelected(null);
+        setStatus(remove ? 'Photo removed.' : 'Photo saved.');
       }
     }, true);
   }
   // Keep capability fetching mounted, but do not advertise an unavailable feature.
   if (
+    variant !== 'page' &&
     !capabilities.uploadsEnabled &&
     !profile.avatarRef &&
     !profile.avatarUrl &&
@@ -179,11 +203,15 @@ function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: Photo
   )
     return null;
   return (
-    <View style={{ gap: space.sm }}>
-      <Text style={{ ...type.body, color: colors.text }}>Profile photo</Text>
+    <View
+      style={{ gap: space.xs, ...(variant === 'page' ? { alignItems: 'center' as const } : {}) }}
+    >
+      {variant === 'default' ? (
+        <Text style={{ ...type.body, color: colors.text }}>Profile photo</Text>
+      ) : null}
       <Avatar
         name={profile.displayName ?? 'You'}
-        size={72}
+        size={variant === 'page' ? 88 : 72}
         uri={selected?.previewUri ?? profile.avatarUrl}
         avatarRef={selected ? undefined : profile.avatarRef}
         userId={selected ? undefined : profile.id}
@@ -192,10 +220,15 @@ function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: Photo
         <Button
           label="Change photo"
           icon="image-outline"
-          variant="secondary"
+          variant={variant === 'page' ? 'link' : 'secondary'}
+          size="compact"
           disabled={disabled || busy || !capabilities.uploadsEnabled}
           onPress={() => void choose()}
         />
+      ) : variant === 'page' ? (
+        <Text style={{ ...type.caption, color: colors.muted, textAlign: 'center' }}>
+          Photo uploads are currently unavailable.
+        </Text>
       ) : null}
       {selected ? (
         <>
@@ -239,6 +272,17 @@ function PhotoEditor({ profile, onSaved, onBusyChange, disabled = false }: Photo
         </Text>
       ) : null}
       {error ? <ErrorState message={error} /> : null}
+      {status ? (
+        <Text accessibilityLiveRegion="polite" style={{ ...type.caption, color: colors.text }}>
+          {status}
+        </Text>
+      ) : null}
+      {variant === 'page' &&
+      (capabilities.uploadsEnabled || profile.avatarRef || profile.avatarUrl) ? (
+        <Text style={{ ...type.caption, color: colors.muted, textAlign: 'center' }}>
+          Photo changes save separately from profile details.
+        </Text>
+      ) : null}
       {permission ? (
         <Button
           label="Open photo settings"
