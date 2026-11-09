@@ -303,9 +303,11 @@ was invented, and no operator permissions or shared-project settings were change
 
 The existing #44 `report_create(..., 'user', ...)` contract permits a generic report
 against another existing profile even after either-direction blocking or group
-removal. The ordinary member/profile/DM-header menu's “Offensive name or profile
-picture” reason uses that contract and says it does not save photo evidence. It
-remains usable when photo reporting is disabled or the image is inaccessible.
+removal. The shared member/profile/DM-header menu now separates “Report user”
+(names, behavior and other concerns) from “Report profile picture.” The generic
+name reason is “Offensive name”; it never describes itself as a photo report.
+“Report user” remains usable when photo reporting is disabled or the image is
+inaccessible.
 It never pins photo bytes, records a photo revision, restores image access, or
 asserts that moderators can recover what was previously displayed. A former viewer
 still needs an available user-menu entry point (for example a still-open sheet);
@@ -327,3 +329,27 @@ security contract. Both already delegate to `private.remove_reported_photo`, whi
 owns the shared owner/report locks, revision advancement, exact-report resolution,
 and note-preserving outcomes. Keep the two small public wrappers and existing CLI
 commands; no additional mutation pipeline is needed.
+
+### Profile-photo reporting operational inputs
+
+Mike approved a 30-day evidence interval (2592000 seconds), with Mike assigned
+to review reports daily. App Review notes aim to handle reports within 24 hours.
+These are operational inputs, not an automatic enablement or new staff grant.
+An already-authorized operator must still verify access/audit controls, disclosures,
+real Storage review/removal and coverage for that response target before setting
+readiness. This change configures no database setting and enables no feature.
+
+The picture action is shown only for an actually displayed, authorized current
+revision and fresh reporting capabilities. It sends POST /reports with
+kind=profile_photo, targetId and photoRevision; the API routes to
+avatar_report_create. Revision changes require a new explicit selection.
+avatar_moderation_current and avatar_moderation_remove_current accept these
+reports and retain the existing evidence, compare-and-swap and audit rules.
+When blocking removes photo authorization, only generic user reporting remains
+available; no new private photo evidence is acquired. Existing generic reports
+are not relabeled or assigned invented revision evidence.
+
+The new member-photo SQL regression uses a rolled-back 30-day fixture and
+synthetic Storage metadata. That fixture does not configure shared or hosted
+retention/readiness. The HTTP regression uses the existing local-only test setup
+and verifies group-member reports reach current-photo review and removal audit.
