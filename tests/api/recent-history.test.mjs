@@ -12,7 +12,7 @@ const query = JSON.parse(
 test(
   'real summary RPC, composite winner embedding, pagination and participant RLS',
   { timeout: 120_000 },
-  async () => {
+  async (t) => {
     const config = localConfig();
     const users = [],
       picks = [],
@@ -56,6 +56,7 @@ test(
         label + (response.elapsedMs === undefined ? '' : ` (elapsedMs=${response.elapsedMs})`),
         { database: true },
       );
+    const timings = [];
     const summaries = async (who, body = {}) => {
       const started = performance.now();
       const response = await request(
@@ -67,7 +68,9 @@ test(
           body: { p_history: true, p_limit: 5, ...body },
         },
       );
-      return { ...response, elapsedMs: Math.round(performance.now() - started) };
+      const elapsedMs = Math.round(performance.now() - started);
+      timings.push(elapsedMs);
+      return { ...response, elapsedMs };
     };
     try {
       const member = await user(),
@@ -157,7 +160,12 @@ test(
           old.slice(n, n + 200).map((p) => ({ pick_id: p.id, user_id: member.id })),
         );
       expected.sort((a, b) => b.time.localeCompare(a.time) || a.id.localeCompare(b.id));
-      const top = requireSummary(await summaries(member), 200, 'real RPC winner projection');
+      const winnerResponse = await summaries(member);
+      const top = requireSummary(winnerResponse, 200, 'real RPC winner projection');
+      assert.ok(
+        winnerResponse.elapsedMs < 4000,
+        `Summary RPC must retain headroom under the unchanged 8s database timeout; elapsedMs=${winnerResponse.elapsedMs}`,
+      );
       assert.deepEqual(
         top.map((p) => [p.id, p.winner?.name]),
         expected.map((p) => [p.id, p.name]),
@@ -206,6 +214,7 @@ test(
       );
       const revoked = requireSummary(await summaries(member), 200, 'revoked read');
       assert.ok(revoked.every((p) => p.id !== top[0].id));
+      t.diagnostic('Summary RPC timings (ms): ' + timings.join(', '));
     } finally {
       for (let n = 0; n < picks.length; n += 100)
         requireStatus(
