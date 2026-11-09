@@ -1,3 +1,4 @@
+import summaryQuery from '@shared/queries/pickSummaries.json';
 // Read-only queries. Clients only READ from Supabase; RLS limits rows to Picks I'm in
 // and to my own preferences. Every write goes through src/lib/api.ts.
 import { USE_MOCK } from './config';
@@ -17,6 +18,8 @@ export interface Queries {
   /** My own profile (RLS: I can always read my row). displayName is null until I pick one. */
   getMyProfile(userId: string): Promise<MyProfile>;
   listMyPicks(userId: string): Promise<PickSummary[]>;
+  /** All active Picks plus a bounded recent-history preview; not the full History API. */
+  listPicksHome(userId: string): Promise<PickSummary[]>;
   getMyPreferences(pickId: string, userId: string): Promise<MyPreference[]>;
   /** Rank + finalist only. Never selects `score`. */
   getRankingResults(pickId: string): Promise<RankedPlace[]>;
@@ -59,6 +62,21 @@ interface PickRow {
   state: PickState;
   category: string;
   deadline_at: string | null;
+  created_at?: string | null;
+  decided_at?: string | null;
+  winner?: { name: string | null } | null;
+}
+
+function summaryOf(p: PickRow): PickSummary {
+  return {
+    id: p.id,
+    state: p.state,
+    category: p.category,
+    deadlineAt: p.deadline_at,
+    createdAt: p.created_at ?? null,
+    decidedAt: p.decided_at ?? null,
+    winnerName: p.state === 'completed' ? p.winner?.name?.trim() || null : null,
+  };
 }
 
 const supabaseQueries: Queries = {
@@ -77,12 +95,42 @@ const supabaseQueries: Queries = {
     const rows = check(
       await getSupabase()
         .from('pick_participants')
-        .select('picks(id, state, category, deadline_at)')
+        // The composite FK joins only the persisted winner, never the first candidate.
+        // Left embedding retains canceled Picks and missing/unavailable winners.
+        .select(`picks(${summaryQuery.select})`)
         .eq('user_id', userId),
     ) as unknown as { picks: PickRow | PickRow[] | null }[];
     return rows
       .flatMap((r) => (Array.isArray(r.picks) ? r.picks : r.picks ? [r.picks] : []))
-      .map((p) => ({ id: p.id, state: p.state, category: p.category, deadlineAt: p.deadline_at }));
+      .map(summaryOf);
+  },
+
+  async listPicksHome(_userId) {
+    // Identity is derived by SQL from auth.uid(), never trusted from a caller argument.
+    const page = async (history: boolean, limit: number, before?: PickRow) =>
+      check(
+        await getSupabase()
+          .rpc(summaryQuery.rpc, {
+            p_history: history,
+            p_limit: limit,
+            p_before_time: before ? (before.decided_at ?? before.created_at) : null,
+            p_before_id: before?.id ?? null,
+          })
+          .select(summaryQuery.select),
+      ) as unknown as PickRow[];
+    const active = async () => {
+      const rows: PickRow[] = [];
+      let before: PickRow | undefined;
+      for (;;) {
+        const next = await page(false, summaryQuery.pageSize, before);
+        rows.push(...next);
+        if (next.length < summaryQuery.pageSize) return rows;
+        before = next[next.length - 1];
+      }
+    };
+    const [current, history] = await Promise.all([active(), page(true, 5)]);
+    // A Pick can finish between the two reads; prefer its terminal projection.
+    return [...new Map([...current, ...history].map((p) => [p.id, p])).values()].map(summaryOf);
   },
 
   async getMyPreferences(pickId, userId) {

@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { ActivePickPanel, GroupIdentity, PicksHero } from '@/components/picks/PicksHome';
 import { Button, Screen } from '@/components';
@@ -17,15 +17,16 @@ import { newGroupPickRoute, type GroupSummary } from '@/lib/groups';
 import { haptic } from '@/lib/haptics';
 import { resetMockGroups } from '@/lib/mock/groups';
 import { MOCK_INVITE_CODE, resetMockData } from '@/lib/mock/store';
-import { pickTitle, STATE_LABEL } from '@/lib/pickUi';
+import { historyTitle, historySubtitle, recentHistory } from '@/lib/recentHistory';
 import { queries } from '@/lib/queries';
 import type { PickState, PickSummary } from '@/lib/types';
 const ACTIVE: readonly PickState[] = ['draft', 'swiping', 'ranking', 'final_vote'];
 function PickRow({ pick }: { pick: PickSummary }) {
   return (
     <ListRow
-      title={pickTitle(pick.category)}
-      subtitle={STATE_LABEL[pick.state]}
+      title={historyTitle(pick)}
+      titleNumberOfLines={2}
+      subtitle={historySubtitle(pick)}
       leading={
         <Ionicons
           name={
@@ -48,6 +49,10 @@ function PickRow({ pick }: { pick: PickSummary }) {
 }
 export default function PicksScreen() {
   const session = useSession();
+  return <PicksHome key={session.user.id} userId={session.user.id} />;
+}
+function PicksHome({ userId }: { userId: string }) {
+  const latest = useRef(0);
   const [picks, setPicks] = useState<PickSummary[] | null>(null);
   const [groups, setGroups] = useState<GroupSummary[] | null>(null);
   const [groupError, setGroupError] = useState<string | null>(null);
@@ -55,22 +60,32 @@ export default function PicksScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [joining, setJoining] = useState(false);
   const load = useCallback(async () => {
+    const request = ++latest.current;
     setError(null);
     setGroupError(null);
     try {
-      setPicks(await queries.listMyPicks(session.user.id));
+      const next = await queries.listPicksHome(userId);
+      if (request !== latest.current) return;
+      setPicks(next);
     } catch (e) {
+      if (request !== latest.current) return;
       setError(messageOf(e));
     }
     try {
-      setGroups(await queries.listMyGroups(session.user.id));
+      const next = await queries.listMyGroups(userId);
+      if (request === latest.current) setGroups(next);
     } catch (e) {
-      setGroupError(messageOf(e));
+      if (request === latest.current) setGroupError(messageOf(e));
     }
-  }, [session.user.id]);
+  }, [userId]);
   useFocusEffect(
     useCallback(() => {
       void load();
+      return () => {
+        latest.current++;
+        setPicks(null);
+        setGroups(null);
+      };
     }, [load]),
   );
   const resetDemo = () => {
@@ -80,7 +95,7 @@ export default function PicksScreen() {
     void load();
   };
   const active = (picks ?? []).filter((p) => ACTIVE.includes(p.state));
-  const history = (picks ?? []).filter((p) => !ACTIVE.includes(p.state));
+  const history = recentHistory(picks ?? []);
   return (
     <Screen
       edges={['top', 'left', 'right']}
@@ -186,19 +201,19 @@ export default function PicksScreen() {
         ) : null}
       </View>
       <HangCard />
-      {history.length ? (
+      {picks !== null ? (
         <View>
-          <Text style={s.historyTitle} accessibilityRole="header">
-            History
-          </Text>
-          {history.map((p) => (
-            <PickRow key={p.id} pick={p} />
-          ))}
-          <Button
-            label="See winners, who went, and Pick again"
-            variant="link"
-            onPress={() => router.push('/history')}
-          />
+          <View style={s.sectionHead}>
+            <Text style={s.historyTitle} accessibilityRole="header">
+              Recent History
+            </Text>
+            <Button label="See all" variant="link" onPress={() => router.push('/history')} />
+          </View>
+          {history.length ? (
+            history.map((p) => <PickRow key={p.id} pick={p} />)
+          ) : (
+            <Text style={s.caption}>Your finished Picks will appear here.</Text>
+          )}
         </View>
       ) : null}
       {USE_MOCK ? (

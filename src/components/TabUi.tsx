@@ -71,6 +71,7 @@ export function SectionHeading({
 }
 export function ListRow({
   title,
+  titleNumberOfLines,
   subtitle,
   leading,
   right,
@@ -80,6 +81,7 @@ export function ListRow({
   muted = false,
 }: {
   title: string;
+  titleNumberOfLines?: number;
   subtitle?: string;
   leading?: ReactNode;
   right?: ReactNode;
@@ -93,6 +95,7 @@ export function ListRow({
       {leading}
       <View style={s.who}>
         <Text
+          numberOfLines={titleNumberOfLines}
           style={[
             s.rowTitle,
             danger && { color: colors.primary },
@@ -131,6 +134,7 @@ export function ListRow({
           {leading}
           <View style={s.who}>
             <Text
+              numberOfLines={titleNumberOfLines}
               style={[
                 s.rowTitle,
                 danger && { color: colors.primary },

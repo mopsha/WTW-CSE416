@@ -17,6 +17,10 @@ export interface PickSummary {
   state: PickState;
   category: string;
   deadlineAt: string | null;
+  /** Persisted chronology and winner snapshot, when supplied by summary queries. */
+  createdAt?: string | null;
+  decidedAt?: string | null;
+  winnerName?: string | null;
 }
 
 /** What the Swipe and Results screens show for a place. Built from pick_candidates.snapshot. */

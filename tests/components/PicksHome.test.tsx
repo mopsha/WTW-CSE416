@@ -14,7 +14,7 @@ jest.mock('expo-router', () => ({ router: { push: jest.fn() }, useFocusEffect: j
 jest.mock('@/hooks/useAuth', () => ({ useSession: () => ({ user: { id: 'me' } }) }));
 jest.mock('@/lib/config', () => ({ USE_MOCK: false }));
 jest.mock('@/lib/queries', () => ({
-  queries: { listMyPicks: jest.fn(), listMyGroups: jest.fn() },
+  queries: { listPicksHome: jest.fn(), listMyGroups: jest.fn() },
 }));
 jest.mock('@/lib/haptics', () => ({ haptic: { tap: jest.fn(), success: jest.fn() } }));
 jest.mock('@/lib/mock/groups', () => ({ resetMockGroups: jest.fn() }));
@@ -52,7 +52,7 @@ const pick = (id: string, state: PickSummary['state']): PickSummary => ({
 beforeEach(() => {
   jest.resetAllMocks();
   jest
-    .mocked(queries.listMyPicks)
+    .mocked(queries.listPicksHome)
     .mockResolvedValue([pick('live', 'final_vote'), pick('past', 'completed')]);
   jest.mocked(queries.listMyGroups).mockResolvedValue([group]);
 });
@@ -124,7 +124,7 @@ test('hero word fits a bounded line while retaining accessibility scaling and th
 });
 test('join sheet, empty state and retry remain available', async () => {
   jest
-    .mocked(queries.listMyPicks)
+    .mocked(queries.listPicksHome)
     .mockRejectedValueOnce(new Error('Offline'))
     .mockResolvedValue([]);
   jest
@@ -147,5 +147,65 @@ test('join sheet, empty state and retry remain available', async () => {
   await act(async () => join.props.onPress());
   // Existing Sheet mounts its Modal only when the join action opens it.
   expect(JSON.stringify(tree.toJSON())).toContain('Join with code');
+  await act(async () => tree.unmount());
+});
+
+test('Recent History renders five newest persisted winners and preserves See all and row routes', async () => {
+  jest.mocked(queries.listPicksHome).mockResolvedValue([
+    ...[2, 6, 1, 5, 4, 3].map((n) => ({
+      ...pick(String(n), 'completed'),
+      category: ['food', 'activities', 'both', 'custom'][n % 4]!,
+      winnerName: `Winner ${n}`,
+      decidedAt: `2026-11-0${n}T12:00:00Z`,
+    })),
+    pick('active', 'draft'),
+  ]);
+  const tree = await mount();
+  await focus();
+  const { ListRow } = jest.requireActual('@/components/TabUi');
+  const rows = tree.root.findAllByType(ListRow);
+  expect(rows.map((n: any) => n.props.title)).toEqual([
+    'Winner 6',
+    'Winner 5',
+    'Winner 4',
+    'Winner 3',
+    'Winner 2',
+  ]);
+  expect(JSON.stringify(tree.toJSON())).toContain('Recent History');
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Winner 1');
+  await act(async () => rows[0].props.onPress());
+  expect(router.push).toHaveBeenLastCalledWith({ pathname: '/pick/[id]', params: { id: '6' } });
+  await act(async () => button(tree, 'See all').props.onPress());
+  expect(router.push).toHaveBeenLastCalledWith('/history');
+  await act(async () => tree.unmount());
+});
+test('Recent History stays out of loading state and offers full History when empty', async () => {
+  jest.mocked(queries.listPicksHome).mockResolvedValue([]);
+  const tree = await mount();
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Recent History');
+  await focus();
+  expect(JSON.stringify(tree.toJSON())).toContain('Your finished Picks will appear here.');
+  await act(async () => button(tree, 'See all').props.onPress());
+  expect(router.push).toHaveBeenLastCalledWith('/history');
+  await act(async () => tree.unmount());
+});
+
+test('long preview titles are visually limited while the full accessible name remains intact', async () => {
+  const name = 'A very long custom celebration option '.repeat(5).trim();
+  jest
+    .mocked(queries.listPicksHome)
+    .mockResolvedValue([{ ...pick('long', 'completed'), category: 'custom', winnerName: name }]);
+  const tree = await mount();
+  await focus();
+  const { ListRow } = jest.requireActual('@/components/TabUi');
+  const row = tree.root.findByType(ListRow);
+  expect(row.props.titleNumberOfLines).toBe(2);
+  const title = row.findAllByType(Text).find((n: any) => n.props.children === name);
+  expect(title.props.numberOfLines).toBe(2);
+  expect(
+    row
+      .findAllByProps({ accessibilityRole: 'button' })
+      .some((n: any) => n.props.accessibilityLabel.startsWith(name + ',')),
+  ).toBe(true);
   await act(async () => tree.unmount());
 });
