@@ -49,12 +49,26 @@ test(
       );
       return { id: created.id, token: session.access_token };
     }
-    const summaries = (who, body = {}) =>
-      request(config, `/rest/v1/rpc/${query.rpc}?select=${encodeURIComponent(query.select)}`, {
-        method: 'POST',
-        token: who?.token,
-        body: { p_history: true, p_limit: 5, ...body },
-      });
+    const requireSummary = (response, status, label) =>
+      requireStatus(
+        response,
+        status,
+        label + (response.elapsedMs === undefined ? '' : ` (elapsedMs=${response.elapsedMs})`),
+        { database: true },
+      );
+    const summaries = async (who, body = {}) => {
+      const started = performance.now();
+      const response = await request(
+        config,
+        `/rest/v1/rpc/${query.rpc}?select=${encodeURIComponent(query.select)}`,
+        {
+          method: 'POST',
+          token: who?.token,
+          body: { p_history: true, p_limit: 5, ...body },
+        },
+      );
+      return { ...response, elapsedMs: Math.round(performance.now() - started) };
+    };
     try {
       const member = await user(),
         outsider = await user();
@@ -143,13 +157,13 @@ test(
           old.slice(n, n + 200).map((p) => ({ pick_id: p.id, user_id: member.id })),
         );
       expected.sort((a, b) => b.time.localeCompare(a.time) || a.id.localeCompare(b.id));
-      const top = requireStatus(await summaries(member), 200, 'real RPC winner projection');
+      const top = requireSummary(await summaries(member), 200, 'real RPC winner projection');
       assert.deepEqual(
         top.map((p) => [p.id, p.winner?.name]),
         expected.map((p) => [p.id, p.name]),
       );
-      const page1 = requireStatus(await summaries(member, { p_limit: 1 }), 200, 'first tie page');
-      const page2 = requireStatus(
+      const page1 = requireSummary(await summaries(member, { p_limit: 1 }), 200, 'first tie page');
+      const page2 = requireSummary(
         await summaries(member, {
           p_limit: 1,
           p_before_time: page1[0].decided_at,
@@ -159,7 +173,7 @@ test(
         'second tie page',
       );
       assert.equal(page2[0].id, expected[1].id);
-      const canceled = requireStatus(
+      const canceled = requireSummary(
         await summaries(member, {
           p_before_time: top[4].decided_at,
           p_before_id: top[4].id,
@@ -169,8 +183,8 @@ test(
       );
       assert.equal(canceled.length, 5);
       assert.ok(canceled.every((p) => p.state === 'canceled' && p.winner === null));
-      assert.deepEqual(requireStatus(await summaries(outsider), 200, 'outsider'), []);
-      const exhausted = requireStatus(
+      assert.deepEqual(requireSummary(await summaries(outsider), 200, 'outsider'), []);
+      const exhausted = requireSummary(
         await summaries(member, {
           p_before_time: '1900-01-01T00:00:00Z',
           p_before_id: top[0].id,
@@ -179,7 +193,7 @@ test(
         'exhausted page',
       );
       assert.deepEqual(exhausted, []);
-      requireStatus(await summaries(member, { p_limit: 101 }), 400, 'invalid page limit');
+      requireSummary(await summaries(member, { p_limit: 101 }), 400, 'invalid page limit');
       const anon = await summaries(null);
       assert.ok([401, 403].includes(anon.status));
       // Access is re-evaluated on every page.
@@ -190,7 +204,7 @@ test(
         204,
         'remove participation',
       );
-      const revoked = requireStatus(await summaries(member), 200, 'revoked read');
+      const revoked = requireSummary(await summaries(member), 200, 'revoked read');
       assert.ok(revoked.every((p) => p.id !== top[0].id));
     } finally {
       for (let n = 0; n < picks.length; n += 100)
