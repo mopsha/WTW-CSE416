@@ -2,7 +2,7 @@
 -- Synthetic Storage metadata and moderation settings are ROLLED-BACK FIXTURES,
 -- never operational configuration, upload enablement or a retention deployment.
 begin;
-select '1..6';
+select '1..7';
 insert into auth.users(id,raw_user_meta_data)
  select ('a736000'||n||'-3333-4333-8333-333333333333')::uuid,'{}'::jsonb from generate_series(1,3)n;
 insert into public.groups(id,name,owner_id) values
@@ -38,6 +38,29 @@ do $$ declare rid uuid; again uuid; begin
 end $$;
 select 'ok 2 - group-only member pins exact revision once with private 30-day evidence';
 
+-- Regression for the real HTTP fixture: a reverse block must be removed before
+-- reusing the same shared-group peer in a positive current-photo report case.
+do $$ declare rid uuid; after_unblock uuid; begin
+ select id into rid from public.reports where target_kind='profile_photo' and photo_revision=1 and reporter_id='a7360002-3333-4333-8333-333333333333';
+ perform public.block_user('a7360001-3333-4333-8333-333333333333','a7360002-3333-4333-8333-333333333333');
+ if (select count(*) from public.group_members where group_id='a7360000-3333-4333-8333-333333333333')<>2 then
+  raise exception 'Shared-group fixture changed'; end if;
+ begin
+  perform public.avatar_report_create('a7360002-3333-4333-8333-333333333333','a7360001-3333-4333-8333-333333333333',1,'Blocked current photo');
+  raise exception 'Shared group overrode reverse block';
+ exception when sqlstate 'PT404' then
+  if sqlerrm<>'Nothing to report here' then raise; end if;
+ end;
+ perform public.unblock_user('a7360001-3333-4333-8333-333333333333','a7360002-3333-4333-8333-333333333333');
+ if public.avatar_read('a7360002-3333-4333-8333-333333333333','a7360001-3333-4333-8333-333333333333',1) is null then
+  raise exception 'Photo visibility not restored'; end if;
+ after_unblock:=public.avatar_report_create('a7360002-3333-4333-8333-333333333333','a7360001-3333-4333-8333-333333333333',1,'Visible current photo');
+ if after_unblock<>rid then raise exception 'Unblocking bypassed report deduplication'; end if;
+ if (select count(*) from public.rate_limit_events where user_id='a7360002-3333-4333-8333-333333333333' and action='report')<>2 then
+  raise exception 'Blocked or duplicate report consumed quota'; end if;
+end $$;
+select 'ok 3 - reverse block denies reports until cleanup; same group then regains authorized reporting';
+
 do $$ declare rid uuid; begin
  select id into rid from public.reports where target_kind='profile_photo' and photo_revision=1 and reporter_id='a7360002-3333-4333-8333-333333333333';
  perform public.avatar_change('a7360001-3333-4333-8333-333333333333',1,'a7360001-3333-4333-8333-333333333333/22222222-2222-4222-8222-222222222222.jpg');
@@ -49,7 +72,7 @@ do $$ declare rid uuid; begin
  exception when sqlstate 'PT409' then null; end;
  perform public.avatar_report_create('a7360002-3333-4333-8333-333333333333','a7360001-3333-4333-8333-333333333333',2,'Sexual or violent content');
 end $$;
-select 'ok 3 - replaced revision cannot be newly reported or remove its replacement';
+select 'ok 4 - replaced revision cannot be newly reported or remove its replacement';
 
 do $$ begin
  perform public.block_user('a7360002-3333-4333-8333-333333333333','a7360001-3333-4333-8333-333333333333');
@@ -59,7 +82,7 @@ do $$ begin
  begin perform public.avatar_report_create('a7360003-3333-4333-8333-333333333333','a7360001-3333-4333-8333-333333333333',2,'Stranger photo');
  raise exception 'Stranger report allowed'; exception when sqlstate 'PT404' then null; end;
 end $$;
-select 'ok 4 - blocked generic reports remain usable; private photo access stays denied';
+select 'ok 5 - blocked generic reports remain usable; private photo access stays denied';
 
 do $$ declare rid uuid; current_photo jsonb; removed jsonb; begin
  select id into rid from public.reports where target_kind='profile_photo' and photo_revision=2 and reporter_id='a7360002-3333-4333-8333-333333333333';
@@ -73,7 +96,7 @@ do $$ declare rid uuid; current_photo jsonb; removed jsonb; begin
  begin perform public.avatar_moderation_current(rid); raise exception 'Deleted photo shown as current';
  exception when sqlstate 'PT409' then null; end;
 end $$;
-select 'ok 5 - current-photo removal accepts member report, records audit, preserves pinned evidence';
+select 'ok 6 - current-photo removal accepts member report, records audit, preserves pinned evidence';
 
 reset role;
 do $$ begin
@@ -81,5 +104,5 @@ do $$ begin
  or has_function_privilege('authenticated','public.avatar_moderation_remove_current(uuid,bigint,text)','execute')
  or has_table_privilege('authenticated','public.reports','select') then raise exception 'Moderation privacy bypass'; end if;
 end $$;
-select 'ok 6 - mobile users cannot read reports or invoke operator moderation';
+select 'ok 7 - mobile users cannot read reports or invoke operator moderation';
 rollback;
