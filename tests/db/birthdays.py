@@ -54,7 +54,7 @@ do $$ begin
 end $$;
 """)
         print('PASS all migrations through 0038; existing profile remains exempt with no invented birthday', flush=True)
-        for name in ['birthdays_test.sql', 'auth_identity_setup_test.sql', 'integration_identity_guard_test.sql', 'username_discovery_test.sql', 'username_reserved_legacy_test.sql', 'username_review_fixes_test.sql', 'photo_moderation_readiness_test.sql']:
+        for name in ['user_profiles_test.sql', 'birthdays_test.sql', 'auth_identity_setup_test.sql', 'integration_identity_guard_test.sql', 'username_discovery_test.sql', 'username_reserved_legacy_test.sql', 'username_review_fixes_test.sql', 'photo_moderation_readiness_test.sql']:
             result = run(base + ['-f', str(ROOT/'supabase/tests'/name)])
             if 'not ok' in result:
                 raise RuntimeError(result)

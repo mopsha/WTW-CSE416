@@ -95,7 +95,7 @@ begin
   if not own then
    select coalesce(jsonb_agg(jsonb_build_object('id',g.id,'name',g.name) order by g.name,g.id),'[]') into mutual
    from public.groups g join public.group_members a on a.group_id=g.id and a.user_id=p_viewer_id
-    join public.group_members b on b.group_id=g.id and b.user_id=p_target_id;
+    join public.group_members target_members on target_members.group_id=g.id and target_members.user_id=p_target_id;
   end if;
  end if;
  select * into b from private.profile_birthdays where user_id=p_target_id;
