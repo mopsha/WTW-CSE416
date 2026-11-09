@@ -1,3 +1,5 @@
+import { normalizeUsername } from '../_shared/api/usernames.ts';
+import { parseFriendId } from '../_shared/api/friends.ts';
 import type { PastMovesStore } from '../_shared/api/pastMoves.ts';
 import { sendDirectMessage, type DirectChatStore } from '../_shared/api/directChat.ts';
 import { sendGroupMessage, type GroupChatStore } from '../_shared/api/groupChat.ts';
@@ -84,7 +86,6 @@ import {
   type InviteStore,
 } from '../_shared/api/invites.ts';
 import { deleteAccount, type AccountStore } from '../_shared/api/account.ts';
-import { requestFriendSafely } from '../_shared/api/friendRequests.ts';
 import { parseAvatarRevision, readAvatarBody, type AvatarStore } from '../_shared/api/avatars.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
@@ -442,24 +443,36 @@ export function createApp(
     if (!deps.friendsStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Friends are not available');
     return { user, store: deps.friendsStore };
   };
+  app.get('/friends/search', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await friends(c);
+    const query = normalizeUsername(c.req.query('q'), true);
+    if (!store.search) throw new ApiError(503, 'NOT_CONFIGURED', 'Username search unavailable');
+    return c.json({ people: await store.search(user.id, query) });
+  });
+  app.get('/people/:id', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await friends(c);
+    if (!store.person) throw new ApiError(503, 'NOT_CONFIGURED', 'Profile lookup unavailable');
+    return c.json(await store.person(user.id, parseFriendId(c.req.param('id'))));
+  });
+  app.post('/friends/username-requests', async (c) => {
+    const { user, store } = await friends(c);
+    const body = (await readJsonBody(c)) as { username?: unknown; targetId?: unknown } | null;
+    const username = normalizeUsername(body?.username, true);
+    const targetId = parseFriendId(typeof body?.targetId === 'string' ? body.targetId : '');
+    if (!store.requestUsername)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Username requests unavailable');
+    return c.json(await store.requestUsername(user.id, username, targetId));
+  });
   app.get('/friends', async (c) => {
     c.header('Cache-Control', 'private, no-store');
     const { user, store } = await friends(c);
     return c.json(await listFriends(store, user.id));
   });
   app.post('/friends/requests', async (c) => {
-    const { user, store } = await friends(c);
-    // Same answer whether or not the email has an account (or blocked the caller).
-    return c.json(
-      await requestFriendSafely(
-        {
-          takeFriendRequestLimit: (id) => store.takeFriendRequestLimit(id),
-          request: (id, email) => store.request(id, email.toLowerCase()),
-        },
-        user.id,
-        await readJsonBody(c),
-      ),
-    );
+    await deps.getUser(c.req.raw);
+    throw new ApiError(410, 'EMAIL_REQUESTS_RETIRED', 'Find friends by username instead');
   });
   app.post('/friends/:id/accept', async (c) => {
     const { user, store } = await friends(c);
@@ -748,7 +761,18 @@ export function createApp(
   });
   app.post('/me/details', async (c) => {
     const { user, store } = await userProfiles(c);
-    return c.json(await store.update(user.id, parseProfileDetails(await readJsonBody(c))));
+    const body = await readJsonBody(c);
+    const requested =
+      body && typeof body === 'object' ? (body as Record<string, unknown>).username : undefined;
+    let currentUsername: string | null | undefined;
+    if (typeof requested === 'string') {
+      try {
+        normalizeUsername(requested);
+      } catch {
+        currentUsername = (await store.get(user.id, user.id)).username;
+      }
+    }
+    return c.json(await store.update(user.id, parseProfileDetails(body, currentUsername)));
   });
   app.get('/users/:id/profile', async (c) => {
     c.header('Cache-Control', 'private, no-store');

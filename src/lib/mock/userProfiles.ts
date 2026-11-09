@@ -31,6 +31,14 @@ export const mockUserProfiles = new Map<
   }
 >([
   [
+    'mock-jordan',
+    { username: 'jordan', favoriteCuisine: null, favoriteActivity: null, shareMetadata: false },
+  ],
+  [
+    'mock-dana',
+    { username: 'dana', favoriteCuisine: null, favoriteActivity: null, shareMetadata: false },
+  ],
+  [
     'mock-ava',
     {
       username: 'ava',
@@ -200,7 +208,7 @@ export function handleMockUserProfiles(method: string, path: string, body: unkno
     const identity = path === '/me/identity' ? parseIdentity(body) : null;
     const input = identity
       ? { ...(mockUserProfiles.get(MOCK_USER_ID) ?? empty()), username: identity.username }
-      : parseProfileDetails(body);
+      : parseProfileDetails(body, mockUserProfiles.get(MOCK_USER_ID)?.username);
     if (mockUserProfiles.get(MOCK_USER_ID)?.username && !input.username)
       throw new ApiError(400, 'INVALID_INPUT', 'Username is required');
     if (

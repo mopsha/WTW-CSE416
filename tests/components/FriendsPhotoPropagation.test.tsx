@@ -5,6 +5,7 @@ import { avatarCache, useAvatarLifecycle } from '@/hooks/useAvatarSource';
 import { api } from '@/lib/api';
 const { create, act } = jest.requireActual('react-test-renderer');
 jest.mock('expo-router', () => ({
+  useLocalSearchParams: () => ({}),
   router: { push: jest.fn() },
   useFocusEffect: (fn: () => void) => jest.requireActual('react').useEffect(fn, [fn]),
 }));

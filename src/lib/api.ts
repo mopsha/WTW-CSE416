@@ -1,3 +1,4 @@
+import type { PersonIdentity } from '@shared/api/people.ts';
 import type { PastMovesResult } from '@shared/api/pastMoves.ts';
 import type { DirectConversation, DirectMessage, DirectHistory } from '@shared/api/directChat.ts';
 import type { GroupMessage, GroupMessageInput } from '@shared/api/groupChat.ts';
@@ -573,12 +574,22 @@ export function createApiClient({
       request<StatusResponse>('POST', `${pickPath(pickId)}/close-vote`),
 
     /** My friends, requests to me, and requests I sent (names only, never emails). */
+    searchPeople: (query: string) =>
+      request<{ people: PersonIdentity[] }>(
+        'GET',
+        `/friends/search?q=${encodeURIComponent(query)}`,
+      ),
+    getPerson: (id: string) => request<PersonIdentity>('GET', `/people/${encodeURIComponent(id)}`),
+    addFriendByUsername: (username: string, targetId: string) =>
+      request<{ status: 'sent'; relationship?: 'requested' | 'friends' }>(
+        'POST',
+        '/friends/username-requests',
+        {
+          body: { username, targetId },
+        },
+      ),
     listFriends: () => request<FriendsList>('GET', '/friends'),
-    /**
-     * Ask someone by the exact email they sign in with. Always { status: 'sent' }, so this can't
-     * reveal who has an account; if they already asked you, you're now friends. 400
-     * CANNOT_FRIEND_SELF for your own email, 429 RATE_LIMITED after 20 a day.
-     */
+    /** @deprecated Retired HTTP route: always rejects with 410 EMAIL_REQUESTS_RETIRED. */
     addFriend: (email: string) =>
       request<{ status: 'sent' }>('POST', '/friends/requests', { body: { email } }),
     /** Accept their request. 404 REQUEST_NOT_FOUND if it was withdrawn. */

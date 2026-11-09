@@ -23,7 +23,7 @@ test('normalizes optional metadata, ignores privilege fields and moderates all v
     favoriteActivity: 'Basketball',
     shareMetadata: false,
   });
-  expect(parseProfileDetails({ username: '', favoriteCuisine: ' ', shareMetadata: true })).toEqual({
+  expect(parseProfileDetails({ username: null, favoriteCuisine: ' ', shareMetadata: true })).toEqual({
     username: null,
     favoriteCuisine: null,
     favoriteActivity: null,
@@ -36,6 +36,9 @@ test.each([
   null,
   [],
   {},
+  { ...input, username: '' },
+  { ...input, username: '   ' },
+  { ...input, username: 'ADMIN' },
   { ...input, username: 'ab' },
   { ...input, username: 'x'.repeat(25) },
   { ...input, username: 'not allowed' },

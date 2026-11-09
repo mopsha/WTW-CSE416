@@ -32,13 +32,19 @@ test('accept moves a request into friends; decline removes it', async () => {
 });
 
 test('a sent request is not listed, so the list cannot reveal who has an account', async () => {
-  await expect(api.addFriend('Dana.Lee@example.com')).resolves.toEqual({ status: 'sent' });
+  await expect(api.addFriend('Dana.Lee@example.com')).rejects.toMatchObject({
+    status: 410,
+    code: 'EMAIL_REQUESTS_RETIRED',
+  });
   expect(JSON.stringify(await api.listFriends())).not.toContain('Dana');
 });
 
 test('errors match the API', async () => {
   // Same answer for an email with no account, so the route can't find out who uses WTW.
-  await expect(api.addFriend('nobody@example.com')).resolves.toEqual({ status: 'sent' });
+  await expect(api.addFriend('nobody@example.com')).rejects.toMatchObject({
+    status: 410,
+    code: 'EMAIL_REQUESTS_RETIRED',
+  });
   await expect(api.addFriend('not an email')).rejects.toBeInstanceOf(ApiError);
   await expect(api.acceptFriend('mock-ava-nope')).rejects.toMatchObject({
     code: 'REQUEST_NOT_FOUND',

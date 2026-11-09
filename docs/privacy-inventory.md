@@ -71,7 +71,7 @@ an implementation inventory, not published legal text. Use
 | Group Ideas | `group_ideas`: creator, group, title, food/activity type, description, location text, timestamps | Current group members; API validates mutations; creator edits/deletes, owner may delete | Until deleted; group/creator deletion cascades. Location text is not geocoded. No image/upload storage |
 | Frozen Group Idea candidates | Existing Pick candidate snapshots; `picks.include_group_ideas` | Existing Pick participants; library membership is rechecked when committing a deck | Existing Pick history rules; library edit/deletion does not rewrite snapshots. Account attribution cleanup follows existing custom-candidate rules; shared historical text may remain |
 | Direct group invitations | `group_invitations`: group, inviter, invitee, status, created/resolved times | Intended recipient/inviter while invitation eligibility remains; pending list is not membership | Resolved rows retained; no scheduled retention cleanup. Group or either account deletion cascades; only accept inserts membership |
-| Username / favorites / metadata privacy | `profiles.username`, favorites, `share_profile_metadata` | Owner full; accepted unblocked friends see basic identity; counts/favorites/mutual groups only with sharing enabled. Raw metadata columns are not granted to clients | Until edited/deleted; username normalized and unique; sharing off by default. New identity required; established username cannot be erased |
+| Username / favorites / metadata privacy | `profiles.username`, favorites, `share_profile_metadata` | Owner full; authenticated username/UUID discovery exposes only public identity, excluding blocks/deleting accounts; full profiles require accepted unblocked friendship; counts/favorites/mutual groups only with sharing enabled. Raw metadata columns are not granted to clients | Until edited/deleted; username normalized and unique; sharing off by default. New identity required; established username cannot be erased |
 | Optional setup offer | `profiles.optional_setup_pending` | Owner through API only; never controls authorization | Until dismissed or account deleted; existing accounts are not forced through optional steps |
 | Group chat | `group_messages`: group, sender, text, retry ID, time | Current members; blocked sender content filtered. API returns latest 50; bounded display is not storage deletion | Stored until message's group or sender account deleted. Leaving/removal revokes access without erasing prior messages |
 | Direct conversations/messages | `direct_conversations`, `direct_messages`: pair, sender, text, retry ID, time | Pair only while accepted friends and unblocked; API latest 50 | Unfriend/block retains inaccessible history; accepted re-friend can reuse conversation. Either account deletion cascades conversation/messages |
@@ -79,7 +79,7 @@ an implementation inventory, not published legal text. Use
 | Past Moves | `profile_past_moves` projection of completed Picks, winners and own `went=true`; no new feed table | Owner; friend requires metadata sharing, accepted/unblocked friendship and participation in same Pick. Group label requires viewer's current membership | Existing Pick/outcome retention; correcting attendance removes projected entry. Timed eligibility +1h, untimed +3h. Restricted Google display content omitted; deletion follows underlying records |
 
 Chats and Group Ideas add user-generated content to the store disclosure review;
-usernames add a public-facing identifier within authorized profile contexts. These
+usernames add a public-facing identifier through authenticated, rate-limited identity discovery. These
 features introduce no contacts, birthday or analytics collection. Managed profile photos
 add uploaded user content as described below.
 
@@ -154,3 +154,58 @@ refreshes at 15 seconds or less remaining on the 30-second request-start lease;
 expiry/failure remains fail-closed. Request completion and JS scheduling can still
 delay updates. Disabled uploads hide the upload controls; existing owner photos
 remain removable. No new viewing-history or retention policy was introduced.
+
+Username discovery (0036): signed-in users can perform bounded prefix/UUID identity
+lookups. The projection contains display name, username, UUID and the viewer's own
+relationship; no email, favorites or private social statistics. Either-direction
+blocks and pending deletion deny lookup. Existing avatar authorization is unchanged.
+Public identity discovery is separate from the metadata-sharing preference. Lookup
+counters use bounded minute buckets and are removed on account deletion. Native
+sharing sends only public identity text and an ID-backed custom-scheme link to the
+OS-selected recipient/app. A pending sign-in profile target is stored locally for
+up to 24 hours and consumed once. Review corresponding disclosures before release;
+no public web domain, universal-link service or new legal promise is introduced.
+
+## Username discovery and profile links (0036–0037, PR #51)
+
+This section supersedes older Friends discovery descriptions above. It is an implementation
+inventory, not a claim that a Privacy Policy or App Store disclosure has been published.
+
+- Authenticated accounts with a username are discoverable by default. There is no separate
+  discovery opt-out. The existing profile-metadata sharing switch does not hide basic identity.
+- Prefix search (optional @, at least three characters, escaped literal underscores) returns
+  at most ten matches: display name, username, stable user UUID and relationship state.
+  UUID-backed wtw://p/<UUID> links use the same safe identity projection after sign-in.
+  Emails, preferences, social counts and private profile metadata are not search results.
+- Either-direction blocks and deletion-pending/deleted targets prevent discovery. Photo
+  references are optional and require the existing independent photo authorization and quota;
+  pending requests alone do not grant photo access. Sharing never includes private image URLs.
+- Relationship states are self, friends, incoming, requested, or none. Existing pending
+  rows are conservatively treated as legacy because their origin was not recorded. Outgoing pending state
+  is returned only for explicitly UUID-bound username requests. Historical email-created
+  pending requests are concealed from their sender by discovery, but are preserved for the
+  recipient to accept; accepted friendships are unchanged.
+- Authenticated POST /friends/requests is retired and returns the same 410 response without
+  inspecting email/body or performing account lookup. OTP authentication and other email
+  invitation flows are unchanged. The privileged service-only historical friend_request RPC
+  remains for internal compatibility; anon/authenticated roles cannot execute it. Older
+  clients using the retired HTTP friend-creation route must upgrade.
+- Both username-prefix and UUID lookups share an atomic database budget: 30 per UTC minute
+  and 150 discovery lookups per rolling 24 hours, per authenticated account.
+  Missing/blocked UUID lookups also consume budget. Quota exhaustion returns generic 429;
+  the API does not promise a fixed Retry-After because the two windows reset differently.
+- Lookup accounting is server-only. Minute counters are pruned during subsequent lookups;
+  rolling events expire logically after 24 hours and are pruned on that viewer's next lookup.
+  Inactive-viewer event rows persist until another lookup or account deletion (cascade).
+- Pending profile intents use SecureStore (memory on web), are eligible to resume for
+  24 hours, and are scoped to their authenticated owner when present. Expiry is checked
+  on consumption; expired persisted entries are removed on a later read or logout, not
+  by a background expiry job. Sign-out/account boundaries invalidate consumption and
+  clear storage; explicit sign-out fails safely if a persisted intent cannot be cleared.
+  Unauthenticated link entry survives sign-in and required username setup.
+
+Before release, the team must reconcile the published Privacy Policy and App Store privacy
+answers with default social discoverability, public-to-authenticated identity identifiers,
+relationship states, photo authorization and local deep-link retention. Publication and
+legal approval are not verified by this code change; do not promise an opt-out or retention
+schedule beyond what the implementation actually enforces.

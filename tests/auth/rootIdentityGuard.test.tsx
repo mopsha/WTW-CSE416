@@ -1,4 +1,6 @@
 import React from 'react';
+import { router } from 'expo-router';
+import { resumePendingProfile } from '@/lib/pendingProfile';
 import RootLayout from '../../app/_layout';
 import { useProfile } from '@/hooks/useProfile';
 
@@ -24,6 +26,9 @@ jest.mock('@/lib/notify', () => ({
 jest.mock('@/lib/push', () => ({ registerForPush: jest.fn() }));
 jest.mock('@/lib/auth', () => ({ auth: { signOut: jest.fn() } }));
 jest.mock('@/lib/pendingInvite', () => ({ takePendingInvite: async () => null }));
+jest.mock('@/lib/pendingProfile', () => ({
+  resumePendingProfile: jest.fn().mockResolvedValue(false),
+}));
 jest.mock('@/lib/pendingJoin', () => ({ takePendingJoin: () => null }));
 jest.mock('@/components', () => {
   const React = jest.requireActual('react');
@@ -34,13 +39,18 @@ jest.mock('@/components', () => {
     ]),
   );
 });
+let mockPath = '/pick/deep-link/swipe';
 jest.mock('expo-router', () => {
   const React = jest.requireActual('react');
   const Stack = Object.assign((props: object) => React.createElement('test-Stack', props), {
     Protected: (props: object) => React.createElement('test-Protected', props),
     Screen: () => null,
   });
-  return { Stack, router: { push: jest.fn() }, usePathname: () => '/pick/deep-link/swipe' };
+  return {
+    Stack,
+    router: { push: jest.fn(), replace: jest.fn() },
+    usePathname: () => mockPath,
+  };
 });
 test('failed /me does not mount a navigator or redirect a restored deep link into identity setup', async () => {
   const retry = jest.fn();
@@ -59,14 +69,12 @@ test('failed /me does not mount a navigator or redirect a restored deep link int
   expect(tree.root.findByType('test-Screen').props.title).toBe('Could not load your profile');
   await act(async () => tree.root.findByType('test-ErrorState').props.onRetry());
   expect(retry).toHaveBeenCalledTimes(1);
-  jest
-    .mocked(useProfile)
-    .mockReturnValue({
-      failed: false,
-      loading: true,
-      username: null,
-      displayName: null,
-    } as ReturnType<typeof useProfile>);
+  jest.mocked(useProfile).mockReturnValue({
+    failed: false,
+    loading: true,
+    username: null,
+    displayName: null,
+  } as ReturnType<typeof useProfile>);
   await act(async () => tree.update(<RootLayout />));
   expect(tree.root.findAllByType('test-Stack')).toHaveLength(0);
   expect(tree.root.findByType('test-Screen').props.title).toBe('Loading your profile…');
@@ -95,5 +103,26 @@ test('failed /me does not mount a navigator or redirect a restored deep link int
       .findAllByType('test-Protected')
       .map((n: { props: { guard: boolean } }) => n.props.guard),
   ).toEqual([false, true, false]);
+  await act(async () => tree.unmount());
+});
+
+test('resumed profile intent replaces a temporary route instead of stacking a spinner', async () => {
+  mockPath = '/p/target';
+  jest.mocked(useProfile).mockReturnValue({
+    failed: false,
+    loading: false,
+    username: 'returning',
+    displayName: 'Returning',
+    optionalSetupPending: false,
+  } as ReturnType<typeof useProfile>);
+  jest.mocked(resumePendingProfile).mockImplementationOnce(async (_current, navigate) => {
+    navigate('target');
+    return false;
+  });
+  let tree: any;
+  await act(async () => {
+    tree = create(<RootLayout />);
+  });
+  expect(router.replace).toHaveBeenCalledWith({ pathname: '/p/[id]', params: { id: 'target' } });
   await act(async () => tree.unmount());
 });

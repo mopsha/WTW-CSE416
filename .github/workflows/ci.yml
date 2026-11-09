@@ -25,7 +25,7 @@ jobs:
         with:
           deno-version: v2.x
       - run: deno check --config supabase/functions/api/deno.json supabase/functions/api/index.ts
-      - run: deno test --config supabase/functions/api/deno.json supabase/functions/api/app_test.ts
+      - run: deno test --config supabase/functions/api/deno.json supabase/functions/api/app_test.ts supabase/functions/api/people_test.ts
   integration:
     name: Local database and API
     runs-on: ubuntu-latest
@@ -108,6 +108,9 @@ jobs:
       - name: Check concurrent photo replacements and account deletion
         timeout-minutes: 2
         run: timeout 60 python3 tests/db/avatar_concurrency.py --dsn 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+      - name: Check concurrent username discovery quota
+        timeout-minutes: 2
+        run: timeout 60 python3 tests/db/username_concurrency.py --dsn 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
       - name: Serve API and wait for readiness
         timeout-minutes: 3
         shell: bash

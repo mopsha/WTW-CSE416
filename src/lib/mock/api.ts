@@ -1,3 +1,4 @@
+import { mockPeopleRoute } from './people';
 import { handleMockPastMoves } from './pastMoves';
 import { handleMockDirectChat, mockDirectNotices, resetMockDirectChat } from './directChat';
 import { handleMockGroupChat, mockGroupMessages, mockGroupChatNotices } from './groupChat';
@@ -774,6 +775,15 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     return json(200, { status: 'ok' });
   }
 
+  if (
+    path.startsWith('/friends/search?') ||
+    path.startsWith('/people/') ||
+    path === '/friends/username-requests'
+  ) {
+    if (!(await mockAuth.getSession())) return fail(401, 'UNAUTHORIZED', 'Sign in first');
+    const peopleResult = mockPeopleRoute(method, path, readBody(init));
+    if (peopleResult) return json(peopleResult.status, peopleResult.body);
+  }
   if (path.startsWith('/friends')) {
     const session = await mockAuth.getSession();
     const result = handleMockFriends(method, path, readBody(init), session?.user.email ?? null);
