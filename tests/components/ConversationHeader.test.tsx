@@ -102,3 +102,27 @@ test('header action slot remains separate from identity navigation', async () =>
   expect(profile).not.toHaveBeenCalled();
   await act(async () => tree.unmount());
 });
+
+test('group subpages can supply back behavior and an explicit details label without affecting direct chats', async () => {
+  const onBack = jest.fn();
+  let tree: any;
+  await act(async () => {
+    tree = create(
+      <ConversationHeader
+        name="Our crew"
+        subtitle="3 members"
+        accessibilityLabel="Group details for Our crew, 3 members"
+        onBack={onBack}
+        onPress={() => {}}
+      />,
+    );
+  });
+  await act(async () => tree.root.findByType('test-back').props.onPress());
+  expect(onBack).toHaveBeenCalledTimes(1);
+  expect(router.back).not.toHaveBeenCalled();
+  expect(
+    tree.root.findAllByProps({ accessibilityLabel: 'Group details for Our crew, 3 members' })
+      .length,
+  ).toBeGreaterThan(0);
+  await act(async () => tree.unmount());
+});
