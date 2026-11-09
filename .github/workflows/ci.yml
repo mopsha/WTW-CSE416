@@ -25,7 +25,7 @@ jobs:
         with:
           deno-version: v2.x
       - run: deno check --config supabase/functions/api/deno.json supabase/functions/api/index.ts
-      - run: deno test --config supabase/functions/api/deno.json supabase/functions/api/app_test.ts supabase/functions/api/people_test.ts
+      - run: deno test --config supabase/functions/api/deno.json supabase/functions/api/app_test.ts supabase/functions/api/people_test.ts supabase/functions/api/recentWinners_test.ts
   integration:
     name: Local database and API
     runs-on: ubuntu-latest

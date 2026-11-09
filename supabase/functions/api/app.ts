@@ -1,3 +1,9 @@
+import {
+  parseRecentWinnerIds,
+  resolveRecentWinners,
+  type RecentWinnersStore,
+} from '../_shared/api/recentWinners.ts';
+import type { Candidate, Category } from '../_shared/places/types.ts';
 import { normalizeUsername } from '../_shared/api/usernames.ts';
 import { parseFriendId } from '../_shared/api/friends.ts';
 import type { PastMovesStore } from '../_shared/api/pastMoves.ts';
@@ -106,6 +112,8 @@ export function createApp(
     lifecycleStore: LifecycleStore;
     poolBuilder: PoolBuilder;
     pickPlaces?: PickPlaces;
+    recentWinnersStore?: RecentWinnersStore;
+    winnerDetails?: (placeId: string, category: Category) => Promise<Candidate | null>;
     closingStore: ClosingStore & VotingStore;
     joinStore?: JoinStore;
     friendsStore?: FriendsStore;
@@ -370,6 +378,21 @@ export function createApp(
       await createPickMaybeForGroup(deps.lifecycleStore, deps.groupsStore, user.id, body),
       201,
     );
+  });
+  app.post('/picks/recent-winners', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const user = await deps.getUser(c.req.raw);
+    const ids = parseRecentWinnerIds(await readJsonBody(c));
+    if (!deps.recentWinnersStore || !deps.winnerDetails)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Recent winners unavailable');
+    return c.json({
+      winners: await resolveRecentWinners(
+        deps.recentWinnersStore,
+        user.id,
+        ids,
+        deps.winnerDetails,
+      ),
+    });
   });
   app.get('/picks/:id', async (c) => {
     c.header('Cache-Control', 'private, no-store');

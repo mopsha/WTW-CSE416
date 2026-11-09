@@ -21,6 +21,8 @@ export interface PickSummary {
   createdAt?: string | null;
   decidedAt?: string | null;
   winnerName?: string | null;
+  winnerPlaceId?: string | null;
+  winnerProvider?: string | null;
 }
 
 /** What the Swipe and Results screens show for a place. Built from pick_candidates.snapshot. */

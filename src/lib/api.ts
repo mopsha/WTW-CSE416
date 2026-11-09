@@ -542,6 +542,17 @@ export function createApiClient({
     /** Host only: closes swiping and ranks. Others get 403 FORBIDDEN. */
     rankPick: (pickId: string) => request<RankResponse>('POST', `${pickPath(pickId)}/rank`),
 
+    /** Request-only Google names for at most five displayed, participant-authorized winners. */
+    resolveRecentWinners: async (pickIds: string[]) => {
+      const response = await request<{
+        winners: import('@shared/api/recentWinners.ts').WinnerDisplay[];
+      }>('POST', '/picks/recent-winners', { body: { pickIds } });
+      return response.winners.map(({ pickId, ...place }) => ({
+        pickId,
+        place: candidateFromApi(place),
+      }));
+    },
+
     /** The Pick, my candidates in my own shuffled order, and my answers. */
     getPick: async (pickId: string): Promise<PickDetail> => {
       return pickDetailFromApi(await request<RawPickDetail>('GET', pickPath(pickId)));

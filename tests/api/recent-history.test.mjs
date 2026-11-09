@@ -170,6 +170,37 @@ test(
         top.map((p) => [p.id, p.winner?.name]),
         expected.map((p) => [p.id, p.name]),
       );
+      // New batch route: verified participation, bounded IDs, no provider calls for stored names.
+      const winners = (who, pickIds) =>
+        request(config, '/functions/v1/api/picks/recent-winners', {
+          method: 'POST',
+          token: who?.token,
+          body: { pickIds, userId: member.id },
+        });
+      assert.deepEqual(
+        requireStatus(
+          await winners(
+            member,
+            top.map((p) => p.id),
+          ),
+          200,
+          'stored winners',
+        ).winners,
+        [],
+      );
+      assert.deepEqual(
+        requireStatus(
+          await winners(
+            outsider,
+            top.map((p) => p.id),
+          ),
+          200,
+          'outsider winners',
+        ).winners,
+        [],
+      );
+      assert.ok([401, 403].includes((await winners(null, [top[0].id])).status));
+      requireStatus(await winners(member, Array(6).fill(top[0].id)), 400, 'winner request bound');
       const page1 = requireSummary(await summaries(member, { p_limit: 1 }), 200, 'first tie page');
       const page2 = requireSummary(
         await summaries(member, {
@@ -214,6 +245,10 @@ test(
       );
       const revoked = requireSummary(await summaries(member), 200, 'revoked read');
       assert.ok(revoked.every((p) => p.id !== top[0].id));
+      assert.deepEqual(
+        requireStatus(await winners(member, [top[0].id]), 200, 'revoked winner').winners,
+        [],
+      );
       t.diagnostic('Summary RPC timings (ms): ' + timings.join(', '));
     } finally {
       for (let n = 0; n < picks.length; n += 100)

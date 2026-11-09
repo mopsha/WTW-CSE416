@@ -1,5 +1,5 @@
 {
   "rpc": "my_pick_summaries",
   "pageSize": 100,
-  "select": "id,state,category,deadline_at,created_at,decided_at,winner:pick_candidates!picks_winner_is_candidate(name:snapshot->>name)"
+  "select": "id,state,category,deadline_at,created_at,decided_at,winner_place_id,winner:pick_candidates!picks_winner_is_candidate(name:snapshot->>name,provider:snapshot->>provider)"
 }

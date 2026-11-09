@@ -122,3 +122,34 @@ describe('createApiClient', () => {
     expect([err.code, err.status]).toEqual(['FORBIDDEN', 403]);
   });
 });
+
+test('recent winner client authenticates and maps live attribution without persisting content', async () => {
+  const fetch = jest.fn<ReturnType<FetchLike>, Parameters<FetchLike>>(async () =>
+    jsonResponse(200, {
+      winners: [
+        {
+          pickId: 'pick',
+          placeId: 'canonical',
+          name: 'Live Cafe',
+          provider: 'google',
+          googleMapsUri: 'https://maps.google.com/place',
+          attributions: [{ provider: 'Source', providerUri: 'https://example.com/credit' }],
+        },
+      ],
+    }),
+  );
+  const resolved = await client(fetch).resolveRecentWinners(['pick']);
+  expect(fetch.mock.calls[0]![0]).toBe(`${BASE}/picks/recent-winners`);
+  expect(fetch.mock.calls[0]![1].headers).toMatchObject({ Authorization: 'Bearer user-jwt' });
+  expect(JSON.parse(String(fetch.mock.calls[0]![1].body))).toEqual({ pickIds: ['pick'] });
+  expect(resolved[0]).toMatchObject({
+    pickId: 'pick',
+    place: {
+      placeId: 'canonical',
+      name: 'Live Cafe',
+      provider: 'google',
+      attributions: [{ provider: 'Source', uri: 'https://example.com/credit' }],
+    },
+  });
+  expect(fetch).toHaveBeenCalledTimes(1);
+});

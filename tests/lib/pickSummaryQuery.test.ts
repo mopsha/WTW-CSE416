@@ -114,3 +114,25 @@ test('a Pick completing between active/history reads appears only once with its 
   expect(picks).toHaveLength(1);
   expect(picks[0]).toMatchObject({ state: 'completed', winnerName: 'Winner' });
 });
+
+test('Google winner projection preserves provider and canonical ID with a null stored name', async () => {
+  mockPageSelect.mockResolvedValue({
+    data: [
+      {
+        id: 'google',
+        state: 'completed',
+        category: 'food',
+        winner_place_id: 'canonical',
+        winner: { name: null, provider: 'google' },
+      },
+    ],
+    error: null,
+  });
+  const rows = await queries.listPicksHome('viewer');
+  expect(rows[0]).toMatchObject({
+    winnerName: null,
+    winnerProvider: 'google',
+    winnerPlaceId: 'canonical',
+  });
+  expect(summaryQuery.select).toContain('pick_candidates!picks_winner_is_candidate');
+});

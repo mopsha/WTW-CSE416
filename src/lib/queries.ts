@@ -64,7 +64,8 @@ interface PickRow {
   deadline_at: string | null;
   created_at?: string | null;
   decided_at?: string | null;
-  winner?: { name: string | null } | null;
+  winner_place_id?: string | null;
+  winner?: { name: string | null; provider?: string | null } | null;
 }
 
 function summaryOf(p: PickRow): PickSummary {
@@ -75,6 +76,8 @@ function summaryOf(p: PickRow): PickSummary {
     deadlineAt: p.deadline_at,
     createdAt: p.created_at ?? null,
     decidedAt: p.decided_at ?? null,
+    winnerPlaceId: p.winner_place_id ?? null,
+    winnerProvider: p.winner?.provider ?? null,
     winnerName: p.state === 'completed' ? p.winner?.name?.trim() || null : null,
   };
 }

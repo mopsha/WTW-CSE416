@@ -55,3 +55,11 @@ are added. See recent-history-performance.md for measurements and regressions.
 
 Apply 0038 birthdays, then 0039, then 0040 in a combined clean replay. A hosted
 database already on 0039 receives only 0040; do not edit or replay 0039.
+
+## PR #56 review correction
+
+PR #54 owns 0038 and must merge **and deploy** before PR #56's 0039/0040.
+This correction changes none of these migration files or their version numbers.
+The summary projection now includes the persisted winner ID and provider; it
+continues to join through the same composite winner FK and participant RLS.
+Live Google names are request-only API data, never written into snapshots or SQL.

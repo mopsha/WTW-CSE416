@@ -2,6 +2,9 @@ import React from 'react';
 import { router, useFocusEffect } from 'expo-router';
 import PicksScreen from '../../app/(tabs)/index';
 import { queries } from '@/lib/queries';
+import { api } from '@/lib/api';
+import { GoogleCredit } from '@/components/GoogleCredit';
+import { useSession } from '@/hooks/useAuth';
 import type { GroupSummary } from '@/lib/groups';
 import type { PickSummary } from '@/lib/types';
 import { PicksHero } from '@/components/picks/PicksHome';
@@ -11,7 +14,8 @@ import { haptic } from '@/lib/haptics';
 const { create, act } = jest.requireActual('react-test-renderer');
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('expo-router', () => ({ router: { push: jest.fn() }, useFocusEffect: jest.fn() }));
-jest.mock('@/hooks/useAuth', () => ({ useSession: () => ({ user: { id: 'me' } }) }));
+jest.mock('@/hooks/useAuth', () => ({ useSession: jest.fn() }));
+jest.mock('@/lib/api', () => ({ api: { resolveRecentWinners: jest.fn() } }));
 jest.mock('@/lib/config', () => ({ USE_MOCK: false }));
 jest.mock('@/lib/queries', () => ({
   queries: { listPicksHome: jest.fn(), listMyGroups: jest.fn() },
@@ -51,6 +55,8 @@ const pick = (id: string, state: PickSummary['state']): PickSummary => ({
 });
 beforeEach(() => {
   jest.resetAllMocks();
+  jest.mocked(useSession).mockReturnValue({ user: { id: 'me' } } as ReturnType<typeof useSession>);
+  jest.mocked(api.resolveRecentWinners).mockResolvedValue([]);
   jest
     .mocked(queries.listPicksHome)
     .mockResolvedValue([pick('live', 'final_vote'), pick('past', 'completed')]);
@@ -208,4 +214,152 @@ test('long preview titles are visually limited while the full accessible name re
       .some((n: any) => n.props.accessibilityLabel.startsWith(name + ',')),
   ).toBe(true);
   await act(async () => tree.unmount());
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+}
+const googlePick = (id = 'google') => ({
+  ...pick(id, 'completed'),
+  winnerName: null,
+  winnerProvider: 'google',
+  winnerPlaceId: 'persisted',
+});
+const liveWinner = (pickId = 'google', placeId = 'persisted') => ({
+  pickId,
+  place: {
+    placeId,
+    name: 'Live Google Cafe',
+    provider: 'google' as const,
+    photoUrl: null,
+    priceLevel: null,
+    rating: null,
+    cuisine: null,
+    address: null,
+    lat: null,
+    lng: null,
+    googleMapsUri: 'https://maps.google.com/place',
+    attributions: [{ provider: 'Data partner', uri: 'https://example.com/credit' }],
+  },
+});
+test('null Google snapshot name resolves only the displayed persisted winner with GoogleCredit', async () => {
+  const pending = deferred<Awaited<ReturnType<typeof api.resolveRecentWinners>>>();
+  jest
+    .mocked(queries.listPicksHome)
+    .mockResolvedValue([
+      googlePick(),
+      { ...pick('custom', 'completed'), winnerName: 'Our custom option' },
+      { ...pick('mock', 'completed'), winnerName: 'Stored mock name' },
+      { ...googlePick('canceled'), state: 'canceled' },
+      pick('missing', 'completed'),
+    ]);
+  jest.mocked(api.resolveRecentWinners).mockReturnValue(pending.promise);
+  const tree = await mount();
+  await focus();
+  expect(api.resolveRecentWinners).toHaveBeenCalledTimes(1);
+  expect(api.resolveRecentWinners).toHaveBeenCalledWith(['google']);
+  expect(JSON.stringify(tree.toJSON())).toContain('Our custom option');
+  expect(JSON.stringify(tree.toJSON())).toContain('Stored mock name');
+  expect(tree.root.findAllByType(GoogleCredit)).toHaveLength(0);
+  await act(async () => pending.resolve([liveWinner()]));
+  expect(JSON.stringify(tree.toJSON())).toContain('Live Google Cafe');
+  expect(tree.root.findByType(GoogleCredit).props.place.placeId).toBe('persisted');
+  expect(JSON.stringify(tree.toJSON())).toContain('Google Maps');
+  expect(JSON.stringify(tree.toJSON())).toContain('Data partner');
+  await act(async () => tree.unmount());
+});
+test.each(['quota', 'unavailable', 'wrong winner'])(
+  'Google %s keeps safe fallbacks without retries or attribution for absent content',
+  async (failure) => {
+    jest.mocked(queries.listPicksHome).mockResolvedValue([googlePick()]);
+    if (failure === 'quota')
+      jest.mocked(api.resolveRecentWinners).mockRejectedValue(new Error('Quota exceeded'));
+    else
+      jest
+        .mocked(api.resolveRecentWinners)
+        .mockResolvedValue(failure === 'wrong winner' ? [liveWinner('google', 'different')] : []);
+    const tree = await mount();
+    await focus();
+    expect(JSON.stringify(tree.toJSON())).not.toContain('Live Google Cafe');
+    expect(tree.root.findAllByType(GoogleCredit)).toHaveLength(0);
+    expect(api.resolveRecentWinners).toHaveBeenCalledTimes(1);
+    await act(async () => tree.unmount());
+  },
+);
+test('resolves a maximum of five visible winners', async () => {
+  jest
+    .mocked(queries.listPicksHome)
+    .mockResolvedValue(Array.from({ length: 8 }, (_, n) => googlePick(String(n))));
+  const tree = await mount();
+  await focus();
+  expect(jest.mocked(api.resolveRecentWinners).mock.calls[0]![0]).toHaveLength(5);
+  await act(async () => tree.unmount());
+});
+test('blur retains Picks/groups, refocus refreshes without a spinner, and duplicate refreshes coalesce', async () => {
+  const tree = await mount();
+  let cleanup!: () => void;
+  await act(async () => {
+    cleanup = jest.mocked(useFocusEffect).mock.calls.at(-1)![0]() as () => void;
+  });
+  await act(async () => cleanup());
+  const pending = deferred<PickSummary[]>();
+  jest.mocked(queries.listPicksHome).mockReturnValue(pending.promise);
+  await focus();
+  expect(tree.root.findAllByProps({ accessibilityLabel: 'Loading your Picks' })).toHaveLength(0);
+  expect(JSON.stringify(tree.toJSON())).toContain('CSE 416 Team');
+  expect(JSON.stringify(tree.toJSON())).toContain('Final vote');
+  await act(async () => tree.root.findByType('test-Screen').props.onRefresh());
+  expect(queries.listPicksHome).toHaveBeenCalledTimes(2);
+  await act(async () => pending.resolve([pick('new', 'draft')]));
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Final vote');
+  await act(async () => tree.unmount());
+});
+test('stale Pick and group responses cannot overwrite the next focus', async () => {
+  const oldPicks = deferred<PickSummary[]>(),
+    oldGroups = deferred<GroupSummary[]>();
+  jest.mocked(queries.listPicksHome).mockReturnValueOnce(oldPicks.promise);
+  jest.mocked(queries.listMyGroups).mockReturnValueOnce(oldGroups.promise);
+  const tree = await mount();
+  let cleanup!: () => void;
+  await act(async () => {
+    cleanup = jest.mocked(useFocusEffect).mock.calls.at(-1)![0]() as () => void;
+  });
+  await act(async () => cleanup());
+  await focus();
+  await act(async () => {
+    oldPicks.resolve([{ ...pick('old', 'completed'), winnerName: 'STALE' }]);
+    oldGroups.resolve([{ ...group, name: 'STALE GROUP' }]);
+  });
+  expect(JSON.stringify(tree.toJSON())).not.toContain('STALE');
+  expect(JSON.stringify(tree.toJSON())).toContain('CSE 416 Team');
+  await act(async () => tree.unmount());
+});
+test('account switches and logout discard cached data and late Google results', async () => {
+  const pending = deferred<Awaited<ReturnType<typeof api.resolveRecentWinners>>>();
+  jest.mocked(queries.listPicksHome).mockResolvedValue([googlePick()]);
+  jest.mocked(api.resolveRecentWinners).mockReturnValue(pending.promise);
+  const tree = await mount();
+  await focus();
+  jest
+    .mocked(useSession)
+    .mockReturnValue({ user: { id: 'other' } } as ReturnType<typeof useSession>);
+  await act(async () => tree.update(<PicksScreen />));
+  expect(JSON.stringify(tree.toJSON())).not.toContain('CSE 416 Team');
+  expect(
+    tree.root.findAllByProps({ accessibilityLabel: 'Loading your Picks' }).length,
+  ).toBeGreaterThan(0);
+  await act(async () => pending.resolve([liveWinner()]));
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Live Google Cafe');
+  await act(async () => tree.unmount()); // Auth guard unmounts this screen on logout.
+  jest.mocked(useSession).mockReturnValue({ user: { id: 'me' } } as ReturnType<typeof useSession>);
+  const next = await mount();
+  expect(JSON.stringify(next.toJSON())).not.toContain('CSE 416 Team');
+  expect(JSON.stringify(next.toJSON())).not.toContain('Live Google Cafe');
+  await act(async () => next.unmount());
 });
