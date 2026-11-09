@@ -442,6 +442,32 @@ test(
       );
       assert.equal(reports.length, 1);
       const rid = reports[0].id;
+
+      // Same payload emitted by group member menus; no friendship is required.
+      requireStatus(
+        await api('/reports', groupPeer.token, 'POST', photoReport),
+        201,
+        'group member reports current photo revision',
+      );
+      const memberReports = requireStatus(
+        await db(
+          `reports?reporter_id=eq.${groupPeer.id}&target_kind=eq.profile_photo&target_id=eq.${owner.id}&select=id,photo_revision`,
+        ),
+        200,
+        'member photo report lookup',
+      );
+      assert.equal(memberReports.length, 1);
+      assert.equal(memberReports[0].photo_revision, 4);
+      const memberCurrent = requireStatus(
+        await db('rpc/avatar_moderation_current', {
+          method: 'POST',
+          body: { p_report_id: memberReports[0].id },
+        }),
+        200,
+        'member photo report enters existing moderation',
+      );
+      assert.equal(memberCurrent.revision, 4);
+      assert.equal(memberCurrent.path, final.avatar_path);
       sql(
         `update public.reports set photo_expires_at=clock_timestamp()-interval '1 second' where id='${rid}'`,
       );
@@ -498,6 +524,13 @@ test(
         200,
         'operator current removal',
       );
+      const reviewedMember = requireStatus(
+        await db(`reports?id=eq.${memberReports[0].id}&select=reviewed_at,review_note`),
+        200,
+        'member photo report removal audit',
+      );
+      assert.ok(reviewedMember[0].reviewed_at);
+      assert.match(reviewedMember[0].review_note, /Removed reported current photo revision 4/);
       await getPhoto(owner, friend, 4, 404);
       assert.equal((await upload(owner, 4)).status, 409);
       assert.equal(await storageExists(final.avatar_path), true); // Evidence is private and pinned.

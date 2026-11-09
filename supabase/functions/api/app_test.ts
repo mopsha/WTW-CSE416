@@ -2587,3 +2587,91 @@ Deno.test(
     equal((await unauthenticated.request('/me/optional-setup', { method: 'POST' })).status, 401);
   },
 );
+
+Deno.test(
+  'member photo report preserves exact revision and verified reporter, distinct from generic user reports',
+  async () => {
+    const captured: { viewer: string; input: Parameters<SafetyStore['report']>[1] }[] = [];
+    const app = safetyApp([], {
+      report: async (viewer, input) => {
+        captured.push({ viewer, input });
+      },
+    });
+    equal(
+      (
+        await app.request(
+          '/reports',
+          authed('POST', {
+            kind: 'profile_photo',
+            targetId: OTHER,
+            photoRevision: 7,
+            reason: '  Spam  ',
+            userId: OTHER,
+          }),
+        )
+      ).status,
+      201,
+    );
+    equal(captured, [
+      {
+        viewer: ME,
+        input: { kind: 'profile_photo', targetId: OTHER, reason: 'Spam', photoRevision: 7 },
+      },
+    ]);
+    equal(
+      (
+        await app.request(
+          '/reports',
+          authed('POST', {
+            kind: 'user',
+            targetId: OTHER,
+            reason: 'Offensive name',
+          }),
+        )
+      ).status,
+      201,
+    );
+    equal(captured[1], {
+      viewer: ME,
+      input: { kind: 'user', targetId: OTHER, reason: 'Offensive name' },
+    });
+    for (const revision of [undefined, -1, 1.5, '7']) {
+      equal(
+        (
+          await app.request(
+            '/reports',
+            authed('POST', {
+              kind: 'profile_photo',
+              targetId: OTHER,
+              photoRevision: revision,
+              reason: 'Spam',
+            }),
+          )
+        ).status,
+        400,
+      );
+    }
+    equal(captured.length, 2);
+    for (const status of [404, 409, 429, 503] as const) {
+      const denied = safetyApp([], {
+        report: async () => {
+          throw new ApiError(status, 'PHOTO_UNAVAILABLE', 'Photo unavailable');
+        },
+      });
+      equal(
+        (
+          await denied.request(
+            '/reports',
+            authed('POST', {
+              kind: 'profile_photo',
+              targetId: OTHER,
+              photoRevision: 7,
+              reason: 'Spam',
+            }),
+          )
+        ).status,
+        status,
+      );
+    }
+  },
+);
