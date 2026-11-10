@@ -741,9 +741,10 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     return json(200, {
       displayName,
       preferences,
-      onboarded,
+      onboarded: onboarded,
       username: getMockUserProfile(MOCK_USER_ID).username,
       optionalSetupPending: mockProfile.optionalSetupPending,
+      ...(mockProfile.birthdayRequired ? { birthdayRequired: true } : {}),
     });
   }
   if (method === 'POST' && path === '/me/preferences') return updatePreferences(readBody(init));

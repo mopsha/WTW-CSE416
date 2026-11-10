@@ -18,6 +18,7 @@ export interface ProfileStore {
   setDisplayName(userId: string, displayName: string): Promise<void>;
   /** null when the row doesn't exist. preferences is the raw stored jsonb. */
   getProfile(userId: string): Promise<{
+    birthdayRequired?: boolean;
     username?: string | null;
     optionalSetupPending?: boolean;
     displayName: string | null;
@@ -29,6 +30,7 @@ export interface ProfileStore {
 }
 
 export interface MeResponse {
+  birthdayRequired?: boolean;
   username: string | null;
   optionalSetupPending: boolean;
   displayName: string | null;
@@ -75,6 +77,7 @@ export async function updateMe(store: ProfileStore, userId: string, body: unknow
 export async function getMe(store: ProfileStore, userId: string): Promise<MeResponse> {
   const row = await store.getProfile(userId);
   return {
+    ...(row?.birthdayRequired ? { birthdayRequired: true } : {}),
     username: row?.username ?? null,
     optionalSetupPending: row?.optionalSetupPending ?? false,
     displayName: row?.displayName?.trim() || null,

@@ -1158,3 +1158,39 @@ same unavailable error (404); self is 400. Friend-request accounting is inside t
 POST /friends/requests is retired: all authenticated bodies return 410
 EMAIL_REQUESTS_RETIRED without an email lookup. Historical pending requests remain
 acceptable but their email-created outgoing state is not exposed by discovery.
+
+
+## Birthday fields (migration 0038)
+
+`POST /me/identity` optionally accepts `birthday: {month: 6, day: 15}` or null.
+Signup offers Skip birthday, which saves identity with a null birthday. Identity and
+birthday commit atomically. Birthday never gates setup or preference completion.
+Compatibility flags default false. Existing profiles stay exempt; no date is backfilled.
+`/me` never includes birthday.
+
+`POST /me/details` optionally accepts `birthday` (month/day object or null) and
+`shareBirthday` (boolean). Omitted keys preserve existing birthday state for older
+clients. Birthday, username, favorites, and privacy update in one transaction.
+Sharing an absent birthday fails; clearing requires sharing off. Both the API and
+database enforce integer months 1–12 and valid days. February 29 is allowed every
+cycle; April 31 and February 30 fail. No birth year, date string, timestamp, age,
+"future date" comparison, or calendar-year anchor is used. Year-bearing and legacy
+complete-date requests are rejected without reflecting the value in errors.
+
+Owner responses include `birthday` (month/day or null), `shareBirthday`, and
+`birthdayRequired`. Accepted, unblocked friend profiles include only `birthday`
+when explicitly shared. This is independent of metadata sharing. No birthday goes
+into other identity projections. There is no new lookup endpoint: existing
+profile authorization and rate-limited username/UUID discovery remain intact.
+The backend service role alone can access private storage/helpers; HTTP routes
+always derive the viewer from authentication.
+
+The repository rollout record states the project owner confirmed it has not been deployed to any
+shared/hosted environment. The month/day implementation replaces its unshipped
+version in place. Historical migrations 0001–0037 are untouched. If another copy
+has since been deployed, stop rollout and use a forward-only corrective migration
+that preserves month/day and removes the unnecessary column; do not rewrite an
+applied migration or retain unnecessary personal data in new backups.
+
+Roll out migration and compatible API before distributing this client. No birthday
+notifications, reminders or other features are introduced.

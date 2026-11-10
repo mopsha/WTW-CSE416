@@ -1,7 +1,7 @@
 import { createApiClient } from '@/lib/api';
 import { MOCK_API_BASE_URL, mockFetch } from '@/lib/mock/api';
 import { MOCK_ACCESS_TOKEN, MOCK_USER_ID } from '@/lib/mock/auth';
-import { mockUserProfiles, resetOwnMockUserProfile } from '@/lib/mock/userProfiles';
+import { mockUserProfiles, mockBirthdays, resetOwnMockUserProfile } from '@/lib/mock/userProfiles';
 import { resetMockGroups, mockGroupRecord } from '@/lib/mock/groups';
 import { resetMockFriends } from '@/lib/mock/friends';
 import { resetMockData, setMockBots } from '@/lib/mock/store';
@@ -117,4 +117,23 @@ test('avatar reference is preserved when updating only metadata', async () => {
       })
     ).avatarUrl,
   ).toBe('https://example.com/avatar.png');
+});
+
+test('birthday sharing only projects month/day to accepted friends and revokes with privacy, blocks or removal', async () => {
+  mockBirthdays.set('mock-ben', { birthday: { month: 2, day: 29 }, shareBirthday: false });
+  expect(await api.getUserProfile('mock-ben')).not.toHaveProperty('birthday');
+  mockBirthdays.set('mock-ben', { birthday: { month: 2, day: 29 }, shareBirthday: true });
+  const friend = await api.getUserProfile('mock-ben');
+  expect(friend).toMatchObject({ metadataVisible: false, birthday: { month: 2, day: 29 } });
+  expect(friend.birthday).not.toHaveProperty('year');
+  expect(friend).not.toHaveProperty('shareBirthday');
+  expect(JSON.stringify(friend)).not.toContain('2000');
+  mockBirthdays.set('mock-jordan', { birthday: { month: 1, day: 1 }, shareBirthday: true });
+  await expect(api.getUserProfile('mock-jordan')).rejects.toMatchObject({ status: 404 });
+  await api.removeFriend('mock-ben');
+  await expect(api.getUserProfile('mock-ben')).rejects.toMatchObject({ status: 404 });
+  mockBirthdays.set('mock-ava', { birthday: { month: 2, day: 29 }, shareBirthday: true });
+  await api.blockUser('mock-ava');
+  await expect(api.getUserProfile('mock-ava')).rejects.toMatchObject({ status: 404 });
+  mockBirthdays.clear();
 });
