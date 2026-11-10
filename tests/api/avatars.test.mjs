@@ -365,6 +365,29 @@ test(
         'reverse photo block',
       );
       await getPhoto(owner, groupPeer, 1, 404);
+      const blockedReport = requireStatus(
+        await api('/reports', groupPeer.token, 'POST', {
+          kind: 'profile_photo',
+          targetId: owner.id,
+          photoRevision: 1,
+          reason: 'Spam',
+        }),
+        404,
+        'blocked group member cannot report private photo',
+      );
+      assert.deepEqual(blockedReport, {
+        error: { code: 'NOT_FOUND', message: 'Nothing to report here' },
+      });
+      // End this negative fixture: a shared group must not override a block.
+      // Later positive report tests require an unblocked, authorized peer.
+      requireStatus(
+        await db(`blocks?blocker_id=eq.${owner.id}&blocked_id=eq.${groupPeer.id}`, {
+          method: 'DELETE',
+        }),
+        204,
+        'remove reverse test block',
+      );
+      await getPhoto(owner, groupPeer, 1);
       requireStatus(
         await db(`pick_participants?pick_id=eq.${pickId}&user_id=eq.${pickPeer.id}`, {
           method: 'DELETE',
@@ -442,6 +465,35 @@ test(
       );
       assert.equal(reports.length, 1);
       const rid = reports[0].id;
+
+      // Same payload emitted by group member menus; no friendship is required.
+      // Verify current visibility/revision immediately before the positive report.
+      assert.equal(final.avatar_revision, photoReport.photoRevision);
+      await getPhoto(owner, groupPeer, photoReport.photoRevision);
+      requireStatus(
+        await api('/reports', groupPeer.token, 'POST', photoReport),
+        201,
+        'group member reports current photo revision',
+      );
+      const memberReports = requireStatus(
+        await db(
+          `reports?reporter_id=eq.${groupPeer.id}&target_kind=eq.profile_photo&target_id=eq.${owner.id}&select=id,photo_revision`,
+        ),
+        200,
+        'member photo report lookup',
+      );
+      assert.equal(memberReports.length, 1);
+      assert.equal(memberReports[0].photo_revision, 4);
+      const memberCurrent = requireStatus(
+        await db('rpc/avatar_moderation_current', {
+          method: 'POST',
+          body: { p_report_id: memberReports[0].id },
+        }),
+        200,
+        'member photo report enters existing moderation',
+      );
+      assert.equal(memberCurrent.revision, 4);
+      assert.equal(memberCurrent.path, final.avatar_path);
       sql(
         `update public.reports set photo_expires_at=clock_timestamp()-interval '1 second' where id='${rid}'`,
       );
@@ -498,6 +550,13 @@ test(
         200,
         'operator current removal',
       );
+      const reviewedMember = requireStatus(
+        await db(`reports?id=eq.${memberReports[0].id}&select=reviewed_at,review_note`),
+        200,
+        'member photo report removal audit',
+      );
+      assert.ok(reviewedMember[0].reviewed_at);
+      assert.match(reviewedMember[0].review_note, /Removed reported current photo revision 4/);
       await getPhoto(owner, friend, 4, 404);
       assert.equal((await upload(owner, 4)).status, 409);
       assert.equal(await storageExists(final.avatar_path), true); // Evidence is private and pinned.

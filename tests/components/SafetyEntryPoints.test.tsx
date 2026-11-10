@@ -15,7 +15,9 @@ jest.mock('@/hooks/useAvatarSource', () => ({
 }));
 const { create, act } = jest.requireActual('react-test-renderer');
 jest.mock('expo-router', () => ({
-  router: { push: jest.fn() },
+  router: { push: jest.fn(), setParams: jest.fn() },
+  Stack: { Screen: () => null },
+  useFocusEffect: (effect: () => void) => jest.requireActual('react').useEffect(effect, [effect]),
   useLocalSearchParams: () => ({ id: 'fixture', section: 'members' }),
 }));
 jest.mock('@/hooks/useAuth', () => ({ useSession: () => ({ user: { id: 'me' } }) }));
@@ -47,20 +49,19 @@ jest.mock('@/components', () => ({
   ),
   Card: ({ children }: { children: React.ReactNode }) => children,
   Avatar: () => null,
+  IconButton: () => null,
   Button: () => null,
   EmptyState: () => null,
   ErrorState: () => null,
 }));
 beforeEach(() =>
-  jest
-    .mocked(useAvatarPhoto)
-    .mockReturnValue({
-      displayKey: undefined,
-      displayed: false,
-      onDisplay: () => {},
-      uri: null,
-      ref: null,
-    }),
+  jest.mocked(useAvatarPhoto).mockReturnValue({
+    displayKey: undefined,
+    displayed: false,
+    onDisplay: () => {},
+    uri: null,
+    ref: null,
+  }),
 );
 test('group member safety menus exclude self and refresh group access after blocking', async () => {
   jest.mocked(queries.getGroup).mockResolvedValue({
@@ -118,15 +119,13 @@ test('profile forwards only the currently rendered authorized photo to the exist
     isOwner: false,
     metadataVisible: false,
   } as Awaited<ReturnType<typeof api.getUserProfile>>);
-  jest
-    .mocked(useAvatarPhoto)
-    .mockReturnValue({
-      displayKey: undefined,
-      displayed: true,
-      onDisplay: () => {},
-      uri: 'data:image/jpeg;base64,photo',
-      ref: { userId: 'ava', revision: 7 },
-    });
+  jest.mocked(useAvatarPhoto).mockReturnValue({
+    displayKey: undefined,
+    displayed: true,
+    onDisplay: () => {},
+    uri: 'data:image/jpeg;base64,photo',
+    ref: { userId: 'ava', revision: 7 },
+  });
   let tree: any;
   await act(async () => {
     tree = create(<UserScreen />);
@@ -135,15 +134,13 @@ test('profile forwards only the currently rendered authorized photo to the exist
     userId: 'ava',
     revision: 7,
   });
-  jest
-    .mocked(useAvatarPhoto)
-    .mockReturnValue({
-      displayKey: undefined,
-      displayed: false,
-      onDisplay: () => {},
-      uri: null,
-      ref: null,
-    });
+  jest.mocked(useAvatarPhoto).mockReturnValue({
+    displayKey: undefined,
+    displayed: false,
+    onDisplay: () => {},
+    uri: null,
+    ref: null,
+  });
   await act(async () => tree.update(<UserScreen />));
   expect(tree.root.findByType('test-member-menu').props.photo).toBeUndefined();
   await act(async () => tree.unmount());

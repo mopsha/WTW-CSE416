@@ -90,7 +90,7 @@ test('ordered group bubbles retain sender names, timestamps and long/multiline c
     tree.root
       .findAllByType(Text)
       .some((n: any) => String(n.props.children).includes('latest 50 messages')),
-  ).toBe(true);
+  ).toBe(false);
   await act(async () => tree.unmount());
 });
 test('validation preserves oversized drafts and never calls the send contract', async () => {

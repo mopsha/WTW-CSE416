@@ -4,7 +4,7 @@ import { useAvatarPhoto, usePhotoCapabilities } from '@/hooks/useAvatarSource';
 // silent: they aren't told, and they can no longer friend or message you, join your Picks, or be
 // added to your groups (0014).
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Modal, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -23,8 +23,8 @@ import { colors } from './theme';
 const USER_REASONS = [
   { reason: 'Harassment or bullying', hint: 'They were mean or threatening' },
   {
-    reason: 'Offensive name or profile picture',
-    hint: 'General report; does not save photo evidence',
+    reason: 'Offensive name',
+    hint: 'Their name is offensive',
   },
   { reason: 'Spam or a fake account', hint: 'They aren’t a real person or keep spamming' },
 ] as const;
@@ -51,14 +51,19 @@ interface SheetProps {
 export function SafetySheet({ onClose, userId, name, target, onBlocked, photo }: SheetProps) {
   const displayed = useAvatarPhoto(photo, userId);
   const capabilities = usePhotoCapabilities();
-  const reportablePhoto = capabilities.reportsEnabled && displayed.displayed ? displayed.ref : null;
+  const reportablePhoto =
+    capabilities.reportsEnabled && displayed.displayed && displayed.ref?.userId === userId
+      ? displayed.ref
+      : null;
   const [step, setStep] = useState<'menu' | 'report' | 'done'>('menu');
   const [message, setMessage] = useState('');
   const [photoReport, setPhotoReport] = useState<AvatarRef | null>(null);
   const action = useAction();
+  const reporting = useRef(false);
   const selectedPhotoAvailable =
     !photoReport ||
-    (displayed.displayed &&
+    (photoReport.userId === userId &&
+      displayed.displayed &&
       displayed.ref?.userId === photoReport.userId &&
       displayed.ref?.revision === photoReport.revision);
   const canSubmitPhoto = capabilities.reportsEnabled && selectedPhotoAvailable;
@@ -71,35 +76,41 @@ export function SafetySheet({ onClose, userId, name, target, onBlocked, photo }:
   };
 
   const report = async (reason: string) => {
-    if (photoReport && !canSubmitPhoto) {
-      await action.run('report', async () => {
-        throw new Error(
-          'Photo reporting or the selected photo is currently unavailable. No report was submitted.',
-        );
-      });
-      return;
-    }
-    const ok = await action.run('report', () =>
-      api.report(
-        photoReport
-          ? {
-              kind: 'profile_photo',
-              targetId: photoReport.userId,
-              photoRevision: photoReport.revision,
-              reason,
-            }
-          : { kind: target?.kind ?? 'user', targetId: target?.id ?? userId, reason },
-      ),
-    );
-    if (!ok && photoReport) void capabilities.refresh();
-    if (ok)
-      finish(
-        photoReport
-          ? 'Thanks. We’ll look into this photo.'
-          : reportsMessage
-            ? 'Thanks. We’ll look into this message.'
-            : `Thanks. We’ll look into ${name}.`,
+    if (reporting.current) return;
+    reporting.current = true;
+    try {
+      if (photoReport && !canSubmitPhoto) {
+        await action.run('report', async () => {
+          throw new Error(
+            'Photo reporting or the selected photo is currently unavailable. No report was submitted.',
+          );
+        });
+        return;
+      }
+      const ok = await action.run('report', () =>
+        api.report(
+          photoReport
+            ? {
+                kind: 'profile_photo',
+                targetId: photoReport.userId,
+                photoRevision: photoReport.revision,
+                reason,
+              }
+            : { kind: target?.kind ?? 'user', targetId: target?.id ?? userId, reason },
+        ),
       );
+      if (!ok && photoReport) void capabilities.refresh();
+      if (ok)
+        finish(
+          photoReport
+            ? 'Thanks. We’ll look into this photo.'
+            : reportsMessage
+              ? 'Thanks. We’ll look into this message.'
+              : `Thanks. We’ll look into ${name}.`,
+        );
+    } finally {
+      reporting.current = false;
+    }
   };
 
   const block = async () => {
@@ -124,7 +135,7 @@ export function SafetySheet({ onClose, userId, name, target, onBlocked, photo }:
         <Text style={menuStyles.title} accessibilityRole="header">
           {step === 'report'
             ? photoReport
-              ? 'Report profile photo'
+              ? 'Report profile picture'
               : reportsMessage
                 ? 'Report message'
                 : `Report ${name}`
@@ -135,14 +146,24 @@ export function SafetySheet({ onClose, userId, name, target, onBlocked, photo }:
           <>
             <MenuItem
               icon="flag"
-              label={reportsMessage ? 'Report message' : 'Report'}
-              hint="Tell us something isn’t right"
+              label={
+                reportsMessage
+                  ? 'Report message'
+                  : target && target.kind !== 'user'
+                    ? 'Report'
+                    : 'Report user'
+              }
+              hint={
+                reportsMessage
+                  ? 'Tell us something isn’t right'
+                  : 'Report a name, behavior, or other concern'
+              }
               onPress={() => setStep('report')}
             />
             {reportablePhoto ? (
               <MenuItem
                 icon="flag"
-                label="Report profile photo"
+                label="Report profile picture"
                 hint="Report the photo currently shown"
                 onPress={() => {
                   setPhotoReport(reportablePhoto);

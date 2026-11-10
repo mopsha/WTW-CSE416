@@ -12,6 +12,8 @@ export function ConversationHeader({
   avatarRef,
   subtitle,
   onPress,
+  onBack,
+  accessibilityLabel,
   loading = false,
   unavailable = false,
   right,
@@ -22,6 +24,8 @@ export function ConversationHeader({
   avatarRef?: AvatarRef | null;
   subtitle?: string;
   onPress?: () => void;
+  onBack?: () => void;
+  accessibilityLabel?: string;
   loading?: boolean;
   unavailable?: boolean;
   right?: ReactNode;
@@ -52,7 +56,8 @@ export function ConversationHeader({
         icon="chevron-back"
         accessibilityLabel="Back"
         onPress={() => {
-          if (router.canGoBack()) router.back();
+          if (onBack) onBack();
+          else if (router.canGoBack()) router.back();
           else router.replace('/');
         }}
       />
@@ -61,7 +66,7 @@ export function ConversationHeader({
           style={s.identity}
           onPress={onPress}
           accessibilityRole="button"
-          accessibilityLabel={name}
+          accessibilityLabel={accessibilityLabel ?? name}
         >
           {identity}
         </Pressable>

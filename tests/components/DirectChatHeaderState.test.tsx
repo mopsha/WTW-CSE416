@@ -111,7 +111,7 @@ test('verified direct-chat peer menu reports and blocks the peer, then refreshes
   const item = (label: string) =>
     tree.root.findAllByType('test-item').find((n: any) => n.props.label === label);
   await act(async () => trigger().props.onPress());
-  await act(async () => item('Report').props.onPress());
+  await act(async () => item('Report user').props.onPress());
   await act(async () => item('Spam or a fake account').props.onPress());
   expect(api.report).toHaveBeenCalledWith({
     kind: 'user',
@@ -156,7 +156,7 @@ test.each([
     await act(async () => trigger.props.onPress());
     const report = tree.root
       .findAllByType('test-item')
-      .find((n: any) => n.props.label === 'Report');
+      .find((n: any) => n.props.label === 'Report user');
     expect(report).toBeDefined();
     await act(async () => tree.unmount());
   },

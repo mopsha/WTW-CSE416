@@ -1,16 +1,30 @@
 import { ConversationHeader } from '@/components/ConversationHeader';
 import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
+import { emptyMessageDraft } from '@/components/MessageThread';
 import { GroupChat } from '@/components/GroupChat';
 import { MemberMenu } from '@/components/MemberMenu';
-import { Segments } from '@/components/TabUi';
+import { ListRow, Segments } from '@/components/TabUi';
 import type { GroupInvitation } from '@shared/api/groupInvitations.ts';
 import { GroupIdeas } from '@/components/GroupIdeas';
 // One group: Start a Pick, members, add friends (owner), recent Picks, rename/delete or leave.
 // Non-members (and removed members) get "not found": RLS returns no row.
 import { Ionicons } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  BackHandler,
+  Keyboard,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
 import {
   Avatar,
@@ -21,6 +35,8 @@ import {
   ErrorState,
   fonts,
   MIN_TARGET,
+  IconButton,
+  radius,
   Screen,
   space,
   type,
@@ -47,14 +63,92 @@ export default function GroupScreen() {
     id: string;
     section?: string;
   }>();
-  const [section, setSection] = useState<'chat' | 'plans' | 'ideas' | 'members'>(
-    initialSection === 'plans' || initialSection === 'ideas' || initialSection === 'members'
-      ? initialSection
-      : 'chat',
-  );
   const session = useSession();
-  const me = session.user.id;
+  return (
+    <GroupConversation
+      key={`${id}:${session.user.id}:${session.user.email ?? ''}`}
+      id={id}
+      initialSection={initialSection}
+      me={session.user.id}
+    />
+  );
+}
+type Section = 'chat' | 'plans' | 'details' | 'ideas' | 'members';
+function GroupConversation({
+  id,
+  initialSection,
+  me,
+}: {
+  id: string;
+  initialSection?: string;
+  me: string;
+}) {
+  const initial = ['plans', 'details', 'ideas', 'members'].includes(initialSection ?? '')
+    ? (initialSection as Section)
+    : 'chat';
+  const [section, setSection] = useState<Section>(initial);
+  const [primary, setPrimary] = useState<'chat' | 'plans'>(initial === 'plans' ? 'plans' : 'chat');
+  const primaryVisible = section === 'chat' || section === 'plans';
   const [group, setGroup] = useState<GroupDetail | null | undefined>(undefined);
+  const visibleGroup = useRef<GroupDetail | null>(null);
+  useLayoutEffect(() => {
+    visibleGroup.current = group ?? null;
+  }, [group]);
+  const navigate = useCallback((next: Section) => {
+    if (next !== 'chat') Keyboard.dismiss();
+    setSection(next);
+    if (next === 'chat' || next === 'plans') setPrimary(next);
+    router.setParams({ section: next });
+  }, []);
+  const back = useCallback(() => {
+    if (section === 'ideas' || section === 'members') navigate('details');
+    else if (section === 'details') navigate(primary);
+    else if (router.canGoBack()) router.back();
+    else router.replace('/groups');
+  }, [section, primary, navigate]);
+  useFocusEffect(
+    useCallback(() => {
+      const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (primaryVisible || !visibleGroup.current) return false;
+        back();
+        return true;
+      });
+      return () => subscription.remove();
+    }, [back, primaryVisible]),
+  );
+  const composerRef = useRef(emptyMessageDraft().current);
+  // Each focus session invalidates completions started on a previous visit.
+  const focus = useRef<object | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      const visit = {};
+      focus.current = visit;
+      return () => {
+        focus.current = null;
+      };
+    }, []),
+  );
+  const active = useRef(true);
+  const writing = useRef(false);
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+      composerRef.current = emptyMessageDraft().current;
+    };
+  }, [composerRef]);
+  // A notification can update this route's section without mounting a new group.
+  useEffect(() => {
+    let current = true;
+    void Promise.resolve().then(() => {
+      if (!current || !active.current) return;
+      setSection(initial);
+      if (initial === 'chat' || initial === 'plans') setPrimary(initial);
+    });
+    return () => {
+      current = false;
+    };
+  }, [initial, initialSection]);
   const [pendingInvites, setPendingInvites] = useState<GroupInvitation[]>([]);
   const [friends, setFriends] = useState<FriendOption[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +177,7 @@ export default function GroupScreen() {
       setGroup(g);
       setError(null);
       if (!g) {
+        composerRef.current = emptyMessageDraft().current;
         auxiliaryLoaded.current = false;
         setFriends([]);
         setPendingInvites([]);
@@ -118,25 +213,30 @@ export default function GroupScreen() {
         setError(messageOf(e));
       }
     }
-  }, [id, me]);
+  }, [id, me, composerRef]);
   usePrivateRefresh(load, clear);
 
   /** Run a write, then reload; `key` marks which button shows a spinner. */
   const run = async (key: string, write: () => Promise<unknown>, after?: () => void) => {
+    if (writing.current || !active.current || !focus.current) return;
+    const visit = focus.current;
+    writing.current = true;
     setBusy(key);
     setError(null);
     try {
       await write();
+      if (!active.current || focus.current !== visit) return;
       haptic.success();
       if (after) after();
-      else {
+      else if (visibleGroup.current) {
         auxiliaryLoaded.current = false;
         await load();
       }
     } catch (e) {
-      setError(messageOf(e));
+      if (active.current && focus.current === visit) setError(messageOf(e));
     } finally {
-      setBusy(null);
+      writing.current = false;
+      if (active.current) setBusy(null);
     }
   };
 
@@ -189,284 +289,391 @@ export default function GroupScreen() {
 
   return (
     <Screen
-      scroll={section !== 'chat'}
-      contentStyle={
-        section === 'chat' ? { padding: 0, paddingBottom: 0, gap: space.sm } : undefined
-      }
-      title={section === 'chat' ? undefined : group.name}
-      subtitle={
-        section === 'chat'
-          ? undefined
-          : `${group.members.length} ${group.members.length === 1 ? 'person' : 'people'}`
-      }
-      back={section !== 'chat'}
+      scroll={false}
+      keyboardBehavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      contentStyle={{ padding: 0, paddingBottom: 0, gap: space.sm }}
       onRefresh={() => {
         auxiliaryLoaded.current = false;
         void load();
       }}
     >
-      {section === 'chat' ? (
+      {/* Secondary sections use explicit Back; section-aware iOS gestures remain future work. */}
+      <Stack.Screen options={{ gestureEnabled: primaryVisible }} />
+      {primaryVisible ? (
         <ConversationHeader
           name={group.name}
-          subtitle={`${group.members.length} ${group.members.length === 1 ? 'person' : 'people'}`}
-          onPress={() => setSection('members')}
+          subtitle={`${group.members.length} ${group.members.length === 1 ? 'member' : 'members'}`}
+          onBack={back}
+          onPress={() => navigate('details')}
+          accessibilityLabel={`Group details for ${group.name}, ${group.members.length} ${group.members.length === 1 ? 'member' : 'members'}`}
         />
-      ) : null}
-      {error ? (
-        <View style={section === 'chat' ? styles.chatInset : undefined}>
-          <ErrorState message={error} />
+      ) : (
+        <View style={styles.subheader}>
+          <IconButton icon="chevron-back" accessibilityLabel="Back" onPress={back} />
+          <Text style={styles.heading} accessibilityRole="header">
+            {section === 'details'
+              ? 'Group details'
+              : section === 'ideas'
+                ? 'Group Ideas'
+                : 'Members'}
+          </Text>
+        </View>
+      )}
+      {primaryVisible ? (
+        <View style={styles.chatInset}>
+          <Segments
+            label="Group sections"
+            variant="underline"
+            value={primary}
+            onChange={navigate}
+            options={[
+              { value: 'chat', label: 'Chat' },
+              { value: 'plans', label: 'Plans' },
+            ]}
+          />
         </View>
       ) : null}
-
-      <View style={section === 'chat' ? styles.chatInset : undefined}>
-        <Segments
-          label="Group sections"
-          value={section}
-          onChange={setSection}
-          options={[
-            { value: 'chat', label: 'Chat' },
-            { value: 'plans', label: 'Plans' },
-            { value: 'ideas', label: 'Ideas' },
-            { value: 'members', label: 'Members' },
-          ]}
-        />
-      </View>
-      {section === 'chat' ? (
+      {error ? (
+        <View style={styles.chatInset}>
+          <ErrorState message={error} onRetry={() => void load()} />
+        </View>
+      ) : null}
+      {/* Keep the draft, retry ID and scroll position while browsing this group's views.
+          The existing focus/background hooks still clear revoked private data. */}
+      <View
+        style={[styles.chat, section !== 'chat' && styles.hidden]}
+        accessibilityElementsHidden={section !== 'chat'}
+        importantForAccessibility={section === 'chat' ? 'auto' : 'no-hide-descendants'}
+      >
         <GroupChat
           key={`${group.id}:${me}`}
           groupId={group.id}
           userId={me}
+          composerRef={composerRef}
           onRefresh={() => {
             auxiliaryLoaded.current = false;
             return load();
           }}
         />
-      ) : null}
-      {section === 'plans' ? (
-        <Button
-          label="Start a Pick"
-          icon="flame"
-          onPress={() => {
-            router.push(newGroupPickRoute(group));
-          }}
-          accessibilityHint={`Creates a Pick with everyone in ${group.name}`}
-        />
-      ) : null}
-
-      {section === 'ideas' ? (
-        <GroupIdeas key={`${group.id}:${me}`} group={group} userId={me} />
-      ) : null}
-
-      {section === 'members' ? (
-        <>
-          <Card>
-            <Text style={styles.heading} accessibilityRole="header">
-              Members
-            </Text>
-            {group.members.map((m) => (
-              <View key={m.userId} style={styles.member}>
-                <Avatar name={memberName(m)} userId={m.userId} size={40} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.name}>{m.userId === me ? 'You' : memberName(m)}</Text>
-                  {m.role === 'owner' ? <Text style={styles.sub}>Owner</Text> : null}
-                </View>
-                {m.userId !== me ? (
-                  <MemberMenu
-                    userId={m.userId}
-                    name={memberName(m)}
-                    onBlocked={() => void load()}
+      </View>
+      {section !== 'chat' ? (
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl
+              refreshing={false}
+              onRefresh={() => {
+                auxiliaryLoaded.current = false;
+                void load();
+              }}
+              tintColor={colors.primary}
+            />
+          }
+        >
+          {section === 'details' ? (
+            <>
+              <View style={styles.hero}>
+                <Avatar name={group.name} size={72} />
+                <Text style={styles.groupName} accessibilityRole="header">
+                  {group.name}
+                </Text>
+                <Text style={styles.sub}>
+                  {group.members.length} {group.members.length === 1 ? 'member' : 'members'}
+                </Text>
+              </View>
+              <View style={styles.rows}>
+                <ListRow
+                  title="Group Ideas"
+                  subtitle="Save ideas for your next Pick"
+                  leading={<Ionicons name="bulb-outline" size={22} color={colors.primary} />}
+                  onPress={() => navigate('ideas')}
+                />
+                <ListRow
+                  title="Members"
+                  subtitle={`${group.members.length} in this group`}
+                  leading={<Ionicons name="people-outline" size={22} color={colors.primary} />}
+                  onPress={() => navigate('members')}
+                />
+                {isOwner ? (
+                  <ListRow
+                    title="Add members"
+                    leading={
+                      <Ionicons name="person-add-outline" size={22} color={colors.primary} />
+                    }
+                    onPress={() => navigate('members')}
                   />
                 ) : null}
-                {isOwner && m.role !== 'owner' ? (
-                  <Pressable
+              </View>
+              {isOwner ? (
+                <Button
+                  label="Share invite link"
+                  icon="link-outline"
+                  variant="link"
+                  size="compact"
+                  loading={busy === 'link'}
+                  disabled={busy !== null}
+                  onPress={() =>
+                    void run('link', async () => {
+                      const link = await api.createInvite({ kind: 'group', targetId: group.id });
+                      if (active.current && visibleGroup.current?.id === group.id)
+                        await Share.share({ message: `Join ${group.name} on WTW: ${link.url}` });
+                    })
+                  }
+                />
+              ) : null}
+            </>
+          ) : null}
+          {section === 'ideas' ? (
+            <GroupIdeas key={`${group.id}:${me}`} group={group} userId={me} showHeading={false} />
+          ) : null}
+          {section === 'plans' ? (
+            <Button
+              label="Start a Pick"
+              icon="flame"
+              onPress={() => router.push(newGroupPickRoute(group))}
+              accessibilityHint={`Creates a Pick with everyone in ${group.name}`}
+            />
+          ) : null}
+          {section === 'members' ? (
+            <>
+              <Card>
+                {group.members.map((m) => (
+                  <View key={m.userId} style={styles.member}>
+                    <Pressable
+                      style={styles.memberIdentity}
+                      accessibilityRole="button"
+                      accessibilityLabel={`View ${m.userId === me ? 'your' : memberName(m) + '’s'} profile`}
+                      onPress={() =>
+                        router.push(
+                          m.userId === me
+                            ? '/(tabs)/profile'
+                            : { pathname: '/p/[id]', params: { id: m.userId } },
+                        )
+                      }
+                    >
+                      <Avatar name={memberName(m)} userId={m.userId} size={40} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.name}>{m.userId === me ? 'You' : memberName(m)}</Text>
+                        {m.role === 'owner' ? <Text style={styles.sub}>Owner</Text> : null}
+                      </View>
+                    </Pressable>
+                    {m.userId !== me ? (
+                      <MemberMenu
+                        userId={m.userId}
+                        name={memberName(m)}
+                        onBlocked={() => void load()}
+                      />
+                    ) : null}
+                    {isOwner && m.role !== 'owner' ? (
+                      <Pressable
+                        onPress={async () => {
+                          const ok = await confirmAction({
+                            title: `Remove ${memberName(m)}?`,
+                            message:
+                              'They keep the Picks they were in, but won’t be added to new ones.',
+                            confirmLabel: 'Remove',
+                            destructive: true,
+                          });
+                          if (ok)
+                            void run(`remove:${m.userId}`, () =>
+                              api.removeGroupMember(group.id, m.userId),
+                            );
+                        }}
+                        disabled={busy !== null}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove ${memberName(m)} from ${group.name}`}
+                        style={styles.iconBtn}
+                      >
+                        {busy === `remove:${m.userId}` ? (
+                          <ActivityIndicator color={colors.muted} />
+                        ) : (
+                          <Ionicons name="close" size={22} color={colors.muted} />
+                        )}
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ))}
+              </Card>
+
+              {isOwner ? (
+                <Card>
+                  <Text style={styles.heading} accessibilityRole="header">
+                    Invite friends
+                  </Text>
+                  <Text style={styles.sub}>They join only after accepting your invitation.</Text>
+                  {pendingInvites.length ? (
+                    <Text style={styles.sub}>
+                      {pendingInvites.length} pending{' '}
+                      {pendingInvites.length === 1 ? 'invitation' : 'invitations'}
+                    </Text>
+                  ) : null}
+                  {toAdd.length === 0 ? (
+                    <Text style={styles.sub}>
+                      {friends.length === 0
+                        ? 'Only accepted friends can be invited. Add friends on the Friends tab first.'
+                        : 'All your friends are already in this group.'}
+                    </Text>
+                  ) : (
+                    toAdd.map((f) => (
+                      <View key={f.userId} style={styles.member}>
+                        <Avatar name={memberName(f)} userId={f.userId} size={40} />
+                        <Text style={[styles.name, { flex: 1 }]}>{memberName(f)}</Text>
+                        <Button
+                          label={
+                            pendingInvites.some((i) => i.inviteeId === f.userId)
+                              ? 'Pending'
+                              : 'Invite'
+                          }
+                          variant="secondary"
+                          icon="add"
+                          loading={busy === `add:${f.userId}`}
+                          disabled={
+                            busy !== null || pendingInvites.some((i) => i.inviteeId === f.userId)
+                          }
+                          onPress={() =>
+                            void run(`add:${f.userId}`, () =>
+                              api.addGroupMembers(group.id, [f.userId]),
+                            )
+                          }
+                          accessibilityLabel={`Invite ${memberName(f)} to ${group.name}`}
+                        />
+                      </View>
+                    ))
+                  )}
+                </Card>
+              ) : null}
+            </>
+          ) : null}
+          {section === 'plans' ? (
+            <>
+              {group.picks.length === 0 ? (
+                <EmptyState
+                  emoji="📅"
+                  title="No group Picks yet"
+                  body="Start a Pick to make your next plan together."
+                />
+              ) : null}
+              {group.picks.length > 0 ? (
+                <Card>
+                  <Text style={styles.heading} accessibilityRole="header">
+                    Recent Picks
+                  </Text>
+                  {group.picks.map((p) => (
+                    <Pressable
+                      key={p.id}
+                      onPress={() => router.push({ pathname: '/pick/[id]', params: { id: p.id } })}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${pickTitle(p.category)}, ${STATE_LABEL[p.state]}`}
+                      style={styles.member}
+                    >
+                      <Text style={{ fontSize: 22 }}>{pickEmoji(p.category)}</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.name}>{pickTitle(p.category)}</Text>
+                        <Text style={styles.sub}>{STATE_LABEL[p.state]}</Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={20} color={colors.muted} />
+                    </Pressable>
+                  ))}
+                </Card>
+              ) : null}
+
+              <Button
+                label="See group history"
+                variant="link"
+                onPress={() => router.push({ pathname: '/history', params: { groupId: group.id } })}
+                accessibilityHint={`Every finished Pick in ${group.name}`}
+              />
+            </>
+          ) : null}
+
+          {section === 'details' ? (
+            <>
+              {isOwner ? (
+                <Card>
+                  {editing ? (
+                    <>
+                      <TextInput
+                        style={styles.input}
+                        value={name}
+                        onChangeText={setName}
+                        maxLength={MAX_GROUP_NAME + 10}
+                        autoFocus
+                        editable={busy === null}
+                        returnKeyType="done"
+                        onSubmitEditing={saveName}
+                        accessibilityLabel="New group name"
+                      />
+                      <Button
+                        label="Save name"
+                        loading={busy === 'rename'}
+                        onPress={saveName}
+                        variant="secondary"
+                      />
+                      <Button
+                        label="Cancel"
+                        variant="link"
+                        disabled={busy !== null}
+                        onPress={() => setEditing(false)}
+                      />
+                    </>
+                  ) : (
+                    <Button
+                      label="Rename group"
+                      icon="pencil"
+                      variant="secondary"
+                      onPress={() => {
+                        setName(group.name);
+                        setEditing(true);
+                      }}
+                    />
+                  )}
+                  <Button
+                    label="Delete group"
+                    icon="trash"
+                    variant="danger"
+                    loading={busy === 'delete'}
                     onPress={async () => {
                       const ok = await confirmAction({
-                        title: `Remove ${memberName(m)}?`,
-                        message:
-                          'They keep the Picks they were in, but won’t be added to new ones.',
-                        confirmLabel: 'Remove',
+                        title: `Delete ${group.name}?`,
+                        message: 'Everyone keeps their past Picks and results.',
+                        confirmLabel: 'Delete',
                         destructive: true,
                       });
                       if (ok)
-                        void run(`remove:${m.userId}`, () =>
-                          api.removeGroupMember(group.id, m.userId),
+                        void run(
+                          'delete',
+                          () => api.deleteGroup(group.id),
+                          () => router.replace('/groups'),
                         );
                     }}
-                    disabled={busy !== null}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Remove ${memberName(m)} from ${group.name}`}
-                    style={styles.iconBtn}
-                  >
-                    {busy === `remove:${m.userId}` ? (
-                      <ActivityIndicator color={colors.muted} />
-                    ) : (
-                      <Ionicons name="close" size={22} color={colors.muted} />
-                    )}
-                  </Pressable>
-                ) : null}
-              </View>
-            ))}
-          </Card>
-
-          {isOwner ? (
-            <Card>
-              <Text style={styles.heading} accessibilityRole="header">
-                Invite friends
-              </Text>
-              <Text style={styles.sub}>They join only after accepting your invitation.</Text>
-              {pendingInvites.length ? (
-                <Text style={styles.sub}>
-                  {pendingInvites.length} pending{' '}
-                  {pendingInvites.length === 1 ? 'invitation' : 'invitations'}
-                </Text>
-              ) : null}
-              {toAdd.length === 0 ? (
-                <Text style={styles.sub}>
-                  {friends.length === 0
-                    ? 'Only accepted friends can be invited. Add friends on the Friends tab first.'
-                    : 'All your friends are already in this group.'}
-                </Text>
-              ) : (
-                toAdd.map((f) => (
-                  <View key={f.userId} style={styles.member}>
-                    <Avatar name={memberName(f)} userId={f.userId} size={40} />
-                    <Text style={[styles.name, { flex: 1 }]}>{memberName(f)}</Text>
-                    <Button
-                      label={
-                        pendingInvites.some((i) => i.inviteeId === f.userId) ? 'Pending' : 'Invite'
-                      }
-                      variant="secondary"
-                      icon="add"
-                      loading={busy === `add:${f.userId}`}
-                      disabled={
-                        busy !== null || pendingInvites.some((i) => i.inviteeId === f.userId)
-                      }
-                      onPress={() =>
-                        void run(`add:${f.userId}`, () => api.addGroupMembers(group.id, [f.userId]))
-                      }
-                      accessibilityLabel={`Invite ${memberName(f)} to ${group.name}`}
-                    />
-                  </View>
-                ))
-              )}
-            </Card>
-          ) : null}
-        </>
-      ) : null}
-      {section === 'plans' ? (
-        <>
-          {group.picks.length > 0 ? (
-            <Card>
-              <Text style={styles.heading} accessibilityRole="header">
-                Recent Picks
-              </Text>
-              {group.picks.map((p) => (
-                <Pressable
-                  key={p.id}
-                  onPress={() => router.push({ pathname: '/pick/[id]', params: { id: p.id } })}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${pickTitle(p.category)}, ${STATE_LABEL[p.state]}`}
-                  style={styles.member}
-                >
-                  <Text style={{ fontSize: 22 }}>{pickEmoji(p.category)}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.name}>{pickTitle(p.category)}</Text>
-                    <Text style={styles.sub}>{STATE_LABEL[p.state]}</Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={20} color={colors.muted} />
-                </Pressable>
-              ))}
-            </Card>
-          ) : null}
-
-          <Button
-            label="See group history"
-            variant="link"
-            onPress={() => router.push({ pathname: '/history', params: { groupId: group.id } })}
-            accessibilityHint={`Every finished Pick in ${group.name}`}
-          />
-        </>
-      ) : null}
-
-      {section === 'members' ? (
-        <>
-          {isOwner ? (
-            <Card>
-              {editing ? (
-                <>
-                  <TextInput
-                    style={styles.input}
-                    value={name}
-                    onChangeText={setName}
-                    maxLength={MAX_GROUP_NAME + 10}
-                    autoFocus
-                    returnKeyType="done"
-                    onSubmitEditing={saveName}
-                    accessibilityLabel="New group name"
                   />
-                  <Button
-                    label="Save name"
-                    loading={busy === 'rename'}
-                    onPress={saveName}
-                    variant="secondary"
-                  />
-                  <Button label="Cancel" variant="link" onPress={() => setEditing(false)} />
-                </>
+                </Card>
               ) : (
                 <Button
-                  label="Rename group"
-                  icon="pencil"
-                  variant="secondary"
-                  onPress={() => {
-                    setName(group.name);
-                    setEditing(true);
+                  label="Leave group"
+                  icon="exit-outline"
+                  variant="danger"
+                  loading={busy === 'leave'}
+                  onPress={async () => {
+                    const ok = await confirmAction({
+                      title: `Leave ${group.name}?`,
+                      message: 'You keep your past Picks, but won’t be added to new ones.',
+                      confirmLabel: 'Leave',
+                      destructive: true,
+                    });
+                    if (ok)
+                      void run(
+                        'leave',
+                        () => api.leaveGroup(group.id),
+                        () => router.replace('/groups'),
+                      );
                   }}
                 />
               )}
-              <Button
-                label="Delete group"
-                icon="trash"
-                variant="danger"
-                loading={busy === 'delete'}
-                onPress={async () => {
-                  const ok = await confirmAction({
-                    title: `Delete ${group.name}?`,
-                    message: 'Everyone keeps their past Picks and results.',
-                    confirmLabel: 'Delete',
-                    destructive: true,
-                  });
-                  if (ok)
-                    void run(
-                      'delete',
-                      () => api.deleteGroup(group.id),
-                      () => router.replace('/groups'),
-                    );
-                }}
-              />
-            </Card>
-          ) : (
-            <Button
-              label="Leave group"
-              icon="exit-outline"
-              variant="danger"
-              loading={busy === 'leave'}
-              onPress={async () => {
-                const ok = await confirmAction({
-                  title: `Leave ${group.name}?`,
-                  message: 'You keep your past Picks, but won’t be added to new ones.',
-                  confirmLabel: 'Leave',
-                  destructive: true,
-                });
-                if (ok)
-                  void run(
-                    'leave',
-                    () => api.leaveGroup(group.id),
-                    () => router.replace('/groups'),
-                  );
-              }}
-            />
-          )}
-        </>
+            </>
+          ) : null}
+        </ScrollView>
       ) : null}
     </Screen>
   );
@@ -474,7 +681,27 @@ export default function GroupScreen() {
 
 const styles = StyleSheet.create({
   chatInset: { marginHorizontal: space.lg },
+  chat: { flex: 1 },
+  hidden: { display: 'none' },
+  content: { padding: space.lg, gap: space.md, paddingBottom: space.xxl },
+  subheader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    paddingHorizontal: space.md,
+    minHeight: MIN_TARGET + space.lg,
+  },
+  hero: { alignItems: 'center', gap: space.sm, paddingVertical: space.md },
+  groupName: { ...type.heading, color: colors.text, textAlign: 'center' },
+  rows: { backgroundColor: colors.card, borderRadius: radius.md, overflow: 'hidden' },
   heading: { fontFamily: fonts.bold, fontSize: 17, color: colors.text },
+  memberIdentity: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    minHeight: MIN_TARGET,
+  },
   member: {
     flexDirection: 'row',
     alignItems: 'center',
