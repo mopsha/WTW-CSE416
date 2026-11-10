@@ -1,11 +1,13 @@
-import { MessageThread } from './MessageThread';
+import { MessageThread, type MessageDraft } from './MessageThread';
 import { useGroupChat } from '@/hooks/useGroupChat';
 import { api } from '@/lib/api';
 export function GroupChat({
   groupId,
   userId,
   onRefresh,
+  composerRef,
 }: {
+  composerRef?: MessageDraft;
   groupId: string;
   userId: string;
   onRefresh?: () => void | Promise<void>;
@@ -14,6 +16,7 @@ export function GroupChat({
   return (
     <MessageThread
       group
+      composerRef={composerRef}
       onRefresh={onRefresh}
       userId={userId}
       chat={chat}

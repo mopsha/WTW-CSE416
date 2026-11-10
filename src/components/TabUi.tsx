@@ -175,11 +175,15 @@ export function Segments<T extends string>({
   value: T;
   onChange: (value: T) => void;
   label: string;
-  variant?: 'default' | 'compact';
+  variant?: 'default' | 'compact' | 'underline';
 }) {
   return (
     <View
-      style={[s.segments, variant === 'compact' && s.compactSegments]}
+      style={[
+        s.segments,
+        variant === 'compact' && s.compactSegments,
+        variant === 'underline' && s.underlineSegments,
+      ]}
       accessibilityRole="tablist"
       accessibilityLabel={label}
     >
@@ -194,9 +198,17 @@ export function Segments<T extends string>({
             s.segment,
             variant === 'compact' && s.compactSegment,
             o.value === value && s.selected,
+            variant === 'underline' && s.underlineSegment,
+            variant === 'underline' && o.value === value && s.underlineSelected,
           ]}
         >
-          <Text style={[s.segmentText, variant === 'compact' && s.compactSegmentText]}>
+          <Text
+            style={[
+              s.segmentText,
+              variant === 'compact' && s.compactSegmentText,
+              variant === 'underline' && o.value === value && { color: colors.primary },
+            ]}
+          >
             {o.label}
           </Text>
         </Pressable>
@@ -315,6 +327,19 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: radius.pill,
   },
+  underlineSegments: {
+    backgroundColor: colors.transparent,
+    borderWidth: 0,
+    borderRadius: 0,
+    padding: 0,
+  },
+  underlineSegment: {
+    borderRadius: 0,
+    backgroundColor: colors.transparent,
+    borderBottomWidth: 2,
+    borderBottomColor: colors.transparent,
+  },
+  underlineSelected: { borderBottomColor: colors.primary },
   compactSegments: { borderWidth: 0, borderRadius: radius.md, padding: space.xs },
   compactSegment: {
     borderRadius: radius.sm,

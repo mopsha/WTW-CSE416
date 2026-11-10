@@ -272,7 +272,7 @@ test('native loading/error and server capabilities govern the real shared photo 
   const photoActions = () =>
     tree!.root
       .findAllByType(jest.requireActual('@/components/HostMenu').MenuItem)
-      .filter((n) => n.props.label === 'Report profile photo');
+      .filter((n) => n.props.label === 'Report profile picture');
   expect(photoActions()).toHaveLength(0); // Bytes loaded, native image not yet displayed.
   await act(async () => tree!.root.findAllByType(Image)[0]!.props.onLoad());
   expect(photoActions()).toHaveLength(1);

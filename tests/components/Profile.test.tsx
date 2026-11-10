@@ -1,3 +1,4 @@
+import { UserProfileMetadata } from '@/components/UserProfileMetadata';
 import React from 'react';
 import ProfileScreen from '../../app/(tabs)/profile';
 import { ProfileHero, ProfileFavorites } from '@/components/profile/ProfilePresentation';
@@ -106,35 +107,12 @@ test('own identity, actual counts and favorites render with unchanged settings r
   expect(router.push).toHaveBeenLastCalledWith('/settings');
   await act(async () => tree.unmount());
 });
-test('existing name editor validates and saves the display name', async () => {
+test('Edit profile opens the unified page without a nested editor', async () => {
   const tree = await mount();
   await act(async () => press(tree, 'Edit profile for Demo Person'));
-  const input = tree.root
-    .findAllByProps({ accessibilityLabel: 'Your name' })
-    .find((n: any) => typeof n.props.onChangeText === 'function');
-  await act(async () => input.props.onChangeText('  Updated Name  '));
-  await act(async () => button(tree, 'Save').props.onPress());
-  expect(mockSaveName).toHaveBeenCalledWith('Updated Name');
-  await act(async () => tree.unmount());
-});
-test('details editor preserves the private-sharing default and updates the existing contract', async () => {
-  const tree = await mount();
-  expect(JSON.stringify(tree.toJSON())).not.toContain('demo@example.test');
-  await act(async () => button(tree, 'Profile details & privacy').props.onPress());
-  expect(JSON.stringify(tree.toJSON())).toContain('demo@example.test');
-  const toggle = tree.root
-    .findAllByProps({ accessibilityLabel: 'Share profile metadata with friends' })
-    .find((n: any) => typeof n.props.onValueChange === 'function');
-  expect(toggle.props.value).toBe(false);
-  jest.mocked(api.updateProfileDetails).mockResolvedValue({ ...profile, shareMetadata: true });
-  await act(async () => toggle.props.onValueChange(true));
-  await act(async () => button(tree, 'Save profile details').props.onPress());
-  expect(api.updateProfileDetails).toHaveBeenCalledWith({
-    username: 'demo_person',
-    favoriteCuisine: 'Japanese',
-    favoriteActivity: 'Bowling',
-    shareMetadata: true,
-  });
+  expect(router.push).toHaveBeenLastCalledWith('/settings/profile');
+  expect(button(tree, 'Profile details & privacy')).toBeUndefined();
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Your name');
   await act(async () => tree.unmount());
 });
 test('account actions remain accessible and go through accountActions', async () => {
@@ -198,4 +176,23 @@ test('loading and empty metadata states show no invented identity details', asyn
     tree.unmount();
     favorites.unmount();
   });
+});
+
+test('friend birthday renders as month/day independently from metadata privacy, with no birth year', async () => {
+  let tree: any;
+  await act(async () => {
+    tree = create(
+      <UserProfileMetadata
+        profile={{
+          ...profile,
+          isOwner: false,
+          metadataVisible: false,
+          birthday: { month: 2, day: 29 },
+        }}
+      />,
+    );
+  });
+  expect(JSON.stringify(tree.toJSON())).toContain('February 29');
+  expect(JSON.stringify(tree.toJSON())).not.toMatch(/2000|birthDate|January/);
+  await act(async () => tree.unmount());
 });

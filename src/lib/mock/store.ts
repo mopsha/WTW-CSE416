@@ -125,9 +125,13 @@ export const mockProfile: {
   displayName: string | null;
   preferences: Preferences;
   onboarded: boolean;
+  birthdayRequired: boolean;
+  birthdaySetupRequired: boolean;
   optionalSetupPending: boolean;
   pushTokens: string[];
 } = {
+  birthdayRequired: false,
+  birthdaySetupRequired: false,
   optionalSetupPending: true,
   displayName: null,
   preferences: EMPTY_PREFERENCES,
@@ -141,6 +145,8 @@ export function resetMockProfile() {
     displayName: null,
     preferences: EMPTY_PREFERENCES,
     onboarded: false,
+    birthdayRequired: false,
+    birthdaySetupRequired: false,
     optionalSetupPending: true,
     pushTokens: [],
   });

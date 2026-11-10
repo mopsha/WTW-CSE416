@@ -1,3 +1,4 @@
+import type { Birthday } from '@shared/api/birthdays.ts';
 import type { PersonIdentity } from '@shared/api/people.ts';
 import type { PastMovesResult } from '@shared/api/pastMoves.ts';
 import type { DirectConversation, DirectMessage, DirectHistory } from '@shared/api/directChat.ts';
@@ -463,8 +464,10 @@ export function createApiClient({
     updateMe: (displayName: string) =>
       request<{ displayName: string }>('POST', '/me', { body: { displayName } }),
     /** My name, survey answers and whether onboarding is done (survey answers are API-only). */
-    completeIdentity: (displayName: string, username: string) =>
-      request<UserProfile>('POST', '/me/identity', { body: { displayName, username } }),
+    completeIdentity: (displayName: string, username: string, birthday?: Birthday | null) =>
+      request<UserProfile>('POST', '/me/identity', {
+        body: { displayName, username, ...(birthday !== undefined ? { birthday } : {}) },
+      }),
     finishOptionalSetup: () =>
       request<{ optionalSetupPending: false }>('POST', '/me/optional-setup', { body: {} }),
     getMe: () => request<MeResponse>('GET', '/me'),

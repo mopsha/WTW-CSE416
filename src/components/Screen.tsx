@@ -19,6 +19,9 @@ import { colors, MIN_TARGET, space, type } from './theme';
 
 interface Props {
   children: ReactNode;
+  /** Optional compact header kept above the scrolling, keyboard-aware content. */
+  fixedHeader?: ReactNode;
+  keyboardBehavior?: 'padding' | 'height' | 'position';
   /** Large title at the top of the screen. */
   title?: string;
   /** Small line above the title (e.g. "Hey Mike 👋"). */
@@ -40,6 +43,8 @@ interface Props {
 /** Every screen's frame: safe area, dark background, optional header, padding. */
 export function Screen({
   children,
+  fixedHeader,
+  keyboardBehavior,
   title,
   subtitle,
   back,
@@ -84,11 +89,12 @@ export function Screen({
 
   return (
     <SafeAreaView style={styles.safe} edges={edges}>
+      {fixedHeader}
       {/* Keeps focused inputs (e.g. Create Pick's place search) above the keyboard on iOS;
           Android resizes the window by itself. */}
       <KeyboardAvoidingView
         style={styles.fill}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={keyboardBehavior ?? (Platform.OS === 'ios' ? 'padding' : undefined)}
       >
         {scroll ? (
           <ScrollView

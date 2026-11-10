@@ -1,3 +1,5 @@
+import { sameBirthday, type Birthday } from '@shared/api/birthdays.ts';
+import type { ProfileDetailsInput, UserProfile } from '@shared/api/userProfiles.ts';
 import { EMPTY_PREFERENCES, type Preferences } from '@shared/domain/preferences.ts';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 
@@ -8,6 +10,7 @@ import { useAuth } from './useAuth';
 interface ProfileState {
   /** My display name; null until I've picked one ("what should we call you?"). */
   username: string | null;
+  birthdayRequired?: boolean;
   optionalSetupPending: boolean;
   displayName: string | null;
   /** My survey answers (FR-02); empty until onboarding. */
@@ -19,10 +22,11 @@ interface ProfileState {
   /** True when the read failed; identity setup offers retry instead of assuming completion. */
   failed: boolean;
   /** Saves through POST /me and updates everyone reading this context. */
-  completeIdentity(name: string, username: string): Promise<void>;
+  completeIdentity(name: string, username: string, birthday?: Birthday | null): Promise<void>;
   finishOptionalSetup(): Promise<void>;
   retry(): void;
   saveDisplayName(name: string): Promise<void>;
+  saveProfileDetails(input: ProfileDetailsInput): Promise<UserProfile>;
   /** Saves through POST /me/preferences; also finishes onboarding. */
   savePreferences(preferences: Preferences): Promise<void>;
 }
@@ -39,6 +43,9 @@ const ProfileContext = createContext<ProfileState>({
   finishOptionalSetup: async () => {},
   retry: () => {},
   saveDisplayName: async () => {},
+  saveProfileDetails: async () => {
+    throw new Error('Profile unavailable');
+  },
   savePreferences: async () => {},
 });
 
@@ -46,6 +53,7 @@ interface Loaded {
   attempt: number;
   userId: string | null;
   username: string | null;
+  birthdayRequired?: boolean;
   optionalSetupPending: boolean;
   displayName: string | null;
   preferences: Preferences;
@@ -106,8 +114,10 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   }, [userId, attempt]);
 
   const completeIdentity = useCallback(
-    async (name: string, username: string) => {
-      const saved = await api.completeIdentity(name, username);
+    async (name: string, username: string, birthday?: Birthday | null) => {
+      const saved = await api.completeIdentity(name, username, birthday);
+      if (birthday && !sameBirthday(saved.birthday, birthday))
+        throw new Error('Birthday could not be confirmed saved. Please try again.');
       setState((s) =>
         s.userId !== userId
           ? s
@@ -115,6 +125,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
               ...s,
               displayName: saved.displayName,
               username: saved.username,
+              birthdayRequired: saved.birthdayRequired ?? false,
               failed: false,
             },
       );
@@ -133,6 +144,27 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     [userId],
   );
 
+  const saveProfileDetails = useCallback(
+    async (input: ProfileDetailsInput) => {
+      const saved = await api.updateProfileDetails(input);
+      if (saved.id !== userId || !saved.isOwner) throw new Error('Unexpected profile response');
+      if (
+        ('birthday' in input && !sameBirthday(saved.birthday, input.birthday)) ||
+        ('shareBirthday' in input && (saved.shareBirthday ?? false) !== input.shareBirthday)
+      )
+        throw new Error(
+          'Birthday changes could not be confirmed saved. Reload your profile and try again.',
+        );
+      setState((s) =>
+        s.userId !== userId
+          ? s
+          : { ...s, username: saved.username, birthdayRequired: saved.birthdayRequired ?? false },
+      );
+      return saved;
+    },
+    [userId],
+  );
+
   const savePreferences = useCallback(
     async (next: Preferences) => {
       const { preferences, onboarded } = await api.savePreferences(next);
@@ -143,6 +175,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
 
   const current = state.userId === userId && state.attempt === attempt;
   const value: ProfileState = {
+    birthdayRequired: current && !!state.birthdayRequired,
     username: current ? state.username : null,
     optionalSetupPending: current && state.optionalSetupPending,
     displayName: current ? state.displayName : null,
@@ -154,6 +187,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     finishOptionalSetup,
     retry: () => setAttempt((n) => n + 1),
     saveDisplayName,
+    saveProfileDetails,
     savePreferences,
   };
   return <ProfileContext.Provider value={value}>{children}</ProfileContext.Provider>;

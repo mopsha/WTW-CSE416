@@ -770,6 +770,7 @@ export function createApp(
     return c.json(await store.get(user.id, user.id));
   });
   app.post('/me/identity', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
     const { user, store } = await userProfiles(c);
     if (!store.completeIdentity)
       throw new ApiError(503, 'NOT_CONFIGURED', 'Identity setup is unavailable');
@@ -783,6 +784,7 @@ export function createApp(
     return c.json({ optionalSetupPending: false });
   });
   app.post('/me/details', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
     const { user, store } = await userProfiles(c);
     const body = await readJsonBody(c);
     const requested =
