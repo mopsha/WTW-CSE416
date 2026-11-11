@@ -1,3 +1,5 @@
+import { createRecentWinnersStore } from './recentWinnersStore.ts';
+import { winnerDetails } from './places.ts';
 import { createPastMovesStore } from './pastMovesStore.ts';
 import { createAvatarStore } from './avatarStore.ts';
 import { createDirectChatStore } from './directChatStore.ts';
@@ -54,6 +56,8 @@ const app = createApp(
     cronSecret: Deno.env.get('CRON_SECRET'),
     poolBuilder: pickPoolBuilder,
     pickPlaces,
+    recentWinnersStore: createRecentWinnersStore(),
+    winnerDetails,
     discoverPool: placesPoolBuilder,
     discoverPhoto: resolveDiscoverPhoto,
     discoverStore: createDiscoverStore(),

@@ -1,3 +1,4 @@
+import { recentHistory } from '../recentHistory';
 import type { Queries } from '../queries';
 import { MOCK_USER_ID } from './auth';
 import { mockGetGroup, mockListFriends, mockListGroups } from './groups';
@@ -26,7 +27,22 @@ export const mockQueries: Queries = {
     return [...mockPicks.values()]
       .filter((p) => mine(p.id))
       .sort((a, b) => b.createdAt - a.createdAt)
-      .map(summaryOf);
+      .map((p) => ({
+        ...summaryOf(p),
+        createdAt: new Date(p.createdAt).toISOString(),
+        decidedAt: p.decidedAt,
+        winnerName:
+          p.state === 'completed'
+            ? (p.candidates.find((c) => c.placeId === p.winnerPlaceId)?.name ?? null)
+            : null,
+      }));
+  },
+  async listPicksHome(userId) {
+    const picks = await mockQueries.listMyPicks(userId);
+    return [
+      ...picks.filter((p) => !['completed', 'canceled'].includes(p.state)),
+      ...recentHistory(picks),
+    ];
   },
   async getMyPreferences(pickId) {
     await delay();

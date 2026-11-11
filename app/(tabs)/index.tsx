@@ -1,9 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { ActivePickPanel, GroupIdentity, PicksHero } from '@/components/picks/PicksHome';
 import { Button, Screen } from '@/components';
+import { GoogleCredit } from '@/components/GoogleCredit';
+import { api } from '@/lib/api';
 import { HangCard } from '@/components/HangCard';
 import { JoinCodeCard } from '@/components/JoinCodeCard';
 import { NotificationBell } from '@/components/NotificationBell';
@@ -17,60 +19,119 @@ import { newGroupPickRoute, type GroupSummary } from '@/lib/groups';
 import { haptic } from '@/lib/haptics';
 import { resetMockGroups } from '@/lib/mock/groups';
 import { MOCK_INVITE_CODE, resetMockData } from '@/lib/mock/store';
-import { pickTitle, STATE_LABEL } from '@/lib/pickUi';
+import { historyTitle, historySubtitle, recentHistory } from '@/lib/recentHistory';
 import { queries } from '@/lib/queries';
-import type { PickState, PickSummary } from '@/lib/types';
+import type { Candidate, PickState, PickSummary } from '@/lib/types';
 const ACTIVE: readonly PickState[] = ['draft', 'swiping', 'ranking', 'final_vote'];
-function PickRow({ pick }: { pick: PickSummary }) {
+function PickRow({ pick, place }: { pick: PickSummary; place?: Candidate }) {
   return (
-    <ListRow
-      title={pickTitle(pick.category)}
-      subtitle={STATE_LABEL[pick.state]}
-      leading={
-        <Ionicons
-          name={
-            pick.category === 'food'
-              ? 'restaurant-outline'
-              : pick.category === 'custom'
-                ? 'sparkles-outline'
-                : 'walk-outline'
-          }
-          size={20}
-          color={colors.muted}
-        />
-      }
-      onPress={() => {
-        haptic.tap();
-        router.push({ pathname: '/pick/[id]', params: { id: pick.id } });
-      }}
-    />
+    <View>
+      <ListRow
+        title={place?.name ?? historyTitle(pick)}
+        titleNumberOfLines={2}
+        subtitle={historySubtitle(pick)}
+        leading={
+          <Ionicons
+            name={
+              pick.category === 'food'
+                ? 'restaurant-outline'
+                : pick.category === 'custom'
+                  ? 'sparkles-outline'
+                  : 'walk-outline'
+            }
+            size={20}
+            color={colors.muted}
+          />
+        }
+        onPress={() => {
+          haptic.tap();
+          router.push({ pathname: '/pick/[id]', params: { id: pick.id } });
+        }}
+      />
+      {place ? <GoogleCredit place={place} /> : null}
+    </View>
   );
 }
 export default function PicksScreen() {
   const session = useSession();
+  return <PicksHome key={session.user.id} userId={session.user.id} />;
+}
+function PicksHome({ userId }: { userId: string }) {
+  const latest = useRef(0);
+  const inFlight = useRef<{ request: number; promise: Promise<void> } | null>(null);
+  const [winnerPlaces, setWinnerPlaces] = useState<ReadonlyMap<string, Candidate>>(new Map());
+  useEffect(
+    () => () => {
+      latest.current++;
+    },
+    [],
+  );
   const [picks, setPicks] = useState<PickSummary[] | null>(null);
   const [groups, setGroups] = useState<GroupSummary[] | null>(null);
   const [groupError, setGroupError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [joining, setJoining] = useState(false);
-  const load = useCallback(async () => {
+  const load = useCallback(() => {
+    if (inFlight.current?.request === latest.current) return inFlight.current.promise;
+    const request = ++latest.current;
     setError(null);
     setGroupError(null);
-    try {
-      setPicks(await queries.listMyPicks(session.user.id));
-    } catch (e) {
-      setError(messageOf(e));
-    }
-    try {
-      setGroups(await queries.listMyGroups(session.user.id));
-    } catch (e) {
-      setGroupError(messageOf(e));
-    }
-  }, [session.user.id]);
+    const current = () => request === latest.current;
+    const loadPicks = async () => {
+      try {
+        const next = await queries.listPicksHome(userId);
+        if (!current()) return;
+        setPicks(next);
+        // Replace live display content when the refreshed summaries arrive; never persist it.
+        setWinnerPlaces(new Map());
+        const shown = recentHistory(next).filter(
+          (p) => p.state === 'completed' && p.winnerProvider === 'google' && p.winnerPlaceId,
+        );
+        if (!shown.length) return;
+        try {
+          const resolved = await api.resolveRecentWinners(shown.map((p) => p.id));
+          if (!current()) return;
+          setWinnerPlaces(
+            new Map(
+              resolved.flatMap(({ pickId, place }) =>
+                shown.some((p) => p.id === pickId && p.winnerPlaceId === place.placeId)
+                  ? [[pickId, place] as const]
+                  : [],
+              ),
+            ),
+          );
+        } catch {
+          /* Optional names: retain category fallbacks on failure/quota exhaustion. */
+        }
+      } catch (e) {
+        if (current()) setError(messageOf(e));
+      }
+    };
+    const loadGroups = async () => {
+      try {
+        const next = await queries.listMyGroups(userId);
+        if (current()) setGroups(next);
+      } catch (e) {
+        if (current()) setGroupError(messageOf(e));
+      }
+    };
+    const promise = Promise.all([loadPicks(), loadGroups()]).then(() => {
+      if (current()) setRefreshing(false);
+    });
+    inFlight.current = { request, promise };
+    void promise.finally(() => {
+      if (inFlight.current?.request === request) inFlight.current = null;
+    });
+    return promise;
+  }, [userId]);
   useFocusEffect(
     useCallback(() => {
       void load();
+      return () => {
+        latest.current++;
+        setRefreshing(false);
+      };
     }, [load]),
   );
   const resetDemo = () => {
@@ -80,7 +141,7 @@ export default function PicksScreen() {
     void load();
   };
   const active = (picks ?? []).filter((p) => ACTIVE.includes(p.state));
-  const history = (picks ?? []).filter((p) => !ACTIVE.includes(p.state));
+  const history = recentHistory(picks ?? []);
   return (
     <Screen
       edges={['top', 'left', 'right']}
@@ -88,7 +149,7 @@ export default function PicksScreen() {
       refreshing={refreshing}
       onRefresh={() => {
         setRefreshing(true);
-        void load().finally(() => setRefreshing(false));
+        void load();
       }}
     >
       <View style={s.header}>
@@ -186,19 +247,19 @@ export default function PicksScreen() {
         ) : null}
       </View>
       <HangCard />
-      {history.length ? (
+      {picks !== null ? (
         <View>
-          <Text style={s.historyTitle} accessibilityRole="header">
-            History
-          </Text>
-          {history.map((p) => (
-            <PickRow key={p.id} pick={p} />
-          ))}
-          <Button
-            label="See winners, who went, and Pick again"
-            variant="link"
-            onPress={() => router.push('/history')}
-          />
+          <View style={s.sectionHead}>
+            <Text style={s.historyTitle} accessibilityRole="header">
+              Recent History
+            </Text>
+            <Button label="See all" variant="link" onPress={() => router.push('/history')} />
+          </View>
+          {history.length ? (
+            history.map((p) => <PickRow key={p.id} pick={p} place={winnerPlaces.get(p.id)} />)
+          ) : (
+            <Text style={s.caption}>Your finished Picks will appear here.</Text>
+          )}
         </View>
       ) : null}
       {USE_MOCK ? (

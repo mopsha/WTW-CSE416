@@ -1,3 +1,4 @@
+import { databaseFailureSummary } from './database-diagnostics.mjs';
 import { execFileSync } from 'node:child_process';
 
 /** Obtain only local CLI credentials in memory; never echo CLI output or tokens. */
@@ -57,10 +58,12 @@ export async function request(
   return { status: response.status, data };
 }
 
-export function requireStatus(response, expected, label) {
+export function requireStatus(response, expected, label, { database = false } = {}) {
   if (response.status !== expected) {
     // Deliberately omit response bodies: Auth responses can contain credentials.
-    throw new Error(`${label}: expected HTTP ${expected}, received ${response.status}`);
+    throw new Error(
+      `${label}: expected HTTP ${expected}, received ${response.status}${database ? '; ' + databaseFailureSummary(response.data) : ''}`,
+    );
   }
   return response.data;
 }

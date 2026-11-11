@@ -25,7 +25,7 @@ jobs:
         with:
           deno-version: v2.x
       - run: deno check --config supabase/functions/api/deno.json supabase/functions/api/index.ts
-      - run: deno test --config supabase/functions/api/deno.json supabase/functions/api/app_test.ts supabase/functions/api/people_test.ts supabase/functions/api/birthdays_test.ts
+      - run: deno test --config supabase/functions/api/deno.json supabase/functions/api/app_test.ts supabase/functions/api/people_test.ts supabase/functions/api/birthdays_test.ts supabase/functions/api/recentWinners_test.ts
   integration:
     name: Local database and API
     runs-on: ubuntu-latest
@@ -125,6 +125,10 @@ jobs:
       - name: Report service status on failure
         if: failure()
         run: docker ps -a --format 'table {{.Names}}\t{{.Status}}'
+      - name: Report redacted database failure diagnostics
+        if: failure()
+        timeout-minutes: 1
+        run: node tests/api/service-failure-diagnostics.mjs
       - name: Stop local services and remove private logs
         if: always()
         timeout-minutes: 3

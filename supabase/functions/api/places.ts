@@ -42,3 +42,9 @@ export const pickPlaces = createPickPlaces({
   details: (placeId, category) => google().pickPlace(placeId, category),
   photo: resolveDiscoverPhoto,
 });
+
+/** Same live details lookup and atomic Google budget as Pick results; no photos. */
+export const winnerDetails = (
+  placeId: string,
+  category: import('../_shared/places/types.ts').Category,
+) => google().pickPlace(placeId, category);
