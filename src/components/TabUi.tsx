@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -71,6 +71,7 @@ export function SectionHeading({
 }
 export function ListRow({
   title,
+  titleNumberOfLines,
   subtitle,
   leading,
   right,
@@ -80,6 +81,7 @@ export function ListRow({
   muted = false,
 }: {
   title: string;
+  titleNumberOfLines?: number;
   subtitle?: string;
   leading?: ReactNode;
   right?: ReactNode;
@@ -93,6 +95,7 @@ export function ListRow({
       {leading}
       <View style={s.who}>
         <Text
+          numberOfLines={titleNumberOfLines}
           style={[
             s.rowTitle,
             danger && { color: colors.primary },
@@ -131,6 +134,7 @@ export function ListRow({
           {leading}
           <View style={s.who}>
             <Text
+              numberOfLines={titleNumberOfLines}
               style={[
                 s.rowTitle,
                 danger && { color: colors.primary },
@@ -165,14 +169,24 @@ export function Segments<T extends string>({
   value,
   onChange,
   label,
+  variant = 'default',
 }: {
   options: readonly { value: T; label: string }[];
   value: T;
   onChange: (value: T) => void;
   label: string;
+  variant?: 'default' | 'compact' | 'underline';
 }) {
   return (
-    <View style={s.segments} accessibilityRole="tablist" accessibilityLabel={label}>
+    <View
+      style={[
+        s.segments,
+        variant === 'compact' && s.compactSegments,
+        variant === 'underline' && s.underlineSegments,
+      ]}
+      accessibilityRole="tablist"
+      accessibilityLabel={label}
+    >
       {options.map((o) => (
         <Pressable
           key={o.value}
@@ -180,9 +194,23 @@ export function Segments<T extends string>({
           accessibilityRole="tab"
           accessibilityLabel={o.label}
           accessibilityState={{ selected: o.value === value }}
-          style={[s.segment, o.value === value && s.selected]}
+          style={[
+            s.segment,
+            variant === 'compact' && s.compactSegment,
+            o.value === value && s.selected,
+            variant === 'underline' && s.underlineSegment,
+            variant === 'underline' && o.value === value && s.underlineSelected,
+          ]}
         >
-          <Text style={s.segmentText}>{o.label}</Text>
+          <Text
+            style={[
+              s.segmentText,
+              variant === 'compact' && s.compactSegmentText,
+              variant === 'underline' && o.value === value && { color: colors.primary },
+            ]}
+          >
+            {o.label}
+          </Text>
         </Pressable>
       ))}
     </View>
@@ -202,14 +230,33 @@ export function Sheet({
   title,
   onClose,
   children,
+  onDismiss,
+  animationType = 'slide',
 }: {
   visible: boolean;
   title: string;
   onClose: () => void;
   children: ReactNode;
+  onDismiss?: () => void;
+  /** Opt-in motion preference; other sheets retain their existing transition. */
+  animationType?: 'none' | 'slide' | 'fade';
 }) {
+  const wasVisible = useRef(visible);
+  useEffect(() => {
+    // Android removes the dialog when visible becomes false; no slide animation
+    // is used for an opted-in handoff. RN exposes native onDismiss only on iOS.
+    const dismissed = wasVisible.current && !visible;
+    wasVisible.current = visible;
+    if (dismissed && Platform.OS !== 'ios') onDismiss?.();
+  }, [visible, onDismiss]);
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType={onDismiss && Platform.OS !== 'ios' ? 'none' : animationType}
+      onDismiss={Platform.OS === 'ios' ? onDismiss : undefined}
+      onRequestClose={onClose}
+    >
       <KeyboardAvoidingView
         style={s.modal}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -280,6 +327,26 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: radius.pill,
   },
+  underlineSegments: {
+    backgroundColor: colors.transparent,
+    borderWidth: 0,
+    borderRadius: 0,
+    padding: 0,
+  },
+  underlineSegment: {
+    borderRadius: 0,
+    backgroundColor: colors.transparent,
+    borderBottomWidth: 2,
+    borderBottomColor: colors.transparent,
+  },
+  underlineSelected: { borderBottomColor: colors.primary },
+  compactSegments: { borderWidth: 0, borderRadius: radius.md, padding: space.xs },
+  compactSegment: {
+    borderRadius: radius.sm,
+    paddingHorizontal: space.sm,
+    paddingVertical: space.sm,
+  },
+  compactSegmentText: { fontFamily: fonts.semibold, fontSize: 16, lineHeight: 22 },
   selected: { backgroundColor: colors.cardHi },
   segmentText: { ...type.body, color: colors.text },
   empty: {

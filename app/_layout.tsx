@@ -1,3 +1,4 @@
+import { resumePendingProfile } from '@/lib/pendingProfile';
 import { hasRequiredIdentity } from '@shared/api/userProfiles.ts';
 import {
   Poppins_400Regular,
@@ -10,16 +11,17 @@ import {
 import { router, Stack, usePathname } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { Button, ErrorState, Screen } from '@/components';
 import { colors } from '@/components/theme';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
+import { useAvatarLifecycle } from '@/hooks/useAvatarSource';
 import { ProfileProvider, useProfile } from '@/hooks/useProfile';
 import { auth } from '@/lib/auth';
 import { configureNotifications, onNotificationTap } from '@/lib/notify';
-import { takePendingInvite } from '@/lib/pendingInvite';
+import { takePendingInvite, setPendingInvite } from '@/lib/pendingInvite';
 import { takePendingJoin } from '@/lib/pendingJoin';
 import { registerForPush } from '@/lib/push';
 
@@ -54,7 +56,17 @@ function RootStack() {
     !!session && !profile.failed && !hasRequiredIdentity(profile.displayName, profile.username);
   const inApp = !!session && !profile.failed && !needsName;
   const pathname = usePathname();
+  useAvatarLifecycle(session?.user.id, pathname, session?.user.email);
   const offered = useRef<string | null>(null);
+  const resuming = useRef(false);
+  const mounted = useRef(true);
+  const [resumeRetry, setResumeRetry] = useState(0);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const userId = session?.user.id;
 
   useEffect(() => {
@@ -83,7 +95,7 @@ function RootStack() {
     if (!profile.optionalSetupPending) offered.current = null;
     if (profile.optionalSetupPending && offered.current !== userId) {
       offered.current = userId ?? null;
-      if (pathname !== '/onboarding') router.push('/onboarding');
+      if (pathname !== '/onboarding' && !pathname.startsWith('/p/')) router.push('/onboarding');
       return;
     }
     if (pathname === '/onboarding') return;
@@ -92,11 +104,41 @@ function RootStack() {
       router.push({ pathname: '/join/[code]', params: { code } });
       return;
     }
-    // Invite links are parked in SecureStore, so they survive a restart during sign-in.
-    void takePendingInvite().then((token) => {
-      if (token) router.push({ pathname: '/i/[token]', params: { token } });
-    });
-  }, [ready, inApp, userId, session, profile.optionalSetupPending, pathname]);
+    if (resuming.current) return;
+    resuming.current = true;
+    let current = true;
+    let retry = false;
+    void (async () => {
+      const token = await takePendingInvite();
+      if (token) {
+        if (current) router.push({ pathname: '/i/[token]', params: { token } });
+        else {
+          await setPendingInvite(token);
+          retry = true;
+        }
+        return;
+      }
+      retry = await resumePendingProfile(
+        () => current,
+        (id) => {
+          const route = { pathname: '/p/[id]' as const, params: { id } };
+          if (pathname.startsWith('/p/')) router.replace(route);
+          else router.push(route);
+        },
+        userId,
+      );
+    })()
+      .catch(() => {
+        /* Keep navigation failures from becoming unhandled rejections. */
+      })
+      .finally(() => {
+        resuming.current = false;
+        if ((retry || !current) && mounted.current) setResumeRetry((n) => n + 1);
+      });
+    return () => {
+      current = false;
+    };
+  }, [ready, inApp, userId, session, profile.optionalSetupPending, pathname, resumeRetry]);
 
   // Keep the splash up until the stored session and fonts are loaded. Rendering the
   // guarded Stack earlier treats a signed-in user as signed out for a moment, which
@@ -161,6 +203,7 @@ function RootStack() {
         {/* Join and invite links open signed in or out; the screen sends you to sign-in if needed.
             Listed last so it is never the guard's fallback screen. */}
         <Stack.Screen name="join/[code]" options={{ animation: 'fade' }} />
+        <Stack.Screen name="p/[id]" options={{ animation: 'fade' }} />
         <Stack.Screen name="i/[token]" options={{ animation: 'fade' }} />
       </Stack>
     </>

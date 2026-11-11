@@ -1,3 +1,11 @@
+import {
+  parseRecentWinnerIds,
+  resolveRecentWinners,
+  type RecentWinnersStore,
+} from '../_shared/api/recentWinners.ts';
+import type { Candidate, Category } from '../_shared/places/types.ts';
+import { normalizeUsername } from '../_shared/api/usernames.ts';
+import { parseFriendId } from '../_shared/api/friends.ts';
 import type { PastMovesStore } from '../_shared/api/pastMoves.ts';
 import { sendDirectMessage, type DirectChatStore } from '../_shared/api/directChat.ts';
 import { sendGroupMessage, type GroupChatStore } from '../_shared/api/groupChat.ts';
@@ -32,6 +40,7 @@ import {
 import { closePick, type ClosingStore } from '../_shared/api/closing.ts';
 import { castVote, closeVote, type VotingStore } from '../_shared/api/voting.ts';
 import type { PoolBuilder } from '../_shared/places/pool.ts';
+import type { PickPlaces } from '../_shared/places/pickPlaces.ts';
 import { joinPick, type JoinStore } from '../_shared/api/join.ts';
 import { authorizeSweep, sweepDeadlines, type SweepStore } from '../_shared/api/sweep.ts';
 import {
@@ -83,7 +92,7 @@ import {
   type InviteStore,
 } from '../_shared/api/invites.ts';
 import { deleteAccount, type AccountStore } from '../_shared/api/account.ts';
-import { requestFriendSafely } from '../_shared/api/friendRequests.ts';
+import { parseAvatarRevision, readAvatarBody, type AvatarStore } from '../_shared/api/avatars.ts';
 
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
   const raw = await c.req.text();
@@ -102,6 +111,9 @@ export function createApp(
     progressStore?: ProgressStore;
     lifecycleStore: LifecycleStore;
     poolBuilder: PoolBuilder;
+    pickPlaces?: PickPlaces;
+    recentWinnersStore?: RecentWinnersStore;
+    winnerDetails?: (placeId: string, category: Category) => Promise<Candidate | null>;
     closingStore: ClosingStore & VotingStore;
     joinStore?: JoinStore;
     friendsStore?: FriendsStore;
@@ -115,6 +127,8 @@ export function createApp(
     safetyStore?: SafetyStore;
     inviteStore?: InviteStore;
     accountStore?: AccountStore;
+    avatarStore?: AvatarStore;
+    retryAccountDeletions?: () => Promise<{ attempted: number; failed: number }>;
     sweepStore?: SweepStore;
     notifyStore?: NotifyStore;
     plansStore?: PlansStore;
@@ -154,6 +168,64 @@ export function createApp(
   });
   app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404));
   app.get('/health', (c) => c.json({ status: 'ok' }));
+  app.get('/avatars/capabilities', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.avatarStore?.capabilities)
+      throw new ApiError(503, 'PHOTO_UNAVAILABLE', 'Photo capabilities unavailable');
+    return c.json(await deps.avatarStore.capabilities(user.id));
+  });
+  app.post('/avatars/resolve', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const user = await deps.getUser(c.req.raw);
+    const body = (await readJsonBody(c)) as { userIds?: unknown } | null;
+    if (!body || !Array.isArray(body.userIds) || body.userIds.length > 100)
+      throw new ApiError(400, 'INVALID_INPUT', 'Expected up to 100 user IDs');
+    const ids = [...new Set(body.userIds.map((id) => parseId(id, 'user id')))];
+    if (!deps.avatarStore?.resolve)
+      throw new ApiError(503, 'PHOTO_UNAVAILABLE', 'Photos unavailable');
+    return c.json(await deps.avatarStore.resolve(user.id, ids));
+  });
+  // No-store applies to errors as well as successful image responses.
+  app.use('/me/avatar', async (c, next) => {
+    c.header('Cache-Control', 'private, no-store');
+    await next();
+  });
+  app.use('/users/:id/avatar', async (c, next) => {
+    c.header('Cache-Control', 'private, no-store');
+    await next();
+  });
+  app.post('/me/avatar', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.avatarStore) throw new ApiError(503, 'PHOTO_UNAVAILABLE', 'Photos unavailable');
+    const revision = parseAvatarRevision(c.req.query('revision'));
+    const bytes = await readAvatarBody(c.req.raw);
+    return c.json(await deps.avatarStore.upload(user.id, revision, bytes));
+  });
+  app.delete('/me/avatar', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.avatarStore) throw new ApiError(503, 'PHOTO_UNAVAILABLE', 'Photos unavailable');
+    return c.json(
+      await deps.avatarStore.remove(user.id, parseAvatarRevision(c.req.query('revision'))),
+    );
+  });
+  app.get('/users/:id/avatar', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.avatarStore) throw new ApiError(503, 'PHOTO_UNAVAILABLE', 'Photos unavailable');
+    const bytes = await deps.avatarStore.read(
+      user.id,
+      parseId(c.req.param('id'), 'user id'),
+      parseAvatarRevision(c.req.query('revision')),
+    );
+    return new Response(new Uint8Array(bytes).buffer, {
+      headers: {
+        'Content-Type': 'image/jpeg',
+        'Cache-Control': 'private, no-store',
+        'X-Content-Type-Options': 'nosniff',
+        Vary: 'Authorization',
+      },
+    });
+  });
   app.post('/internal/sweep', async (c) => {
     authorizeSweep(c.req.header('x-cron-secret'), deps.cronSecret);
     if (!deps.sweepStore) {
@@ -161,12 +233,35 @@ export function createApp(
     }
     const result = await sweepDeadlines(deps.sweepStore, deps.closingStore);
     const cacheCleanup = await cleanupCache(deps.cacheCleanupStore);
+    let avatarCleanup: 'ok' | 'partial_failure' = 'ok';
+    try {
+      await deps.avatarStore?.cleanup();
+    } catch {
+      avatarCleanup = 'partial_failure';
+    }
+    let accountDeletionCleanup;
+    try {
+      accountDeletionCleanup = await deps.retryAccountDeletions?.();
+    } catch {
+      accountDeletionCleanup = { status: 'partial_failure' };
+    }
+    console.info(
+      JSON.stringify({
+        service: 'sweep',
+        event: 'photo_maintenance',
+        avatarCleanup,
+        accountDeletionCleanup,
+      }),
+    );
     console.info(JSON.stringify({ service: 'sweep', event: 'cache_cleanup', ...cacheCleanup }));
     const status =
       result.status === 'ok' && cacheCleanup.status !== 'partial_failure'
         ? 'ok'
         : 'partial_failure';
-    return c.json({ ...result, status, cacheCleanup }, status === 'ok' ? 200 : 503);
+    return c.json(
+      { ...result, status, cacheCleanup, avatarCleanup, accountDeletionCleanup },
+      status === 'ok' ? 200 : 503,
+    );
   });
   app.get('/hang', async (c) => {
     const user = await deps.getUser(c.req.raw);
@@ -284,11 +379,32 @@ export function createApp(
       201,
     );
   });
+  app.post('/picks/recent-winners', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const user = await deps.getUser(c.req.raw);
+    const ids = parseRecentWinnerIds(await readJsonBody(c));
+    if (!deps.recentWinnersStore || !deps.winnerDetails)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Recent winners unavailable');
+    return c.json({
+      winners: await resolveRecentWinners(
+        deps.recentWinnersStore,
+        user.id,
+        ids,
+        deps.winnerDetails,
+      ),
+    });
+  });
   app.get('/picks/:id', async (c) => {
     c.header('Cache-Control', 'private, no-store');
     const user = await deps.getUser(c.req.raw);
     return c.json(
-      await getPick(deps.lifecycleStore, c.req.param('id'), user.id, deps.refreshHours),
+      await getPick(
+        deps.lifecycleStore,
+        c.req.param('id'),
+        user.id,
+        deps.refreshHours,
+        deps.pickPlaces,
+      ),
     );
   });
   app.post('/picks/:id/start', async (c) => {
@@ -350,24 +466,36 @@ export function createApp(
     if (!deps.friendsStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Friends are not available');
     return { user, store: deps.friendsStore };
   };
+  app.get('/friends/search', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await friends(c);
+    const query = normalizeUsername(c.req.query('q'), true);
+    if (!store.search) throw new ApiError(503, 'NOT_CONFIGURED', 'Username search unavailable');
+    return c.json({ people: await store.search(user.id, query) });
+  });
+  app.get('/people/:id', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const { user, store } = await friends(c);
+    if (!store.person) throw new ApiError(503, 'NOT_CONFIGURED', 'Profile lookup unavailable');
+    return c.json(await store.person(user.id, parseFriendId(c.req.param('id'))));
+  });
+  app.post('/friends/username-requests', async (c) => {
+    const { user, store } = await friends(c);
+    const body = (await readJsonBody(c)) as { username?: unknown; targetId?: unknown } | null;
+    const username = normalizeUsername(body?.username, true);
+    const targetId = parseFriendId(typeof body?.targetId === 'string' ? body.targetId : '');
+    if (!store.requestUsername)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Username requests unavailable');
+    return c.json(await store.requestUsername(user.id, username, targetId));
+  });
   app.get('/friends', async (c) => {
     c.header('Cache-Control', 'private, no-store');
     const { user, store } = await friends(c);
     return c.json(await listFriends(store, user.id));
   });
   app.post('/friends/requests', async (c) => {
-    const { user, store } = await friends(c);
-    // Same answer whether or not the email has an account (or blocked the caller).
-    return c.json(
-      await requestFriendSafely(
-        {
-          takeFriendRequestLimit: (id) => store.takeFriendRequestLimit(id),
-          request: (id, email) => store.request(id, email.toLowerCase()),
-        },
-        user.id,
-        await readJsonBody(c),
-      ),
-    );
+    await deps.getUser(c.req.raw);
+    throw new ApiError(410, 'EMAIL_REQUESTS_RETIRED', 'Find friends by username instead');
   });
   app.post('/friends/:id/accept', async (c) => {
     const { user, store } = await friends(c);
@@ -642,6 +770,7 @@ export function createApp(
     return c.json(await store.get(user.id, user.id));
   });
   app.post('/me/identity', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
     const { user, store } = await userProfiles(c);
     if (!store.completeIdentity)
       throw new ApiError(503, 'NOT_CONFIGURED', 'Identity setup is unavailable');
@@ -655,8 +784,20 @@ export function createApp(
     return c.json({ optionalSetupPending: false });
   });
   app.post('/me/details', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
     const { user, store } = await userProfiles(c);
-    return c.json(await store.update(user.id, parseProfileDetails(await readJsonBody(c))));
+    const body = await readJsonBody(c);
+    const requested =
+      body && typeof body === 'object' ? (body as Record<string, unknown>).username : undefined;
+    let currentUsername: string | null | undefined;
+    if (typeof requested === 'string') {
+      try {
+        normalizeUsername(requested);
+      } catch {
+        currentUsername = (await store.get(user.id, user.id)).username;
+      }
+    }
+    return c.json(await store.update(user.id, parseProfileDetails(body, currentUsername)));
   });
   app.get('/users/:id/profile', async (c) => {
     c.header('Cache-Control', 'private, no-store');

@@ -17,6 +17,12 @@ export interface PickSummary {
   state: PickState;
   category: string;
   deadlineAt: string | null;
+  /** Persisted chronology and winner snapshot, when supplied by summary queries. */
+  createdAt?: string | null;
+  decidedAt?: string | null;
+  winnerName?: string | null;
+  winnerPlaceId?: string | null;
+  winnerProvider?: string | null;
 }
 
 /** What the Swipe and Results screens show for a place. Built from pick_candidates.snapshot. */
@@ -39,6 +45,11 @@ export interface Candidate {
   closesAt?: string | null;
   note?: string | null;
   provider?: 'mock' | 'google' | 'custom';
+  /** Credits Google requires next to its content. */
+  attributions?: { provider: string; uri?: string }[];
+  googleMapsUri?: string;
+  /** The shown photo's page on Google Maps, which is separate from the place's. */
+  photoGoogleMapsUri?: string;
   origin?: 'group_idea';
   groupIdeaId?: string;
   groupId?: string;

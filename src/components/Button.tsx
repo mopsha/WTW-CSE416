@@ -10,9 +10,9 @@ export interface ButtonProps {
   onPress: () => void;
   /**
    * primary: solid coral (one per screen) · secondary: outlined surface ·
-   * link: text only · danger: destructive actions (Cancel Pick, Sign out)
+   * paper: opt-in warm-white Picks action · link: text only · danger: destructive actions (Cancel Pick, Sign out)
    */
-  variant?: 'primary' | 'secondary' | 'link' | 'danger';
+  variant?: 'primary' | 'secondary' | 'link' | 'danger' | 'paper';
   /** An Ionicons name shown before the label. */
   icon?: keyof typeof Ionicons.glyphMap;
   disabled?: boolean;
@@ -21,6 +21,8 @@ export interface ButtonProps {
   accessibilityLabel?: string;
   accessibilityHint?: string;
   style?: ViewStyle;
+  /** Opt-in compact target for conversation send controls. */
+  size?: 'default' | 'compact';
 }
 
 export function Button({
@@ -33,16 +35,19 @@ export function Button({
   accessibilityLabel,
   accessibilityHint,
   style,
+  size = 'default',
 }: ButtonProps) {
   const inactive = disabled || loading;
   const textColor =
-    variant === 'primary'
-      ? colors.primaryText
-      : variant === 'danger'
-        ? colors.no
-        : variant === 'link'
-          ? colors.primary
-          : colors.text;
+    variant === 'paper'
+      ? colors.bg
+      : variant === 'primary'
+        ? colors.primaryText
+        : variant === 'danger'
+          ? colors.no
+          : variant === 'link'
+            ? colors.primary
+            : colors.text;
 
   const iconOnly = !label && !!icon;
   const content = loading ? (
@@ -50,7 +55,13 @@ export function Button({
   ) : (
     <View style={styles.row}>
       {icon ? <Ionicons name={icon} size={18} color={textColor} /> : null}
-      {!iconOnly ? <Text style={[styles.label, { color: textColor }]}>{label}</Text> : null}
+      {!iconOnly ? (
+        <Text
+          style={[styles.label, variant === 'paper' && styles.paperLabel, { color: textColor }]}
+        >
+          {label}
+        </Text>
+      ) : null}
     </View>
   );
 
@@ -69,13 +80,20 @@ export function Button({
         styles.base,
         variant === 'primary' && styles.primaryShadow,
         variant === 'secondary' && styles.secondary,
+        variant === 'paper' && styles.paper,
         variant === 'danger' && styles.danger,
         inactive && styles.disabled,
         pressed && !inactive && styles.pressed,
         style,
       ]}
     >
-      <View style={[styles.fill, iconOnly && { paddingHorizontal: 0, minWidth: MIN_TARGET }]}>
+      <View
+        style={[
+          styles.fill,
+          size === 'compact' && { minHeight: MIN_TARGET },
+          iconOnly && { paddingHorizontal: 0, minWidth: MIN_TARGET },
+        ]}
+      >
         {content}
       </View>
     </Pressable>
@@ -93,6 +111,8 @@ const styles = StyleSheet.create({
   },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   label: { fontFamily: fonts.semibold, fontSize: 16 },
+  paper: { backgroundColor: colors.text, borderRadius: radius.md },
+  paperLabel: { fontSize: 17, flexShrink: 1 },
   primaryShadow: { backgroundColor: colors.primary },
   secondary: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
   danger: { backgroundColor: colors.dangerBg },

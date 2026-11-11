@@ -13,7 +13,15 @@ import { colors, MIN_TARGET, radius, space, type } from './theme';
 
 const blank: GroupIdeaInput = { name: '', category: 'activity', description: '', locationText: '' };
 /** Future possibilities for this group. Saving an idea never creates or alters a Pick. */
-export function GroupIdeas({ group, userId }: { group: GroupDetail; userId: string }) {
+export function GroupIdeas({
+  group,
+  userId,
+  showHeading = true,
+}: {
+  group: GroupDetail;
+  userId: string;
+  showHeading?: boolean;
+}) {
   const { id: groupId, ownerId } = group;
   const [ideas, setIdeas] = useState<GroupIdea[]>([]);
   const [loading, setLoading] = useState(true);
@@ -114,24 +122,26 @@ export function GroupIdeas({ group, userId }: { group: GroupDetail; userId: stri
       setBusy(false);
     }
   };
+  const addButton = (
+    <Button
+      label="Add idea"
+      variant="link"
+      disabled={loading || busy || !!error}
+      onPress={() => {
+        setSelected(null);
+        setForm(blank);
+        setFormError(null);
+        setEditing(true);
+      }}
+    />
+  );
   return (
     <View style={s.section}>
-      <SectionHeading
-        title="Group Ideas"
-        right={
-          <Button
-            label="Add idea"
-            variant="link"
-            disabled={loading || busy || !!error}
-            onPress={() => {
-              setSelected(null);
-              setForm(blank);
-              setFormError(null);
-              setEditing(true);
-            }}
-          />
-        }
-      />
+      {showHeading ? (
+        <SectionHeading title="Group Ideas" right={addButton} />
+      ) : (
+        <View style={{ alignItems: 'flex-end' }}>{addButton}</View>
+      )}
       <Text style={s.caption}>Things your group might want to do sometime.</Text>
       {error ? (
         <ErrorState message={error} onRetry={() => void load()} />

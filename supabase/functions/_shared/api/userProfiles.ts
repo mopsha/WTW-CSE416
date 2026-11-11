@@ -1,17 +1,30 @@
+import { parseBirthday, type Birthday } from './birthdays.ts';
+import { normalizeUsername } from './usernames.ts';
 import { parseProfileUpdate, validateDisplayName } from './profile.ts';
 import { ApiError } from './errors.ts';
 import { requireCleanText } from './text.ts';
+import type { AvatarRef } from './avatars.ts';
 export interface ProfileDetailsInput {
+  birthday?: Birthday | null;
+  shareBirthday?: boolean;
   username: string | null;
   favoriteCuisine: string | null;
   favoriteActivity: string | null;
   shareMetadata: boolean;
 }
 export interface UserProfile {
+  /** Owner sees their month/day even when sharing is off. */
+  birthday?: Birthday | null;
+  shareBirthday?: boolean;
+  birthdayRequired?: boolean;
+  /** Friends receive birthday only when explicitly shared. */
   id: string;
   displayName: string | null;
   username: string | null;
   avatarUrl: string | null;
+  avatarRef?: AvatarRef | null;
+  /** Included for the owner even when there is no photo. */
+  avatarRevision?: number;
   isOwner: boolean;
   metadataVisible: boolean;
   shareMetadata?: boolean;
@@ -22,6 +35,7 @@ export interface UserProfile {
   mutualGroups: { id: string; name: string }[];
 }
 export interface IdentityInput {
+  birthday?: Birthday | null;
   displayName: string;
   username: string;
 }
@@ -32,22 +46,25 @@ export function parseIdentity(body: unknown): IdentityInput {
     shareMetadata: false,
   });
   if (!details.username) throw new ApiError(400, 'INVALID_INPUT', 'Choose a username');
-  return { displayName, username: details.username };
+  return {
+    displayName,
+    username: details.username,
+    ...('birthday' in details ? { birthday: details.birthday } : {}),
+  };
 }
 /** Required access depends on identity, never optional survey/permission state. */
 export function hasRequiredIdentity(displayName: string | null, username: string | null): boolean {
-  return (
-    !('error' in validateDisplayName(displayName)) &&
-    !!username &&
-    /^[a-z0-9_]{3,24}$/.test(username)
-  );
+  return !('error' in validateDisplayName(displayName)) && !!username;
 }
 export interface UserProfilesStore {
   completeIdentity?(userId: string, input: IdentityInput): Promise<UserProfile>;
   get(viewerId: string, targetId: string): Promise<UserProfile>;
   update(userId: string, input: ProfileDetailsInput): Promise<UserProfile>;
 }
-export function parseProfileDetails(body: unknown): ProfileDetailsInput {
+export function parseProfileDetails(
+  body: unknown,
+  currentUsername?: string | null,
+): ProfileDetailsInput {
   if (!body || typeof body !== 'object' || Array.isArray(body))
     throw new ApiError(400, 'INVALID_INPUT', 'Expected profile details');
   const b = body as Record<string, unknown>;
@@ -65,17 +82,20 @@ export function parseProfileDetails(body: unknown): ProfileDetailsInput {
     requireCleanText(text, label);
     return text || null;
   };
+  if ('shareBirthday' in b && typeof b.shareBirthday !== 'boolean')
+    throw new ApiError(400, 'INVALID_INPUT', 'Choose whether to show your birthday to friends');
+  if ('birthDate' in b || 'birthYear' in b || 'year' in b)
+    throw new ApiError(400, 'INVALID_BIRTHDAY', 'Birthday uses month and day only');
+  const birthday = 'birthday' in b ? { birthday: parseBirthday(b.birthday) } : {};
+  if (b.shareBirthday === true && 'birthday' in b && !birthday.birthday)
+    throw new ApiError(400, 'INVALID_BIRTHDAY', 'Add a birthday before sharing it');
   const username =
-    optionalText(b.username, 'username', 25)?.replace(/^@/, '').toLowerCase() ?? null;
-  if (username !== null && !/^[a-z0-9_]{3,24}$/.test(username))
-    throw new ApiError(
-      400,
-      'INVALID_INPUT',
-      'Username must be 3–24 letters, numbers or underscores',
-    );
+    b.username == null ? null : normalizeUsername(b.username, false, currentUsername);
   if (typeof b.shareMetadata !== 'boolean')
     throw new ApiError(400, 'INVALID_INPUT', 'Choose whether to share profile metadata');
   return {
+    ...birthday,
+    ...('shareBirthday' in b ? { shareBirthday: b.shareBirthday as boolean } : {}),
     username,
     favoriteCuisine: optionalText(b.favoriteCuisine, 'favorite cuisine', 60),
     favoriteActivity: optionalText(b.favoriteActivity, 'favorite activity', 60),

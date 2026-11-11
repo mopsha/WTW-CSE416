@@ -101,3 +101,27 @@ test('event deletion errors surface to sweep status and retry despite claimed ca
     createCacheCleanupStore().deleteExpiredOnce('2026-11-03', '2026-11-03T11:55:00Z'),
   ).resolves.toEqual({ ran: false, removed: 0 });
 });
+
+test.each([true, false])('Google coordinate purge runs once even when daily cache ran=%p', async (ran) => {
+  mockRpc.mockResolvedValue({ data: { ran, removed: 0 }, error: null });
+  await createCacheCleanupStore().deleteExpiredOnce('2026-11-03', '2026-11-03T11:55:00Z');
+  expect(mockRpc.mock.calls.filter(([name]) => name === 'purge_google_coordinates')).toEqual([
+    ['purge_google_coordinates', { p_cutoff: '2026-10-07T00:00:00.000Z' }],
+  ]);
+});
+
+test('failed Google coordinate purge surfaces and retries after the daily cache claim', async () => {
+  mockRpc.mockImplementation(async (name) => ({
+    data: { ran: false, removed: 0 },
+    error: name === 'purge_google_coordinates' ? { message: 'private database detail' } : null,
+  }));
+  const cleanup = createCacheCleanupStore();
+  await expect(cleanup.deleteExpiredOnce('2026-11-03', '2026-11-03T11:55:00Z')).rejects.toThrow(
+    'Google coordinate cleanup failed',
+  );
+  mockRpc.mockResolvedValue({ data: { ran: false, removed: 0 }, error: null });
+  await expect(cleanup.deleteExpiredOnce('2026-11-03', '2026-11-03T11:55:00Z')).resolves.toEqual({
+    ran: false, removed: 0,
+  });
+  expect(mockRpc.mock.calls.filter(([name]) => name === 'purge_google_coordinates')).toHaveLength(2);
+});

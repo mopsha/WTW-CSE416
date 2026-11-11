@@ -1,3 +1,4 @@
+import { clearPendingProfile } from '../pendingProfile';
 import { AuthError, type AuthService, type AuthSession, type AuthMode } from '../authTypes';
 
 export const MOCK_CODE = '123456';
@@ -21,6 +22,7 @@ function loadProfiles(): typeof import('./userProfiles') {
 type Snapshot = {
   profile: typeof import('./store').mockProfile;
   details: ReturnType<typeof import('./userProfiles').mockUserProfiles.get>;
+  birthday: ReturnType<typeof import('./userProfiles').mockBirthdays.get>;
 };
 const clone = <T>(value: T): T =>
   value === undefined ? value : (JSON.parse(JSON.stringify(value)) as T);
@@ -42,10 +44,11 @@ export function mockUsernameTaken(username: string): boolean {
 async function saveCurrent() {
   if (!session || deleted.has(session.user.email!)) return;
   const { mockProfile } = loadStore();
-  const { mockUserProfiles } = loadProfiles();
+  const { mockUserProfiles, mockBirthdays } = loadProfiles();
   accounts.set(session.user.email!, {
     profile: clone(mockProfile),
     details: clone(mockUserProfiles.get(MOCK_USER_ID)),
+    birthday: clone(mockBirthdays.get(MOCK_USER_ID)),
   });
 }
 function setSession(next: AuthSession | null) {
@@ -80,13 +83,14 @@ export const mockAuth: AuthService = {
       throw new AuthError('invalid_code', 'That code is wrong or has expired.');
     await saveCurrent();
     const { mockProfile, resetMockProfile } = loadStore();
-    const { mockUserProfiles, resetOwnMockUserProfile } = loadProfiles();
+    const { mockUserProfiles, mockBirthdays, resetOwnMockUserProfile } = loadProfiles();
     const saved = accounts.get(email);
     resetMockProfile();
     resetOwnMockUserProfile();
     if (saved) {
       Object.assign(mockProfile, clone(saved.profile));
       if (saved.details) mockUserProfiles.set(MOCK_USER_ID, clone(saved.details));
+      if (saved.birthday) mockBirthdays.set(MOCK_USER_ID, clone(saved.birthday));
     } else if (email === MOCK_EXISTING_EMAIL) {
       // Returning demo user exercises the direct-to-app login path.
       Object.assign(mockProfile, { displayName: 'Demo', optionalSetupPending: false });
@@ -97,17 +101,26 @@ export const mockAuth: AuthService = {
         shareMetadata: false,
       });
     }
+    if (!saved && email !== MOCK_EXISTING_EMAIL) {
+      mockProfile.birthdayRequired = false;
+      mockProfile.birthdaySetupRequired = false;
+    }
     deleted.delete(email);
     accounts.set(email, {
       profile: clone(mockProfile),
       details: clone(mockUserProfiles.get(MOCK_USER_ID)),
+      birthday: clone(mockBirthdays.get(MOCK_USER_ID)),
     });
     attempt = null;
     const next = { accessToken: MOCK_ACCESS_TOKEN, user: { id: MOCK_USER_ID, email } };
     setSession(next);
     return next;
   },
+  async signInWithPassword() {
+    throw new AuthError('unknown', 'Password sign-in isn’t available in demo mode.');
+  },
   async signOut() {
+    await clearPendingProfile();
     await saveCurrent();
     setSession(null);
   },

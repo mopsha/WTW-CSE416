@@ -1,3 +1,4 @@
+import { ApiError } from '../_shared/api/errors.ts';
 import type { ProfileStore } from '../_shared/api/profile.ts';
 import { createServiceClient } from './serviceClient.ts';
 
@@ -12,6 +13,8 @@ export function createProfileStore(): ProfileStore {
         .from('profiles')
         .update({ optional_setup_pending: false })
         .eq('id', userId);
+      if (error?.code === 'PT400')
+        throw new ApiError(400, 'BIRTHDAY_REQUIRED', 'Add your birthday to finish account setup');
       if (error) throw new Error('Could not save optional setup');
     },
     async setDisplayName(userId, displayName) {
@@ -30,13 +33,14 @@ export function createProfileStore(): ProfileStore {
       const { data, error } = await createServiceClient()
         .from('profiles')
         .select(
-          'display_name, username, optional_setup_pending, discover_preferences, preferences_updated_at',
+          'display_name, username, birthday_required, optional_setup_pending, discover_preferences, preferences_updated_at',
         )
         .eq('id', userId)
         .maybeSingle();
       if (error) throw new Error('Database operation failed');
       if (!data) return null;
       const row = data as {
+        birthday_required: boolean;
         username: string | null;
         optional_setup_pending: boolean;
         display_name: string | null;
@@ -44,6 +48,7 @@ export function createProfileStore(): ProfileStore {
         preferences_updated_at: string | null;
       };
       return {
+        birthdayRequired: row.birthday_required,
         displayName: row.display_name,
         username: row.username,
         optionalSetupPending: row.optional_setup_pending,
@@ -63,6 +68,8 @@ export function createProfileStore(): ProfileStore {
         },
         { onConflict: 'id' },
       );
+      if (error?.code === 'PT400')
+        throw new ApiError(400, 'BIRTHDAY_REQUIRED', 'Add your birthday to finish account setup');
       if (error) throw new Error('Database operation failed');
     },
   };

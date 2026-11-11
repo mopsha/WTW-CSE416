@@ -1,3 +1,4 @@
+import { clearPendingProfile } from './pendingProfile';
 import { USE_MOCK } from './config';
 import { mockAuth } from './mock/auth';
 import { AuthError, type AuthService, type AuthSession } from './authTypes';
@@ -64,7 +65,18 @@ const supabaseAuth: AuthService = {
     if (!session) throw new AuthError('unknown', 'Sign-in did not return a session.');
     return session;
   },
+  async signInWithPassword(email, password) {
+    const { data, error } = await getSupabase().auth.signInWithPassword({ email, password });
+    if (error?.code === 'invalid_credentials') {
+      throw new AuthError('invalid_code', 'That password is wrong.');
+    }
+    if (error) throw toAuthError(error);
+    const session = toSession(data.session);
+    if (!session) throw new AuthError('unknown', 'Sign-in did not return a session.');
+    return session;
+  },
   async signOut() {
+    await clearPendingProfile();
     const { error } = await getSupabase().auth.signOut();
     if (error) throw new AuthError('unknown', 'Could not sign out. Please try again.');
   },
@@ -74,4 +86,12 @@ export const auth: AuthService = USE_MOCK ? mockAuth : supabaseAuth;
 
 export async function getAccessToken(): Promise<string | null> {
   return (await auth.getSession())?.accessToken ?? null;
+}
+
+/** Explicit, single retry for protected photo requests; existing auth flows are unchanged. */
+export async function refreshPhotoSession(): Promise<AuthSession | null> {
+  if (USE_MOCK) return mockAuth.getSession();
+  const { data, error } = await getSupabase().auth.refreshSession();
+  if (error) return null;
+  return toSession(data.session);
 }

@@ -1,3 +1,4 @@
+import type { PersonIdentity } from './people.ts';
 // Friends (Mike, M3). One row per pair in public.friendships (0008_friendships.sql):
 //   GET  /friends                 -> { friends, incoming }
 //   POST /friends/requests        { email } -> { status: 'sent' }
@@ -7,11 +8,13 @@
 // shapes the list. Nobody's email is ever returned.
 
 import { ApiError } from './errors.ts';
+import type { AvatarRef } from './avatars.ts';
 
 export type FriendStatus = 'pending' | 'accepted';
 
 /** One friend_list row: the other person, and which way the request went. */
 export interface FriendRow {
+  avatarRef?: AvatarRef | null;
   userId: string;
   displayName: string | null;
   status: FriendStatus;
@@ -21,6 +24,7 @@ export interface FriendRow {
 }
 
 export interface FriendPerson {
+  avatarRef?: AvatarRef | null;
   userId: string;
   displayName: string | null;
   /** When they became friends (friends) or when the request was sent (requests). */
@@ -41,6 +45,13 @@ export interface FriendRequestResult {
 
 /** Database adapter. Rejects unknown emails (404), yourself (400), and missing requests (404). */
 export interface FriendsStore {
+  search?(viewer: string, query: string): Promise<PersonIdentity[]>;
+  person?(viewer: string, target: string): Promise<PersonIdentity>;
+  requestUsername?(
+    viewer: string,
+    username: string,
+    targetId: string,
+  ): Promise<{ status: 'sent'; relationship?: 'requested' | 'friends' }>;
   list(userId: string): Promise<FriendRow[]>;
   request(userId: string, email: string): Promise<FriendRequestResult>;
   accept(userId: string, friendId: string): Promise<void>;
@@ -79,6 +90,7 @@ export function groupFriends(rows: readonly FriendRow[]): FriendsList {
   const person = (r: FriendRow): FriendPerson => ({
     userId: r.userId,
     displayName: r.displayName,
+    ...(r.avatarRef === undefined ? {} : { avatarRef: r.avatarRef }),
     since: r.status === 'accepted' ? (r.acceptedAt ?? r.createdAt) : r.createdAt,
   });
   const newest = (a: FriendPerson, b: FriendPerson) => b.since.localeCompare(a.since);

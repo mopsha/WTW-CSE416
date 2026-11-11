@@ -27,7 +27,21 @@ export function candidateFromSnapshot(placeId: string, snapshot: unknown): Candi
           groupId: str(s.groupId)!,
         }
       : {}),
-    name: str(s.name) ?? 'Unnamed place',
+    ...(s.provider === 'google'
+      ? {
+          provider: 'google' as const,
+          attributions: Array.isArray(s.attributions)
+            ? s.attributions.flatMap((a: unknown) => {
+                const credit = a as { provider?: unknown; providerUri?: unknown } | null;
+                const name = str(credit?.provider);
+                return name ? [{ provider: name, uri: str(credit?.providerUri) ?? undefined }] : [];
+              })
+            : [],
+          googleMapsUri: str(s.googleMapsUri) ?? undefined,
+          photoGoogleMapsUri: str(s.photoGoogleMapsUri) ?? undefined,
+        }
+      : {}),
+    name: str(s.name) ?? (s.provider === 'google' ? 'Place details unavailable' : 'Unnamed place'),
     photoUrl: str(s.photoUrl),
     priceLevel: num(s.priceLevel),
     rating: num(s.rating),
@@ -49,6 +63,12 @@ export function candidateFromApi(snapshot: unknown): Candidate {
     typeof snapshot === 'object' && snapshot !== null ? (snapshot as Record<string, unknown>) : {};
   const id = typeof s.placeId === 'string' ? s.placeId : typeof s.id === 'string' ? s.id : '';
   return candidateFromSnapshot(id, s);
+}
+
+/** A link from a provider that's safe to open: https only, as Google sometimes omits the scheme. */
+export function safeLink(uri: string | undefined): string | null {
+  const url = uri?.startsWith('//') ? `https:${uri}` : uri;
+  return url?.startsWith('https://') ? url : null;
 }
 
 /** "Open now · closes 10 PM" / "Closed now", or null when we don't know the hours. */

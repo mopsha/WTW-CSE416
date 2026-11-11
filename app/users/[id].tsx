@@ -1,5 +1,7 @@
+import { useAvatarPhoto } from '@/hooks/useAvatarSource';
 import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import { PastMoves } from '@/components/PastMoves';
+import { MemberMenu } from '@/components/MemberMenu';
 import { MessageFriendButton } from '@/components/MessageFriendButton';
 import type { UserProfile } from '@shared/api/userProfiles.ts';
 import { useLocalSearchParams } from 'expo-router';
@@ -12,6 +14,7 @@ import { messageOf } from '@/lib/errors';
 export default function UserProfileScreen() {
   const { id = '' } = useLocalSearchParams<{ id: string }>();
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const photo = useAvatarPhoto(profile?.avatarRef, profile?.id);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const latest = useRef(0);
@@ -38,7 +41,21 @@ export default function UserProfileScreen() {
   }, []);
   usePrivateRefresh(load, clear);
   return (
-    <Screen title="Profile" back onRefresh={() => void load()}>
+    <Screen
+      title="Profile"
+      back
+      onRefresh={() => void load()}
+      right={
+        profile && !profile.isOwner ? (
+          <MemberMenu
+            userId={profile.id}
+            photo={photo.ref ?? undefined}
+            name={profile.displayName ?? 'WTW friend'}
+            onBlocked={() => void load()}
+          />
+        ) : undefined
+      }
+    >
       {loading ? (
         <ActivityIndicator color={colors.primary} accessibilityLabel="Loading profile" />
       ) : null}
@@ -46,7 +63,13 @@ export default function UserProfileScreen() {
       {profile ? (
         <View style={{ gap: space.lg }}>
           <View style={{ alignItems: 'center', gap: space.sm }}>
-            <Avatar name={profile.displayName ?? 'WTW friend'} uri={profile.avatarUrl} size={84} />
+            <Avatar
+              name={profile.displayName ?? 'WTW friend'}
+              uri={profile.avatarUrl}
+              avatarRef={profile.avatarRef}
+              userId={profile.id}
+              size={84}
+            />
             <Text style={{ ...type.heading, color: colors.text }}>
               {profile.displayName ?? 'WTW friend'}
             </Text>

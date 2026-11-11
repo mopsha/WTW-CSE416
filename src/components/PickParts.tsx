@@ -121,7 +121,7 @@ export function ParticipantRow({
       accessible
       accessibilityLabel={[name, person.isHost ? 'host' : null, status].filter(Boolean).join(', ')}
     >
-      <Avatar name={person.displayName} size={40} done={person.done} />
+      <Avatar name={person.displayName} userId={person.userId} size={40} done={person.done} />
       <Text style={styles.personName} numberOfLines={1}>
         {name}
       </Text>
@@ -160,7 +160,12 @@ export function GroupAvatars({
     >
       {people.slice(0, 6).map((p, i) => (
         <View key={p.userId} style={[styles.ring, i > 0 && { marginLeft: -size * 0.3 }]}>
-          <Avatar name={p.displayName} size={size} done={mark === 'done' ? p.done : p.voted} />
+          <Avatar
+            name={p.displayName}
+            userId={p.userId}
+            size={size}
+            done={mark === 'done' ? p.done : p.voted}
+          />
         </View>
       ))}
       {people.length > 6 ? (

@@ -168,3 +168,30 @@ test('Google transport aborts at three seconds even without a pool wrapper', asy
     jest.useRealTimers();
   }
 });
+
+test('a photo keeps its own Google Maps link when normalized', () => {
+  const place = normalizePlace(
+    {
+      id: 'place',
+      displayName: { text: 'Cafe' },
+      location: { latitude: 40.9, longitude: -73.1 },
+      types: ['restaurant'],
+      googleMapsUri: 'https://maps.example/place',
+      photos: [
+        {
+          name: 'places/place/photos/1',
+          googleMapsUri: 'https://maps.example/photo',
+          authorAttributions: [{ displayName: 'Ana', uri: 'https://maps.example/author' }],
+        },
+      ],
+    },
+    'food',
+    '2026-11-04T00:00:00Z',
+  );
+  expect(place?.googleMapsUri).toBe('https://maps.example/place');
+  expect(place?.photos?.[0]).toEqual({
+    name: 'places/place/photos/1',
+    googleMapsUri: 'https://maps.example/photo',
+    authorAttributions: [{ displayName: 'Ana', uri: 'https://maps.example/author' }],
+  });
+});

@@ -25,7 +25,7 @@ jobs:
         with:
           deno-version: v2.x
       - run: deno check --config supabase/functions/api/deno.json supabase/functions/api/index.ts
-      - run: deno test --config supabase/functions/api/deno.json supabase/functions/api/app_test.ts
+      - run: deno test --config supabase/functions/api/deno.json supabase/functions/api/app_test.ts supabase/functions/api/people_test.ts supabase/functions/api/birthdays_test.ts supabase/functions/api/recentWinners_test.ts
   integration:
     name: Local database and API
     runs-on: ubuntu-latest
@@ -47,9 +47,48 @@ jobs:
         shell: bash
         run: |
           umask 077
-          if ! timeout 600 supabase start > "$RUNNER_TEMP/supabase-start.log" 2>&1; then
-            echo '::error::Local Supabase startup failed or exceeded 10 minutes'
-            exit 1
+          result=0
+          timeout 600 supabase start > "$RUNNER_TEMP/supabase-start.log" 2>&1 || result=$?
+          if [ "$result" -ne 0 ]; then
+            if [ "$result" -eq 124 ]; then
+              echo '::error::Local Supabase startup exceeded 600 seconds (timeout exit 124)'
+            else
+              echo "::error::Local Supabase startup failed (exit $result)"
+            fi
+            # Emit only fixed diagnostic labels and repository-known migration names.
+            # Raw CLI output can contain credentials; never print or upload it.
+            python3 - <<'PYDIAG'
+          import os
+          import re
+          from pathlib import Path
+          log = (Path(os.environ['RUNNER_TEMP']) / 'supabase-start.log').read_text(errors='replace')
+          patterns = {
+              'Migration/application SQL failure': r'SQLSTATE|failed to apply migration|ERROR:',
+              'Duplicate database object': r'already exists|duplicate (?:key|column|object)',
+              'Missing database object': r'(?:relation|column|function|type).*does not exist',
+              'SQL permission denied': r'permission denied',
+              'SQL syntax error': r'syntax error',
+              'Invalid database value or constraint violation': r'invalid input value|violates .*constraint',
+              'Storage metadata deletion protection': r'Direct deletion from storage tables|storage\.protect_delete',
+              'Docker image pull failure': r'failed to pull|pull access denied|manifest unknown|toomanyrequests',
+              'Network/DNS/TLS failure': r'connection refused|i/o timeout|context deadline exceeded|no such host|TLS handshake|x509:',
+              'Container health/start failure': r'unhealthy|failed to start|health check failed',
+              'Port conflict': r'address already in use|port is already allocated',
+              'Disk exhaustion': r'no space left on device',
+          }
+          found = False
+          for label, pattern in patterns.items():
+              if re.search(pattern, log, re.IGNORECASE):
+                  print('Startup diagnostic: ' + label)
+                  found = True
+          for migration in sorted(Path('supabase/migrations').glob('*.sql')):
+              if migration.name in log and re.fullmatch(r'[0-9]+_[a-zA-Z0-9_]+\.sql', migration.name):
+                  print('Migration mentioned in startup log: ' + migration.name)
+                  found = True
+          if not found:
+              print('No allowlisted startup diagnostic matched; raw log withheld to protect credentials.')
+          PYDIAG
+            exit "$result"
           fi
       - name: Reset local database and apply migrations and seed
         timeout-minutes: 4
@@ -66,6 +105,12 @@ jobs:
       - name: Check concurrent polling and message quotas
         timeout-minutes: 2
         run: timeout 60 python3 tests/db/pr42_concurrency.py --dsn 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+      - name: Check concurrent photo replacements and account deletion
+        timeout-minutes: 2
+        run: timeout 60 python3 tests/db/avatar_concurrency.py --dsn 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+      - name: Check concurrent username discovery quota
+        timeout-minutes: 2
+        run: timeout 60 python3 tests/db/username_concurrency.py --dsn 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
       - name: Serve API and wait for readiness
         timeout-minutes: 3
         shell: bash
@@ -80,6 +125,10 @@ jobs:
       - name: Report service status on failure
         if: failure()
         run: docker ps -a --format 'table {{.Names}}\t{{.Status}}'
+      - name: Report redacted database failure diagnostics
+        if: failure()
+        timeout-minutes: 1
+        run: node tests/api/service-failure-diagnostics.mjs
       - name: Stop local services and remove private logs
         if: always()
         timeout-minutes: 3

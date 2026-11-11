@@ -10,7 +10,7 @@ end $$;
 select 'ok 1 - newly created profiles receive optional setup offer';
 set local role service_role;
 do $$ declare p jsonb; begin
- p:=public.user_identity_update('d0000001-2222-4222-8222-222222222222','{"displayName":" Josh ","username":"JOSH_AUTH"}');
+ p:=public.user_identity_update('d0000001-2222-4222-8222-222222222222','{"displayName":" Josh ","username":"JOSH_AUTH","birthday":{"month":2,"day":29}}');
  if p->>'displayName'<>'Josh' or p->>'username'<>'josh_auth' then raise exception 'Identity not normalized'; end if;
 end $$;
 select 'ok 2 - existing identity columns updated together and normalized';

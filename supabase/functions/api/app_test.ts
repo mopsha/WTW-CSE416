@@ -1,3 +1,4 @@
+import './avatars_test.ts';
 import './pastMoves_test.ts';
 import './directChat_test.ts';
 import './groupChat_test.ts';
@@ -657,11 +658,11 @@ Deno.test('friends: 401 without a token, before touching the database', async ()
   equal((await app.request(`/friends/${BO}/remove`, { method: 'POST' })).status, 401);
 });
 
-Deno.test('friends: 400 for bad input, before touching the database', async () => {
+Deno.test('friends: retired email input is uniform, before touching the database', async () => {
   const app = friendsApp(untouched);
   for (const body of ['{', '[]', '{}', '{"email":"not-an-email"}', '{"email":42}']) {
     const res = await app.request('/friends/requests', { method: 'POST', headers: auth, body });
-    equal(res.status, 400);
+    equal(res.status, 410);
   }
   equal(
     (await app.request('/friends/not-a-uuid/accept', { method: 'POST', headers: auth })).status,
@@ -729,8 +730,8 @@ Deno.test(
       headers: auth,
       body: JSON.stringify({ email: '  Bo@Example.com ' }),
     });
-    equal(sent.status, 200);
-    equal(await sent.json(), { status: 'sent' });
+    equal(sent.status, 410);
+    equal((await sent.json()).error.code, 'EMAIL_REQUESTS_RETIRED');
     const accepted = await app.request(`/friends/${BO.toUpperCase()}/accept`, {
       method: 'POST',
       headers: auth,
@@ -738,7 +739,7 @@ Deno.test(
     equal(await accepted.json(), { status: 'accepted' });
     const removed = await app.request(`/friends/${BO}/remove`, { method: 'POST', headers: auth });
     equal(await removed.json(), { status: 'ok' });
-    equal(calls, [`request ${ANN} bo@example.com`, `accept ${ANN} ${BO}`, `remove ${ANN} ${BO}`]);
+    equal(calls, [`accept ${ANN} ${BO}`, `remove ${ANN} ${BO}`]);
   },
 );
 
@@ -755,8 +756,8 @@ Deno.test('friends: store errors keep their status; 503 if not configured', asyn
   const body = JSON.stringify({ email: 'nobody@example.com' });
   // An unknown email gets the same answer as a real one: no account leak.
   const res = await app.request('/friends/requests', { method: 'POST', headers: auth, body });
-  equal(res.status, 200);
-  equal(await res.json(), { status: 'sent' });
+  equal(res.status, 410);
+  equal((await res.json()).error.code, 'EMAIL_REQUESTS_RETIRED');
   equal(
     (await app.request(`/friends/${BO}/accept`, { method: 'POST', headers: auth })).status,
     404,
@@ -1954,7 +1955,7 @@ Deno.test('friends: requests stop at the daily limit, before touching the databa
   const app = friendsApp({ ...untouched, takeFriendRequestLimit: async () => false });
   const body = JSON.stringify({ email: 'bo@example.com' });
   const res = await app.request('/friends/requests', { method: 'POST', headers: auth, body });
-  equal(res.status, 429);
+  equal(res.status, 410);
 });
 
 Deno.test('text other people see is filtered: POST /me', async () => {
@@ -2437,7 +2438,7 @@ Deno.test(
       ).status,
       400,
     );
-    equal(calls.length, before);
+    equal(calls.length, before + 1); // Invalid/legacy names require a verified owner read.
     const anon = createApp({
       store,
       lifecycleStore,
@@ -2584,5 +2585,93 @@ Deno.test(
       401,
     );
     equal((await unauthenticated.request('/me/optional-setup', { method: 'POST' })).status, 401);
+  },
+);
+
+Deno.test(
+  'member photo report preserves exact revision and verified reporter, distinct from generic user reports',
+  async () => {
+    const captured: { viewer: string; input: Parameters<SafetyStore['report']>[1] }[] = [];
+    const app = safetyApp([], {
+      report: async (viewer, input) => {
+        captured.push({ viewer, input });
+      },
+    });
+    equal(
+      (
+        await app.request(
+          '/reports',
+          authed('POST', {
+            kind: 'profile_photo',
+            targetId: OTHER,
+            photoRevision: 7,
+            reason: '  Spam  ',
+            userId: OTHER,
+          }),
+        )
+      ).status,
+      201,
+    );
+    equal(captured, [
+      {
+        viewer: ME,
+        input: { kind: 'profile_photo', targetId: OTHER, reason: 'Spam', photoRevision: 7 },
+      },
+    ]);
+    equal(
+      (
+        await app.request(
+          '/reports',
+          authed('POST', {
+            kind: 'user',
+            targetId: OTHER,
+            reason: 'Offensive name',
+          }),
+        )
+      ).status,
+      201,
+    );
+    equal(captured[1], {
+      viewer: ME,
+      input: { kind: 'user', targetId: OTHER, reason: 'Offensive name' },
+    });
+    for (const revision of [undefined, -1, 1.5, '7']) {
+      equal(
+        (
+          await app.request(
+            '/reports',
+            authed('POST', {
+              kind: 'profile_photo',
+              targetId: OTHER,
+              photoRevision: revision,
+              reason: 'Spam',
+            }),
+          )
+        ).status,
+        400,
+      );
+    }
+    equal(captured.length, 2);
+    for (const status of [404, 409, 429, 503] as const) {
+      const denied = safetyApp([], {
+        report: async () => {
+          throw new ApiError(status, 'PHOTO_UNAVAILABLE', 'Photo unavailable');
+        },
+      });
+      equal(
+        (
+          await denied.request(
+            '/reports',
+            authed('POST', {
+              kind: 'profile_photo',
+              targetId: OTHER,
+              photoRevision: 7,
+              reason: 'Spam',
+            }),
+          )
+        ).status,
+        status,
+      );
+    }
   },
 );

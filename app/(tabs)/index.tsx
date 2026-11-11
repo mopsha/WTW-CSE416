@@ -1,69 +1,137 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivePickPanel, GroupIdentity, PicksHero } from '@/components/picks/PicksHome';
 import { Button, Screen } from '@/components';
+import { GoogleCredit } from '@/components/GoogleCredit';
+import { api } from '@/lib/api';
 import { HangCard } from '@/components/HangCard';
 import { JoinCodeCard } from '@/components/JoinCodeCard';
 import { NotificationBell } from '@/components/NotificationBell';
-import { HeaderAction, ListRow, QuietEmpty, SectionHeading, Sheet } from '@/components/TabUi';
+import { HeaderAction, ListRow, QuietEmpty, Sheet } from '@/components/TabUi';
 import { ErrorBanner } from '@/components/ErrorBanner';
-import { colors, fonts, MIN_TARGET, radius, space, surfaces, type } from '@/components/theme';
+import { colors, fonts, MIN_TARGET, picksTheme, space, type } from '@/components/theme';
 import { useSession } from '@/hooks/useAuth';
 import { USE_MOCK } from '@/lib/config';
 import { messageOf } from '@/lib/errors';
-import { memberCountLabel, newGroupPickRoute, type GroupSummary } from '@/lib/groups';
+import { newGroupPickRoute, type GroupSummary } from '@/lib/groups';
 import { haptic } from '@/lib/haptics';
 import { resetMockGroups } from '@/lib/mock/groups';
 import { MOCK_INVITE_CODE, resetMockData } from '@/lib/mock/store';
-import { pickTitle, STATE_LABEL } from '@/lib/pickUi';
+import { historyTitle, historySubtitle, recentHistory } from '@/lib/recentHistory';
 import { queries } from '@/lib/queries';
-import type { PickState, PickSummary } from '@/lib/types';
+import type { Candidate, PickState, PickSummary } from '@/lib/types';
 const ACTIVE: readonly PickState[] = ['draft', 'swiping', 'ranking', 'final_vote'];
-function PickRow({ pick }: { pick: PickSummary }) {
+function PickRow({ pick, place }: { pick: PickSummary; place?: Candidate }) {
   return (
-    <ListRow
-      title={pickTitle(pick.category)}
-      subtitle={STATE_LABEL[pick.state]}
-      leading={
-        <Ionicons
-          name={
-            pick.category === 'food'
-              ? 'restaurant-outline'
-              : pick.category === 'custom'
-                ? 'sparkles-outline'
-                : 'walk-outline'
-          }
-          size={25}
-          color={colors.primary}
-        />
-      }
-      onPress={() => {
-        haptic.tap();
-        router.push({ pathname: '/pick/[id]', params: { id: pick.id } });
-      }}
-    />
+    <View>
+      <ListRow
+        title={place?.name ?? historyTitle(pick)}
+        titleNumberOfLines={2}
+        subtitle={historySubtitle(pick)}
+        leading={
+          <Ionicons
+            name={
+              pick.category === 'food'
+                ? 'restaurant-outline'
+                : pick.category === 'custom'
+                  ? 'sparkles-outline'
+                  : 'walk-outline'
+            }
+            size={20}
+            color={colors.muted}
+          />
+        }
+        onPress={() => {
+          haptic.tap();
+          router.push({ pathname: '/pick/[id]', params: { id: pick.id } });
+        }}
+      />
+      {place ? <GoogleCredit place={place} /> : null}
+    </View>
   );
 }
 export default function PicksScreen() {
   const session = useSession();
+  return <PicksHome key={session.user.id} userId={session.user.id} />;
+}
+function PicksHome({ userId }: { userId: string }) {
+  const latest = useRef(0);
+  const inFlight = useRef<{ request: number; promise: Promise<void> } | null>(null);
+  const [winnerPlaces, setWinnerPlaces] = useState<ReadonlyMap<string, Candidate>>(new Map());
+  useEffect(
+    () => () => {
+      latest.current++;
+    },
+    [],
+  );
   const [picks, setPicks] = useState<PickSummary[] | null>(null);
-  const [groups, setGroups] = useState<GroupSummary[]>([]);
+  const [groups, setGroups] = useState<GroupSummary[] | null>(null);
+  const [groupError, setGroupError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [joining, setJoining] = useState(false);
-  const load = useCallback(async () => {
+  const load = useCallback(() => {
+    if (inFlight.current?.request === latest.current) return inFlight.current.promise;
+    const request = ++latest.current;
     setError(null);
-    try {
-      setPicks(await queries.listMyPicks(session.user.id));
-    } catch (e) {
-      setError(messageOf(e));
-    }
-    setGroups(await queries.listMyGroups(session.user.id).catch(() => []));
-  }, [session.user.id]);
+    setGroupError(null);
+    const current = () => request === latest.current;
+    const loadPicks = async () => {
+      try {
+        const next = await queries.listPicksHome(userId);
+        if (!current()) return;
+        setPicks(next);
+        // Replace live display content when the refreshed summaries arrive; never persist it.
+        setWinnerPlaces(new Map());
+        const shown = recentHistory(next).filter(
+          (p) => p.state === 'completed' && p.winnerProvider === 'google' && p.winnerPlaceId,
+        );
+        if (!shown.length) return;
+        try {
+          const resolved = await api.resolveRecentWinners(shown.map((p) => p.id));
+          if (!current()) return;
+          setWinnerPlaces(
+            new Map(
+              resolved.flatMap(({ pickId, place }) =>
+                shown.some((p) => p.id === pickId && p.winnerPlaceId === place.placeId)
+                  ? [[pickId, place] as const]
+                  : [],
+              ),
+            ),
+          );
+        } catch {
+          /* Optional names: retain category fallbacks on failure/quota exhaustion. */
+        }
+      } catch (e) {
+        if (current()) setError(messageOf(e));
+      }
+    };
+    const loadGroups = async () => {
+      try {
+        const next = await queries.listMyGroups(userId);
+        if (current()) setGroups(next);
+      } catch (e) {
+        if (current()) setGroupError(messageOf(e));
+      }
+    };
+    const promise = Promise.all([loadPicks(), loadGroups()]).then(() => {
+      if (current()) setRefreshing(false);
+    });
+    inFlight.current = { request, promise };
+    void promise.finally(() => {
+      if (inFlight.current?.request === request) inFlight.current = null;
+    });
+    return promise;
+  }, [userId]);
   useFocusEffect(
     useCallback(() => {
       void load();
+      return () => {
+        latest.current++;
+        setRefreshing(false);
+      };
     }, [load]),
   );
   const resetDemo = () => {
@@ -73,14 +141,15 @@ export default function PicksScreen() {
     void load();
   };
   const active = (picks ?? []).filter((p) => ACTIVE.includes(p.state));
-  const history = (picks ?? []).filter((p) => !ACTIVE.includes(p.state));
+  const history = recentHistory(picks ?? []);
   return (
     <Screen
       edges={['top', 'left', 'right']}
+      contentStyle={s.content}
       refreshing={refreshing}
       onRefresh={() => {
         setRefreshing(true);
-        void load().finally(() => setRefreshing(false));
+        void load();
       }}
     >
       <View style={s.header}>
@@ -101,80 +170,42 @@ export default function PicksScreen() {
           />
         </View>
       </View>
-      <View style={s.intro}>
-        <Text style={s.headline} accessibilityRole="header">
-          What’s the <Text style={s.accent}>word?</Text>
-        </Text>
-        <Text style={s.subtitle}>Decide where to eat or what to do{'\n'}with your friends.</Text>
-      </View>
-      <Button
-        label="Start a Pick"
-        icon="sparkles-outline"
-        onPress={() => router.push('/pick/new')}
-        style={s.start}
-      />
-      <Pressable
-        onPress={() => setJoining(true)}
-        accessibilityRole="button"
-        accessibilityLabel="Join with code"
-        style={({ pressed }) => [s.join, pressed && { opacity: 0.7 }]}
-      >
-        <Ionicons name="qr-code-outline" size={22} color={colors.text} />
-        <Text style={s.joinText}>Join with code</Text>
-        <Ionicons name="chevron-forward" size={19} color={colors.muted} />
-      </Pressable>
-      <View style={s.section}>
-        <SectionHeading
-          title="Your groups"
-          right={
-            <Button
-              label={groups.length ? 'All groups' : 'New group'}
-              variant="link"
-              onPress={() => router.push('/groups')}
-            />
-          }
+      <PicksHero />
+      <View style={s.primaryActions}>
+        <Button
+          label="Start a Pick"
+          variant="paper"
+          icon="arrow-forward"
+          onPress={() => router.push('/pick/new')}
         />
-        {groups.length ? (
-          <View style={s.groupList}>
-            {groups.slice(0, 3).map((g) => (
-              <View key={g.id} style={s.groupRow}>
-                <Pressable
-                  onPress={() => router.push({ pathname: '/groups/[id]', params: { id: g.id } })}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${g.name}, ${memberCountLabel(g.memberCount)}`}
-                  style={s.groupMain}
-                >
-                  <View style={s.groupIcon}>
-                    <Ionicons name="people-outline" size={23} color={colors.muted} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.groupName}>{g.name}</Text>
-                    <Text style={s.caption}>{memberCountLabel(g.memberCount)}</Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={18} color={colors.muted} />
-                </Pressable>
-                <Button
-                  label="Start"
-                  variant="link"
-                  accessibilityLabel={`Start a Pick with ${g.name}`}
-                  onPress={() => router.push(newGroupPickRoute(g))}
-                />
-              </View>
-            ))}
-          </View>
-        ) : (
-          <Text style={s.caption}>Make a group for your regular crew.</Text>
-        )}
+        <Pressable
+          onPress={() => setJoining(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Join with code"
+          style={({ pressed }) => [s.join, pressed && { opacity: 0.7 }]}
+        >
+          <Ionicons name="qr-code-outline" size={18} color={colors.muted} />
+          <Text style={s.joinText}>Join with code</Text>
+          <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+        </Pressable>
       </View>
       {error ? <ErrorBanner message={error} onRetry={() => void load()} /> : null}
       {picks === null && !error ? (
         <ActivityIndicator color={colors.primary} accessibilityLabel="Loading your Picks" />
       ) : null}
       {active.length ? (
-        <View>
-          <SectionHeading title="Active Picks" />
-          {active.map((p) => (
-            <PickRow key={p.id} pick={p} />
+        <View style={s.section}>
+          <Text style={s.sectionTitle} accessibilityRole="header">
+            Active Picks
+          </Text>
+          {active.map((pick) => (
+            <ActivePickPanel
+              key={pick.id}
+              pick={pick}
+              onPress={() => {
+                router.push({ pathname: '/pick/[id]', params: { id: pick.id } });
+              }}
+            />
           ))}
         </View>
       ) : picks ? (
@@ -184,18 +215,51 @@ export default function PicksScreen() {
           body="Start a Pick with a group to decide where to eat or what to do."
         />
       ) : null}
-      <HangCard />
-      {history.length ? (
-        <View>
-          <SectionHeading title="History" />
-          {history.map((p) => (
-            <PickRow key={p.id} pick={p} />
-          ))}
+      <View style={s.section}>
+        <View style={s.sectionHead}>
+          <Text style={s.sectionTitle} accessibilityRole="header">
+            Your groups
+          </Text>
           <Button
-            label="See winners, who went, and Pick again"
+            label={groups?.length ? 'All groups' : 'New group'}
             variant="link"
-            onPress={() => router.push('/history')}
+            onPress={() => router.push('/groups')}
           />
+        </View>
+        {groupError ? <ErrorBanner message={groupError} onRetry={() => void load()} /> : null}
+        {groups === null && !groupError ? (
+          <ActivityIndicator color={colors.primary} accessibilityLabel="Loading your groups" />
+        ) : null}
+        {groups?.length ? (
+          <View style={[s.groupShelf, groups.length === 1 && s.singleShelf]}>
+            {groups.slice(0, 3).map((group) => (
+              <GroupIdentity
+                key={group.id}
+                group={group}
+                single={groups.length === 1}
+                onOpen={() => router.push({ pathname: '/groups/[id]', params: { id: group.id } })}
+                onStart={() => router.push(newGroupPickRoute(group))}
+              />
+            ))}
+          </View>
+        ) : groups !== null && !groupError ? (
+          <Text style={s.caption}>Make a group for your regular crew.</Text>
+        ) : null}
+      </View>
+      <HangCard />
+      {picks !== null ? (
+        <View>
+          <View style={s.sectionHead}>
+            <Text style={s.historyTitle} accessibilityRole="header">
+              Recent History
+            </Text>
+            <Button label="See all" variant="link" onPress={() => router.push('/history')} />
+          </View>
+          {history.length ? (
+            history.map((p) => <PickRow key={p.id} pick={p} place={winnerPlaces.get(p.id)} />)
+          ) : (
+            <Text style={s.caption}>Your finished Picks will appear here.</Text>
+          )}
         </View>
       ) : null}
       {USE_MOCK ? (
@@ -211,50 +275,33 @@ export default function PicksScreen() {
   );
 }
 const s = StyleSheet.create({
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: space.md,
-  },
+  content: { paddingTop: space.sm, gap: space.lg },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   actions: { flexDirection: 'row', gap: space.xs },
-  wordmarkTarget: { minHeight: MIN_TARGET, justifyContent: 'center' },
-  wordmark: { fontFamily: fonts.bold, fontSize: 29, letterSpacing: -1.5, color: colors.text },
-  intro: { gap: space.sm, marginBottom: space.xs },
-  headline: { ...type.title, fontSize: 32, letterSpacing: -0.8, color: colors.text },
-  accent: { color: colors.primary },
-  subtitle: { ...type.body, fontSize: 17, lineHeight: 25, color: colors.muted },
-  start: { minHeight: 56 },
+  wordmarkTarget: { minHeight: MIN_TARGET, minWidth: MIN_TARGET, justifyContent: 'center' },
+  wordmark: { fontFamily: fonts.bold, fontSize: 25, letterSpacing: -1.3, color: colors.text },
+  primaryActions: { gap: space.xs },
   join: {
-    ...surfaces.control,
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    minHeight: 52,
-    paddingHorizontal: space.lg,
-    borderRadius: radius.pill,
-  },
-  joinText: { ...type.body, color: colors.text, flex: 1 },
-  section: { gap: space.sm },
-  groupList: { ...surfaces.control, borderRadius: radius.md, overflow: 'hidden' },
-  groupRow: { flexDirection: 'row', alignItems: 'center', ...surfaces.line },
-  groupMain: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    padding: space.md,
-    minHeight: 72,
-  },
-  groupIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: radius.sm,
-    backgroundColor: colors.cardHi,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: space.sm,
+    minHeight: MIN_TARGET,
+    paddingVertical: space.sm,
   },
-  groupName: { ...type.body, fontFamily: fonts.semibold, color: colors.text },
+  joinText: { ...picksTheme.secondary, color: colors.muted, flexShrink: 1 },
+  section: { gap: space.md },
+  sectionHead: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: space.sm,
+  },
+  historyTitle: { ...picksTheme.section, color: colors.muted },
+  sectionTitle: { ...picksTheme.section, color: colors.text },
+  groupShelf: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: space.md },
+  singleShelf: { alignItems: 'stretch' },
   caption: { ...type.caption, color: colors.muted },
   demo: { paddingTop: space.lg, gap: space.xs },
 });

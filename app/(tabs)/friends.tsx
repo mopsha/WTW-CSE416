@@ -1,49 +1,35 @@
+import { UsernameFriendSearch } from '@/components/friends/UsernameFriendSearch';
+import {
+  RequestsEntry,
+  SocialRow,
+  SocialIdentity,
+  SocialAction,
+  SocialBusy,
+  SocialSectionTitle,
+} from '@/components/friends/SocialRow';
 import { GroupInvitations } from '@/components/GroupInvitations';
-// Friends, in the live-demo style: add someone by the email they sign in with, answer requests,
+// Friends: discover public usernames, answer requests,
 // and see who you're friends with. Every write goes through the API (src/lib/api.ts).
 // Joining a Pick still happens by code; inviting friends to a Pick comes later.
-import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Keyboard, StyleSheet, Text, View } from 'react-native';
 
 import type { FriendPerson, FriendsList } from '@shared/api/friends.ts';
 
-import {
-  Avatar,
-  Button,
-  Card,
-  colors,
-  ErrorState,
-  fonts,
-  MIN_TARGET,
-  radius,
-  Screen,
-  space,
-  type,
-} from '@/components';
-import { GradientButton } from '@/components/GradientButton';
+import { Button, colors, ErrorState, fonts, MIN_TARGET, radius, Screen, space } from '@/components';
 import { useAction } from '@/hooks/useAction';
 import { api } from '@/lib/api';
-import { USE_MOCK } from '@/lib/config';
 import { confirmAction } from '@/lib/confirm';
 import { messageOf } from '@/lib/errors';
 import { haptic } from '@/lib/haptics';
-import {
-  HeaderAction,
-  ListRow,
-  QuietEmpty,
-  SectionHeading,
-  Segments,
-  Sheet,
-  TabHeading,
-} from '@/components/TabUi';
+import { QuietEmpty, Segments, Sheet } from '@/components/TabUi';
 import { useSession } from '@/hooks/useAuth';
 import { queries } from '@/lib/queries';
 import { memberCountLabel, newGroupPickRoute, type GroupSummary } from '@/lib/groups';
 
 const nameOf = (p: FriendPerson) => p.displayName ?? 'WTW friend';
 
-/** "just now", "45m ago", "3h ago", "Oct 11". */
 /** "today" or "Oct 11", for "Friends since …". */
 function day(iso: string): string {
   const d = new Date(iso);
@@ -51,84 +37,26 @@ function day(iso: string): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function AddFriendCard({ onAdded }: { onAdded: () => void }) {
-  const [email, setEmail] = useState('');
-  const [done, setDone] = useState<string | null>(null);
-  const { busy, error, run, clearError } = useAction();
-
-  const submit = async () => {
-    if (busy || !email.trim()) return;
-    setDone(null);
-    let message = '';
-    const ok = await run('add', async () => {
-      await api.addFriend(email.trim());
-      message = 'If they’re on WTW, they’ll see your request.';
-    });
-    if (!ok) return;
-    haptic.success();
-    setEmail('');
-    setDone(message);
-    onAdded();
-  };
-
-  return (
-    <Card>
-      <Text style={styles.cardTitle} accessibilityRole="header">
-        Add a friend
-      </Text>
-      <Text style={styles.caption}>Use the email they sign in to WTW with.</Text>
-      <TextInput
-        style={styles.input}
-        value={email}
-        onChangeText={(t) => {
-          setEmail(t);
-          if (error) clearError();
-          if (done) setDone(null);
-        }}
-        placeholder="friend@stonybrook.edu"
-        placeholderTextColor={colors.muted}
-        keyboardType="email-address"
-        autoCapitalize="none"
-        autoCorrect={false}
-        autoComplete="email"
-        spellCheck={false}
-        maxLength={254}
-        returnKeyType="send"
-        onSubmitEditing={() => void submit()}
-        editable={!busy}
-        accessibilityLabel="Friend's email"
-        accessibilityHint="The email address your friend signs in with"
-      />
-      <GradientButton
-        label="Send request"
-        onPress={() => void submit()}
-        loading={!!busy}
-        disabled={!email.trim()}
-        style={styles.send}
-      />
-      {error ? (
-        <Text style={styles.error} accessibilityRole="alert" accessibilityLiveRegion="polite">
-          {error}
-        </Text>
-      ) : null}
-      {done ? (
-        <Text style={styles.done} accessibilityLiveRegion="polite">
-          {done}
-        </Text>
-      ) : null}
-      {USE_MOCK ? (
-        <Text style={styles.caption}>
-          Demo mode: any email works; one starting with nobody@ has no account.
-        </Text>
-      ) : null}
-    </Card>
-  );
-}
-
 export default function FriendsScreen() {
+  const { requests } = useLocalSearchParams<{ requests?: string }>();
   const session = useSession();
   const [tab, setTab] = useState<'friends' | 'groups'>('friends');
   const [adding, setAdding] = useState(false);
+  const [requestsOpen, setRequestsOpen] = useState(false);
+  const handoff = useRef<{ kind: 'requests' } | { kind: 'profile'; id: string } | null>(null);
+  useEffect(
+    () => () => {
+      handoff.current = null;
+    },
+    [session.user.id],
+  );
+  const finishHandoff = useCallback(() => {
+    const target = handoff.current;
+    handoff.current = null;
+    if (target?.kind === 'requests') setRequestsOpen(true);
+    else if (target?.kind === 'profile')
+      router.push({ pathname: '/p/[id]', params: { id: target.id } });
+  }, []);
   const [groups, setGroups] = useState<GroupSummary[] | null>(null);
   const [groupError, setGroupError] = useState<string | null>(null);
   const [list, setList] = useState<FriendsList | null>(null);
@@ -175,28 +103,31 @@ export default function FriendsScreen() {
     if (ok) await act(`remove:${p.userId}`, () => api.removeFriend(p.userId));
   };
 
-  const empty = list && !list.friends.length && !list.incoming.length;
+  const empty = list && !list.friends.length;
 
   return (
     <Screen
       edges={['top', 'left', 'right']}
+      contentStyle={styles.content}
       refreshing={refreshing}
       onRefresh={() => {
         setRefreshing(true);
         void load().finally(() => setRefreshing(false));
       }}
     >
-      <TabHeading
-        title="Friends"
-        right={
-          <HeaderAction
-            icon="person-add-outline"
-            label="Add a friend"
-            onPress={() => setAdding(true)}
-          />
-        }
-      />
+      <View style={styles.header}>
+        <Text style={styles.title} accessibilityRole="header">
+          Friends
+        </Text>
+        <SocialAction
+          icon="person-add-outline"
+          label="Add a friend"
+          tone="accent"
+          onPress={() => setAdding(true)}
+        />
+      </View>
       <Segments
+        variant="compact"
         options={[
           { value: 'friends', label: 'Friends' },
           { value: 'groups', label: 'Groups' },
@@ -206,73 +137,124 @@ export default function FriendsScreen() {
         label="Friends or groups"
       />
       <GroupInvitations
+        variant="compact"
         key={session.user.id}
         refreshing={refreshing}
         onAccepted={() => void load()}
+        renderContainer={({ count, loading, error, content }) => (
+          <>
+            <RequestsEntry
+              count={count + (list?.incoming.length ?? 0)}
+              loading={loading}
+              error={error}
+              onPress={() => setRequestsOpen(true)}
+            />
+            <Sheet
+              visible={!adding && (requestsOpen || requests === '1')}
+              title="Requests"
+              onClose={() => {
+                setRequestsOpen(false);
+                if (requests) router.setParams({ requests: undefined });
+              }}
+            >
+              {action.error ? <ErrorState message={action.error} /> : null}
+              {list?.incoming.length ? (
+                <View style={styles.group}>
+                  <SocialSectionTitle title="Friend requests" count={list.incoming.length} />
+                  {list.incoming.map((p) => (
+                    <SocialRow
+                      key={p.userId}
+                      title={nameOf(p)}
+                      subtitle="Friend request"
+                      leading={
+                        <SocialIdentity
+                          name={nameOf(p)}
+                          userId={p.userId}
+                          avatarRef={p.avatarRef}
+                        />
+                      }
+                      actions={
+                        <>
+                          <Button
+                            label=""
+                            icon="close-outline"
+                            variant="secondary"
+                            disabled={!!action.busy}
+                            loading={action.busy === `remove:${p.userId}`}
+                            style={styles.requestAction}
+                            accessibilityLabel={`Decline ${nameOf(p)}'s friend request`}
+                            onPress={() =>
+                              void act(`remove:${p.userId}`, () => api.removeFriend(p.userId))
+                            }
+                          />
+                          <Button
+                            label=""
+                            icon="checkmark-outline"
+                            disabled={!!action.busy}
+                            loading={action.busy === `accept:${p.userId}`}
+                            style={styles.requestAction}
+                            accessibilityLabel={`Accept ${nameOf(p)}'s friend request`}
+                            onPress={() =>
+                              void act(`accept:${p.userId}`, () => api.acceptFriend(p.userId))
+                            }
+                          />
+                        </>
+                      }
+                    />
+                  ))}
+                </View>
+              ) : null}
+              {content}
+              {!loading &&
+              !error &&
+              !loadError &&
+              list !== null &&
+              count === 0 &&
+              !list.incoming.length ? (
+                <Text style={styles.caption}>No pending requests</Text>
+              ) : null}
+              {loadError ? <ErrorState message={loadError} onRetry={() => void load()} /> : null}
+              {list === null && !loadError ? (
+                <ActivityIndicator
+                  color={colors.primary}
+                  accessibilityLabel="Loading your friends"
+                />
+              ) : null}
+            </Sheet>
+          </>
+        )}
       />
-      {action.error ? <ErrorState message={action.error} /> : null}
+      {action.error && !requestsOpen ? <ErrorState message={action.error} /> : null}
       {tab === 'friends' ? (
         <>
           {loadError ? <ErrorState message={loadError} onRetry={() => void load()} /> : null}
           {list === null && !loadError ? (
             <ActivityIndicator color={colors.primary} accessibilityLabel="Loading your friends" />
           ) : null}
-          {list?.incoming.length ? (
-            <View style={styles.group}>
-              <SectionHeading title="Friend requests" badge={list.incoming.length} />
-              {list.incoming.map((p) => (
-                <View key={p.userId} style={styles.row}>
-                  <Avatar name={nameOf(p)} neutral size={46} />
-                  <View style={styles.who}>
-                    <Text style={styles.name}>{nameOf(p)}</Text>
-                    <Text style={styles.caption}>Request sent by email</Text>
-                  </View>
-                  <Button
-                    label=""
-                    icon="close-outline"
-                    variant="secondary"
-                    disabled={!!action.busy}
-                    loading={action.busy === `remove:${p.userId}`}
-                    style={styles.requestAction}
-                    accessibilityLabel={`Decline ${nameOf(p)}'s friend request`}
-                    onPress={() => void act(`remove:${p.userId}`, () => api.removeFriend(p.userId))}
-                  />
-                  <Button
-                    label=""
-                    icon="checkmark-outline"
-                    disabled={!!action.busy}
-                    loading={action.busy === `accept:${p.userId}`}
-                    style={styles.requestAction}
-                    accessibilityLabel={`Accept ${nameOf(p)}'s friend request`}
-                    onPress={() => void act(`accept:${p.userId}`, () => api.acceptFriend(p.userId))}
-                  />
-                </View>
-              ))}
-            </View>
-          ) : null}
           {list?.friends.length ? (
             <View style={styles.group}>
-              <SectionHeading title={`Your friends (${list.friends.length})`} />
+              <SocialSectionTitle title={`Your friends (${list.friends.length})`} />
               <View>
                 {list.friends.map((p) => (
-                  <ListRow
+                  <SocialRow
                     key={p.userId}
                     onPress={() =>
                       router.push({ pathname: '/users/[id]', params: { id: p.userId } })
                     }
                     title={nameOf(p)}
                     subtitle={`Friends since ${day(p.since)}`}
-                    leading={<Avatar name={nameOf(p)} neutral size={44} />}
-                    right={
+                    leading={
+                      <SocialIdentity name={nameOf(p)} userId={p.userId} avatarRef={p.avatarRef} />
+                    }
+                    actions={
                       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                         {action.busy === `message:${p.userId}` ? (
-                          <ActivityIndicator
-                            color={colors.primary}
-                            accessibilityLabel="Opening conversation"
-                          />
+                          <SocialBusy />
                         ) : (
-                          <HeaderAction
-                            icon="chatbubble-outline"
+                          <SocialAction
+                            icon="chatbubble-ellipses-outline"
+                            tone="accent"
+                            treatment="message"
                             label={`Message ${nameOf(p)}`}
                             onPress={() => {
                               if (openingMessage.current) return;
@@ -291,8 +273,9 @@ export default function FriendsScreen() {
                             }}
                           />
                         )}
-                        <HeaderAction
+                        <SocialAction
                           icon="ellipsis-horizontal"
+                          tone="quiet"
                           label={`Remove ${nameOf(p)} from friends`}
                           onPress={() => void remove(p)}
                         />
@@ -307,30 +290,28 @@ export default function FriendsScreen() {
             <QuietEmpty
               icon="people-outline"
               title="No friends here yet"
-              body="Add a friend by email. When they accept, they’ll show up here."
+              body="Add a friend by username. When they accept, they’ll show up here."
             />
           ) : null}
         </>
       ) : (
         <>
-          <SectionHeading
-            title="Your groups"
-            right={
-              <Button label="Manage groups" variant="link" onPress={() => router.push('/groups')} />
-            }
-          />
+          <View style={styles.sectionHead}>
+            <SocialSectionTitle title="Your groups" />
+            <Button label="Manage groups" variant="link" onPress={() => router.push('/groups')} />
+          </View>
           {groupError ? <ErrorState message={groupError} onRetry={() => void load()} /> : null}
           {groups === null && !groupError ? (
             <ActivityIndicator color={colors.primary} accessibilityLabel="Loading your groups" />
           ) : null}
           {groups?.map((g) => (
-            <ListRow
+            <SocialRow
               key={g.id}
               title={g.name}
               subtitle={memberCountLabel(g.memberCount)}
-              leading={<Avatar name={g.name} neutral size={46} />}
+              leading={<SocialIdentity name={g.name} group />}
               onPress={() => router.push({ pathname: '/groups/[id]', params: { id: g.id } })}
-              right={
+              actions={
                 <Button
                   label="Start"
                   variant="link"
@@ -350,52 +331,65 @@ export default function FriendsScreen() {
           <Button
             label="Create a group"
             variant="secondary"
+            style={styles.createGroup}
             icon="add-outline"
             onPress={() => router.push('/groups')}
           />
         </>
       )}
-      <Sheet visible={adding} title="Add a friend" onClose={() => setAdding(false)}>
-        <AddFriendCard onAdded={() => void load()} />
+      <Sheet
+        visible={adding}
+        title="Add a friend"
+        onClose={() => {
+          handoff.current = null;
+          Keyboard.dismiss();
+          setAdding(false);
+        }}
+        onDismiss={finishHandoff}
+      >
+        <UsernameFriendSearch
+          onAdded={() => void load()}
+          onNavigate={(target) => {
+            Keyboard.dismiss();
+            handoff.current = target;
+            setAdding(false);
+          }}
+        />
       </Sheet>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  cardTitle: { ...type.heading, color: colors.text },
-  caption: { ...type.caption, color: colors.muted },
-  input: {
-    minHeight: MIN_TARGET + 4,
-    marginTop: space.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    paddingHorizontal: 20,
-    fontFamily: fonts.medium,
-    fontSize: 16,
-    color: colors.text,
-    backgroundColor: colors.cardHi,
+  content: { paddingTop: space.sm, gap: space.lg },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: space.md,
   },
-  send: { marginTop: space.md },
-  error: { ...type.caption, color: colors.danger, marginTop: space.sm },
-  done: { ...type.caption, color: colors.yes, marginTop: space.sm },
-  loading: { marginTop: 40 },
-  group: { gap: space.md, marginTop: space.md },
-  section: {
-    ...type.caption,
+  title: {
     fontFamily: fonts.bold,
-    color: colors.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
+    fontSize: 32,
+    lineHeight: 40,
+    letterSpacing: -0.6,
+    color: colors.text,
   },
-  highlight: { borderColor: colors.primary },
-  listCard: { paddingVertical: space.xs },
-  row: { flexDirection: 'row', alignItems: 'center', gap: space.sm, minHeight: 64 },
-  requestAction: { width: 48 },
-  who: { flex: 1, gap: 2 },
-  name: { ...type.body, fontFamily: fonts.semibold, color: colors.text },
-  divider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-  actions: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.md },
-  actionButton: { flex: 1 },
+  caption: { fontSize: 14, lineHeight: 20, color: colors.muted },
+  group: { gap: space.sm },
+  sectionHead: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: space.sm,
+  },
+  requestAction: {
+    width: MIN_TARGET,
+    minHeight: MIN_TARGET,
+    borderRadius: radius.sm,
+    borderWidth: 0,
+    marginLeft: space.xs,
+  },
+  createGroup: { borderWidth: 0, borderRadius: radius.md, backgroundColor: colors.card },
 });

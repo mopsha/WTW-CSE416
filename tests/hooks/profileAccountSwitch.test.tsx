@@ -9,7 +9,12 @@ const { create, act } = jest.requireActual<{
 }>('react-test-renderer');
 jest.mock('@/hooks/useAuth', () => ({ useAuth: jest.fn() }));
 jest.mock('@/lib/api', () => ({
-  api: { getMe: jest.fn(), updateMe: jest.fn(), savePreferences: jest.fn() },
+  api: {
+    getMe: jest.fn(),
+    updateMe: jest.fn(),
+    savePreferences: jest.fn(),
+    updateProfileDetails: jest.fn(),
+  },
 }));
 let profile!: ReturnType<typeof useProfile>;
 function Consumer() {
@@ -25,6 +30,131 @@ const treeValue = () => (
   </ProfileProvider>
 );
 test('delayed name/preferences saves from account A do not alter account B context', async () => {
+  jest.mocked(useAuth).mockReturnValue({
+    session: { user: { id: 'a', email: 'a@example.com' }, accessToken: 'a' },
+    loading: false,
+  });
+  jest.mocked(api.getMe).mockResolvedValue({
+    displayName: 'A',
+    username: 'user_a',
+    optionalSetupPending: false,
+    preferences: EMPTY_PREFERENCES,
+    onboarded: false,
+  });
+  let tree!: ReturnType<typeof create>;
+  await act(async () => {
+    tree = create(treeValue());
+  });
+  let resolveName!: (value: { displayName: string }) => void;
+  let resolvePrefs!: (value: Awaited<ReturnType<typeof api.savePreferences>>) => void;
+  jest.mocked(api.updateMe).mockReturnValue(
+    new Promise((r) => {
+      resolveName = r;
+    }),
+  );
+  jest.mocked(api.savePreferences).mockReturnValue(
+    new Promise((r) => {
+      resolvePrefs = r;
+    }),
+  );
+  const nameSave = profile.saveDisplayName('A edited');
+  const prefSave = profile.savePreferences({ ...EMPTY_PREFERENCES, priceMax: 2 });
+  let resolveDetails!: (value: Awaited<ReturnType<typeof api.updateProfileDetails>>) => void;
+  jest.mocked(api.updateProfileDetails).mockReturnValue(
+    new Promise((r) => {
+      resolveDetails = r;
+    }),
+  );
+  const detailsSave = profile.saveProfileDetails({
+    username: 'a_edited',
+    favoriteCuisine: null,
+    favoriteActivity: null,
+    shareMetadata: false,
+  });
+  jest.mocked(useAuth).mockReturnValue({
+    session: { user: { id: 'b', email: 'b@example.com' }, accessToken: 'b' },
+    loading: false,
+  });
+  jest.mocked(api.getMe).mockResolvedValue({
+    displayName: 'B',
+    username: 'user_b',
+    optionalSetupPending: false,
+    preferences: EMPTY_PREFERENCES,
+    onboarded: false,
+  });
+  await act(async () => tree.update(treeValue()));
+  await act(async () => {
+    resolveName({ displayName: 'A edited' });
+    resolvePrefs({ preferences: { ...EMPTY_PREFERENCES, priceMax: 2 }, onboarded: true });
+    await nameSave;
+    await prefSave;
+    resolveDetails({
+      id: 'a',
+      username: 'a_edited',
+      displayName: 'A',
+      avatarUrl: null,
+      isOwner: true,
+      metadataVisible: true,
+      friendsCount: 0,
+      groupsCount: 0,
+      favoriteCuisine: null,
+      favoriteActivity: null,
+      mutualGroups: [],
+    });
+    await detailsSave;
+  });
+  expect(profile.displayName).toBe('B');
+  expect(profile.username).toBe('user_b');
+  expect(profile.preferences).toEqual(EMPTY_PREFERENCES);
+  expect(profile.onboarded).toBe(false);
+  await act(async () => tree.unmount());
+});
+
+test('profile detail saves update the shared username without reloading or resetting preferences', async () => {
+  jest.mocked(useAuth).mockReturnValue({
+    session: { user: { id: 'a', email: 'a@example.com' }, accessToken: 'a' },
+    loading: false,
+  });
+  jest.mocked(api.getMe).mockResolvedValue({
+    displayName: 'A',
+    username: 'user_a',
+    optionalSetupPending: false,
+    preferences: EMPTY_PREFERENCES,
+    onboarded: false,
+  });
+  let tree!: ReturnType<typeof create>;
+  await act(async () => {
+    tree = create(treeValue());
+  });
+  const saved = {
+    id: 'a',
+    username: 'a_edited',
+    displayName: 'A',
+    avatarUrl: null,
+    isOwner: true,
+    metadataVisible: true,
+    friendsCount: 0,
+    groupsCount: 0,
+    favoriteCuisine: null,
+    favoriteActivity: null,
+    mutualGroups: [],
+  };
+  jest.mocked(api.updateProfileDetails).mockResolvedValueOnce(saved);
+  await act(async () => {
+    await profile.saveProfileDetails({
+      username: 'a_edited',
+      favoriteCuisine: null,
+      favoriteActivity: null,
+      shareMetadata: true,
+    });
+  });
+  expect(profile.username).toBe('a_edited');
+  expect(profile.preferences).toEqual(EMPTY_PREFERENCES);
+  expect(profile.displayName).toBe('A');
+  await act(async () => tree.unmount());
+});
+
+test('birthday save confirmation compares month/day structurally and rejects an unconfirmed change', async () => {
   jest
     .mocked(useAuth)
     .mockReturnValue({
@@ -44,44 +174,38 @@ test('delayed name/preferences saves from account A do not alter account B conte
   await act(async () => {
     tree = create(treeValue());
   });
-  let resolveName!: (value: { displayName: string }) => void;
-  let resolvePrefs!: (value: Awaited<ReturnType<typeof api.savePreferences>>) => void;
-  jest.mocked(api.updateMe).mockReturnValue(
-    new Promise((r) => {
-      resolveName = r;
-    }),
-  );
-  jest.mocked(api.savePreferences).mockReturnValue(
-    new Promise((r) => {
-      resolvePrefs = r;
-    }),
-  );
-  const nameSave = profile.saveDisplayName('A edited');
-  const prefSave = profile.savePreferences({ ...EMPTY_PREFERENCES, priceMax: 2 });
-  jest
-    .mocked(useAuth)
-    .mockReturnValue({
-      session: { user: { id: 'b', email: 'b@example.com' }, accessToken: 'b' },
-      loading: false,
-    });
-  jest
-    .mocked(api.getMe)
-    .mockResolvedValue({
-      displayName: 'B',
-      username: 'user_b',
-      optionalSetupPending: false,
-      preferences: EMPTY_PREFERENCES,
-      onboarded: false,
-    });
-  await act(async () => tree.update(treeValue()));
+  const saved = {
+    id: 'a',
+    username: 'a_edited',
+    displayName: 'A',
+    avatarUrl: null,
+    isOwner: true,
+    metadataVisible: true,
+    friendsCount: 0,
+    groupsCount: 0,
+    favoriteCuisine: null,
+    favoriteActivity: null,
+    mutualGroups: [],
+    birthday: { day: 29, month: 2 },
+    shareBirthday: false,
+  };
+  const input = {
+    username: 'a_edited',
+    favoriteCuisine: null,
+    favoriteActivity: null,
+    shareMetadata: false,
+    birthday: { month: 2, day: 29 },
+    shareBirthday: false,
+  };
+  jest.mocked(api.updateProfileDetails).mockResolvedValueOnce(saved);
   await act(async () => {
-    resolveName({ displayName: 'A edited' });
-    resolvePrefs({ preferences: { ...EMPTY_PREFERENCES, priceMax: 2 }, onboarded: true });
-    await nameSave;
-    await prefSave;
+    await expect(profile.saveProfileDetails(input)).resolves.toEqual(saved);
   });
-  expect(profile.displayName).toBe('B');
-  expect(profile.preferences).toEqual(EMPTY_PREFERENCES);
-  expect(profile.onboarded).toBe(false);
+  jest
+    .mocked(api.updateProfileDetails)
+    .mockResolvedValueOnce({ ...saved, birthday: { month: 3, day: 1 } });
+  await act(async () => {
+    await expect(profile.saveProfileDetails(input)).rejects.toThrow('could not be confirmed saved');
+  });
   await act(async () => tree.unmount());
 });

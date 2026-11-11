@@ -64,3 +64,23 @@ test.each([null, 'valid_user'])(
     await act(async () => tree.unmount());
   },
 );
+
+test('a restarted account with identity and skipped birthday does not loop through setup', async () => {
+  jest.mocked(useProfile).mockReturnValue({
+    failed: false,
+    loading: false,
+    username: 'new_person',
+    displayName: 'New',
+    birthdayRequired: true,
+  } as ReturnType<typeof useProfile>);
+  let tree: any;
+  await act(async () => {
+    tree = create(<RootLayout />);
+  });
+  expect(tree.root.findAllByType('test-protected').map((n: any) => n.props.guard)).toEqual([
+    false,
+    false,
+    true,
+  ]);
+  await act(async () => tree.unmount());
+});

@@ -19,7 +19,7 @@ import { GradientButton } from '@/components/GradientButton';
 import { colors, flame, fonts, MIN_TARGET } from '@/components/theme';
 import type { AuthMode } from '@/lib/authTypes';
 import { auth, AuthError } from '@/lib/auth';
-import { USE_MOCK } from '@/lib/config';
+import { REVIEW_EMAIL, USE_MOCK } from '@/lib/config';
 import { messageOf } from '@/lib/errors';
 import { PRIVACY_URL, TERMS_URL } from '@/lib/legal';
 import { MOCK_CODE } from '@/lib/mock/auth';
@@ -30,7 +30,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function SignInScreen() {
   const [mode, setMode] = useState<AuthMode>('login');
-  const [step, setStep] = useState<'email' | 'code'>('email');
+  const [step, setStep] = useState<'email' | 'code' | 'password'>('email');
+  const [password, setPassword] = useState('');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -54,6 +55,10 @@ export default function SignInScreen() {
     setNotice(null);
     if (!EMAIL_RE.test(trimmedEmail)) {
       setError('Enter a valid email address.');
+      return;
+    }
+    if (trimmedEmail === REVIEW_EMAIL) {
+      setStep('password');
       return;
     }
     pending.current = true;
@@ -103,6 +108,24 @@ export default function SignInScreen() {
       );
       setCode('');
       codeInput.current?.focus();
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  }
+
+  /** Only the App Store review account has a password; it can't receive emailed codes. */
+  async function signInWithPassword() {
+    if (!password || pending.current) return;
+    setError(null);
+    pending.current = true;
+    setBusy(true);
+    try {
+      await auth.signInWithPassword(trimmedEmail, password);
+      // The root layout's auth guard switches to the signed-in stack.
+    } catch (e) {
+      setError(messageOf(e));
+      setPassword('');
     } finally {
       pending.current = false;
       setBusy(false);
@@ -224,6 +247,46 @@ export default function SignInScreen() {
                   accessibilityHint="Skips sending an email and goes to the code boxes"
                   disabled={busy}
                   onPress={enterCode}
+                />
+              </View>
+            ) : step === 'password' ? (
+              <View style={styles.form}>
+                <Text style={styles.body}>
+                  Enter the password for{'\n'}
+                  <Text style={styles.bold}>{trimmedEmail}</Text>
+                </Text>
+                <TextInput
+                  style={styles.input}
+                  editable={!busy}
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder="Password"
+                  placeholderTextColor={colors.muted}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="password"
+                  textContentType="password"
+                  returnKeyType="go"
+                  onSubmitEditing={() => void signInWithPassword()}
+                  accessibilityLabel="Password"
+                  autoFocus
+                />
+                <GradientButton
+                  label="Log in"
+                  onPress={() => void signInWithPassword()}
+                  loading={busy}
+                  disabled={!password}
+                />
+                <Button
+                  disabled={busy}
+                  label="Change email"
+                  variant="link"
+                  onPress={() => {
+                    setStep('email');
+                    setPassword('');
+                    setError(null);
+                  }}
                 />
               </View>
             ) : (
