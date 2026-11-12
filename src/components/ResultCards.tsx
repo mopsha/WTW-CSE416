@@ -1,5 +1,4 @@
-// Result cards from the live demo's reveal: a big photo card with a rank badge, a compact row,
-// and the winner card in a flame ring. RANK ONLY: nothing here can show a score.
+// Ranked finalists and the persisted winner. Ranks only; never scores.
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import type { ReactNode } from 'react';
@@ -11,43 +10,32 @@ import { GoogleCredit } from './GoogleCredit';
 import type { Candidate } from '@/lib/types';
 
 import { Chips, describePlace, PlacePhoto } from './PlaceCard';
-import { colors, flame, fonts, MIN_TARGET } from './theme';
+import { colors, fonts, MIN_TARGET, radius, space, type } from './theme';
+import { Card } from './Card';
 
 export function WinnerCard({
   place: base,
-  badge = '👑 1st',
+  badge = 'The pick',
 }: {
   place: Candidate;
   badge?: string;
 }) {
   const place = useEnrichedPlace(base);
   return (
-    <View style={styles.winnerWrap}>
-      <LinearGradient
-        colors={flame}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.winnerRing}
-      >
-        <View
-          style={styles.winnerCard}
-          accessible
-          accessibilityLabel={`Winner: ${describePlace(place)}`}
-        >
-          <PlacePhoto uri={place.photoUrl} style={styles.winnerPhoto} />
-          <View style={styles.crown}>
-            <Text style={styles.crownText}>{badge}</Text>
-          </View>
-          <View style={styles.winnerInfo}>
-            <Text style={styles.winnerName}>{place.name}</Text>
-            {place.address ? <Text style={styles.addr}>{place.address}</Text> : null}
-            <Chips place={place} light={false} />
-            {place.photoCredit ? (
-              <Text style={styles.credit}>Photo: {place.photoCredit}</Text>
-            ) : null}
-          </View>
+    <View>
+      <Card style={styles.winnerCard}>
+        {place.photoUrl ? <PlacePhoto uri={place.photoUrl} style={styles.winnerPhoto} /> : null}
+        <View style={styles.winnerInfo}>
+          <Text style={styles.crownText}>{badge}</Text>
+          <Text style={styles.winnerName} accessibilityRole="header">
+            {place.name}
+          </Text>
+          {place.address ? <Text style={styles.addr}>{place.address}</Text> : null}
+          {place.note ? <Text style={styles.addr}>{place.note}</Text> : null}
+          <Chips place={place} light={false} />
+          {place.photoCredit ? <Text style={styles.credit}>Photo: {place.photoCredit}</Text> : null}
         </View>
-      </LinearGradient>
+      </Card>
       <GoogleCredit place={place} style={styles.creditRow} />
     </View>
   );
@@ -150,31 +138,14 @@ export function SmallResult({
 }
 
 const styles = StyleSheet.create({
-  winnerWrap: {
-    shadowColor: '#FF3D71',
-    shadowOpacity: 0.55,
-    shadowRadius: 30,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 14,
-  },
-  winnerRing: { borderRadius: 30, padding: 3 },
-  winnerCard: { borderRadius: 27, overflow: 'hidden', backgroundColor: colors.card },
-  winnerPhoto: { width: '100%', height: 240 },
-  crown: {
-    position: 'absolute',
-    top: 14,
-    left: 14,
-    backgroundColor: 'rgba(14,11,18,0.8)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-  },
-  crownText: { fontFamily: fonts.black, fontSize: 14, color: '#FFD23F' },
-  winnerInfo: { padding: 18, gap: 6 },
+  winnerCard: { padding: 0, gap: 0, overflow: 'hidden' },
+  winnerPhoto: { width: '100%', height: 190 },
+  crownText: { ...type.caption, fontFamily: fonts.semibold, color: colors.primary },
+  winnerInfo: { padding: space.lg, gap: space.sm },
   creditRow: { marginTop: 6, paddingHorizontal: 4 },
   credit: { fontFamily: fonts.medium, fontSize: 10, color: colors.muted },
   addr: { fontFamily: fonts.medium, fontSize: 14, color: colors.muted },
-  winnerName: { fontFamily: fonts.black, fontSize: 28, lineHeight: 34, color: colors.text },
+  winnerName: { ...type.heading, color: colors.text },
   bigResult: {
     minHeight: 190,
     borderRadius: 24,
@@ -214,13 +185,13 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 10,
     minHeight: MIN_TARGET + 20,
-    borderRadius: 20,
+    borderRadius: radius.md,
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
   },
   smallPhoto: { width: 64, height: 64, borderRadius: 14 },
-  smallRank: { fontFamily: fonts.black, fontSize: 12, color: '#FF7A45', letterSpacing: 1 },
+  smallRank: { fontFamily: fonts.black, fontSize: 12, color: colors.muted, letterSpacing: 1 },
   smallName: { fontFamily: fonts.bold, fontSize: 16, color: colors.text },
   smallMeta: { fontFamily: fonts.medium, fontSize: 13, color: colors.muted },
 });
