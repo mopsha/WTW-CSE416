@@ -1,11 +1,11 @@
 import { useFocusEffect, useLocalSearchParams, router } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { AppState, Linking, Platform, Text, View } from 'react-native';
+import { AppState, Platform, Text, View } from 'react-native';
 import { Button, Card, ErrorState, Screen, colors, space, type } from '@/components';
 import { ListRow, SectionHeading, Sheet } from '@/components/TabUi';
 import { useAction } from '@/hooks/useAction';
 import { accountActions } from '@/lib/accountActions';
-import { PRIVACY_URL, SUPPORT_URL, TERMS_URL } from '@/lib/legal';
+import { openLegalPage, PRIVACY_URL, SUPPORT_URL, TERMS_URL } from '@/lib/legal';
 import { ensureNotificationPermission } from '@/lib/notify';
 import { registerForPush } from '@/lib/push';
 import {
@@ -148,17 +148,14 @@ export default function SettingsScreen() {
       <Card>
         <ListRow title="Help" onPress={() => open('help')} />
         <ListRow title="Data & privacy information" onPress={() => open('data')} />
-        <ListRow
-          title="Support"
-          onPress={() => void Linking.openURL(SUPPORT_URL).catch(() => {})}
-        />
+        <ListRow title="Support" onPress={() => void openLegalPage(SUPPORT_URL, 'Support')} />
         <ListRow
           title="Privacy Policy"
-          onPress={() => void Linking.openURL(PRIVACY_URL).catch(() => {})}
+          onPress={() => void openLegalPage(PRIVACY_URL, 'Privacy Policy')}
         />
         <ListRow
           title="Terms of Use"
-          onPress={() => void Linking.openURL(TERMS_URL).catch(() => {})}
+          onPress={() => void openLegalPage(TERMS_URL, 'Terms of Use')}
         />
       </Card>
       <Sheet

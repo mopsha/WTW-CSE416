@@ -2,7 +2,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
-  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -21,7 +20,7 @@ import type { AuthMode } from '@/lib/authTypes';
 import { auth, AuthError } from '@/lib/auth';
 import { REVIEW_EMAIL, USE_MOCK } from '@/lib/config';
 import { messageOf } from '@/lib/errors';
-import { PRIVACY_URL, TERMS_URL } from '@/lib/legal';
+import { openLegalPage, PRIVACY_URL, TERMS_URL } from '@/lib/legal';
 import { MOCK_CODE } from '@/lib/mock/auth';
 
 /** Supabase's default minimum interval between OTP emails to the same address. */
@@ -229,12 +228,12 @@ export default function SignInScreen() {
                       <Button
                         label="Terms of Use"
                         variant="link"
-                        onPress={() => void Linking.openURL(TERMS_URL).catch(() => {})}
+                        onPress={() => void openLegalPage(TERMS_URL, 'Terms of Use')}
                       />
                       <Button
                         label="Privacy Policy"
                         variant="link"
-                        onPress={() => void Linking.openURL(PRIVACY_URL).catch(() => {})}
+                        onPress={() => void openLegalPage(PRIVACY_URL, 'Privacy Policy')}
                       />
                     </View>
                   </>
