@@ -1,11 +1,11 @@
 # Requirements status (M4)
 
-State of `integ/m4` (PR #35) on Nov 1, 2026: **13 done, 9 partial, 0 cut**. This is a draft; owners should correct their rows.
+State of `main` on Nov 2, 2026: **14 done, 8 partial, 0 cut**. This is a draft; owners should correct their rows.
 
 **Read this first**
 
-- **Most M4 work isn't on `main` yet.** Of M4's work, only the display name and EAS config have merged. The rest lands when #35 merges.
-- **Apart from the sign-in email, nothing here has run on wtw-dev or on a phone.** Evidence is CI (migrations, database tests, API tests, Jest), reading the code, and clicking through mock mode in a browser. The installed test builds predate most of it.
+- **M4 is on `main` and wtw-dev.** Migrations through 0022 and the API are deployed through CI.
+- **Apart from the sign-in email, nothing here has run on a phone.** Evidence is CI (migrations, database tests, API tests, Jest), reading the code, clicking through mock mode in a browser, and signed-in checks of Discover in the web version on wtw-dev. iOS build 2 and the Android preview are out, but no full Pick has been run on them yet.
 - **Done** means the requirement is built and works in those checks; known bugs are listed. **Partial** means part of the requirement is missing or doesn't work. **Cut** means the team decided not to ship it for M4, with a reason.
 
 ## Functional requirements
@@ -18,7 +18,7 @@ State of `integ/m4` (PR #35) on Nov 1, 2026: **13 done, 9 partial, 0 cut**. This
 | FR-04 | Create, name, manage a group | Done | Create, rename, delete, add and remove members, leave. Pick again uses current group membership (0020) | | Razin |
 | FR-05 | Pick for selected friends or a saved group | Partial | Group Picks from the Picks tab and group screen | Choosing individual friends: `POST /picks/:id/invite` exists but no screen calls it | Razin |
 | FR-06 | Category, location, radius, price, open status | Partial | Food, Activities, Custom, map pin, radius, price filter | Unknown fixture hours/prices correctly cannot satisfy explicit Open now/Free filters; no verified free/open fixture data. Drafts cannot be edited | Josh |
-| FR-07 | Bounded nearby candidate pool | Partial | Pool building, cap and rate limits; Discover can use Google | Picks always use the 36 mock places around Stony Brook, so real places are Discover-only, and wtw-dev's provider setting is unconfirmed. Discover now has a separate 20/user/day limit (0021); live Google Pick snapshots still require an approved retention design | Josh |
+| FR-07 | Bounded nearby candidate pool | Partial | Pool building, cap and rate limits; Discover uses live Google places on wtw-dev, ranked by popularity and rating | Picks always use the 36 mock places around Stony Brook, so real places are Discover-only. Discover has a separate 20/user/day limit (0021); live Google Pick snapshots still require an approved retention design | Josh |
 | FR-08 | Join through the app or an invite link | Partial | Join codes, `wtw://` links, brute-force limit, lobby lock | No web page or Universal Links, no revoke in the app, and `wtw://` tapped from iMessage is untested | Razin |
 | FR-09 | One answer per candidate, changeable | Done | Swipes, buttons, Back, Change my answers | | Alan, Mike |
 | FR-10 | Answers persist and progress restores | Done | Server-saved answers, resume after reload | | Alan |
@@ -28,8 +28,8 @@ State of `integ/m4` (PR #35) on Nov 1, 2026: **13 done, 9 partial, 0 cut**. This
 | FR-14 | Plain-language reason, no numbers | Done | `explainRank`, shown on Results | | Alan |
 | FR-15 | Vote among the three finalists | Done | Changeable vote, host close, deadline | | Alan, Mike |
 | FR-16 | Tie-break, one winner, saved | Done | Tally, tie-break by rank, Winner screen | | Alan |
-| FR-17 | Discover feed and saved interests | Partial | `GET /discover` scored by survey answers, filters, save/unsave/list; includeSaved is category/radius/filter-aware and deduplicated | No screen lists saved places, no "That's today's 20" end state, and saved Google IDs cannot yet be hydrated into persistable Pick snapshots | Josh, Mike |
-| FR-18 | Completed Pick history | Partial | My history with winner, finalists and who went; Pick again | Group history is linked; Pick again preserves filters and custom options (0020) | Alan, Razin |
+| FR-17 | Discover feed and saved interests | Partial | `GET /discover` scored by survey answers, filters, save/unsave/list; includeSaved is category/radius/filter-aware and deduplicated | No screen lists saved places, no "That's today's 20" end state, no Google photos, every activity shows the same 🎳 emoji, and saved Google IDs cannot yet be hydrated into persistable Pick snapshots | Josh, Mike |
+| FR-18 | Completed Pick history | Done | My history and group history (linked from the group screen) with winner, finalists and who went; Pick again preserves filters and custom options (0020) | | Alan, Razin |
 
 ## New M4 features
 
@@ -38,16 +38,16 @@ State of `integ/m4` (PR #35) on Nov 1, 2026: **13 done, 9 partial, 0 cut**. This
 | RSVP and "Did you go?" | Done | Plan time, RSVP, outcomes, sweep prompts, Winner screen. Known bugs: the first deploy prompts for old Picks, and the app and sweep ask at different times | | Alan |
 | Frictionless invite link | Partial | Revocable, expiring tokens through the API, kept across sign-in; share from the Lobby | Not yet "one tap from iMessage": no web page or Universal Links, no group link in the app, no revoke in the app, and a link can skip the name step | Razin |
 | Custom Plans | Partial | Typed options, templates, mixed with places, text filter, tested through the Pick flow | No location input, so Directions and saved custom options are unreachable; options can't be reported; Pick again retains them (0020) | Josh |
-| "Looking to hang" | Done | Shared friend/group visibility with blocks/expiry; changeable responses; exact eligible down Pick via existing creation and notifications; unchanged draft reuse (0022) | Local validation passed; deployment/device acceptance pending | Josh |
+| "Looking to hang" | Done | Shared friend/group visibility with blocks/expiry; changeable responses; exact eligible down Pick via existing creation and notifications; unchanged draft reuse (0022). Known bug: the card shows "Loading hang plans…" and hides its buttons on each 30-second refresh | | Josh |
 
 ## Sources
 
 - Reviews with file references: the comments on PR #35.
 - Requirement wording: `docs/design.md` (its table is as of M3).
 
-## Josh M4 verification on current integration branch
+## Josh M4 verification on the integration branch
 
-Local changes below are not pushed/deployed. Apply 0021 before enabling them.
+Validated on `integ/m4` before #35 merged. 0021 and 0022 are applied on wtw-dev.
 
 | Requirement | Result | Evidence or remaining boundary |
 |---|---|---|
@@ -90,4 +90,4 @@ removed/blocked responders, expiry and delegated-host normal start. Android expo
 and git diff --check pass. Migration replay through 0022 used isolated PostgreSQL
 with an Auth bootstrap; cron/Vault migration 0007 and full pgTAP/HTTP were not run
 locally because their Supabase/Docker/extension prerequisites are unavailable.
-Nothing was committed, pushed or deployed; real-device acceptance remains pending.
+Merged in #35 and deployed to wtw-dev; real-device acceptance remains pending.
