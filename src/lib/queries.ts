@@ -49,10 +49,25 @@ export interface JoinCode {
 
 export class QueryError extends Error {
   override readonly name = 'QueryError';
+  constructor(
+    message: string,
+    readonly code?: string,
+    readonly status?: number,
+  ) {
+    super(message);
+  }
 }
 
-function check<T>({ data, error }: { data: T | null; error: { message: string } | null }): T {
-  if (error) throw new QueryError(error.message);
+function check<T>({
+  data,
+  error,
+  status,
+}: {
+  data: T | null;
+  error: { message: string; code?: string } | null;
+  status?: number;
+}): T {
+  if (error) throw new QueryError(error.message, error.code, status);
   if (data === null) throw new QueryError('No data returned.');
   return data;
 }

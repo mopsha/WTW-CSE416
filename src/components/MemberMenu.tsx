@@ -99,7 +99,7 @@ export function SafetySheet({ onClose, userId, name, target, onBlocked, photo }:
             : { kind: target?.kind ?? 'user', targetId: target?.id ?? userId, reason },
         ),
       );
-      if (!ok && photoReport) void capabilities.refresh();
+      if (ok === false && photoReport) void capabilities.refresh();
       if (ok)
         finish(
           photoReport
