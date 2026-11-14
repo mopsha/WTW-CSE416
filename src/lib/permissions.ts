@@ -16,17 +16,18 @@ export interface PermissionInfo {
 const UNAVAILABLE: PermissionInfo = { status: 'unavailable', canAskAgain: false };
 const supported = () => Platform.OS === 'ios' || Platform.OS === 'android';
 
-function classify(r: {
-  status: string;
-  granted: boolean;
-  canAskAgain: boolean;
-  ios?: { status?: number } | null;
-}): PermissionInfo {
-  // iOS provisional (quiet) notifications count as allowed; the docs say to check ios.status.
-  const provisional = r.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL;
+function classify(
+  r: { status: string; granted: boolean; canAskAgain: boolean },
+  provisional = false,
+): PermissionInfo {
   if (r.granted || provisional) return { status: 'granted', canAskAgain: r.canAskAgain };
   if (r.status === 'undetermined') return { status: 'undetermined', canAskAgain: r.canAskAgain };
   return { status: 'denied', canAskAgain: r.canAskAgain };
+}
+
+// iOS provisional (quiet) notifications count as allowed; the docs say to check ios.status.
+function classifyNotifications(r: Notifications.NotificationPermissionsStatus): PermissionInfo {
+  return classify(r, r.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL);
 }
 
 /** Whether a "Continue" tap would show the system prompt. */
@@ -59,7 +60,7 @@ export async function requestLocationPermission(): Promise<PermissionInfo> {
 export async function readNotificationPermission(): Promise<PermissionInfo> {
   if (!supported()) return UNAVAILABLE;
   try {
-    return classify(await Notifications.getPermissionsAsync());
+    return classifyNotifications(await Notifications.getPermissionsAsync());
   } catch {
     return UNAVAILABLE;
   }
@@ -73,7 +74,7 @@ export async function requestNotificationPermission(): Promise<PermissionInfo> {
   const current = await readNotificationPermission();
   if (!wouldPrompt(current)) return current;
   try {
-    return classify(await Notifications.requestPermissionsAsync());
+    return classifyNotifications(await Notifications.requestPermissionsAsync());
   } catch {
     return current;
   }
