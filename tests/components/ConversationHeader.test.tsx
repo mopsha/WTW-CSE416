@@ -126,3 +126,20 @@ test('group subpages can supply back behavior and an explicit details label with
   ).toBeGreaterThan(0);
   await act(async () => tree.unmount());
 });
+
+test('group header and Details share the group avatar component and social palette', async () => {
+  const { GroupAvatar } = jest.requireActual('@/components/GroupAvatar');
+  let tree: any;
+  await act(async () => {
+    tree = create(<ConversationHeader group name="Weekend crew" onPress={jest.fn()} />);
+  });
+  expect(tree.root.findByType(GroupAvatar).props.name).toBe('Weekend crew');
+  const identity = tree.root.findByType(SocialIdentity).props;
+  expect(identity.group).toBe(true);
+  await act(async () => tree.update(<GroupAvatar name="Weekend crew" size={64} />));
+  expect(tree.root.findByType(SocialIdentity).props).toMatchObject({
+    name: identity.name,
+    group: true,
+  });
+  await act(async () => tree.unmount());
+});

@@ -304,3 +304,32 @@ test('delivery completing after unmount does not start history reconciliation', 
   expect(refresh).not.toHaveBeenCalled();
   props.onSend.mockClear();
 });
+
+test('route-owned viewport survives remount and restores position after history revalidation', async () => {
+  const { emptyMessageDraft } = jest.requireActual('@/components/MessageThread');
+  const draft = emptyMessageDraft();
+  let tree: any;
+  await act(async () => {
+    tree = create(<MessageThread {...props} chat={base} composerRef={draft} />);
+  });
+  await act(async () =>
+    tree.root.findByType(ScrollView).props.onScroll({
+      nativeEvent: {
+        layoutMeasurement: { height: 400 },
+        contentOffset: { y: 120 },
+        contentSize: { height: 1000 },
+      },
+    }),
+  );
+  expect(draft.current.viewport).toEqual({ offset: 120, atBottom: false });
+  await act(async () => tree.unmount());
+  await act(async () => {
+    tree = create(<MessageThread {...props} chat={base} composerRef={draft} />);
+  });
+  const scroll = tree.root.findByType(ScrollView);
+  const restore = jest.spyOn(scroll.instance, 'scrollTo').mockImplementation(() => {});
+  await act(async () => scroll.props.onContentSizeChange());
+  expect(restore).toHaveBeenCalledWith({ y: 120, animated: false });
+  restore.mockRestore();
+  await act(async () => tree.unmount());
+});
