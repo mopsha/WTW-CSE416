@@ -1,4 +1,6 @@
 import React from 'react';
+import { AppState } from 'react-native';
+import { useSession } from '@/hooks/useAuth';
 import FriendsScreen from '../../app/(tabs)/friends';
 import { api } from '@/lib/api';
 import { queries } from '@/lib/queries';
@@ -21,7 +23,7 @@ jest.mock('expo-router', () => ({
   router: { push: jest.fn() },
   useFocusEffect: (effect: () => void) => jest.requireActual('react').useEffect(effect, [effect]),
 }));
-jest.mock('@/hooks/useAuth', () => ({ useSession: () => ({ user: { id: 'me' } }) }));
+jest.mock('@/hooks/useAuth', () => ({ useSession: jest.fn() }));
 jest.mock('@/lib/api', () => ({
   api: {
     listFriends: jest.fn(),
@@ -33,7 +35,9 @@ jest.mock('@/lib/api', () => ({
 }));
 jest.mock('@/lib/queries', () => ({ queries: { listMyGroups: jest.fn() } }));
 jest.mock('@/lib/confirm', () => ({ confirmAction: jest.fn() }));
-jest.mock('@/lib/haptics', () => ({ haptic: { success: jest.fn(), tap: jest.fn() } }));
+jest.mock('@/lib/haptics', () => ({
+  haptic: { success: jest.fn(), tap: jest.fn(), error: jest.fn() },
+}));
 jest.mock('@/lib/config', () => ({ USE_MOCK: false }));
 jest.mock('@/components/GroupInvitations', () => ({
   GroupInvitations: ({
@@ -44,7 +48,7 @@ jest.mock('@/components/GroupInvitations', () => ({
 }));
 jest.mock('@/components', () => ({
   ...jest.requireActual('@/components/theme'),
-  Screen: ({ children }: { children: React.ReactNode }) => children,
+  Screen: (p: object) => jest.requireActual('react').createElement('test-screen', p),
   Button: (p: object) => jest.requireActual('react').createElement('test-button', p),
   ErrorState: (p: object) => jest.requireActual('react').createElement('test-error', p),
 }));
@@ -52,6 +56,8 @@ const friend = { userId: 'ava', displayName: 'Ava', since: '2026-01-01T12:00:00Z
 const request = { ...friend, userId: 'ben', displayName: 'Ben' };
 beforeEach(() => {
   jest.clearAllMocks();
+  AppState.currentState = 'active';
+  jest.mocked(useSession).mockReturnValue({ user: { id: 'me' } } as ReturnType<typeof useSession>);
   jest.mocked(api.listFriends).mockResolvedValue({ friends: [friend], incoming: [request] });
   jest
     .mocked(queries.listMyGroups)
@@ -166,4 +172,78 @@ test('loading resolves into intentional empty states for both segments', async (
   expect(JSON.stringify(tree.toJSON())).toContain('Your crew goes here');
   expect(button(tree, 'Create a group')).toBeDefined();
   await act(async () => tree.unmount());
+});
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((yes) => {
+    resolve = yes;
+  });
+  return { promise, resolve };
+}
+async function refresh(tree: any) {
+  await act(async () => {
+    await tree.root.findByType('test-screen').props.onRefresh();
+  });
+}
+test('independent group fetch starts while friends are pending; failures remain independent', async () => {
+  const pending = deferred<any>();
+  jest.mocked(api.listFriends).mockReturnValueOnce(pending.promise);
+  const tree = await mount();
+  expect(queries.listMyGroups).toHaveBeenCalledTimes(1);
+  await act(async () => press(tree, 'Groups'));
+  expect(JSON.stringify(tree.toJSON())).toContain('Our crew');
+  await act(async () => pending.resolve({ friends: [friend], incoming: [] }));
+  jest.mocked(api.listFriends).mockRejectedValueOnce(new Error('Offline'));
+  await refresh(tree);
+  await act(async () => press(tree, 'Friends'));
+  expect(JSON.stringify(tree.toJSON())).toContain('Ava');
+  jest
+    .mocked(queries.listMyGroups)
+    .mockRejectedValueOnce(Object.assign(new Error('Denied'), { status: 403 }));
+  await refresh(tree);
+  expect(JSON.stringify(tree.toJSON())).toContain('Ava');
+  await act(async () => press(tree, 'Groups'));
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Our crew');
+  await act(async () => tree.unmount());
+});
+test('friend authorization denial clears rows but successful groups remain available', async () => {
+  const tree = await mount();
+  jest
+    .mocked(api.listFriends)
+    .mockRejectedValueOnce(Object.assign(new Error('Denied'), { status: 401 }));
+  await refresh(tree);
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Ava');
+  await act(async () => press(tree, 'Groups'));
+  expect(JSON.stringify(tree.toJSON())).toContain('Our crew');
+  await act(async () => tree.unmount());
+});
+test('out-of-order reads and account changes cannot restore stale friends', async () => {
+  const old = deferred<any>();
+  jest.mocked(api.listFriends).mockReturnValueOnce(old.promise);
+  const tree = await mount();
+  await refresh(tree);
+  await act(async () =>
+    old.resolve({ friends: [{ ...friend, displayName: 'Stale' }], incoming: [] }),
+  );
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Stale');
+  const pending = deferred<any>();
+  jest.mocked(api.listFriends).mockReturnValueOnce(pending.promise);
+  await act(async () => {
+    void tree.root.findByType('test-screen').props.onRefresh();
+  });
+  jest
+    .mocked(useSession)
+    .mockReturnValue({ user: { id: 'other' } } as ReturnType<typeof useSession>);
+  jest.mocked(api.listFriends).mockResolvedValue({ friends: [], incoming: [] });
+  await act(async () => tree.update(<FriendsScreen />));
+  await act(async () => pending.resolve({ friends: [friend], incoming: [] }));
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Ava');
+  const late = deferred<any>();
+  jest.mocked(api.listFriends).mockReturnValueOnce(late.promise);
+  await act(async () => {
+    void tree.root.findByType('test-screen').props.onRefresh();
+  });
+  await act(async () => tree.unmount());
+  await act(async () => late.resolve({ friends: [friend], incoming: [] }));
 });

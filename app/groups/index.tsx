@@ -1,7 +1,7 @@
 // Groups: the ones I'm in, a quick "Start a Pick" on each, and a new-group form.
-import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
+import { router } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
   Button,
@@ -15,9 +15,10 @@ import {
   space,
   type,
 } from '@/components';
+import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import { useSession } from '@/hooks/useAuth';
 import { api } from '@/lib/api';
-import { messageOf } from '@/lib/errors';
+import { isAccessDenied, messageOf } from '@/lib/errors';
 import {
   groupNameProblem,
   MAX_GROUP_NAME,
@@ -30,6 +31,10 @@ import { queries } from '@/lib/queries';
 
 export default function GroupsScreen() {
   const session = useSession();
+  return <GroupsContent key={session.user.id} userId={session.user.id} />;
+}
+
+function GroupsContent({ userId }: { userId: string }) {
   const [groups, setGroups] = useState<GroupSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -37,36 +42,63 @@ export default function GroupsScreen() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
-  const load = useCallback(async () => {
+  const latest = useRef(0);
+  const active = useRef(false);
+  const mounted = useRef(true);
+  const creatingRef = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const clear = useCallback(() => {
+    active.current = false;
+    latest.current++;
+    setGroups(null);
     setError(null);
+    setRefreshing(false);
+  }, []);
+  const load = useCallback(async () => {
+    if (!active.current) return;
+    const request = ++latest.current;
+    const current = () => active.current && request === latest.current;
     try {
-      setGroups(await queries.listMyGroups(session.user.id));
+      const next = await queries.listMyGroups(userId);
+      if (!current()) return;
+      setGroups(next);
+      setError(null);
     } catch (e) {
+      if (!current()) return;
+      if (isAccessDenied(e)) setGroups(null);
       setError(messageOf(e));
     }
-  }, [session.user.id]);
-
-  useFocusEffect(
-    useCallback(() => {
-      void load();
-    }, [load]),
-  );
+  }, [userId]);
+  const refresh = useCallback(() => {
+    active.current = true;
+    return load();
+  }, [load]);
+  usePrivateRefresh(refresh, clear);
 
   const create = async () => {
+    if (creatingRef.current || !mounted.current) return;
     const problem = groupNameProblem(name);
     setNameError(problem);
     if (problem) return;
+    creatingRef.current = true;
     setCreating(true);
     try {
       const group = await api.createGroup(name.trim());
+      if (!mounted.current) return;
       haptic.success();
       setName('');
       // Straight to the new group so the owner can add friends.
       router.push({ pathname: '/groups/[id]', params: { id: group.id } });
     } catch (e) {
-      setNameError(messageOf(e));
+      if (mounted.current) setNameError(messageOf(e));
     } finally {
-      setCreating(false);
+      creatingRef.current = false;
+      if (mounted.current) setCreating(false);
     }
   };
 
@@ -79,7 +111,7 @@ export default function GroupsScreen() {
       onRefresh={async () => {
         setRefreshing(true);
         await load();
-        setRefreshing(false);
+        if (active.current) setRefreshing(false);
       }}
     >
       {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
@@ -102,28 +134,29 @@ export default function GroupsScreen() {
       ) : null}
 
       {groups?.map((g) => (
-        <Card
-          key={g.id}
-          onPress={() => router.push({ pathname: '/groups/[id]', params: { id: g.id } })}
-          accessibilityLabel={`${g.name}, ${memberCountLabel(g.memberCount)}${g.isOwner ? ', you own it' : ''}`}
-          accessibilityHint="Opens the group"
-        >
+        <Card key={g.id}>
           <View style={styles.row}>
-            <View style={{ flex: 1, gap: 2 }}>
+            <Pressable
+              style={({ pressed }) => [styles.identity, pressed && styles.pressed]}
+              accessibilityRole="button"
+              accessibilityLabel={`${g.name}, ${memberCountLabel(g.memberCount)}${g.isOwner ? ', you own it' : ''}`}
+              accessibilityHint="Opens the group"
+              onPress={() => {
+                haptic.tap();
+                router.push({ pathname: '/groups/[id]', params: { id: g.id } });
+              }}
+            >
               <Text style={styles.name}>{g.name}</Text>
               <Text style={styles.sub}>
                 {memberCountLabel(g.memberCount)}
                 {g.isOwner ? ' · Owner' : ''}
               </Text>
-            </View>
+            </Pressable>
             <Button
               label="Start a Pick"
               variant="secondary"
               icon="flame"
-              onPress={() => {
-                haptic.tap();
-                router.push(newGroupPickRoute(g));
-              }}
+              onPress={() => router.push(newGroupPickRoute(g))}
               accessibilityLabel={`Start a Pick with ${g.name}`}
             />
           </View>
@@ -161,6 +194,8 @@ export default function GroupsScreen() {
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  identity: { flex: 1, gap: 2, minHeight: MIN_TARGET, justifyContent: 'center' },
+  pressed: { opacity: 0.85 },
   name: { fontFamily: fonts.bold, fontSize: 17, color: colors.text },
   sub: { ...type.caption, color: colors.muted },
   heading: { fontFamily: fonts.bold, fontSize: 17, color: colors.text },

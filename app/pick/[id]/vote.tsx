@@ -57,13 +57,14 @@ export default function VoteScreen() {
     if (placeId === myVote) return;
     haptic.tap();
     const before = myVote;
-    setPicked(placeId);
     void action
       .run('vote', async () => {
+        setPicked(placeId);
         await api.vote(pickId, placeId);
         haptic.success();
       })
       .then((ok) => {
+        if (ok === null) return;
         if (!ok) setPicked(before);
         void live.refresh();
       });
