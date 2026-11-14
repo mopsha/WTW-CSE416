@@ -1,3 +1,4 @@
+import type { DiscoverConstraints } from '../domain/discoverFilters.ts';
 import type { LatLng } from '../domain/geo.ts';
 import type { OpeningHours } from '../domain/openingHours.ts';
 
@@ -11,6 +12,7 @@ export interface Candidate extends LatLng {
   address?: string;
   priceLevel?: number | null;
   rating?: number | null;
+  userRatingCount?: number | null;
   types?: string[];
   /** Resolved for one Discover response; never persisted. */
   photoUrl?: string | null;
@@ -38,6 +40,8 @@ export interface Candidate extends LatLng {
 }
 
 export interface PlaceSearch {
+  /** Discover-only constraints; Picks omit this field. */
+  discovery?: DiscoverConstraints;
   center: LatLng;
   radiusM: number;
   category?: Category;
