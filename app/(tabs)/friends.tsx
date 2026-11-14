@@ -1,3 +1,4 @@
+import { RowsSkeleton } from '@/components/LoadingStates';
 import { UsernameFriendSearch } from '@/components/friends/UsernameFriendSearch';
 import {
   RequestsEntry,
@@ -13,7 +14,7 @@ import { GroupInvitations } from '@/components/GroupInvitations';
 // Joining a Pick still happens by code; inviting friends to a Pick comes later.
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Keyboard, StyleSheet, Text, View } from 'react-native';
+import { Keyboard, StyleSheet, Text, View } from 'react-native';
 
 import type { FriendPerson, FriendsList } from '@shared/api/friends.ts';
 
@@ -248,12 +249,7 @@ function FriendsContent({ userId }: { userId: string }) {
                 <Text style={styles.caption}>No pending requests</Text>
               ) : null}
               {loadError ? <ErrorState message={loadError} onRetry={() => void load()} /> : null}
-              {list === null && !loadError ? (
-                <ActivityIndicator
-                  color={colors.primary}
-                  accessibilityLabel="Loading your friends"
-                />
-              ) : null}
+              {list === null && !loadError ? <RowsSkeleton label="Loading your friends" /> : null}
             </Sheet>
           </>
         )}
@@ -262,9 +258,7 @@ function FriendsContent({ userId }: { userId: string }) {
       {tab === 'friends' ? (
         <>
           {loadError ? <ErrorState message={loadError} onRetry={() => void load()} /> : null}
-          {list === null && !loadError ? (
-            <ActivityIndicator color={colors.primary} accessibilityLabel="Loading your friends" />
-          ) : null}
+          {list === null && !loadError ? <RowsSkeleton label="Loading your friends" /> : null}
           {list?.friends.length ? (
             <View style={styles.group}>
               <SocialSectionTitle title={`Your friends (${list.friends.length})`} />
@@ -335,9 +329,7 @@ function FriendsContent({ userId }: { userId: string }) {
             <Button label="Manage groups" variant="link" onPress={() => router.push('/groups')} />
           </View>
           {groupError ? <ErrorState message={groupError} onRetry={() => void load()} /> : null}
-          {groups === null && !groupError ? (
-            <ActivityIndicator color={colors.primary} accessibilityLabel="Loading your groups" />
-          ) : null}
+          {groups === null && !groupError ? <RowsSkeleton label="Loading your groups" /> : null}
           {groups?.map((g) => (
             <SocialRow
               key={g.id}

@@ -20,7 +20,10 @@ jest.mock('expo-router', () => ({
   useFocusEffect: (effect: () => void) => jest.requireActual('react').useEffect(effect, [effect]),
   useLocalSearchParams: () => ({ id: 'fixture', section: 'members' }),
 }));
-jest.mock('@/hooks/useAuth', () => ({ useSession: () => ({ user: { id: 'me' } }) }));
+jest.mock('@/hooks/useAuth', () => ({
+  useSession: () => ({ user: { id: 'me' } }),
+  useAuth: () => ({ session: { user: { id: 'me' } } }),
+}));
 jest.mock('@/hooks/usePrivateRefresh', () => ({
   usePrivateRefresh: (load: () => Promise<void>) =>
     jest.requireActual('react').useEffect(() => {

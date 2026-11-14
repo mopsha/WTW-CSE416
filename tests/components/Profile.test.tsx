@@ -1,5 +1,7 @@
 import { UserProfileMetadata } from '@/components/UserProfileMetadata';
 import React from 'react';
+import { AppState } from 'react-native';
+import { useSession } from '@/hooks/useAuth';
 import ProfileScreen from '../../app/(tabs)/profile';
 import { ProfileHero, ProfileFavorites } from '@/components/profile/ProfilePresentation';
 import { api } from '@/lib/api';
@@ -28,7 +30,7 @@ jest.mock('expo-router', () => ({
   useFocusEffect: (effect: () => void) => jest.requireActual('react').useEffect(effect, [effect]),
 }));
 jest.mock('@/hooks/useAuth', () => ({
-  useSession: () => ({ user: { id: 'me', email: 'demo@example.test' } }),
+  useSession: jest.fn(),
 }));
 jest.mock('@/hooks/useProfile', () => ({
   useProfile: () => ({
@@ -70,6 +72,12 @@ const profile: UserProfile = {
 };
 beforeEach(() => {
   jest.clearAllMocks();
+  AppState.currentState = 'active';
+  jest
+    .mocked(useSession)
+    .mockReturnValue({ user: { id: 'me', email: 'demo@example.test' } } as ReturnType<
+      typeof useSession
+    >);
   jest.mocked(api.getMyUserProfile).mockResolvedValue(profile);
 });
 async function mount() {
@@ -195,4 +203,51 @@ test('friend birthday renders as month/day independently from metadata privacy, 
   expect(JSON.stringify(tree.toJSON())).toContain('February 29');
   expect(JSON.stringify(tree.toJSON())).not.toMatch(/2000|birthDate|January/);
   await act(async () => tree.unmount());
+});
+
+test('account switch immediately removes private details and ignores a late previous-account response', async () => {
+  const tree = await mount();
+  let resolve!: (p: UserProfile) => void;
+  jest.mocked(api.getMyUserProfile).mockReturnValueOnce(
+    new Promise((r) => {
+      resolve = r;
+    }),
+  );
+  jest
+    .mocked(useSession)
+    .mockReturnValue({ user: { id: 'other', email: 'other@example.test' } } as ReturnType<
+      typeof useSession
+    >);
+  await act(async () => tree.update(<ProfileScreen />));
+  expect(
+    tree.root.findAllByProps({ accessibilityLabel: 'Loading profile details' }).length,
+  ).toBeGreaterThan(0);
+  expect(tree.root.findAllByType(ProfileFavorites)).toHaveLength(0);
+  // A mismatched API response is also rejected, even after the keyed owner changed.
+  await act(async () => resolve(profile));
+  expect(tree.root.findAllByType(ProfileFavorites)).toHaveLength(0);
+  expect(tree.root.findByType('test-error').props.message).toContain('verify profile');
+  await act(async () => tree.unmount());
+});
+
+test('same-focus refresh retains authorized details through transient errors and clears them on denial', async () => {
+  jest.useFakeTimers();
+  const tree = await mount();
+  try {
+    jest.mocked(api.getMyUserProfile).mockRejectedValueOnce(new Error('Offline'));
+    await act(async () => jest.advanceTimersByTime(5000));
+    expect(tree.root.findAllByType(ProfileFavorites)).toHaveLength(1);
+    expect(
+      tree.root.findAllByProps({ accessibilityLabel: 'Loading profile details' }),
+    ).toHaveLength(0);
+    jest
+      .mocked(api.getMyUserProfile)
+      .mockRejectedValueOnce(Object.assign(new Error('Denied'), { status: 403 }));
+    await act(async () => jest.advanceTimersByTime(5000));
+    expect(tree.root.findAllByType(ProfileFavorites)).toHaveLength(0);
+    expect(tree.root.findByType('test-error').props.message).toBe('Denied');
+  } finally {
+    await act(async () => tree.unmount());
+    jest.useRealTimers();
+  }
 });

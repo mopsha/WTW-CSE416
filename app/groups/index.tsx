@@ -1,7 +1,8 @@
+import { GroupCardsSkeleton } from '@/components/LoadingStates';
 // Groups: the ones I'm in, a quick "Start a Pick" on each, and a new-group form.
 import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
   Button,
@@ -116,14 +117,7 @@ function GroupsContent({ userId }: { userId: string }) {
     >
       {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
 
-      {groups === null && !error ? (
-        <ActivityIndicator
-          style={{ marginTop: space.xl }}
-          size="large"
-          color={colors.primary}
-          accessibilityLabel="Loading your groups"
-        />
-      ) : null}
+      {groups === null && !error ? <GroupCardsSkeleton /> : null}
 
       {groups && groups.length === 0 ? (
         <EmptyState

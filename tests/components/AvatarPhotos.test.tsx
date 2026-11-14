@@ -318,3 +318,28 @@ test('ordinary avatars do not poll capabilities; only a mounted capability consu
     jest.useRealTimers();
   }
 });
+
+test('a stale native decode cannot make a replacement or revoked revision reportable', async () => {
+  await mount();
+  const first = tree!.root.findAllByType(Image)[0]!.props;
+  await act(async () => first.onLoad());
+  expect(avatarCache.isDisplayed('A', ref)).toBe(true);
+  const next = { userId: 'friend', revision: 2 };
+  jest
+    .mocked(api.resolveAvatarRefs)
+    .mockResolvedValue({ friend: { revision: 2, avatarRef: next } });
+  await act(async () => photoChanged('friend', { revision: 2, avatarRef: next }));
+  expect(avatarCache.isDisplayed('A', next)).toBe(false);
+  await act(async () => {
+    first.onLoad();
+    first.onError();
+  });
+  expect(avatarCache.isDisplayed('A', next)).toBe(false);
+  const second = tree!.root.findAllByType(Image)[0]!.props;
+  await act(async () => second.onLoad());
+  expect(avatarCache.isDisplayed('A', next)).toBe(true);
+  await act(async () => photoChanged('friend', { revision: 2, avatarRef: null }));
+  await act(async () => second.onLoad());
+  expect(avatarCache.isDisplayed('A', next)).toBe(false);
+  expect(tree!.root.findAllByType(Image)).toHaveLength(0);
+});

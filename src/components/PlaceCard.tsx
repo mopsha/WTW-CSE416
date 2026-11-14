@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
@@ -31,11 +32,55 @@ export function describePlace(place: Candidate): string {
   return parts.join(', ');
 }
 
+/** Source-keyed image instances cannot settle a replacement source's loading state. */
 export function PlacePhoto({ uri, style }: { uri: string | null; style?: StyleProp<ImageStyle> }) {
-  return uri ? (
-    <Image source={{ uri }} style={[styles.photo, style]} resizeMode="cover" accessible={false} />
-  ) : (
-    <View style={[styles.photo, style]} />
+  return (
+    <View
+      style={[styles.photo, style]}
+      accessible={false}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      <PlacePhotoContent key={uri ?? 'no-photo'} uri={uri} />
+    </View>
+  );
+}
+function PlacePhotoContent({ uri }: { uri: string | null }) {
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const active = useRef(true);
+  const rejected = useRef(false);
+  useLayoutEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+    };
+  }, []);
+  return (
+    <>
+      {!loaded ? (
+        <View style={[StyleSheet.absoluteFill, styles.photoPlaceholder]}>
+          <Ionicons name="image-outline" size={24} color={colors.muted} />
+        </View>
+      ) : null}
+      {uri && !failed ? (
+        <Image
+          source={{ uri }}
+          resizeMode="cover"
+          accessible={false}
+          style={[StyleSheet.absoluteFill, { opacity: loaded ? 1 : 0 }]}
+          onLoad={() => {
+            if (active.current && !rejected.current) setLoaded(true);
+          }}
+          onError={() => {
+            if (!active.current) return;
+            rejected.current = true;
+            setLoaded(false);
+            setFailed(true);
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -112,7 +157,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: colors.card,
   },
-  photo: { backgroundColor: colors.cardHi },
+  photo: { backgroundColor: colors.cardHi, overflow: 'hidden' },
+  photoPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   nameRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
   infoBtn: {
     width: 40,
