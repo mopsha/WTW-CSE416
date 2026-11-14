@@ -1,6 +1,6 @@
 import { useAvatarPhoto } from '@/hooks/useAvatarSource';
 import React from 'react';
-import GroupScreen from '../../app/groups/[id]';
+import GroupScreen from '../../app/groups/[id]/details';
 import UserScreen from '../../app/users/[id]';
 import { queries } from '@/lib/queries';
 import { api } from '@/lib/api';
