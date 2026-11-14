@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { AvatarRef } from '@shared/api/avatars.ts';
 import { useAvatarPhoto } from '@/hooks/useAvatarSource';
 import { Image, StyleSheet, Text, View } from 'react-native';
@@ -35,13 +35,44 @@ function ManagedAvatar(props: AvatarProps) {
   return (
     <AvatarImage
       {...props}
-      uri={managed.uri ?? (props.avatarRef ? null : props.uri)}
+      uri={managed.uri}
       imageKey={managed.displayKey}
       onDisplay={managed.onDisplay}
     />
   );
 }
-function AvatarImage({
+type AvatarImageProps = AvatarProps & { imageKey?: string; onDisplay?: (success: boolean) => void };
+/** Reset before commit without copying private data URIs into React keys. */
+function AvatarImage(props: AvatarImageProps) {
+  const person = props.avatarRef?.userId ?? props.userId;
+  const revision = props.avatarRef?.revision;
+  const [identity, setIdentity] = useState(() => ({
+    source: props.uri,
+    key: props.imageKey,
+    name: props.name,
+    person,
+    revision,
+    version: 0,
+  }));
+  if (
+    identity.source !== props.uri ||
+    identity.key !== props.imageKey ||
+    identity.name !== props.name ||
+    identity.person !== person ||
+    identity.revision !== revision
+  ) {
+    setIdentity({
+      source: props.uri,
+      key: props.imageKey,
+      name: props.name,
+      person,
+      revision,
+      version: identity.version + 1,
+    });
+  }
+  return <AvatarImageContent key={identity.version} {...props} />;
+}
+function AvatarImageContent({
   name,
   uri: source,
   size = 40,
@@ -50,8 +81,21 @@ function AvatarImage({
   variant = 'default',
   imageKey,
   onDisplay,
-}: AvatarProps & { imageKey?: string; onDisplay?: (success: boolean) => void }) {
-  const [failed, setFailed] = useState<string | null>(null);
+}: AvatarImageProps) {
+  const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const active = useRef(true);
+  const rejected = useRef(false);
+  const display = useRef(onDisplay);
+  useLayoutEffect(() => {
+    active.current = true;
+    const notify = display.current;
+    notify?.(false);
+    return () => {
+      active.current = false;
+      notify?.(false);
+    };
+  }, []);
   let hash = 0;
   for (const ch of name.trim().toLowerCase()) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
   return (
@@ -74,18 +118,7 @@ function AvatarImage({
       accessibilityRole="image"
       accessibilityLabel={done ? `${name}, done` : name}
     >
-      {source && source !== failed ? (
-        <Image
-          key={imageKey}
-          onLoad={() => onDisplay?.(true)}
-          source={{ uri: source }}
-          onError={() => {
-            setFailed(source);
-            onDisplay?.(false);
-          }}
-          style={{ width: size, height: size, borderRadius: size / 2 }}
-        />
-      ) : (
+      {!loaded ? (
         <Text
           style={[
             styles.initials,
@@ -100,7 +133,29 @@ function AvatarImage({
         >
           {initialsFor(name)}
         </Text>
-      )}
+      ) : null}
+      {source && !failed ? (
+        <Image
+          key={imageKey}
+          onLoad={() => {
+            if (!active.current || rejected.current) return;
+            setLoaded(true);
+            onDisplay?.(true);
+          }}
+          source={{ uri: source }}
+          onError={() => {
+            if (!active.current) return;
+            rejected.current = true;
+            setLoaded(false);
+            setFailed(true);
+            onDisplay?.(false);
+          }}
+          style={[
+            StyleSheet.absoluteFill,
+            { width: size, height: size, borderRadius: size / 2, opacity: loaded ? 1 : 0 },
+          ]}
+        />
+      ) : null}
       {done ? (
         <View style={styles.badge}>
           <Ionicons name="checkmark" size={Math.max(10, size * 0.3)} color={colors.bg} />

@@ -37,7 +37,11 @@ test('actual profile images remain visible at every social avatar size', async (
     expect(tree.root.findByType(Image).props.source).toEqual({
       uri: 'https://example.test/ava.jpg',
     });
+    expect(tree.root.findByType(Text).props.children).toBe('A');
+    expect(StyleSheet.flatten(tree.root.findByType(Image).props.style).opacity).toBe(0);
+    await act(async () => tree.root.findByType(Image).props.onLoad());
     expect(tree.root.findAllByType(Text)).toHaveLength(0);
+    expect(StyleSheet.flatten(tree.root.findByType(Image).props.style).opacity).toBe(1);
     await act(async () => tree.unmount());
   }
 });

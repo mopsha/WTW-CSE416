@@ -1,3 +1,5 @@
+import { ProfileSkeleton } from '@/components/LoadingStates';
+import { useAuth } from '@/hooks/useAuth';
 import { useAvatarPhoto } from '@/hooks/useAvatarSource';
 import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import { PastMoves } from '@/components/PastMoves';
@@ -6,13 +8,19 @@ import { MessageFriendButton } from '@/components/MessageFriendButton';
 import type { UserProfile } from '@shared/api/userProfiles.ts';
 import { useLocalSearchParams } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { Avatar, Screen, ErrorState, colors, space, type } from '@/components';
 import { UserProfileMetadata } from '@/components/UserProfileMetadata';
 import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
 export default function UserProfileScreen() {
   const { id = '' } = useLocalSearchParams<{ id: string }>();
+  const { session } = useAuth();
+  return (
+    <UserProfileContent key={JSON.stringify([session?.user.id, session?.user.email, id])} id={id} />
+  );
+}
+function UserProfileContent({ id }: { id: string }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const photo = useAvatarPhoto(profile?.avatarRef, profile?.id);
   const [error, setError] = useState<string | null>(null);
@@ -21,6 +29,7 @@ export default function UserProfileScreen() {
   const load = useCallback(async () => {
     const request = ++latest.current;
     setError(null);
+    setLoading(true);
     try {
       const value = await api.getUserProfile(id);
       if (request === latest.current) setProfile(value);
@@ -56,9 +65,7 @@ export default function UserProfileScreen() {
         ) : undefined
       }
     >
-      {loading ? (
-        <ActivityIndicator color={colors.primary} accessibilityLabel="Loading profile" />
-      ) : null}
+      {loading && !profile ? <ProfileSkeleton /> : null}
       {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
       {profile ? (
         <View style={{ gap: space.lg }}>

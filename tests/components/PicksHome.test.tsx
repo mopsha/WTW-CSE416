@@ -185,10 +185,12 @@ test('Recent History renders five newest persisted winners and preserves See all
   expect(router.push).toHaveBeenLastCalledWith('/history');
   await act(async () => tree.unmount());
 });
-test('Recent History stays out of loading state and offers full History when empty', async () => {
+test('Recent History reserves initial space and offers full History when empty', async () => {
   jest.mocked(queries.listPicksHome).mockResolvedValue([]);
   const tree = await mount();
-  expect(JSON.stringify(tree.toJSON())).not.toContain('Recent History');
+  expect(
+    tree.root.findAllByProps({ accessibilityLabel: 'Loading Recent History' }).length,
+  ).toBeGreaterThan(0);
   await focus();
   expect(JSON.stringify(tree.toJSON())).toContain('Your finished Picks will appear here.');
   await act(async () => button(tree, 'See all').props.onPress());
@@ -362,4 +364,24 @@ test('account switches and logout discard cached data and late Google results', 
   expect(JSON.stringify(next.toJSON())).not.toContain('CSE 416 Team');
   expect(JSON.stringify(next.toJSON())).not.toContain('Live Google Cafe');
   await act(async () => next.unmount());
+});
+
+test('known authorization failures clear Home private sections without retaining or skeletonizing denied rows', async () => {
+  const tree = await mount();
+  await focus();
+  jest
+    .mocked(queries.listPicksHome)
+    .mockRejectedValueOnce(Object.assign(new Error('Denied'), { status: 401 }));
+  jest
+    .mocked(queries.listMyGroups)
+    .mockRejectedValueOnce(Object.assign(new Error('Denied'), { code: '42501' }));
+  await act(async () => tree.root.findByType('test-Screen').props.onRefresh());
+  const json = JSON.stringify(tree.toJSON());
+  expect(json).not.toContain('Final vote');
+  expect(json).not.toContain('CSE 416 Team');
+  expect(tree.root.findAllByProps({ accessibilityLabel: 'Loading your Picks' })).toHaveLength(0);
+  expect(tree.root.findAllByProps({ accessibilityLabel: 'Loading Recent History' })).toHaveLength(
+    0,
+  );
+  await act(async () => tree.unmount());
 });
