@@ -3,20 +3,23 @@ import { attendanceDue } from '@shared/domain/pastMoves.ts';
 // The Winner screen's "after" part (Alan): when we're going, who's in (counts only), "Did you
 // go?", and "Pick again". Everything here is changeable; the server rechecks who may do what.
 import { router } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { PlanSummary, RsvpStatus } from '@shared/api/plans.ts';
 
 import { useAction } from '@/hooks/useAction';
 import { api } from '@/lib/api';
-import { formatPlanTime, planTimeOptions, shouldAskDidYouGo, wentSummary } from '@/lib/plans';
+import { formatPlanTime, shouldAskDidYouGo, wentSummary } from '@/lib/plans';
 
 import { Button } from './Button';
 import { Chips } from './Chips';
 import { ErrorBanner } from './ErrorBanner';
-import { pickStyles } from './PickParts';
-import { colors, fonts } from './theme';
+import { Card } from './Card';
+import { AvatarStack } from './Avatar';
+import { PlanTimeSheet } from './PlanTimeSheet';
+import type { ParticipantProgress } from '@/lib/types';
+import { colors, fonts, space, type } from './theme';
 
 const PLAN_REFRESH_MS = 30_000;
 
@@ -26,8 +29,21 @@ const RSVP_OPTIONS = [
   { value: 'not_going', label: 'Can’t' },
 ] as const;
 
-export function PlanBlock({ pickId, decidedAt }: { pickId: string; decidedAt: string | null }) {
+export function PlanBlock({
+  pickId,
+  decidedAt,
+  people = [],
+  children,
+}: {
+  pickId: string;
+  decidedAt: string | null;
+  people?: ParticipantProgress[];
+  children?: ReactNode;
+}) {
+  const [scheduling, setScheduling] = useState(false);
+  const inFlight = useRef(false);
   const [plan, setPlan] = useState<PlanSummary | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const action = useAction();
   const [editingAttendance, setEditingAttendance] = useState(false);
   // Only the newest reload may update the block, so quick taps can't show a stale answer.
@@ -37,10 +53,14 @@ export function PlanBlock({ pickId, decidedAt }: { pickId: string; decidedAt: st
     const request = ++latest.current;
     return api.getPlan(pickId).then(
       (next) => {
-        if (request === latest.current) setPlan(next);
+        if (request === latest.current) {
+          setPlan(next);
+          setLoadError(false);
+        }
       },
       // Keep offline data, but never retain a plan after authorization is denied.
       (error: unknown) => {
+        if (request === latest.current) setLoadError(true);
         if (
           request === latest.current &&
           typeof error === 'object' &&
@@ -55,16 +75,24 @@ export function PlanBlock({ pickId, decidedAt }: { pickId: string; decidedAt: st
   const clear = useCallback(() => {
     latest.current++;
     setPlan(null);
+    setLoadError(false);
     setEditingAttendance(false);
+    setScheduling(false);
   }, []);
   usePrivateRefresh(load, clear, PLAN_REFRESH_MS);
 
   // One action at a time: a second tap while one is in flight is ignored.
   const act = (name: string, fn: () => Promise<unknown>) => {
-    if (action.busy) return;
-    void action.run(name, fn).then((ok) => {
-      if (ok) return load();
-    });
+    if (inFlight.current) return;
+    inFlight.current = true;
+    void action
+      .run(name, fn)
+      .then((ok) => {
+        if (ok) return load();
+      })
+      .finally(() => {
+        inFlight.current = false;
+      });
   };
 
   const again = () =>
@@ -73,53 +101,79 @@ export function PlanBlock({ pickId, decidedAt }: { pickId: string; decidedAt: st
       router.replace(`/pick/${next}`);
     });
 
-  if (!plan) return null;
+  if (!plan)
+    return (
+      <>
+        {loadError ? (
+          <ErrorBanner message="Couldn’t load the plan." onRetry={() => void load()} />
+        ) : (
+          <Text style={styles.muted}>Loading the plan…</Text>
+        )}
+        {children}
+      </>
+    );
   const summary = wentSummary(plan);
-  const { going, maybe } = plan.rsvps;
+  const { going, maybe, notGoing } = plan.rsvps;
+  const attendanceReady = attendanceDue(plan.planAt, decidedAt);
 
   return (
-    <View style={pickStyles.card} accessibilityLabel="The plan">
-      {action.error ? <ErrorBanner message={action.error} /> : null}
+    <View style={{ gap: space.lg }}>
+      <Card>
+        <Text style={styles.section} accessibilityRole="header">
+          The plan
+        </Text>
+        {action.error ? <ErrorBanner message={action.error} /> : null}
 
-      <Text style={pickStyles.section}>
-        {plan.planAt ? `📅 ${formatPlanTime(plan.planAt)}` : 'When are you going?'}
-      </Text>
-      {plan.isHost ? (
-        <View style={styles.row}>
-          {planTimeOptions().map((o) => (
-            <Button
-              key={o.label}
-              label={o.label}
-              variant="secondary"
-              loading={action.busy === `time-${o.label}`}
-              onPress={() => act(`time-${o.label}`, () => api.setPlanTime(pickId, o.value))}
+        {plan.isHost ? (
+          <Card
+            variant="flat"
+            onPress={() => {
+              if (!inFlight.current) setScheduling(true);
+            }}
+            accessibilityLabel={`${plan.planAt ? formatPlanTime(plan.planAt) : 'No time set'}, edit scheduled time`}
+          >
+            <Text style={styles.label}>
+              {plan.planAt ? formatPlanTime(plan.planAt) : 'Set a time'}
+            </Text>
+            <Text style={styles.muted}>Change date and time</Text>
+          </Card>
+        ) : (
+          <Text style={styles.label}>
+            {plan.planAt ? formatPlanTime(plan.planAt) : 'The host hasn’t set a time yet.'}
+          </Text>
+        )}
+        {people.length ? (
+          <View style={styles.row}>
+            <AvatarStack
+              people={people.map((p) => ({ name: p.displayName ?? 'Member', userId: p.userId }))}
+              size={28}
             />
-          ))}
-        </View>
-      ) : !plan.planAt ? (
-        <Text style={styles.muted}>The host hasn’t set a time yet.</Text>
-      ) : null}
+            <Text style={styles.muted}>{plan.participantCount} participants</Text>
+          </View>
+        ) : null}
 
-      <Text style={styles.label}>Are you in?</Text>
-      <Chips
-        options={RSVP_OPTIONS}
-        value={(plan.myRsvp ?? '') as RsvpStatus}
-        onChange={(status) => act('rsvp', () => api.rsvp(pickId, status))}
-        accessibilityLabel="Are you going"
-      />
-      <Text style={styles.muted}>
-        {going + maybe
-          ? `${going} going${maybe ? `, ${maybe} maybe` : ''} of ${plan.participantCount}`
-          : 'Nobody has answered yet.'}
-      </Text>
-
+        <Text style={styles.label}>Are you in?</Text>
+        <Chips
+          options={RSVP_OPTIONS}
+          value={(plan.myRsvp ?? '') as RsvpStatus}
+          onChange={(status) => act('rsvp', () => api.rsvp(pickId, status))}
+          accessibilityLabel="Are you going"
+        />
+        <Text style={styles.muted}>
+          {going + maybe + notGoing
+            ? `${going} going · ${maybe} maybe · ${notGoing} can’t · ${plan.participantCount - going - maybe - notGoing} awaiting reply`
+            : 'Nobody has answered yet.'}
+        </Text>
+      </Card>
       {shouldAskDidYouGo(plan, decidedAt) ||
       (editingAttendance && attendanceDue(plan.planAt, decidedAt)) ? (
-        <View style={styles.ask}>
-          <Text style={pickStyles.section}>Did you go? 👀</Text>
+        <Card>
+          <Text style={styles.section} accessibilityRole="header">
+            Did you go?
+          </Text>
           <View style={styles.row}>
             <Button
-              label="I went 🎉"
+              label="I went"
               variant="secondary"
               loading={action.busy === 'went'}
               onPress={() =>
@@ -141,9 +195,9 @@ export function PlanBlock({ pickId, decidedAt }: { pickId: string; decidedAt: st
               }
             />
           </View>
-        </View>
+        </Card>
       ) : null}
-      {plan.myOutcome?.went && plan.myOutcome.again === null ? (
+      {attendanceReady && plan.myOutcome?.went && plan.myOutcome.again === null ? (
         <View style={styles.row}>
           <Text style={styles.label}>Would you go again?</Text>
           <Button
@@ -171,8 +225,26 @@ export function PlanBlock({ pickId, decidedAt }: { pickId: string; decidedAt: st
           />
         </>
       ) : null}
-      {summary ? <Text style={styles.went}>{summary}</Text> : null}
+      {attendanceReady && summary ? <Text style={styles.went}>{summary}</Text> : null}
 
+      {children}
+      {scheduling && plan.isHost ? (
+        <PlanTimeSheet
+          initial={plan.planAt}
+          onClose={() => setScheduling(false)}
+          onSave={async (value) => {
+            if (inFlight.current) throw new Error('Another change is saving. Try again.');
+            inFlight.current = true;
+            try {
+              await api.setPlanTime(pickId, value);
+              setPlan((current) => (current ? { ...current, planAt: value } : current));
+              await load();
+            } finally {
+              inFlight.current = false;
+            }
+          }}
+        />
+      ) : null}
       {plan.isHost ? (
         <Button
           label="Pick again with the same group"
@@ -186,9 +258,9 @@ export function PlanBlock({ pickId, decidedAt }: { pickId: string; decidedAt: st
 }
 
 const styles = StyleSheet.create({
+  section: { ...type.heading, color: colors.text },
   row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
   label: { fontFamily: fonts.semibold, fontSize: 15, color: colors.text },
   muted: { fontFamily: fonts.medium, fontSize: 14, color: colors.muted },
   went: { fontFamily: fonts.bold, fontSize: 15, color: colors.yes },
-  ask: { gap: 8, paddingTop: 4 },
 });
