@@ -20,6 +20,7 @@ import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { useAvatarLifecycle } from '@/hooks/useAvatarSource';
 import { ProfileProvider, useProfile } from '@/hooks/useProfile';
 import { auth } from '@/lib/auth';
+import { hasSeenIntro, markIntroSeen } from '@/lib/intro';
 import { configureNotifications, onNotificationTap } from '@/lib/notify';
 import { takePendingInvite, setPendingInvite } from '@/lib/pendingInvite';
 import { takePendingJoin } from '@/lib/pendingJoin';
@@ -50,8 +51,22 @@ function RootStack() {
     Poppins_700Bold,
     Poppins_800ExtraBold,
   });
+  // Read once at launch; null until known so a returning device never flashes the intro.
+  const [introSeen, setIntroSeen] = useState<boolean | null>(null);
+  useEffect(() => {
+    let active = true;
+    void hasSeenIntro().then((seen) => active && setIntroSeen(seen));
+    return () => {
+      active = false;
+    };
+  }, []);
+  // Anyone who has signed in on this device has met WTW: after a sign-out, go to sign-in.
+  if (session && introSeen === false) setIntroSeen(true);
+  useEffect(() => {
+    if (session) void markIntroSeen();
+  }, [session]);
   // A font failure falls back to the system font rather than blocking the app.
-  const ready = !loading && !profile.loading && (fontsLoaded || !!fontError);
+  const ready = !loading && !profile.loading && (fontsLoaded || !!fontError) && introSeen !== null;
   const needsName =
     !!session && !profile.failed && !hasRequiredIdentity(profile.displayName, profile.username);
   const inApp = !!session && !profile.failed && !needsName;
@@ -173,6 +188,12 @@ function RootStack() {
           animation: 'fade_from_bottom',
         }}
       >
+        {/* Signed out, Stack.Protected falls back to the first available screen: the intro
+            until this device has seen it, then sign-in. The intro leaves with replace, so its
+            guard staying true until sign-in never redirects mid-flow. */}
+        <Stack.Protected guard={!session && introSeen === false}>
+          <Stack.Screen name="intro" />
+        </Stack.Protected>
         <Stack.Protected guard={!session}>
           <Stack.Screen name="sign-in" />
         </Stack.Protected>
