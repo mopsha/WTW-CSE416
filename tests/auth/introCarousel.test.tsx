@@ -62,7 +62,6 @@ jest.mock('@/components', () => {
     Illustration: () => null,
     OnboardingCopy: el('copy'),
     PageDots: el('dots'),
-    onboardingStyles: { fine: {} },
   };
 });
 jest.mock('expo-router', () => {
@@ -157,9 +156,13 @@ describe('intro carousel', () => {
     expect(tree.root.findAllByType('test-dots')[0]!.props.index).toBe(2);
     for (const b of tree.root.findAllByType('test-button'))
       expect(b.props.accessibilityLabel ?? b.props.label).toBeTruthy();
-    await act(async () => button(tree, 'Terms').props.onPress());
+    const link = (label: string) =>
+      tree.root.findAll(
+        (n) => n.props.accessibilityRole === 'link' && n.props.accessibilityLabel === label,
+      )[0]!;
+    await act(async () => link('Terms of Use').props.onPress());
     expect(openLegalPage).toHaveBeenCalledWith(TERMS_URL, 'Terms of Use');
-    await act(async () => button(tree, 'Privacy Policy').props.onPress());
+    await act(async () => link('Privacy Policy').props.onPress());
     expect(openLegalPage).toHaveBeenCalledWith(PRIVACY_URL, 'Privacy Policy');
     // Legal links don't count as finishing the intro.
     expect(await AsyncStorage.getItem('wtw.introSeen.v1')).toBeNull();
