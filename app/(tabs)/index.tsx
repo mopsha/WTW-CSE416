@@ -1,7 +1,8 @@
+import { ActivePicksSkeleton, HistorySkeleton, RowsSkeleton } from '@/components/LoadingStates';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ActivePickPanel, GroupIdentity, PicksHero } from '@/components/picks/PicksHome';
 import { Button, Screen } from '@/components';
 import { GoogleCredit } from '@/components/GoogleCredit';
@@ -14,7 +15,7 @@ import { ErrorBanner } from '@/components/ErrorBanner';
 import { colors, fonts, MIN_TARGET, picksTheme, space, type } from '@/components/theme';
 import { useSession } from '@/hooks/useAuth';
 import { USE_MOCK } from '@/lib/config';
-import { messageOf } from '@/lib/errors';
+import { isAccessDenied, messageOf } from '@/lib/errors';
 import { newGroupPickRoute, type GroupSummary } from '@/lib/groups';
 import { haptic } from '@/lib/haptics';
 import { resetMockGroups } from '@/lib/mock/groups';
@@ -105,7 +106,13 @@ function PicksHome({ userId }: { userId: string }) {
           /* Optional names: retain category fallbacks on failure/quota exhaustion. */
         }
       } catch (e) {
-        if (current()) setError(messageOf(e));
+        if (current()) {
+          if (isAccessDenied(e)) {
+            setPicks(null);
+            setWinnerPlaces(new Map());
+          }
+          setError(messageOf(e));
+        }
       }
     };
     const loadGroups = async () => {
@@ -113,7 +120,10 @@ function PicksHome({ userId }: { userId: string }) {
         const next = await queries.listMyGroups(userId);
         if (current()) setGroups(next);
       } catch (e) {
-        if (current()) setGroupError(messageOf(e));
+        if (current()) {
+          if (isAccessDenied(e)) setGroups(null);
+          setGroupError(messageOf(e));
+        }
       }
     };
     const promise = Promise.all([loadPicks(), loadGroups()]).then(() => {
@@ -190,9 +200,7 @@ function PicksHome({ userId }: { userId: string }) {
         </Pressable>
       </View>
       {error ? <ErrorBanner message={error} onRetry={() => void load()} /> : null}
-      {picks === null && !error ? (
-        <ActivityIndicator color={colors.primary} accessibilityLabel="Loading your Picks" />
-      ) : null}
+      {picks === null && !error ? <ActivePicksSkeleton /> : null}
       {active.length ? (
         <View style={s.section}>
           <Text style={s.sectionTitle} accessibilityRole="header">
@@ -228,7 +236,7 @@ function PicksHome({ userId }: { userId: string }) {
         </View>
         {groupError ? <ErrorBanner message={groupError} onRetry={() => void load()} /> : null}
         {groups === null && !groupError ? (
-          <ActivityIndicator color={colors.primary} accessibilityLabel="Loading your groups" />
+          <RowsSkeleton label="Loading your groups" avatarSize={56} count={1} />
         ) : null}
         {groups?.length ? (
           <View style={[s.groupShelf, groups.length === 1 && s.singleShelf]}>
@@ -247,6 +255,7 @@ function PicksHome({ userId }: { userId: string }) {
         ) : null}
       </View>
       <HangCard />
+      {picks === null && !error ? <HistorySkeleton /> : null}
       {picks !== null ? (
         <View>
           <View style={s.sectionHead}>

@@ -1,3 +1,4 @@
+import { GroupDetailsSkeleton, RowsSkeleton } from './LoadingStates';
 import { GroupAvatar } from '@/components/GroupAvatar';
 import { ConversationHeader } from '@/components/ConversationHeader';
 import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
@@ -272,12 +273,13 @@ function GroupConversation({
   if (group === undefined && !error) {
     return (
       <Screen back>
-        <ActivityIndicator
-          style={{ marginTop: space.xxl }}
-          size="large"
-          color={colors.primary}
-          accessibilityLabel="Loading the group"
-        />
+        <>
+          {details ? (
+            <GroupDetailsSkeleton />
+          ) : (
+            <RowsSkeleton label="Loading the group" avatarSize={40} count={1} />
+          )}
+        </>
       </Screen>
     );
   }

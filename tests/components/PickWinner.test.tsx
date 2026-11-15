@@ -195,3 +195,19 @@ test('host schedule control saves through the existing API only on confirmation'
   expect(api.setPlanTime).toHaveBeenCalledWith('pick', next);
   expect(api.getPlan).toHaveBeenCalledTimes(2);
 });
+
+test('initial result loading has only neutral placeholders, with no winner, success or plan actions', async () => {
+  mockReveal = { status: 'loading' };
+  let tree: any;
+  await act(async () => {
+    tree = create(<WinnerScreen />);
+  });
+  expect(
+    tree.root.findAllByProps({ accessibilityLabel: 'Loading Pick results' }).length,
+  ).toBeGreaterThan(0);
+  expect(tree.root.findAllByType(WinnerCard)).toHaveLength(0);
+  expect(tree.root.findAllByType('kit-button')).toHaveLength(0);
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Saved to your history');
+  expect(api.getPlan).not.toHaveBeenCalled();
+  await act(async () => tree.unmount());
+});

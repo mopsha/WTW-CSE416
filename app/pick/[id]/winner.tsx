@@ -1,3 +1,4 @@
+import { PickResultSkeleton } from '@/components/LoadingStates';
 // Winner (completed): the place, how it was decided, Directions in the phone's maps app, and
 // "Saved to your history" (the decided Pick stays in the Picks list after reopening the app).
 import { Ionicons } from '@expo/vector-icons';
@@ -6,7 +7,7 @@ import { Linking, Platform, StyleSheet, Text, View } from 'react-native';
 import { Screen } from '@/components/Screen';
 
 import { Button } from '@/components/Button';
-import { CenterMessage, FlameOrb, goToPicks } from '@/components/PickParts';
+import { CenterMessage, goToPicks } from '@/components/PickParts';
 import { PlanBlock } from '@/components/PlanBlock';
 import { SmallResult, WinnerCard } from '@/components/ResultCards';
 import { colors, space, type } from '@/components/theme';
@@ -33,9 +34,14 @@ function openDirections(place: Candidate) {
 export default function WinnerScreen() {
   const { id: pickId = '' } = useLocalSearchParams<{ id: string }>();
   const session = useSession();
+  return (
+    <WinnerContent key={`${session.user.id}:${pickId}`} pickId={pickId} userId={session.user.id} />
+  );
+}
+function WinnerContent({ pickId, userId }: { pickId: string; userId: string }) {
   const live = usePickLive(pickId);
   usePickRoute(pickId, 'winner', live.state);
-  const { reveal, retry } = useReveal(pickId, session.user.id, live.state);
+  const { reveal, retry } = useReveal(pickId, userId, live.state);
 
   if (reveal.status === 'error') {
     return (
@@ -49,10 +55,8 @@ export default function WinnerScreen() {
   }
   if (reveal.status === 'loading') {
     return (
-      <Screen back scroll={false}>
-        <View style={styles.center}>
-          <FlameOrb />
-        </View>
+      <Screen back>
+        <PickResultSkeleton />
       </Screen>
     );
   }
@@ -124,7 +128,6 @@ export default function WinnerScreen() {
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   head: { gap: space.xs },
   heading: { ...type.heading, color: colors.text },
   muted: { ...type.caption, color: colors.muted },

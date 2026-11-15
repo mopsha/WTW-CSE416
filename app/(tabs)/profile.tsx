@@ -1,3 +1,6 @@
+import { ProfileSkeleton } from '@/components/LoadingStates';
+import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
+import { isAccessDenied, messageOf } from '@/lib/errors';
 import { ProfileActions } from '@/components/profile/ProfileActions';
 import { profileTheme } from '@/components/theme';
 import {
@@ -7,11 +10,11 @@ import {
 } from '@/components/profile/ProfilePresentation';
 import { PastMoves } from '@/components/PastMoves';
 import type { UserProfile } from '@shared/api/userProfiles.ts';
-import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { router } from 'expo-router';
+import { useCallback, useRef, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 
-import { colors, ErrorState, radius, Screen, space } from '@/components';
+import { ErrorState, radius, Screen, space } from '@/components';
 import { useAction } from '@/hooks/useAction';
 import { useSession } from '@/hooks/useAuth';
 import { suggestedName, useProfile } from '@/hooks/useProfile';
@@ -23,6 +26,10 @@ import { preferencesSummary } from '@/lib/preferences';
 // account deletion (App Store 5.1.1(v): reachable from here in two taps).
 export default function ProfileScreen() {
   const session = useSession();
+  return <OwnProfile key={session.user.id} />;
+}
+function OwnProfile() {
+  const session = useSession();
   const { displayName, username, preferences } = useProfile();
   const email = session.user.email ?? 'you';
   const name = displayName || suggestedName(session.user.email) || email;
@@ -30,20 +37,40 @@ export default function ProfileScreen() {
   const [detailsError, setDetailsError] = useState<string | null>(null);
   const { busy, error, run } = useAction();
 
+  const latest = useRef(0);
+  const active = useRef(false);
+  const userId = session.user.id;
+  const clear = useCallback(() => {
+    active.current = false;
+    latest.current++;
+    setDetails(null);
+    setDetailsError(null);
+  }, []);
   const loadDetails = useCallback(async () => {
+    if (!active.current) return;
+    const request = ++latest.current;
+    setDetailsError(null);
     try {
-      setDetails(await api.getMyUserProfile());
+      const next = await api.getMyUserProfile();
+      if (!active.current || latest.current !== request) return;
+      if (next.id !== userId || !next.isOwner) {
+        setDetails(null);
+        setDetailsError('Could not verify profile details. Please try again.');
+        return;
+      }
+      setDetails(next);
       setDetailsError(null);
     } catch (e) {
-      setDetails(null);
-      setDetailsError(e instanceof Error ? e.message : 'Could not load profile details');
+      if (!active.current || latest.current !== request) return;
+      if (isAccessDenied(e)) setDetails(null);
+      setDetailsError(messageOf(e));
     }
-  }, []);
-  useFocusEffect(
-    useCallback(() => {
-      void loadDetails();
-    }, [loadDetails]),
-  );
+  }, [userId]);
+  const refresh = useCallback(() => {
+    active.current = true;
+    return loadDetails();
+  }, [loadDetails]);
+  usePrivateRefresh(refresh, clear);
 
   async function deleteAccount() {
     await run('delete', () => accountActions.deleteAccount());
@@ -51,16 +78,17 @@ export default function ProfileScreen() {
 
   return (
     <Screen edges={['top', 'left', 'right']} contentStyle={styles.content}>
-      <ProfileHero name={name} profile={details} userId={session.user.id} />
+      {!details && !detailsError ? (
+        <ProfileSkeleton own />
+      ) : details ? (
+        <ProfileHero name={name} profile={details} userId={session.user.id} />
+      ) : null}
       <ProfileActions
         userId={session.user.id}
         name={details?.displayName ?? displayName}
         username={details?.username ?? username}
         onEdit={() => router.push('/settings/profile')}
       />
-      {!details && !detailsError ? (
-        <ActivityIndicator color={colors.primary} accessibilityLabel="Loading profile details" />
-      ) : null}
       {detailsError ? (
         <ErrorState message={detailsError} onRetry={() => void loadDetails()} />
       ) : null}

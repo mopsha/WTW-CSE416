@@ -1,3 +1,4 @@
+import { PlaceCardsSkeleton } from '@/components/LoadingStates';
 // Discover: bounded individual feed; preserve local fixture presentation in mock mode.
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -21,7 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/lib/api';
 import { discoverPlace } from '@/lib/discoverFeed';
-import { messageOf } from '@/lib/errors';
+import { isAccessDenied, messageOf } from '@/lib/errors';
 import { DiscoverFilterSheet } from '@/components/DiscoverFilterSheet';
 import {
   activeFilterCount,
@@ -356,7 +357,13 @@ function DiscoverFeed({ userId }: { userId: string }) {
       })
       .catch((e) => {
         if (active)
-          setResponse({ key: requestKey, scope, places: [], notice: null, error: messageOf(e) });
+          setResponse((previous) => ({
+            key: requestKey,
+            scope,
+            places: !isAccessDenied(e) && previous?.scope === scope ? previous.places : [],
+            notice: null,
+            error: messageOf(e),
+          }));
       });
     return () => {
       active = false;
@@ -534,7 +541,7 @@ function DiscoverFeed({ userId }: { userId: string }) {
         }
         ListEmptyComponent={
           loading ? (
-            <ActivityIndicator color={colors.primary} accessibilityLabel="Loading places" />
+            <PlaceCardsSkeleton />
           ) : error ? null : (
             <View style={{ gap: space.sm }}>
               <QuietEmpty

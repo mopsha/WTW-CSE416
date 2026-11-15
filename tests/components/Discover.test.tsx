@@ -351,3 +351,28 @@ test('a previous account response cannot repopulate a newly mounted account feed
   expect(textOf(tree)).not.toContain('Previous account result');
   await act(async () => tree.unmount());
 });
+
+test('same-query retry failure retains usable cards without skeletons; a changed query hides them', async () => {
+  const tree = await mount();
+  jest.mocked(api.savePlace).mockRejectedValueOnce(new Error('Save offline'));
+  await act(async () => press(tree, 'Save Campus Cafe'));
+  jest.mocked(api.discover).mockRejectedValueOnce(new Error('Feed offline'));
+  await act(async () => tree.root.findByType('test-error').props.onRetry());
+  expect(textOf(tree)).toContain('Campus Cafe');
+  expect(tree.root.findAllByProps({ accessibilityLabel: 'Loading places' })).toHaveLength(0);
+  let finish!: (v: any) => void;
+  jest.mocked(api.discover).mockReturnValueOnce(
+    new Promise((r) => {
+      finish = r;
+    }),
+  );
+  await act(async () => press(tree, 'Open Now'));
+  expect(textOf(tree)).not.toContain('Campus Cafe');
+  expect(tree.root.findAllByProps({ accessibilityLabel: 'Loading places' }).length).toBeGreaterThan(
+    0,
+  );
+  await act(async () => finish({ places: [], fallback: false, notice: null }));
+  expect(tree.root.findAllByProps({ accessibilityLabel: 'Loading places' })).toHaveLength(0);
+  expect(tree.root.findByType('test-empty')).toBeDefined();
+  await act(async () => tree.unmount());
+});

@@ -191,3 +191,22 @@ test('invalid names never create a group', async () => {
   expect(api.createGroup).not.toHaveBeenCalled();
   expect(router.push).not.toHaveBeenCalled();
 });
+
+test('initial group skeletons resolve to rows, while failures and empty results remain distinct', async () => {
+  const pending = deferred<any>();
+  jest.mocked(queries.listMyGroups).mockReturnValueOnce(pending.promise);
+  await mount();
+  expect(
+    tree.root.findAllByProps({ accessibilityLabel: 'Loading your groups' }).length,
+  ).toBeGreaterThan(0);
+  expect(target('Our crew, 3 people, you own it')).toBeUndefined();
+  await act(async () => pending.resolve([]));
+  expect(tree.root.findAllByProps({ accessibilityLabel: 'Loading your groups' })).toHaveLength(0);
+  expect(tree.root.findByType('test-empty').props.title).toBe('No groups yet');
+  await act(async () => tree.unmount());
+  tree = null;
+  jest.mocked(queries.listMyGroups).mockRejectedValueOnce(new Error('Offline'));
+  await mount();
+  expect(tree.root.findAllByProps({ accessibilityLabel: 'Loading your groups' })).toHaveLength(0);
+  expect(tree.root.findByType('test-error').props.message).toBe('Offline');
+});

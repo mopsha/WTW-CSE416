@@ -1,9 +1,10 @@
+import { HistorySkeleton } from './LoadingStates';
 import { profileTheme } from './theme';
 import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import type { PastMove, PastMovesResult } from '@shared/api/pastMoves.ts';
 import { router } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { Button, Card, colors, ErrorState, space, type, radius } from '@/components';
 import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
@@ -77,7 +78,7 @@ export function PastMoves({
       {error ? (
         <ErrorState variant="banner" message={error} onRetry={() => void load()} />
       ) : !data ? (
-        <ActivityIndicator color={colors.primary} accessibilityLabel="Loading Past Moves" />
+        <HistorySkeleton label="Loading Past Moves" card />
       ) : !data.visible ? (
         <Text style={s.caption}>Past Moves are private.</Text>
       ) : !data.pastMoves.length ? (
