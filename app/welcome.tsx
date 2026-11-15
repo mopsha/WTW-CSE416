@@ -2,21 +2,18 @@ import type { Birthday } from '@shared/api/birthdays.ts';
 import { BirthdayField } from '@/components/BirthdayField';
 import { parseIdentity } from '@shared/api/userProfiles.ts';
 import { validateDisplayName, DISPLAY_NAME_MAX } from '@shared/api/profile.ts';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useRef, useState } from 'react';
-import {
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { StyleSheet, Text, TextInput } from 'react-native';
 
-import { Avatar, Button, colors, ErrorState, fonts, MIN_TARGET } from '@/components';
-import { GradientButton } from '@/components/GradientButton';
+import {
+  Avatar,
+  Button,
+  colors,
+  ErrorState,
+  OnboardingFrame,
+  onboardingStyles,
+  type,
+} from '@/components';
 import { useAction } from '@/hooks/useAction';
 import { useSession } from '@/hooks/useAuth';
 import { suggestedName, useProfile } from '@/hooks/useProfile';
@@ -66,126 +63,78 @@ function WelcomeForm() {
   const preview = name.trim() || '?';
 
   return (
-    <View style={styles.root}>
-      <LinearGradient
-        colors={[colors.card, colors.bg, colors.bg]}
-        locations={[0, 0.55, 1]}
-        style={StyleSheet.absoluteFill}
+    <OnboardingFrame
+      art={<Avatar name={preview} size={120} />}
+      title="What should we call you?"
+      body="Your name and username show up in Picks. You can change them later."
+      actions={
+        <>
+          {error ? <ErrorState variant="banner" message={error} /> : null}
+          <Button
+            label="Continue"
+            accessibilityHint="Saves your name and username"
+            onPress={() => void save()}
+            loading={busy === 'save'}
+            disabled={!name.trim() || !username.trim()}
+          />
+          <Button
+            label="Skip birthday"
+            accessibilityHint="Saves your name and username without a birthday."
+            variant="link"
+            disabled={!!busy || !name.trim() || !username.trim()}
+            onPress={() => void save(true)}
+          />
+          <Button
+            label="Use a different email"
+            variant="link"
+            onPress={() => void run('logout', () => auth.signOut())}
+          />
+        </>
+      }
+    >
+      <TextInput
+        style={onboardingStyles.input}
+        value={name}
+        onChangeText={(text) => {
+          setName(text);
+          setInvalid(null);
+        }}
+        placeholder="Your name"
+        placeholderTextColor={colors.muted}
+        autoCapitalize="words"
+        autoComplete="name"
+        textContentType="name"
+        maxLength={DISPLAY_NAME_MAX * 2}
+        returnKeyType="done"
+        onSubmitEditing={() => void save()}
+        accessibilityLabel="Your name"
+        accessibilityHint="Shown to people in your Picks"
+        editable={!busy}
       />
-      <SafeAreaView style={styles.flex}>
-        <KeyboardAvoidingView
-          style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-            <View style={styles.hero}>
-              <Avatar name={preview} size={88} />
-              <Text style={styles.title} accessibilityRole="header">
-                Make it yours
-              </Text>
-              <Text style={styles.body}>
-                Choose your display name and a unique username. You can edit both later in Settings.
-              </Text>
-            </View>
-            <View style={styles.form}>
-              <TextInput
-                style={styles.input}
-                value={name}
-                onChangeText={(text) => {
-                  setName(text);
-                  setInvalid(null);
-                }}
-                placeholder="Your name"
-                placeholderTextColor={colors.muted}
-                autoCapitalize="words"
-                autoComplete="name"
-                textContentType="name"
-                autoFocus
-                maxLength={DISPLAY_NAME_MAX * 2}
-                returnKeyType="done"
-                onSubmitEditing={() => void save()}
-                accessibilityLabel="Your name"
-                accessibilityHint="Shown to people in your Picks"
-                editable={!busy}
-              />
-              <TextInput
-                style={styles.input}
-                value={username}
-                onChangeText={setUsername}
-                placeholder="Username"
-                placeholderTextColor={colors.muted}
-                autoCapitalize="none"
-                autoCorrect={false}
-                accessibilityLabel="Username"
-                maxLength={25}
-                editable={!busy}
-              />
-              <Text style={styles.fine}>3–24 letters, numbers or underscores.</Text>
-              <BirthdayField value={birthday} onChange={setBirthday} disabled={!!busy} />
-              {invalid ? (
-                <Text style={styles.invalid} accessibilityLiveRegion="polite">
-                  {invalid}
-                </Text>
-              ) : null}
-              <GradientButton
-                label="Save"
-                onPress={() => void save()}
-                loading={busy === 'save'}
-                disabled={!name.trim() || !username.trim()}
-              />
-              <Button
-                label="Skip birthday"
-                accessibilityHint="Saves your name and username without a birthday."
-                variant="link"
-                disabled={!!busy || !name.trim() || !username.trim()}
-                onPress={() => void save(true)}
-              />
-              <Text style={styles.fine}>You can change it any time on the Profile tab.</Text>
-              <Button
-                label="Use a different email"
-                variant="link"
-                onPress={() => void run('logout', () => auth.signOut())}
-              />
-            </View>
-            {error ? <ErrorState variant="banner" message={error} /> : null}
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </View>
+      <TextInput
+        style={onboardingStyles.input}
+        value={username}
+        onChangeText={setUsername}
+        placeholder="Username"
+        placeholderTextColor={colors.muted}
+        autoCapitalize="none"
+        autoCorrect={false}
+        accessibilityLabel="Username"
+        accessibilityHint="3 to 24 letters, numbers or underscores"
+        maxLength={25}
+        editable={!busy}
+      />
+      <Text style={onboardingStyles.fine}>3–24 letters, numbers or underscores.</Text>
+      <BirthdayField value={birthday} onChange={setBirthday} disabled={!!busy} />
+      {invalid ? (
+        <Text style={styles.invalid} accessibilityLiveRegion="polite">
+          {invalid}
+        </Text>
+      ) : null}
+    </OnboardingFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg },
-  flex: { flex: 1 },
-  content: { flexGrow: 1, justifyContent: 'center', padding: 24, gap: 22 },
-  hero: { alignItems: 'center', gap: 12 },
-  title: {
-    fontFamily: fonts.black,
-    fontSize: 28,
-    color: colors.text,
-    textAlign: 'center',
-    marginTop: 8,
-  },
-  body: {
-    fontFamily: fonts.medium,
-    fontSize: 16,
-    color: colors.muted,
-    textAlign: 'center',
-    lineHeight: 24,
-  },
-  form: { gap: 14 },
-  input: {
-    minHeight: MIN_TARGET + 8,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 999,
-    paddingHorizontal: 22,
-    fontFamily: fonts.medium,
-    fontSize: 17,
-    color: colors.text,
-    backgroundColor: colors.card,
-  },
-  invalid: { fontFamily: fonts.medium, fontSize: 13, color: colors.danger, textAlign: 'center' },
-  fine: { fontFamily: fonts.medium, fontSize: 13, color: colors.muted, textAlign: 'center' },
+  invalid: { ...type.caption, color: colors.danger, textAlign: 'center' },
 });

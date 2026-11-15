@@ -35,6 +35,9 @@ jest.mock('@/components', () => {
   return {
     ...jest.requireActual('@/components/theme'),
     Avatar: () => null,
+    onboardingStyles: { input: {}, fine: {} },
+    OnboardingFrame: (props: { actions: unknown; children: unknown }) =>
+      React.createElement('test-frame', props, props.children, props.actions),
     Button: (props: object) => React.createElement('test-button', props),
     ErrorState: (props: object) => React.createElement('test-error', props),
   };
@@ -42,10 +45,6 @@ jest.mock('@/components', () => {
 jest.mock('@/components/BirthdayField', () => ({
   BirthdayField: (props: object) =>
     jest.requireActual('react').createElement('test-birthday', props),
-}));
-jest.mock('@/components/GradientButton', () => ({
-  GradientButton: (props: object) =>
-    jest.requireActual('react').createElement('test-button', props),
 }));
 test('taken username keeps the form and drafts available for a successful retry', async () => {
   const completeIdentity = jest
@@ -71,7 +70,7 @@ test('taken username keeps the form and drafts available for a successful retry'
     await act(async () => {
       tree.root
         .findAllByType('test-button')
-        .find((b) => b.props.label === 'Save')!
+        .find((b) => b.props.label === 'Continue')!
         .props.onPress();
     });
   }
@@ -108,7 +107,7 @@ test('new-account setup accepts an optional birthday and Skip discards an invali
   const save = () =>
     tree.root
       .findAllByType('test-button')
-      .find((n) => n.props.label === 'Save')!
+      .find((n) => n.props.label === 'Continue')!
       .props.onPress();
   expect(tree.root.findAllByType('test-birthday')[0]!.props.value).toBeNull();
   await act(async () => save());

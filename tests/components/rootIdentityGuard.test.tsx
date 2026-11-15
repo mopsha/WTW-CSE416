@@ -80,6 +80,7 @@ test('a restarted account with identity and skipped birthday does not loop throu
   expect(tree.root.findAllByType('test-protected').map((n: any) => n.props.guard)).toEqual([
     false,
     false,
+    false,
     true,
   ]);
   await act(async () => tree.unmount());

@@ -15,6 +15,8 @@ const { create, act } = jest.requireActual<{
   act(work: () => void | Promise<void>): Promise<void>;
 }>('react-test-renderer');
 jest.mock('expo-linear-gradient', () => ({ LinearGradient: () => null }));
+let mockParams: { mode?: string } = {};
+jest.mock('expo-router', () => ({ useLocalSearchParams: () => mockParams }));
 jest.mock('@/lib/config', () => ({ USE_MOCK: false, REVIEW_EMAIL: 'review@example.com' }));
 jest.mock('@/lib/auth', () => ({
   AuthError: class extends Error {},
@@ -46,7 +48,10 @@ async function submitEmail(email: string) {
   await act(async () => primary(tree).props.onPress());
   return tree;
 }
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockParams = {};
+});
 
 test('the review account asks for a password and never sends a code', async () => {
   jest.mocked(auth.signInWithPassword).mockResolvedValue({
@@ -79,4 +84,27 @@ test('everyone else gets an emailed code and no password field', async () => {
     tree.root.findAll((n) => n.props.accessibilityLabel === 'Password' && !!n.props.onChangeText),
   ).toHaveLength(0);
   await act(async () => tree.unmount());
+});
+
+test('the intro opens sign-up or log-in, and the review password stays reachable from both', async () => {
+  const texts = (tree: Tree) =>
+    tree.root
+      .findAll((n) => typeof n.props.children === 'string')
+      .map((n) => n.props.children as string);
+  for (const mode of ['signup', 'login'] as const) {
+    mockParams = { mode };
+    const tree = await submitEmail('review@example.com');
+    expect(auth.sendCode).not.toHaveBeenCalled();
+    expect(field(tree, 'Password')).toBeDefined();
+    await act(async () => tree.unmount());
+    const fresh = await (async () => {
+      let t!: Tree;
+      await act(async () => {
+        t = create(<SignInScreen />);
+      });
+      return t;
+    })();
+    expect(texts(fresh)).toContain(mode === 'signup' ? 'Create your WTW account' : 'Welcome back');
+    await act(async () => fresh.unmount());
+  }
 });
