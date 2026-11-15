@@ -109,6 +109,7 @@ export default function VoteScreen() {
     <SafeAreaView style={pickStyles.screen} edges={['top', 'left', 'right', 'bottom']}>
       <PickTopBar
         title="Final vote"
+        tabularCountdown
         subtitle={[progress ? voteLine(progress) : null, countdown.label]
           .filter(Boolean)
           .join(' · ')}

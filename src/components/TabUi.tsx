@@ -13,7 +13,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors, fonts, numeric, MIN_TARGET, radius, space, surfaces, type } from './theme';
+import { colors, fonts, MIN_TARGET, radius, space, surfaces, type } from './theme';
 
 type Icon = keyof typeof Ionicons.glyphMap;
 export function HeaderAction({
@@ -342,8 +342,6 @@ const s = StyleSheet.create({
   },
   badgeText: {
     ...type.caption,
-    ...numeric,
-    fontWeight: '600',
     color: colors.primaryText,
     fontFamily: fonts.semibold,
   },

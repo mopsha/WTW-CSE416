@@ -1,9 +1,11 @@
+import { useReducedMotion } from 'react-native-reanimated';
 import { useEffect, useState } from 'react';
 import { AccessibilityInfo } from 'react-native';
 
-/** Start without motion until the OS preference is known; observe changes while mounted. */
+/** Seed entrance configuration synchronously; then track the current OS preference. */
 export function useMotionPreference() {
-  const [reduced, setReduced] = useState(true);
+  const initialPreference = useReducedMotion();
+  const [reduced, setReduced] = useState(initialPreference);
   useEffect(() => {
     let active = true;
     let changed = false;
@@ -16,7 +18,7 @@ export function useMotionPreference() {
         if (active && !changed && typeof value === 'boolean') setReduced(value);
       },
       () => {
-        /* Keep motion off when the setting cannot be read. */
+        /* Retain the synchronous preference when a fresh read is unavailable. */
       },
     );
     return () => {

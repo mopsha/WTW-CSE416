@@ -31,11 +31,13 @@ export function goToPicks() {
 export function PickTopBar({
   title,
   subtitle,
+  tabularCountdown = false,
   right,
   onBack = goToPicks,
 }: {
   title: string;
   subtitle?: string | null;
+  tabularCountdown?: boolean;
   right?: ReactNode;
   onBack?: () => void;
 }) {
@@ -55,8 +57,8 @@ export function PickTopBar({
           {title}
         </Text>
         {subtitle ? (
-          <Text style={[styles.topSub, numeric, { fontWeight: '500' }]} numberOfLines={2}>
-            {subtitle}
+          <Text style={styles.topSub} numberOfLines={2}>
+            {tabularCountdown ? <CountdownDigits text={subtitle} /> : subtitle}
           </Text>
         ) : null}
       </View>
@@ -248,16 +250,20 @@ export function Pill({
   icon,
   text,
   tone = 'muted',
+  tabularCountdown = false,
 }: {
   icon?: keyof typeof Ionicons.glyphMap;
   text: string;
   tone?: 'muted' | 'warn' | 'good';
+  tabularCountdown?: boolean;
 }) {
   const color = tone === 'warn' ? '#FF7A45' : tone === 'good' ? colors.yes : colors.muted;
   return (
     <View style={styles.pill}>
       {icon ? <Ionicons name={icon} size={14} color={color} /> : null}
-      <Text style={[styles.pillText, numeric, { color, fontWeight: '600' }]}>{text}</Text>
+      <Text style={[styles.pillText, { color }]}>
+        {tabularCountdown ? <CountdownDigits text={text} weight="600" /> : text}
+      </Text>
     </View>
   );
 }
@@ -368,3 +374,16 @@ const styles = StyleSheet.create({
   },
   pillText: { fontFamily: fonts.semibold, fontSize: 13 },
 });
+
+/** Only clock digits opt into a native font; units and surrounding copy inherit Poppins. */
+function CountdownDigits({ text, weight = '500' }: { text: string; weight?: '500' | '600' }) {
+  return text.split(/(\d+:\d{2}|\d+(?=[dhm]\b))/g).map((part, index) =>
+    index % 2 ? (
+      <Text key={index} style={[numeric, { fontWeight: weight }]}>
+        {part}
+      </Text>
+    ) : (
+      part
+    ),
+  );
+}

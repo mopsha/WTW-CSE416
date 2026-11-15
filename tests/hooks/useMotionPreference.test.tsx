@@ -3,7 +3,10 @@ import { AccessibilityInfo, Text } from 'react-native';
 import { useMotionPreference } from '@/hooks/useMotionPreference';
 const { act, create } = jest.requireActual('react-test-renderer');
 
-test('motion starts conservatively, follows live OS changes, rejects stale reads and unsubscribes', async () => {
+let mockInitial = false;
+jest.mock('react-native-reanimated', () => ({ useReducedMotion: () => mockInitial }));
+
+test('motion starts synchronously, follows live OS changes, rejects stale reads and unsubscribes', async () => {
   let resolve!: (value: boolean) => void;
   const read = jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockImplementation(
     () =>
@@ -28,7 +31,7 @@ test('motion starts conservatively, follows live OS changes, rejects stale reads
     await act(async () => {
       tree = create(<Probe />);
     });
-    expect(tree.root.findByType(Text).props.children).toBe('true');
+    expect(tree.root.findByType(Text).props.children).toBe('false');
     await act(async () => change(false));
     expect(tree.root.findByType(Text).props.children).toBe('false');
     await act(async () => resolve(true));

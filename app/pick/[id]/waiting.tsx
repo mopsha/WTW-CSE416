@@ -101,6 +101,7 @@ export default function WaitingScreen() {
     <SafeAreaView style={pickStyles.screen} edges={['top', 'left', 'right', 'bottom']}>
       <PickTopBar
         title="Waiting for the group"
+        tabularCountdown
         subtitle={countdown.label}
         right={<LiveDot mode={live.mode} offline={!!live.error} />}
       />
@@ -140,6 +141,7 @@ export default function WaitingScreen() {
           {countdown.label ? (
             <Pill
               icon="timer-outline"
+              tabularCountdown
               text={
                 countdown.passed
                   ? 'Deadline passed, closing…'

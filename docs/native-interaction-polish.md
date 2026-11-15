@@ -26,7 +26,7 @@ identifiers, auth providers or app configuration changed.
 | Main stack forced vertical fades for ordinary pushes, unlike Group Details native navigation                                             | Use native default push transitions, with no animation under reduced motion; keep existing explicit Pick fades and swipe-flow gesture restriction                                                               |
 | Modal transitions, reveal entrances and looping decorations were inconsistent under reduced motion                                       | Live OS preference hook; suppress modal/reveal motion and confetti, stop looping decorations, cancel decorative animations on cleanup; ActivityToast keeps its functional message duration                      |
 | Button/card press feedback introduced movement; several controls had no feedback                                                         | Static opacity through shared controls and touched info, back/close, message menu and legal-link controls; no additional haptics                                                                                |
-| Poppins digits were proportional and bundled faces had no tabular alternates                                                             | Native tabular font style only on live countdown/count/badge text, keeping sizes, colors and scaling; other typography stays Poppins                                                                            |
+| Poppins digits were proportional and bundled faces had no tabular alternates                                                             | Native tabular styling only on countdown digits and the numeric progress count; labels, units and static badges retain their existing fonts                                                                     |
 | OTP had both autofill hints, a 1×1 invisible native field, and fixed boxes wider than small screens                                      | One hint per platform, full-size transparent-text native input over decorative boxes, flexible box widths; JS sanitizes formatted paste before the six-digit limit, auto-submit and pending guard remain intact |
 
 Font inspection read the bundled Poppins 400/500/600/700/800 TTF cmap, hmtx and
@@ -139,3 +139,67 @@ Nothing was committed, pushed, merged, rebased, built as a release, submitted or
 - `tests/components/PlanTimeSheet.test.tsx`
 - `tests/hooks/useMotionPreference.test.tsx`
 - `docs/native-interaction-polish.md`
+
+## Phase 3 review corrections — November 15, 2026
+
+The initial `useState(true)` motion default was incorrect for mount-time entrance
+configuration: the async OS read could update state but could not replay an entering
+animation or the initial native modal transition. The hook now seeds state from
+Reanimated's synchronous `useReducedMotion()` snapshot. Its existing fresh OS read,
+live change listener, stale-read guard and unmount cleanup remain. A failed read
+retains the synchronous value. No delay, remount or navigation workaround was added.
+
+Reviewed every consumer: root navigation; Groups navigation; Pick lobby, results,
+vote and waiting screens; Discover details; shared Sheet (including already-visible
+PlanTimeSheet and report/block menus); PlaceDetailsSheet; HangCard; HangPlanComposer;
+ActivityToast; Confetti; and PickParts' LiveDot and FlameOrb. Enabled Reduce Motion
+suppresses decorative motion immediately; disabled Reduce Motion permits the first
+entrance immediately. Existing cancellation and dismissal guards are unchanged.
+
+Normal Pick subtitles and Pills now inherit Poppins. Only explicitly opted-in
+countdown digits get a native tabular span; units and vote/progress prose retain
+Poppins, as do deadline-expired messages. Opt-ins cover lobby countdown Pills and
+waiting/vote/swipe countdown subtitles. RSVP summary and Hang count overrides were
+removed. Section badges retain Poppins semibold without the ineffective numeric
+spread or synthetic font weight. The genuinely changing numeric-only ProgressBar
+counter retains native tabular digits and its existing size and bold hierarchy.
+
+New `MotionEntrances.test.tsx` holds the async OS query pending for both preference
+values and checks first-mount hook output, already-visible Sheet animationType,
+ActivityToast spring/timing calls, animation cancellation and timer cleanup.
+`CountdownTypography.test.tsx` checks ordinary subtitles/Pills, static badges,
+countdown digit spans and inherited hierarchy. Hook tests retain live-change,
+stale-read and cleanup coverage. Jest now uses the installed Reanimated/Worklets
+mocks because importing the synchronous native hook otherwise loads native Worklets
+in JS-only tests; the focused tests provide explicit true/false preferences.
+
+These are automated configuration tests, not native animation playback tests.
+Native QA still needs first opening of results/vote/lobby/waiting, toast entrances,
+already-visible scheduling/moderation sheets, navigation, system-setting changes,
+countdown wrapping/baselines and accessibility scaling on iOS and Android. All other
+Phase 3 sheet, touch, attribution, OTP, draft and authorization behavior is retained.
+
+Follow-up validation: TypeScript and ESLint passed with no warnings; focused motion,
+sheet, toast, typography and OTP tests passed (9 suites / 36 tests); full Jest passed
+(181 suites / 1,487 tests); Android and iOS exports passed at `/tmp/wtw-review-android/`
+and `/tmp/wtw-review-ios/`; working-tree and staged diff checks passed. One concurrent
+focused run encountered a transient disk-space reporter error; its standalone rerun
+passed. No native playback verification was performed.
+
+Files changed for the review follow-up:
+
+- `app/pick/[id]/lobby.tsx`
+- `app/pick/[id]/swipe.tsx`
+- `app/pick/[id]/vote.tsx`
+- `app/pick/[id]/waiting.tsx`
+- `docs/native-interaction-polish.md`
+- `src/components/PickParts.tsx`
+- `src/components/PlanBlock.tsx`
+- `src/components/TabUi.tsx`
+- `src/components/picks/HangInvitation.tsx`
+- `src/hooks/useMotionPreference.ts`
+- `tests/components/CountdownTypography.test.tsx`
+- `tests/components/MotionEntrances.test.tsx`
+- `tests/components/VoteReliability.test.tsx`
+- `tests/hooks/useMotionPreference.test.tsx`
+- `tests/setup.ts`

@@ -223,6 +223,7 @@ export default function SwipeScreen() {
     <SafeAreaView style={pickStyles.screen} edges={['top', 'bottom', 'left', 'right']}>
       <PickTopBar
         title={pickTitle(pick?.category)}
+        tabularCountdown
         subtitle={subtitle || null}
         right={
           pick?.isHost ? (

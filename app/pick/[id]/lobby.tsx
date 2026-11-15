@@ -231,6 +231,7 @@ export default function LobbyScreen() {
               key={s.icon}
               icon={s.icon}
               text={s.text}
+              tabularCountdown={s.icon === 'timer'}
               tone={s.icon === 'timer' && countdown.passed ? 'warn' : 'muted'}
             />
           ))}
