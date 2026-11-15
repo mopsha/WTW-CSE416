@@ -11,6 +11,7 @@ jest.mock('react-native-reanimated', () => {
   };
   return {
     __esModule: true,
+    useReducedMotion: () => false,
     default: { View: jest.requireActual('react-native').View },
     FadeInDown: animation,
     FadeInUp: animation,

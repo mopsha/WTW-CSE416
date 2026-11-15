@@ -1,6 +1,8 @@
+import { useMotionPreference } from '@/hooks/useMotionPreference';
 import { useEffect, useMemo } from 'react';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import Animated, {
+  cancelAnimation,
   Easing,
   useAnimatedStyle,
   useSharedValue,
@@ -29,6 +31,7 @@ function Piece({ i, width, height }: { i: number; width: number; height: number 
       seed.delay,
       withTiming(1, { duration: seed.duration, easing: Easing.out(Easing.quad) }),
     );
+    return () => cancelAnimation(p);
   }, [p, seed]);
   const style = useAnimatedStyle(() => ({
     opacity: p.value < 0.85 ? 1 : (1 - p.value) / 0.15,
@@ -52,6 +55,8 @@ function Piece({ i, width, height }: { i: number; width: number; height: number 
 /** A one-shot confetti burst over the whole screen. */
 export function Confetti({ count = 60 }: { count?: number }) {
   const { width, height } = useWindowDimensions();
+  const reducedMotion = useMotionPreference();
+  if (reducedMotion) return null;
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
       {Array.from({ length: count }, (_, i) => (

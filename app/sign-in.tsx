@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -297,40 +296,44 @@ export default function SignInScreen() {
                   Enter the code we sent to{'\n'}
                   <Text style={styles.bold}>{trimmedEmail}</Text>
                 </Text>
-                <Pressable
-                  onPress={() => codeInput.current?.focus()}
-                  style={styles.boxes}
-                  accessibilityLabel={`Code, ${code.length} of 6 digits entered`}
-                >
-                  {Array.from({ length: 6 }, (_, i) => {
-                    const active = i === code.length && !busy;
-                    return (
-                      <View
-                        key={i}
-                        style={[
-                          styles.box,
-                          active && styles.boxActive,
-                          !!code[i] && styles.boxFilled,
-                        ]}
-                      >
-                        <Text style={styles.boxText}>{code[i] ?? ''}</Text>
-                      </View>
-                    );
-                  })}
-                </Pressable>
-                <TextInput
-                  ref={codeInput}
-                  style={styles.hiddenInput}
-                  value={code}
-                  onChangeText={onCodeChange}
-                  keyboardType="number-pad"
-                  maxLength={6}
-                  autoComplete="one-time-code"
-                  textContentType="oneTimeCode"
-                  accessibilityLabel="6-digit code"
-                  editable={!busy}
-                  autoFocus
-                />
+                <View style={styles.codeEntry}>
+                  <View
+                    style={styles.boxes}
+                    accessible={false}
+                    importantForAccessibility="no-hide-descendants"
+                  >
+                    {Array.from({ length: 6 }, (_, i) => {
+                      const active = i === code.length && !busy;
+                      return (
+                        <View
+                          key={i}
+                          style={[
+                            styles.box,
+                            active && styles.boxActive,
+                            !!code[i] && styles.boxFilled,
+                          ]}
+                        >
+                          <Text style={styles.boxText}>{code[i] ?? ''}</Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                  <TextInput
+                    ref={codeInput}
+                    style={styles.hiddenInput}
+                    value={code}
+                    onChangeText={onCodeChange}
+                    keyboardType="number-pad"
+                    {...(Platform.OS === 'ios'
+                      ? { textContentType: 'oneTimeCode' as const }
+                      : { autoComplete: 'one-time-code' as const })}
+                    accessibilityLabel="6-digit code"
+                    accessibilityHint="Enter or paste the code from your email"
+                    editable={!busy}
+                    autoFocus
+                    caretHidden
+                  />
+                </View>
                 <GradientButton
                   label="Let's go"
                   onPress={() => void verify()}
@@ -424,9 +427,11 @@ const styles = StyleSheet.create({
     color: colors.text,
     backgroundColor: colors.card,
   },
-  boxes: { flexDirection: 'row', justifyContent: 'center', gap: 10 },
+  boxes: { flexDirection: 'row', justifyContent: 'center', gap: 8 },
   box: {
-    width: 46,
+    flex: 1,
+    maxWidth: 46,
+    minWidth: 0,
     height: 58,
     borderRadius: 14,
     borderWidth: 1.5,
@@ -438,7 +443,17 @@ const styles = StyleSheet.create({
   boxActive: { borderColor: colors.primary },
   boxFilled: { borderColor: '#FF7A45', backgroundColor: colors.cardHi },
   boxText: { fontFamily: fonts.bold, fontSize: 26, color: colors.text },
-  hiddenInput: { position: 'absolute', opacity: 0, height: 1, width: 1 },
+  codeEntry: { position: 'relative' },
+  hiddenInput: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    color: colors.transparent,
+    backgroundColor: colors.transparent,
+    fontSize: 26,
+  },
   row: { flexDirection: 'row', justifyContent: 'space-between' },
   fine: { fontFamily: fonts.medium, fontSize: 13, color: colors.muted, textAlign: 'center' },
   legal: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' },

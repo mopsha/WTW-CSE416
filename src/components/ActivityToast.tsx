@@ -1,6 +1,8 @@
+import { useMotionPreference } from '@/hooks/useMotionPreference';
 import { useEffect } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Animated, {
+  cancelAnimation,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
@@ -20,18 +22,23 @@ export interface Toast {
 /** A pill that drops in from the top, like an in-app notification. Re-key it per toast. */
 export function ActivityToast({ toast }: { toast: Toast }) {
   const insets = useSafeAreaInsets();
+  const reducedMotion = useMotionPreference();
   const y = useSharedValue(-120);
   const o = useSharedValue(0);
 
   useEffect(() => {
-    y.value = withSpring(0, { damping: 16, stiffness: 180 });
-    o.value = withTiming(1, { duration: 180 });
+    y.value = reducedMotion ? 0 : withSpring(0, { damping: 16, stiffness: 180 });
+    o.value = reducedMotion ? 1 : withTiming(1, { duration: 180 });
     const t = setTimeout(() => {
-      y.value = withTiming(-120, { duration: 260 });
-      o.value = withTiming(0, { duration: 260 });
+      y.value = reducedMotion ? -120 : withTiming(-120, { duration: 260 });
+      o.value = reducedMotion ? 0 : withTiming(0, { duration: 260 });
     }, 2600);
-    return () => clearTimeout(t);
-  }, [o, y]);
+    return () => {
+      clearTimeout(t);
+      cancelAnimation(y);
+      cancelAnimation(o);
+    };
+  }, [o, y, reducedMotion]);
 
   const style = useAnimatedStyle(() => ({
     transform: [{ translateY: y.value }],

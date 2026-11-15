@@ -12,7 +12,12 @@ jest.mock('@/components/Button', () => ({
   Button: (p: object) => jest.requireActual('react').createElement('kit-button', p),
 }));
 jest.mock('@/components/TabUi', () => ({
-  Sheet: ({ children }: { children: React.ReactNode }) => children,
+  Sheet: ({ children, footer }: { children: React.ReactNode; footer: React.ReactNode }) => (
+    <>
+      {children}
+      {footer}
+    </>
+  ),
 }));
 const initial = new Date(2026, 10, 12, 18, 30).toISOString();
 const originalOS = Platform.OS;
@@ -106,4 +111,26 @@ test('past custom selection cannot save', async () => {
   expect(button('Save time').props.disabled).toBe(true);
   await press('Save time');
   expect(onSave).not.toHaveBeenCalled();
+});
+
+test('header, backdrop and hardware close callback cannot discard a pending save, including the same tick', async () => {
+  const { Sheet } = jest.requireMock('@/components/TabUi');
+  let resolve!: () => void;
+  onSave.mockImplementation(
+    () =>
+      new Promise<void>((yes) => {
+        resolve = yes;
+      }),
+  );
+  const close = tree.root.findByType(Sheet).props.onClose;
+  await act(async () => {
+    button('Save time').props.onPress();
+    close();
+  });
+  expect(onClose).not.toHaveBeenCalled();
+  expect(tree.root.findByType(Sheet).props.dismissDisabled).toBe(true);
+  await act(async () => tree.root.findByType(Sheet).props.onClose());
+  expect(onClose).not.toHaveBeenCalled();
+  await act(async () => resolve());
+  expect(onClose).toHaveBeenCalledTimes(1);
 });

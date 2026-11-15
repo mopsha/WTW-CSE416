@@ -8,7 +8,7 @@ import { queries } from '@/lib/queries';
 import { parseHang } from '@shared/api/hang.ts';
 
 let mockReduceMotion = false;
-jest.mock('react-native-reanimated', () => ({ useReducedMotion: () => mockReduceMotion }));
+jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => mockReduceMotion }));
 const { act, create } = jest.requireActual('react-test-renderer');
 jest.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ session: { user: { id: 'me' } } }) }));
 jest.mock('@/lib/api', () => ({ api: { createHang: jest.fn(), getHang: jest.fn() } }));

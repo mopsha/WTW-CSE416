@@ -73,7 +73,7 @@ export function BigResult({
         style={({ pressed }) => [
           styles.bigResult,
           selected && styles.bigSelected,
-          pressed && onPress && { transform: [{ scale: 0.98 }] },
+          pressed && onPress && { opacity: 0.8 },
         ]}
       >
         <PlacePhoto uri={place.photoUrl} style={styles.bigPhoto} />

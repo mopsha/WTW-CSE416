@@ -1,3 +1,5 @@
+import { Platform, type TextStyle } from 'react-native';
+
 // WTW design tokens. Use these (and the components in this folder) instead of raw values,
 // Brand headings and kit controls use the named Poppins faces below (not synthetic
 // fontWeight overrides). Opt-in social/conversation body styles use native system
@@ -38,6 +40,12 @@ export const fonts = {
   black: 'Poppins_800ExtraBold',
 } as const;
 
+/** Poppins assets lack tabular alternates; use native tabular digits only for live counters. */
+export const numeric: TextStyle = {
+  fontFamily: Platform.select({ ios: 'System', android: 'sans-serif', default: 'system-ui' }),
+  fontVariant: ['tabular-nums'],
+};
+
 /** Type scale (font size, line height). */
 export const type = {
   title: { fontFamily: fonts.bold, fontSize: 32, lineHeight: 40 },
@@ -50,7 +58,7 @@ export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 } as const;
 export const radius = { sm: 10, md: 14, lg: 22, pill: 999 } as const;
 
 /** Minimum touch target: Apple HIG 44 pt (Material 48 dp). Every tappable kit element meets it. */
-export const MIN_TARGET = 44;
+export const MIN_TARGET = Platform.OS === 'android' ? 48 : 44;
 
 /** Demo group: seeded bot participants (see supabase/seed.sql) plus you. */
 export const FRIENDS = [

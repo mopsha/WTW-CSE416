@@ -1,3 +1,4 @@
+import { useMotionPreference } from '@/hooks/useMotionPreference';
 // Results reveal: what everyone sees the moment the Pick closes. RANK ONLY (1st/2nd/3rd with
 // photo, name, price, open-now badge). A clear winner says so and skips the vote; otherwise
 // the top picks go to a quick vote.
@@ -29,6 +30,7 @@ import { api } from '@/lib/api';
 import { haptic } from '@/lib/haptics';
 
 export default function ResultsScreen() {
+  const reducedMotion = useMotionPreference();
   const { id: pickId = '' } = useLocalSearchParams<{ id: string }>();
   const session = useSession();
   const live = usePickLive(pickId);
@@ -114,7 +116,10 @@ export default function ResultsScreen() {
       />
       <SafeAreaView style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={pickStyles.scroll}>
-          <Animated.View entering={FadeInUp.duration(500)} style={styles.head}>
+          <Animated.View
+            entering={reducedMotion ? undefined : FadeInUp.duration(500)}
+            style={styles.head}
+          >
             <Text style={pickStyles.eyebrow}>
               {voting ? 'TOO CLOSE TO CALL' : clear ? 'CLEAR WINNER!' : 'THE GROUP PICKED'}
             </Text>
@@ -136,7 +141,7 @@ export default function ResultsScreen() {
               return p ? (
                 <Animated.View
                   key={r.placeId}
-                  entering={FadeInDown.delay(250 + i * 150).springify()}
+                  entering={reducedMotion ? undefined : FadeInDown.delay(250 + i * 150).springify()}
                 >
                   <BigResult place={p} rank={r.rank} />
                   {reasonFor(r.placeId)}
@@ -146,7 +151,9 @@ export default function ResultsScreen() {
           ) : (
             <>
               {winner ? (
-                <Animated.View entering={FadeInDown.delay(250).springify()}>
+                <Animated.View
+                  entering={reducedMotion ? undefined : FadeInDown.delay(250).springify()}
+                >
                   <WinnerCard place={winner} />
                   {reasonFor(winner.placeId)}
                 </Animated.View>
@@ -156,7 +163,10 @@ export default function ResultsScreen() {
                 .map((r, i) => {
                   const p = places.get(r.placeId);
                   return p ? (
-                    <Animated.View key={r.placeId} entering={FadeInDown.delay(450 + i * 120)}>
+                    <Animated.View
+                      key={r.placeId}
+                      entering={reducedMotion ? undefined : FadeInDown.delay(450 + i * 120)}
+                    >
                       <SmallResult place={p} rank={r.rank} />
                       {reasonFor(r.placeId)}
                     </Animated.View>
@@ -166,12 +176,18 @@ export default function ResultsScreen() {
           )}
 
           {people.length ? (
-            <Animated.View entering={FadeInDown.delay(700)} style={styles.group}>
+            <Animated.View
+              entering={reducedMotion ? undefined : FadeInDown.delay(700)}
+              style={styles.group}
+            >
               <GroupAvatars people={people} size={34} />
             </Animated.View>
           ) : null}
 
-          <Animated.View entering={FadeInDown.delay(800)} style={{ gap: 8 }}>
+          <Animated.View
+            entering={reducedMotion ? undefined : FadeInDown.delay(800)}
+            style={{ gap: 8 }}
+          >
             {voting ? (
               <GradientButton label="Vote now 🗳️" onPress={() => go('vote')} />
             ) : (

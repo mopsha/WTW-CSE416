@@ -1,3 +1,4 @@
+import { useMotionPreference } from '@/hooks/useMotionPreference';
 import { PlaceCardsSkeleton } from '@/components/LoadingStates';
 // Discover: bounded individual feed; preserve local fixture presentation in mock mode.
 import { Ionicons } from '@expo/vector-icons';
@@ -149,6 +150,7 @@ function PlaceSheet({
   onClose: () => void;
   onSaved: (id: string, saved: boolean) => void;
 }) {
+  const reducedMotion = useMotionPreference();
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -172,10 +174,20 @@ function PlaceSheet({
     };
   }, [place]);
   return (
-    <Modal visible={!!place} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal
+      visible={!!place}
+      transparent
+      animationType={reducedMotion ? 'none' : 'slide'}
+      onRequestClose={onClose}
+    >
       <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close details" />
       {place ? (
-        <SafeAreaView edges={['bottom']} style={styles.sheet}>
+        <SafeAreaView
+          edges={['bottom', 'left', 'right']}
+          style={styles.sheet}
+          accessibilityViewIsModal
+          onAccessibilityEscape={onClose}
+        >
           <ScrollView contentContainerStyle={{ paddingBottom: 8 }} bounces={false}>
             <Cover place={place} style={styles.sheetCover} big />
             <Pressable
@@ -727,7 +739,7 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   emojiCover: { backgroundColor: colors.cardHi, alignItems: 'center', justifyContent: 'center' },
-  pressed: { transform: [{ scale: 0.98 }], opacity: 0.9 },
+  pressed: { opacity: 0.7 },
   backdrop: { flex: 1, backgroundColor: colors.scrim },
   sheet: {
     maxHeight: '88%',

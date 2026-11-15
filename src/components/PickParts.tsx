@@ -1,3 +1,4 @@
+import { useMotionPreference } from '@/hooks/useMotionPreference';
 // Building blocks shared by the Pick screens (lobby, swipe, waiting, results, vote, winner),
 // in the live-demo look: dark surfaces, flame gradient, Poppins.
 import { Ionicons } from '@expo/vector-icons';
@@ -6,6 +7,7 @@ import { router } from 'expo-router';
 import { useEffect, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
+  cancelAnimation,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -17,7 +19,7 @@ import type { LiveMode } from '@/hooks/usePickLive';
 import type { ParticipantProgress } from '@/lib/types';
 
 import { Avatar } from './Avatar';
-import { colors, flame, fonts, MIN_TARGET } from './theme';
+import { colors, flame, fonts, MIN_TARGET, numeric } from './theme';
 
 /** Leave the Pick flow for the Picks tab, whatever stack of replaced screens is underneath. */
 export function goToPicks() {
@@ -29,11 +31,13 @@ export function goToPicks() {
 export function PickTopBar({
   title,
   subtitle,
+  tabularCountdown = false,
   right,
   onBack = goToPicks,
 }: {
   title: string;
   subtitle?: string | null;
+  tabularCountdown?: boolean;
   right?: ReactNode;
   onBack?: () => void;
 }) {
@@ -43,7 +47,7 @@ export function PickTopBar({
         onPress={onBack}
         accessibilityRole="button"
         accessibilityLabel="Back to your Picks"
-        style={styles.iconBtn}
+        style={({ pressed }) => [styles.iconBtn, pressed && { opacity: 0.7 }]}
         hitSlop={4}
       >
         <Ionicons name="chevron-back" size={24} color={colors.text} />
@@ -54,7 +58,7 @@ export function PickTopBar({
         </Text>
         {subtitle ? (
           <Text style={styles.topSub} numberOfLines={2}>
-            {subtitle}
+            {tabularCountdown ? <CountdownDigits text={subtitle} /> : subtitle}
           </Text>
         ) : null}
       </View>
@@ -73,13 +77,19 @@ export function LiveDot({ mode, offline }: { mode: LiveMode; offline?: boolean }
         ? 'Updating'
         : '…';
   const color = offline ? colors.danger : mode === 'realtime' ? colors.yes : colors.maybe;
+  const reducedMotion = useMotionPreference();
   const o = useSharedValue(1);
   useEffect(() => {
+    if (reducedMotion) {
+      o.value = 1;
+      return;
+    }
     o.value = withRepeat(
       withSequence(withTiming(0.3, { duration: 700 }), withTiming(1, { duration: 700 })),
       -1,
     );
-  }, [o]);
+    return () => cancelAnimation(o);
+  }, [o, reducedMotion]);
   const pulse = useAnimatedStyle(() => ({ opacity: o.value }));
   return (
     <View
@@ -177,13 +187,19 @@ export function GroupAvatars({
 
 /** The pulsing flame orb the demo used while counting swipes. */
 export function FlameOrb({ emoji = '🔥', size = 110 }: { emoji?: string; size?: number }) {
+  const reducedMotion = useMotionPreference();
   const s = useSharedValue(1);
   useEffect(() => {
+    if (reducedMotion) {
+      s.value = 1;
+      return;
+    }
     s.value = withRepeat(
       withSequence(withTiming(1.12, { duration: 450 }), withTiming(1, { duration: 450 })),
       -1,
     );
-  }, [s]);
+    return () => cancelAnimation(s);
+  }, [s, reducedMotion]);
   const pulse = useAnimatedStyle(() => ({ transform: [{ scale: s.value }] }));
   return (
     <Animated.View style={pulse} accessible={false}>
@@ -234,16 +250,20 @@ export function Pill({
   icon,
   text,
   tone = 'muted',
+  tabularCountdown = false,
 }: {
   icon?: keyof typeof Ionicons.glyphMap;
   text: string;
   tone?: 'muted' | 'warn' | 'good';
+  tabularCountdown?: boolean;
 }) {
   const color = tone === 'warn' ? '#FF7A45' : tone === 'good' ? colors.yes : colors.muted;
   return (
     <View style={styles.pill}>
       {icon ? <Ionicons name={icon} size={14} color={color} /> : null}
-      <Text style={[styles.pillText, { color }]}>{text}</Text>
+      <Text style={[styles.pillText, { color }]}>
+        {tabularCountdown ? <CountdownDigits text={text} weight="600" /> : text}
+      </Text>
     </View>
   );
 }
@@ -354,3 +374,16 @@ const styles = StyleSheet.create({
   },
   pillText: { fontFamily: fonts.semibold, fontSize: 13 },
 });
+
+/** Only clock digits opt into a native font; units and surrounding copy inherit Poppins. */
+function CountdownDigits({ text, weight = '500' }: { text: string; weight?: '500' | '600' }) {
+  return text.split(/(\d+:\d{2}|\d+(?=[dhm]\b))/g).map((part, index) =>
+    index % 2 ? (
+      <Text key={index} style={[numeric, { fontWeight: weight }]}>
+        {part}
+      </Text>
+    ) : (
+      part
+    ),
+  );
+}

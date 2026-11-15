@@ -1,4 +1,4 @@
-import { useReducedMotion } from 'react-native-reanimated';
+import { useMotionPreference } from '@/hooks/useMotionPreference';
 import { HangPlanComposer } from './HangPlanComposer';
 import { picksTheme } from './theme';
 import { HangInvitation } from './picks/HangInvitation';
@@ -12,7 +12,7 @@ import type { HangPost } from '@shared/api/hang.ts';
 import { Button, colors, ErrorState, radius, space, type } from './index';
 
 export function HangCard() {
-  const reduceMotion = useReducedMotion();
+  const reduceMotion = useMotionPreference();
   const userId = useAuth().session?.user.id;
   const [now, setNow] = useState(() => Date.now());
   const [compose, setCompose] = useState(false);

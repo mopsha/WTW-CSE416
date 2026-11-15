@@ -87,7 +87,19 @@ export function PlanTimeSheet({
   return (
     <Sheet
       visible
+      dismissDisabled={busy}
       title="Set a time"
+      footer={
+        <View style={{ gap: space.sm }}>
+          <Button
+            label="Save time"
+            disabled={busy || !!problem}
+            loading={busy}
+            onPress={() => void save()}
+          />
+          <Button label="Cancel" variant="link" disabled={busy} onPress={onClose} />
+        </View>
+      }
       onClose={() => {
         if (!pending.current) onClose();
       }}
@@ -143,13 +155,6 @@ export function PlanTimeSheet({
         />
       ) : null}
       {error || problem ? <ErrorBanner message={error ?? problem!} /> : null}
-      <Button
-        label="Save time"
-        disabled={busy || !!problem}
-        loading={busy}
-        onPress={() => void save()}
-      />
-      <Button label="Cancel" variant="link" disabled={busy} onPress={onClose} />
     </Sheet>
   );
 }

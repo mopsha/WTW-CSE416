@@ -5,8 +5,8 @@ import { useAvatarPhoto, usePhotoCapabilities } from '@/hooks/useAvatarSource';
 // added to your groups (0014).
 import { Ionicons } from '@expo/vector-icons';
 import { useRef, useState } from 'react';
-import { Modal, Pressable, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Pressable } from 'react-native';
+import { Sheet } from './TabUi';
 
 import type { AvatarRef } from '@shared/api/avatars.ts';
 import type { ReportKind } from '@shared/api/safety.ts';
@@ -128,79 +128,82 @@ export function SafetySheet({ onClose, userId, name, target, onBlocked, photo }:
   };
 
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={menuStyles.backdrop} onPress={onClose} accessibilityLabel="Close options" />
-      <SafeAreaView edges={['bottom']} style={menuStyles.sheet}>
-        <View style={menuStyles.handle} />
-        <Text style={menuStyles.title} accessibilityRole="header">
-          {step === 'report'
-            ? photoReport
-              ? 'Report profile picture'
-              : reportsMessage
+    <Sheet
+      visible
+      closeAccessibilityLabel="Close options"
+      dismissDisabled={!!action.busy}
+      title={
+        step === 'report'
+          ? photoReport
+            ? 'Report profile picture'
+            : reportsMessage
+              ? 'Report message'
+              : `Report ${name}`
+          : name
+      }
+      onClose={() => {
+        if (!reporting.current && !action.busy) onClose();
+      }}
+    >
+      {action.error ? <ErrorBanner message={action.error} onRetry={action.clearError} /> : null}
+      {step === 'menu' ? (
+        <>
+          <MenuItem
+            icon="flag"
+            label={
+              reportsMessage
                 ? 'Report message'
-                : `Report ${name}`
-            : name}
-        </Text>
-        {action.error ? <ErrorBanner message={action.error} onRetry={action.clearError} /> : null}
-        {step === 'menu' ? (
-          <>
+                : target && target.kind !== 'user'
+                  ? 'Report'
+                  : 'Report user'
+            }
+            hint={
+              reportsMessage
+                ? 'Tell us something isn’t right'
+                : 'Report a name, behavior, or other concern'
+            }
+            onPress={() => setStep('report')}
+          />
+          {reportablePhoto ? (
             <MenuItem
               icon="flag"
-              label={
-                reportsMessage
-                  ? 'Report message'
-                  : target && target.kind !== 'user'
-                    ? 'Report'
-                    : 'Report user'
-              }
-              hint={
-                reportsMessage
-                  ? 'Tell us something isn’t right'
-                  : 'Report a name, behavior, or other concern'
-              }
-              onPress={() => setStep('report')}
+              label="Report profile picture"
+              hint="Report the photo currently shown"
+              onPress={() => {
+                setPhotoReport(reportablePhoto);
+                setStep('report');
+              }}
             />
-            {reportablePhoto ? (
-              <MenuItem
-                icon="flag"
-                label="Report profile picture"
-                hint="Report the photo currently shown"
-                onPress={() => {
-                  setPhotoReport(reportablePhoto);
-                  setStep('report');
-                }}
-              />
-            ) : null}
+          ) : null}
+          <MenuItem
+            icon="hand-left"
+            label={reportsMessage ? `Block ${name}` : 'Block'}
+            hint="They won’t be able to reach you"
+            danger
+            busy={action.busy === 'block'}
+            onPress={() => void block()}
+          />
+        </>
+      ) : null}
+      {step === 'report' && photoReport && !canSubmitPhoto && !action.error ? (
+        <ErrorBanner message="Photo reporting or the selected photo is currently unavailable. No report was submitted." />
+      ) : null}
+      {step === 'report' && (!photoReport || canSubmitPhoto)
+        ? (reportsMessage || photoReport ? MESSAGE_REASONS : USER_REASONS).map((r) => (
             <MenuItem
-              icon="hand-left"
-              label={reportsMessage ? `Block ${name}` : 'Block'}
-              hint="They won’t be able to reach you"
-              danger
-              busy={action.busy === 'block'}
-              onPress={() => void block()}
+              key={r.reason}
+              icon="chevron-forward"
+              label={r.reason}
+              hint={r.hint}
+              busy={action.busy === 'report'}
+              onPress={() => void report(r.reason)}
             />
-          </>
-        ) : null}
-        {step === 'report' && photoReport && !canSubmitPhoto && !action.error ? (
-          <ErrorBanner message="Photo reporting or the selected photo is currently unavailable. No report was submitted." />
-        ) : null}
-        {step === 'report' && (!photoReport || canSubmitPhoto)
-          ? (reportsMessage || photoReport ? MESSAGE_REASONS : USER_REASONS).map((r) => (
-              <MenuItem
-                key={r.reason}
-                icon="chevron-forward"
-                label={r.reason}
-                hint={r.hint}
-                busy={action.busy === 'report'}
-                onPress={() => void report(r.reason)}
-              />
-            ))
-          : null}
-        {step === 'done' ? (
-          <MenuItem icon="checkmark-circle" label={message} hint="Tap to close" onPress={onClose} />
-        ) : null}
-      </SafeAreaView>
-    </Modal>
+          ))
+        : null}
+      {step === 'done' ? (
+        <MenuItem icon="checkmark-circle" label={message} hint="Tap to close" onPress={onClose} />
+      ) : null}
+    </Sheet>
   );
 }
 
@@ -227,7 +230,7 @@ export function MemberMenu({
         accessibilityRole="button"
         accessibilityLabel={`Options for ${name}`}
         accessibilityHint="Report or block"
-        style={menuStyles.trigger}
+        style={({ pressed }) => [menuStyles.trigger, pressed && { opacity: 0.7 }]}
       >
         <Ionicons name="ellipsis-horizontal" size={20} color={colors.text} />
       </Pressable>

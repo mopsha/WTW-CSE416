@@ -1,3 +1,4 @@
+import { useMotionPreference } from '@/hooks/useMotionPreference';
 import { resumePendingProfile } from '@/lib/pendingProfile';
 import { hasRequiredIdentity } from '@shared/api/userProfiles.ts';
 import {
@@ -42,6 +43,7 @@ export default function RootLayout() {
 }
 
 function RootStack() {
+  const reducedMotion = useMotionPreference();
   const { session, loading } = useAuth();
   const profile = useProfile();
   const [fontsLoaded, fontError] = useFonts({
@@ -185,7 +187,7 @@ function RootStack() {
         screenOptions={{
           headerShown: false,
           contentStyle: { backgroundColor: colors.bg },
-          animation: 'fade_from_bottom',
+          animation: reducedMotion ? 'none' : 'default',
         }}
       >
         {/* Signed out, Stack.Protected falls back to the first available screen: the intro
@@ -211,21 +213,36 @@ function RootStack() {
           <Stack.Screen name="users/[id]" />
           <Stack.Screen name="messages/[id]" />
           <Stack.Screen name="pick/new" />
-          <Stack.Screen name="pick/[id]/index" options={{ animation: 'fade' }} />
+          <Stack.Screen
+            name="pick/[id]/index"
+            options={{ animation: reducedMotion ? 'none' : 'fade' }}
+          />
           <Stack.Screen name="pick/[id]/lobby" />
           <Stack.Screen name="pick/[id]/swipe" options={{ gestureEnabled: false }} />
-          <Stack.Screen name="pick/[id]/waiting" options={{ animation: 'fade' }} />
-          <Stack.Screen name="pick/[id]/results" options={{ animation: 'fade' }} />
-          <Stack.Screen name="pick/[id]/vote" options={{ animation: 'fade' }} />
-          <Stack.Screen name="pick/[id]/winner" options={{ animation: 'fade' }} />
+          <Stack.Screen
+            name="pick/[id]/waiting"
+            options={{ animation: reducedMotion ? 'none' : 'fade' }}
+          />
+          <Stack.Screen
+            name="pick/[id]/results"
+            options={{ animation: reducedMotion ? 'none' : 'fade' }}
+          />
+          <Stack.Screen
+            name="pick/[id]/vote"
+            options={{ animation: reducedMotion ? 'none' : 'fade' }}
+          />
+          <Stack.Screen
+            name="pick/[id]/winner"
+            options={{ animation: reducedMotion ? 'none' : 'fade' }}
+          />
           <Stack.Screen name="history" />
           <Stack.Screen name="inbox" />
         </Stack.Protected>
         {/* Join and invite links open signed in or out; the screen sends you to sign-in if needed.
             Listed last so it is never the guard's fallback screen. */}
-        <Stack.Screen name="join/[code]" options={{ animation: 'fade' }} />
-        <Stack.Screen name="p/[id]" options={{ animation: 'fade' }} />
-        <Stack.Screen name="i/[token]" options={{ animation: 'fade' }} />
+        <Stack.Screen name="join/[code]" options={{ animation: reducedMotion ? 'none' : 'fade' }} />
+        <Stack.Screen name="p/[id]" options={{ animation: reducedMotion ? 'none' : 'fade' }} />
+        <Stack.Screen name="i/[token]" options={{ animation: reducedMotion ? 'none' : 'fade' }} />
       </Stack>
     </>
   );

@@ -108,3 +108,53 @@ test('the intro opens sign-up or log-in, and the review password stays reachable
     await act(async () => fresh.unmount());
   }
 });
+
+test.each(['ios', 'android'] as const)(
+  'OTP has one autofill hint and a full-size accessible native field on %s',
+  async (os) => {
+    const { Platform, StyleSheet } = jest.requireActual('react-native');
+    const previous = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: os });
+    let tree: Tree | undefined;
+    try {
+      tree = await submitEmail('person@example.com');
+      const input = field(tree, '6-digit code');
+      expect(input.props.textContentType).toBe(os === 'ios' ? 'oneTimeCode' : undefined);
+      expect(input.props.autoComplete).toBe(os === 'android' ? 'one-time-code' : undefined);
+      const style = StyleSheet.flatten(input.props.style);
+      expect(style.opacity).toBeUndefined();
+      expect(style.width).not.toBe(1);
+      expect(style.left).toBe(0);
+      expect(style.right).toBe(0);
+    } finally {
+      if (tree) await act(async () => tree!.unmount());
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: previous });
+    }
+  },
+);
+
+test('formatted OTP paste sanitizes and auto-submits once; an invalid code can be replaced', async () => {
+  let reject!: (reason: Error) => void;
+  jest.mocked(auth.verifyCode).mockImplementationOnce(
+    () =>
+      new Promise((_, no) => {
+        reject = no;
+      }),
+  );
+  const tree = await submitEmail('person@example.com');
+  await act(async () => {
+    field(tree, '6-digit code').props.onChangeText('12a34 56');
+    field(tree, '6-digit code').props.onChangeText('123456');
+    primary(tree).props.onPress();
+  });
+  expect(auth.verifyCode).toHaveBeenCalledTimes(1);
+  expect(auth.verifyCode).toHaveBeenCalledWith('person@example.com', '123456');
+  await act(async () => reject(new Error('Invalid code')));
+  expect(field(tree, '6-digit code').props.value).toBe('');
+  jest
+    .mocked(auth.verifyCode)
+    .mockResolvedValueOnce({ accessToken: 't', user: { id: 'u', email: 'person@example.com' } });
+  await act(async () => field(tree, '6-digit code').props.onChangeText('654321'));
+  expect(auth.verifyCode).toHaveBeenCalledTimes(2);
+  await act(async () => tree.unmount());
+});

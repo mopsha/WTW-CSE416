@@ -1,7 +1,10 @@
 import React from 'react';
 import { Linking } from 'react-native';
+import { PlaceCard } from '@/components/PlaceCard';
 import { GoogleCredit } from '@/components/GoogleCredit';
 import { candidateFromApi, safeLink } from '@/lib/places';
+
+jest.mock('@/lib/googlePlaces', () => ({ useEnrichedPlace: (place: unknown) => place }));
 
 type Node = { props: Record<string, any> };
 type Tree = {
@@ -92,4 +95,51 @@ test('only web links can open', () => {
   expect(safeLink('javascript:alert(1)')).toBeNull();
   expect(safeLink('http://a.example')).toBeNull();
   expect(safeLink(undefined)).toBeNull();
+});
+
+test('long attribution links use bounded wrapping targets without inflated hit regions', async () => {
+  const { StyleSheet } = jest.requireActual('react-native');
+  const tree = await mount({
+    provider: 'google',
+    googleMapsUri: 'https://maps.google.com/place',
+    attributions: [
+      {
+        provider: 'A long photographer name that must remain readable',
+        uri: 'https://maps.google.com/author',
+      },
+    ],
+  });
+  for (const link of links(tree)) {
+    const style = StyleSheet.flatten(link.props.style({ pressed: false }));
+    expect(style.minHeight).toBeGreaterThanOrEqual(44);
+    expect(style.minWidth).toBeGreaterThanOrEqual(44);
+    expect(style.maxWidth).toBe('100%');
+    expect(link.props.hitSlop).toBeUndefined();
+    expect(link.props.numberOfLines).toBeUndefined();
+  }
+  expect(JSON.stringify(tree.toJSON())).toContain(
+    'A long photographer name that must remain readable',
+  );
+  await act(async () => tree.unmount());
+});
+
+test('a separate photo credit does not suppress required Google source links on a place card', async () => {
+  const place = {
+    ...candidateFromApi({
+      placeId: 'g',
+      name: 'Cafe',
+      provider: 'google',
+      googleMapsUri: 'https://maps.google.com/place',
+    }),
+    photoCredit: 'Photo author',
+  };
+  let tree!: Tree;
+  await act(async () => {
+    tree = create(<PlaceCard place={place} />);
+  });
+  expect(
+    links(tree).some((link) => link.props.accessibilityLabel === 'Google Maps, opens outside WTW'),
+  ).toBe(true);
+  expect(JSON.stringify(tree.toJSON())).toContain('Photo author');
+  await act(async () => tree.unmount());
 });

@@ -2,8 +2,8 @@
 // behind one header button, so the deck stays uncluttered.
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Sheet } from './TabUi';
 
 import { useAction } from '@/hooks/useAction';
 import { api, ApiError } from '@/lib/api';
@@ -80,46 +80,43 @@ export function HostMenu({ pickId, onChanged }: Props) {
         accessibilityRole="button"
         accessibilityLabel="Host options"
         accessibilityHint="Close swiping, refresh the places, or cancel"
-        style={menuStyles.trigger}
+        style={({ pressed }) => [menuStyles.trigger, pressed && { opacity: 0.7 }]}
       >
         <Ionicons name="options" size={20} color={colors.text} />
       </Pressable>
-      <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
-        <Pressable
-          style={menuStyles.backdrop}
-          onPress={() => setOpen(false)}
-          accessibilityLabel="Close host options"
+      <Sheet
+        visible={open}
+        closeAccessibilityLabel="Close host options"
+        dismissDisabled={!!action.busy}
+        title="Host options"
+        onClose={() => {
+          if (!action.busy) setOpen(false);
+        }}
+      >
+        {action.error ? <ErrorBanner message={action.error} onRetry={action.clearError} /> : null}
+        <MenuItem
+          icon="flag"
+          label="Close swiping now"
+          hint="Rank what we have and pick a winner"
+          busy={action.busy === 'close'}
+          onPress={() => void closeNow()}
         />
-        <SafeAreaView edges={['bottom']} style={menuStyles.sheet}>
-          <View style={menuStyles.handle} />
-          <Text style={menuStyles.title} accessibilityRole="header">
-            Host options
-          </Text>
-          {action.error ? <ErrorBanner message={action.error} onRetry={action.clearError} /> : null}
-          <MenuItem
-            icon="flag"
-            label="Close swiping now"
-            hint="Rank what we have and pick a winner"
-            busy={action.busy === 'close'}
-            onPress={() => void closeNow()}
-          />
-          <MenuItem
-            icon="refresh"
-            label="Get new places"
-            hint="Rebuilds the pool; clears answers if anyone has swiped"
-            busy={action.busy === 'refresh'}
-            onPress={() => void refresh()}
-          />
-          <MenuItem
-            icon="close-circle"
-            label="Cancel Pick"
-            hint="Stops it for everyone"
-            danger
-            busy={action.busy === 'cancel'}
-            onPress={() => void cancel()}
-          />
-        </SafeAreaView>
-      </Modal>
+        <MenuItem
+          icon="refresh"
+          label="Get new places"
+          hint="Rebuilds the pool; clears answers if anyone has swiped"
+          busy={action.busy === 'refresh'}
+          onPress={() => void refresh()}
+        />
+        <MenuItem
+          icon="close-circle"
+          label="Cancel Pick"
+          hint="Stops it for everyone"
+          danger
+          busy={action.busy === 'cancel'}
+          onPress={() => void cancel()}
+        />
+      </Sheet>
     </>
   );
 }
@@ -147,7 +144,7 @@ export function MenuItem({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityHint={hint}
-      accessibilityState={{ busy: !!busy }}
+      accessibilityState={{ busy: !!busy, disabled: !!busy }}
       style={({ pressed }) => [menuStyles.item, pressed && { opacity: 0.7 }]}
     >
       <View style={[menuStyles.itemIcon, danger && { backgroundColor: colors.dangerBg }]}>
@@ -181,14 +178,6 @@ export const menuStyles = StyleSheet.create({
     padding: 20,
     paddingTop: 10,
     gap: 6,
-  },
-  handle: {
-    alignSelf: 'center',
-    width: 40,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: colors.border,
-    marginBottom: 8,
   },
   title: { fontFamily: fonts.black, fontSize: 22, color: colors.text, marginBottom: 4 },
   item: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 64, paddingVertical: 6 },

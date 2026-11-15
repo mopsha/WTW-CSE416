@@ -1,3 +1,4 @@
+import { useMotionPreference } from '@/hooks/useMotionPreference';
 // Final vote: one tap on a finalist; you can change it until the vote closes (everyone voted,
 // the host closes it, or the deadline). Shows how many have voted, never for what.
 import { useLocalSearchParams } from 'expo-router';
@@ -37,6 +38,7 @@ import { ordinal } from '@/lib/places';
 import { voteLine } from '@/lib/pickUi';
 
 export default function VoteScreen() {
+  const reducedMotion = useMotionPreference();
   const { id: pickId = '' } = useLocalSearchParams<{ id: string }>();
   const session = useSession();
   const live = usePickLive(pickId);
@@ -107,13 +109,17 @@ export default function VoteScreen() {
     <SafeAreaView style={pickStyles.screen} edges={['top', 'left', 'right', 'bottom']}>
       <PickTopBar
         title="Final vote"
+        tabularCountdown
         subtitle={[progress ? voteLine(progress) : null, countdown.label]
           .filter(Boolean)
           .join(' · ')}
         right={<LiveDot mode={live.mode} offline={!!live.error} />}
       />
       <ScrollView contentContainerStyle={pickStyles.scroll} refreshControl={pull}>
-        <Animated.View entering={FadeInUp.duration(400)} style={styles.head}>
+        <Animated.View
+          entering={reducedMotion ? undefined : FadeInUp.duration(400)}
+          style={styles.head}
+        >
           <Text style={pickStyles.eyebrow}>TAP YOUR FAVORITE</Text>
           <Text style={pickStyles.heading} accessibilityRole="header">
             Where are we going? 🗳️
@@ -139,7 +145,10 @@ export default function VoteScreen() {
             if (!p) return null;
             const selected = r.placeId === myVote;
             return (
-              <Animated.View key={r.placeId} entering={FadeInDown.delay(150 + i * 120).springify()}>
+              <Animated.View
+                key={r.placeId}
+                entering={reducedMotion ? undefined : FadeInDown.delay(150 + i * 120).springify()}
+              >
                 <BigResult
                   place={p}
                   rank={r.rank}

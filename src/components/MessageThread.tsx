@@ -294,7 +294,7 @@ export function MessageThread({
                   accessibilityRole="button"
                   accessibilityLabel={`Options for message from ${name}`}
                   accessibilityHint="Report this message or block the sender"
-                  style={s.options}
+                  style={({ pressed }) => [s.options, pressed && { opacity: 0.7 }]}
                 >
                   <Ionicons name="ellipsis-horizontal" size={18} color={colors.muted} />
                 </Pressable>

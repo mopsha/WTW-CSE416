@@ -1,6 +1,8 @@
+import { useMotionPreference } from '@/hooks/useMotionPreference';
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, type ReactNode } from 'react';
 import {
+  AccessibilityInfo,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -18,17 +20,25 @@ export function HeaderAction({
   icon,
   label,
   onPress,
+  disabled = false,
 }: {
   icon: Icon;
   label: string;
   onPress: () => void;
+  disabled?: boolean;
 }) {
   return (
     <Pressable
       onPress={onPress}
+      disabled={disabled}
+      accessibilityState={{ disabled }}
       accessibilityRole="button"
       accessibilityLabel={label}
-      style={({ pressed }) => [s.icon, pressed && s.pressed]}
+      style={({ pressed }) => [
+        s.icon,
+        disabled && { opacity: 0.4 },
+        pressed && !disabled && s.pressed,
+      ]}
     >
       <Ionicons name={icon} size={25} color={colors.text} />
     </Pressable>
@@ -232,6 +242,8 @@ export function Sheet({
   children,
   onDismiss,
   animationType = 'slide',
+  dismissDisabled = false,
+  closeAccessibilityLabel,
   headerRight,
   footer,
 }: {
@@ -240,11 +252,18 @@ export function Sheet({
   onClose: () => void;
   children: ReactNode;
   onDismiss?: () => void;
-  /** Opt-in motion preference; other sheets retain their existing transition. */
+  /** Transition used when the OS allows motion. */
   animationType?: 'none' | 'slide' | 'fade';
+  dismissDisabled?: boolean;
+  closeAccessibilityLabel?: string;
   headerRight?: ReactNode;
   footer?: ReactNode;
 }) {
+  const close = () => {
+    if (!dismissDisabled) onClose();
+  };
+  const reducedMotion = useMotionPreference();
+  const heading = useRef<Text>(null);
   const wasVisible = useRef(visible);
   useEffect(() => {
     // Android removes the dialog when visible becomes false; no slide animation
@@ -257,9 +276,13 @@ export function Sheet({
     <Modal
       visible={visible}
       transparent
-      animationType={onDismiss && Platform.OS !== 'ios' ? 'none' : animationType}
+      animationType={reducedMotion || (onDismiss && Platform.OS !== 'ios') ? 'none' : animationType}
+      onShow={() => {
+        if (visible && heading.current)
+          AccessibilityInfo.sendAccessibilityEvent(heading.current, 'focus');
+      }}
       onDismiss={Platform.OS === 'ios' ? onDismiss : undefined}
-      onRequestClose={onClose}
+      onRequestClose={close}
     >
       <KeyboardAvoidingView
         style={s.modal}
@@ -267,19 +290,38 @@ export function Sheet({
       >
         <Pressable
           style={s.backdrop}
-          onPress={onClose}
-          accessibilityRole="button"
-          accessibilityLabel={`Close ${title}`}
+          onPress={close}
+          accessible={false}
+          importantForAccessibility="no-hide-descendants"
         />
-        <SafeAreaView edges={['bottom', 'left', 'right']} style={s.sheet} accessibilityViewIsModal>
+        <SafeAreaView
+          onAccessibilityEscape={close}
+          edges={['bottom', 'left', 'right']}
+          style={s.sheet}
+          accessibilityViewIsModal
+        >
           <View style={s.sheetHead}>
-            <Text style={[s.section, { flex: 1, flexShrink: 1 }]} accessibilityRole="header">
+            <Text
+              ref={heading}
+              accessible
+              style={[s.section, { flex: 1, flexShrink: 1 }]}
+              accessibilityRole="header"
+            >
               {title}
             </Text>
             {headerRight}
-            <HeaderAction icon="close" label={`Close ${title}`} onPress={onClose} />
+            <HeaderAction
+              icon="close"
+              label={closeAccessibilityLabel ?? `Close ${title}`}
+              disabled={dismissDisabled}
+              onPress={close}
+            />
           </View>
-          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.sheetBody}>
+          <ScrollView
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={s.sheetBody}
+          >
             {children}
           </ScrollView>
           {footer ? <View style={s.sheetFooter}>{footer}</View> : null}
@@ -298,7 +340,11 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: space.xs,
   },
-  badgeText: { ...type.caption, color: colors.primaryText, fontFamily: fonts.semibold },
+  badgeText: {
+    ...type.caption,
+    color: colors.primaryText,
+    fontFamily: fonts.semibold,
+  },
   heading: {
     flexDirection: 'row',
     alignItems: 'center',
