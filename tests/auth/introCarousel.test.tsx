@@ -160,6 +160,12 @@ describe('intro carousel', () => {
       tree.root.findAll(
         (n) => n.props.accessibilityRole === 'link' && n.props.accessibilityLabel === label,
       )[0]!;
+    // Real 44-pt boxes, not hitSlop around a caption-height row.
+    for (const label of ['Terms of Use', 'Privacy Policy']) {
+      const l = link(label);
+      expect(l.props.hitSlop).toBeUndefined();
+      expect(l.props.style).toMatchObject({ minHeight: 44, minWidth: 44 });
+    }
     await act(async () => link('Terms of Use').props.onPress());
     expect(openLegalPage).toHaveBeenCalledWith(TERMS_URL, 'Terms of Use');
     await act(async () => link('Privacy Policy').props.onPress());

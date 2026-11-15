@@ -62,13 +62,6 @@ const SLIDES: {
 ];
 
 const CAPTION_LINE = 18;
-/** Inline links stay caption-sized; hitSlop makes each one a 44-pt tall target. */
-const LINK_SLOP = {
-  top: (MIN_TARGET - CAPTION_LINE) / 2,
-  bottom: (MIN_TARGET - CAPTION_LINE) / 2,
-  left: space.sm,
-  right: space.sm,
-};
 const LEAD_WORDS = 'By continuing, you agree to our'.split(' ');
 
 // Signed-out first run only: the root layout lists this before sign-in until it's been seen.
@@ -158,11 +151,13 @@ export default function IntroScreen() {
               {word}{' '}
             </Text>
           ))}
-          {/* Kept on one line so the two links never stack and their tap areas never overlap. */}
+          {/* Kept on one line so the two links never stack and their tap areas never overlap.
+              Each link's own box is 44 x 44 pt (text stays caption-sized, centered inside), and
+              the row centers the plain words on the same line, so it still reads as one line. */}
           <View style={styles.links}>
             <Pressable
               onPress={() => void openLegalPage(TERMS_URL, 'Terms of Use')}
-              hitSlop={LINK_SLOP}
+              style={styles.linkTarget}
               accessibilityRole="link"
               accessibilityLabel="Terms of Use"
             >
@@ -171,7 +166,7 @@ export default function IntroScreen() {
             <Text style={styles.caption}> and </Text>
             <Pressable
               onPress={() => void openLegalPage(PRIVACY_URL, 'Privacy Policy')}
-              hitSlop={LINK_SLOP}
+              style={styles.linkTarget}
               accessibilityRole="link"
               accessibilityLabel="Privacy Policy"
             >
@@ -193,14 +188,21 @@ const styles = StyleSheet.create({
   slide: { alignItems: 'center', justifyContent: 'center', gap: space.lg },
   unmeasured: { width: '100%' },
   actions: { gap: space.xs },
+  // No top padding: the 44-pt link boxes already give the caption its breathing room.
   legal: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: space.sm,
-    paddingTop: space.sm,
   },
-  links: { flexDirection: 'row' },
+  links: { flexDirection: 'row', alignItems: 'center' },
+  linkTarget: {
+    minHeight: MIN_TARGET,
+    minWidth: MIN_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   caption: { ...type.caption, lineHeight: CAPTION_LINE, color: colors.muted },
   link: { fontFamily: fonts.semibold, color: colors.primary },
 });
