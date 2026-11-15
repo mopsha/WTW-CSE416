@@ -1,4 +1,5 @@
 import { LinearGradient } from 'expo-linear-gradient';
+import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -28,7 +29,9 @@ const RESEND_SECONDS = 60;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function SignInScreen() {
-  const [mode, setMode] = useState<AuthMode>('login');
+  // The intro's "Get started" opens sign-up; "Log in" and every other entry open log-in.
+  const params = useLocalSearchParams<{ mode?: string }>();
+  const [mode, setMode] = useState<AuthMode>(params.mode === 'signup' ? 'signup' : 'login');
   const [step, setStep] = useState<'email' | 'code' | 'password'>('email');
   const [password, setPassword] = useState('');
   const [email, setEmail] = useState('');

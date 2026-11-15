@@ -90,7 +90,7 @@ test('failed /me does not mount a navigator or redirect a restored deep link int
     tree.root
       .findAllByType('test-Protected')
       .map((n: { props: { guard: boolean } }) => n.props.guard),
-  ).toEqual([false, false, true]);
+  ).toEqual([false, false, false, true]);
   jest.mocked(useProfile).mockReturnValue({
     failed: false,
     loading: false,
@@ -102,7 +102,7 @@ test('failed /me does not mount a navigator or redirect a restored deep link int
     tree.root
       .findAllByType('test-Protected')
       .map((n: { props: { guard: boolean } }) => n.props.guard),
-  ).toEqual([false, true, false]);
+  ).toEqual([false, false, true, false]);
   await act(async () => tree.unmount());
 });
 

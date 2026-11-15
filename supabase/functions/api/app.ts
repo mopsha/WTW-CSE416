@@ -94,9 +94,15 @@ import {
 import { deleteAccount, type AccountStore } from '../_shared/api/account.ts';
 import { parseAvatarRevision, readAvatarBody, type AvatarStore } from '../_shared/api/avatars.ts';
 
+/** No JSON route needs more; caps parse cost on hostile bodies (avatars have their own 1 MiB cap). */
+const MAX_JSON_BYTES = 64 * 1024;
+
 async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<unknown> {
   const raw = await c.req.text();
   if (!raw) return undefined;
+  if (raw.length > MAX_JSON_BYTES) {
+    throw new ApiError(400, 'PAYLOAD_TOO_LARGE', 'Request body is too large');
+  }
   try {
     return JSON.parse(raw);
   } catch {
@@ -295,12 +301,7 @@ export function createApp(
   });
   app.post('/picks/:id/swipes', async (c) => {
     const user = await deps.getUser(c.req.raw);
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      throw new ApiError(400, 'INVALID_JSON', 'Request body must be valid JSON');
-    }
+    const body = await readJsonBody(c);
     const pickId = c.req.param('id');
     const result = await swipe(deps.store, pickId, user.id, body);
     // The swipe is already saved, so a failed auto-close must not turn it into

@@ -2,6 +2,8 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
+import { readNotificationPermission } from './permissions';
+
 const supported = Platform.OS !== 'web';
 
 /** Show banners even while the app is open, so the demo recording catches them. */
@@ -47,14 +49,12 @@ export async function notifyLater(title: string, body: string, url: string, seco
   }
 }
 
-/** Whether the OS currently lets us notify (never prompts). */
+/**
+ * Whether the OS currently lets us notify (never prompts). Same check as onboarding, so
+ * iOS provisional (quiet) permission counts as allowed. Never throws.
+ */
 export async function notificationsAllowed(): Promise<boolean> {
-  if (!supported) return false;
-  try {
-    return (await Notifications.getPermissionsAsync()).granted;
-  } catch {
-    return false;
-  }
+  return (await readNotificationPermission()).status === 'granted';
 }
 
 /**

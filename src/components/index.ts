@@ -13,3 +13,11 @@ export { ProgressBar } from './ProgressBar';
 export { IconButton, Screen } from './Screen';
 export { colors, flame, fonts, MIN_TARGET, radius, space, type } from './theme';
 export { Skeleton, SkeletonCard, SkeletonRegion, SkeletonRow } from './Skeleton';
+export {
+  Illustration,
+  OnboardingCopy,
+  OnboardingFrame,
+  onboardingStyles,
+  PageDots,
+  type IllustrationBadge,
+} from './Onboarding';

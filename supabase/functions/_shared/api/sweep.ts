@@ -22,9 +22,18 @@ export function authorizeSweep(provided: string | undefined, expected: string | 
   if (!expected) {
     throw new ApiError(503, 'SERVER_NOT_CONFIGURED', 'Deadline automation is not configured');
   }
-  if (!provided || provided !== expected) {
+  if (!provided || !sameSecret(provided, expected)) {
     throw new ApiError(401, 'UNAUTHENTICATED', 'Invalid automation credentials');
   }
+}
+
+/** Constant-time compare, so response timing doesn't reveal how much of a guess matched. */
+function sameSecret(provided: string, expected: string): boolean {
+  const a = new TextEncoder().encode(provided);
+  const b = new TextEncoder().encode(expected);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < b.length; i++) diff |= (a[i] ?? 0) ^ b[i]!;
+  return diff === 0;
 }
 
 /** Selection and orchestration only; canonical closers own all lifecycle decisions. */
