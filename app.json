@@ -37,6 +37,7 @@
     },
     "android": {
       "package": "edu.stonybrook.wtw",
+      "allowBackup": false,
       "adaptiveIcon": {
         "backgroundColor": "#FF4F6D",
         "foregroundImage": "./assets/images/android-icon-foreground.png",

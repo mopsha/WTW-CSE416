@@ -1,12 +1,14 @@
 // wtw://join/CODE (the Lobby's QR code and share link). Outside the auth guard so the link
 // always opens: signed out, it parks the code and goes to sign-in (the root layout brings you
-// back here after); signed in, it joins and opens the Pick, which forwards to the Lobby.
+// back here after); signed in, it asks first, then joins and opens the Pick, which forwards to
+// the Lobby. Asking first means a link or QR code someone else made can't join you silently.
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/Button';
+import { GradientButton } from '@/components/GradientButton';
 import { CenterMessage, FlameOrb, goToPicks, pickStyles } from '@/components/PickParts';
 import { useAuth } from '@/hooks/useAuth';
 import { useJoinPick } from '@/hooks/useJoinPick';
@@ -16,6 +18,7 @@ export default function JoinByLink() {
   const { code = '' } = useLocalSearchParams<{ code: string }>();
   const { session } = useAuth();
   const { error, join } = useJoinPick();
+  const [confirmed, setConfirmed] = useState(false);
   const started = useRef(false);
 
   useEffect(() => {
@@ -24,12 +27,12 @@ export default function JoinByLink() {
       router.replace('/sign-in');
       return;
     }
-    if (started.current) return;
+    if (!confirmed || started.current) return;
     started.current = true;
     void join(code).then((pickId) => {
       if (pickId) router.replace({ pathname: '/pick/[id]', params: { id: pickId } });
     });
-  }, [session, code, join]);
+  }, [session, code, join, confirmed]);
 
   if (error) {
     return (
@@ -41,6 +44,21 @@ export default function JoinByLink() {
             accessibilityHint="You can type a code there instead"
             onPress={goToPicks}
           />
+        </CenterMessage>
+      </SafeAreaView>
+    );
+  }
+
+  if (session && !confirmed) {
+    return (
+      <SafeAreaView style={pickStyles.screen}>
+        <CenterMessage
+          emoji="🔥"
+          title="Join this Pick?"
+          body="Someone shared a Pick with you. Join only if you know who sent it."
+        >
+          <GradientButton label="Join the Pick" onPress={() => setConfirmed(true)} />
+          <Button label="Not now" variant="link" onPress={goToPicks} />
         </CenterMessage>
       </SafeAreaView>
     );

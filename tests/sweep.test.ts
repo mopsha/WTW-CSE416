@@ -71,7 +71,7 @@ afterEach(() => {
 });
 
 test('secret is required, fails closed when unconfigured, and accepts only the configured value', () => {
-  for (const value of [undefined, '', 'wrong']) {
+  for (const value of [undefined, '', 'wrong', 'test-secre', 'test-secrets', 'TEST-SECRET']) {
     expect(() => authorizeSweep(value, 'test-secret')).toThrow(
       expect.objectContaining({ status: 401 }),
     );

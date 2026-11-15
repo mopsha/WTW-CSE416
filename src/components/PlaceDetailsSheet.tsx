@@ -21,6 +21,7 @@ import {
   type GoogleDetails,
 } from '@/lib/googlePlaces';
 import { haptic } from '@/lib/haptics';
+import { safeLink } from '@/lib/places';
 import type { Candidate, PreferenceValue } from '@/lib/types';
 
 import { ActionBar } from './ActionBar';
@@ -69,6 +70,8 @@ function Details({ place: base, onClose, onAnswer }: { place: Candidate } & Omit
       active = false;
     };
   }, [info?.id]);
+  // Google supplies this URL; only open https so a bad entry can't launch another scheme.
+  const website = safeLink(details?.website ?? undefined);
 
   const gallery = info?.gallery.length
     ? info.gallery
@@ -167,12 +170,8 @@ function Details({ place: base, onClose, onAnswer }: { place: Candidate } & Omit
                 onPress={() => open(`tel:${details.phone!.replace(/[^\d+]/g, '')}`)}
               />
             ) : null}
-            {details?.website ? (
-              <LinkButton
-                icon="globe-outline"
-                label="Website"
-                onPress={() => open(details.website!)}
-              />
+            {website ? (
+              <LinkButton icon="globe-outline" label="Website" onPress={() => open(website)} />
             ) : null}
           </View>
 
