@@ -211,6 +211,10 @@ Deno.test('invalid JSON and missing Pick', async () => {
     getUser: async () => ({ id: 'host' }),
   });
   equal((await app.request('/picks/p/swipes', { method: 'POST', body: '{' })).status, 400);
+  const huge = JSON.stringify({ placeId: 'x'.repeat(70_000), value: 1 });
+  const tooBig = await app.request('/picks/p/swipes', { method: 'POST', body: huge });
+  equal(tooBig.status, 400);
+  equal((await tooBig.json()).error.code, 'PAYLOAD_TOO_LARGE');
   equal((await app.request('/picks/p/rank', { method: 'POST' })).status, 404);
   equal((await app.request('/picks/p/refresh', { method: 'POST', body: '{' })).status, 400);
   equal((await app.request('/picks/p', { method: 'GET' })).status, 404);
