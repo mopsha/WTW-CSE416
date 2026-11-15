@@ -1,7 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { colors, flame, fonts } from './theme';
+import { colors, flame, fonts, numeric } from './theme';
 
 interface Props {
   /** How many are done. */
@@ -36,7 +36,7 @@ export function ProgressBar({ value, total, showCount = true, accessibilityLabel
         />
       </View>
       {showCount ? (
-        <Text style={styles.count}>
+        <Text style={[styles.count, numeric, { fontWeight: '700' }]}>
           {done}/{safeTotal}
         </Text>
       ) : null}

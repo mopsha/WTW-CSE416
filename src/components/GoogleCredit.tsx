@@ -3,7 +3,7 @@ import { Linking, Pressable, StyleSheet, Text, View, type ViewStyle } from 'reac
 import { safeLink } from '@/lib/places';
 import type { Candidate } from '@/lib/types';
 
-import { colors, fonts } from './theme';
+import { colors, fonts, MIN_TARGET } from './theme';
 
 /** The credit and source links Google requires wherever its content appears. */
 export function GoogleCredit({
@@ -33,7 +33,7 @@ export function GoogleCredit({
           <Pressable
             key={provider}
             onPress={() => void Linking.openURL(link).catch(() => {})}
-            hitSlop={12}
+            style={({ pressed }) => [styles.target, pressed && styles.pressed]}
             accessibilityRole="link"
             accessibilityLabel={`${provider}, opens outside WTW`}
           >
@@ -50,7 +50,20 @@ export function GoogleCredit({
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 8 },
+  row: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    maxWidth: '100%',
+    columnGap: 8,
+  },
+  target: {
+    minHeight: MIN_TARGET,
+    minWidth: MIN_TARGET,
+    maxWidth: '100%',
+    justifyContent: 'center',
+  },
+  pressed: { opacity: 0.65 },
   text: { fontFamily: fonts.medium, fontSize: 10, color: colors.muted },
   light: { color: 'rgba(255,255,255,0.85)' },
   link: { textDecorationLine: 'underline' },

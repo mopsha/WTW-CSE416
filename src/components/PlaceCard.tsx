@@ -16,7 +16,7 @@ import { formatPriceLevel, milesFromCampus, openLabel } from '@/lib/places';
 import type { Candidate } from '@/lib/types';
 
 import { GoogleCredit } from './GoogleCredit';
-import { colors, fonts } from './theme';
+import { colors, fonts, MIN_TARGET } from './theme';
 
 /** "Mill Pond Bakery, Italian, price 2 of 4, 1.2 mi away" for screen readers. */
 export function describePlace(place: Candidate): string {
@@ -125,7 +125,7 @@ export function PlaceCard({ place: base, onInfo }: { place: Candidate; onInfo?: 
           disabled={!onInfo}
           accessibilityRole={onInfo ? 'button' : undefined}
           accessibilityHint={onInfo ? 'Shows photos, hours and more' : undefined}
-          style={onInfo ? styles.nameRow : undefined}
+          style={({ pressed }) => [onInfo && styles.nameRow, pressed && onInfo && { opacity: 0.7 }]}
         >
           <Text style={[styles.name, onInfo && { flex: 1 }]} numberOfLines={2}>
             {place.name}
@@ -144,8 +144,10 @@ export function PlaceCard({ place: base, onInfo }: { place: Candidate; onInfo?: 
         ) : null}
         <Chips place={place} />
       </View>
-      {place.photoCredit ? <Text style={styles.credit}>Photo: {place.photoCredit}</Text> : null}
-      {!place.photoCredit ? <GoogleCredit place={place} light style={styles.googleCredit} /> : null}
+      <View style={styles.creditOverlay}>
+        {place.photoCredit ? <Text style={styles.credit}>Photo: {place.photoCredit}</Text> : null}
+        <GoogleCredit place={place} light />
+      </View>
     </View>
   );
 }
@@ -161,8 +163,8 @@ const styles = StyleSheet.create({
   photoPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   nameRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
   infoBtn: {
-    width: 40,
-    height: 40,
+    width: MIN_TARGET,
+    height: MIN_TARGET,
     borderRadius: 20,
     marginBottom: 2,
     alignItems: 'center',
@@ -192,11 +194,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.22)',
   },
   chipDark: { backgroundColor: colors.cardHi, borderColor: colors.border },
-  googleCredit: { position: 'absolute', top: 12, right: 14 },
+  creditOverlay: { position: 'absolute', top: 12, left: 14, right: 14, alignItems: 'flex-end' },
   credit: {
-    position: 'absolute',
-    top: 12,
-    right: 14,
     fontFamily: fonts.medium,
     fontSize: 10,
     color: 'rgba(255,255,255,0.75)',

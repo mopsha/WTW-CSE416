@@ -1,3 +1,4 @@
+import { useMotionPreference } from '@/hooks/useMotionPreference';
 // Building blocks shared by the Pick screens (lobby, swipe, waiting, results, vote, winner),
 // in the live-demo look: dark surfaces, flame gradient, Poppins.
 import { Ionicons } from '@expo/vector-icons';
@@ -6,6 +7,7 @@ import { router } from 'expo-router';
 import { useEffect, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
+  cancelAnimation,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -17,7 +19,7 @@ import type { LiveMode } from '@/hooks/usePickLive';
 import type { ParticipantProgress } from '@/lib/types';
 
 import { Avatar } from './Avatar';
-import { colors, flame, fonts, MIN_TARGET } from './theme';
+import { colors, flame, fonts, MIN_TARGET, numeric } from './theme';
 
 /** Leave the Pick flow for the Picks tab, whatever stack of replaced screens is underneath. */
 export function goToPicks() {
@@ -43,7 +45,7 @@ export function PickTopBar({
         onPress={onBack}
         accessibilityRole="button"
         accessibilityLabel="Back to your Picks"
-        style={styles.iconBtn}
+        style={({ pressed }) => [styles.iconBtn, pressed && { opacity: 0.7 }]}
         hitSlop={4}
       >
         <Ionicons name="chevron-back" size={24} color={colors.text} />
@@ -53,7 +55,7 @@ export function PickTopBar({
           {title}
         </Text>
         {subtitle ? (
-          <Text style={styles.topSub} numberOfLines={2}>
+          <Text style={[styles.topSub, numeric, { fontWeight: '500' }]} numberOfLines={2}>
             {subtitle}
           </Text>
         ) : null}
@@ -73,13 +75,19 @@ export function LiveDot({ mode, offline }: { mode: LiveMode; offline?: boolean }
         ? 'Updating'
         : '…';
   const color = offline ? colors.danger : mode === 'realtime' ? colors.yes : colors.maybe;
+  const reducedMotion = useMotionPreference();
   const o = useSharedValue(1);
   useEffect(() => {
+    if (reducedMotion) {
+      o.value = 1;
+      return;
+    }
     o.value = withRepeat(
       withSequence(withTiming(0.3, { duration: 700 }), withTiming(1, { duration: 700 })),
       -1,
     );
-  }, [o]);
+    return () => cancelAnimation(o);
+  }, [o, reducedMotion]);
   const pulse = useAnimatedStyle(() => ({ opacity: o.value }));
   return (
     <View
@@ -177,13 +185,19 @@ export function GroupAvatars({
 
 /** The pulsing flame orb the demo used while counting swipes. */
 export function FlameOrb({ emoji = '🔥', size = 110 }: { emoji?: string; size?: number }) {
+  const reducedMotion = useMotionPreference();
   const s = useSharedValue(1);
   useEffect(() => {
+    if (reducedMotion) {
+      s.value = 1;
+      return;
+    }
     s.value = withRepeat(
       withSequence(withTiming(1.12, { duration: 450 }), withTiming(1, { duration: 450 })),
       -1,
     );
-  }, [s]);
+    return () => cancelAnimation(s);
+  }, [s, reducedMotion]);
   const pulse = useAnimatedStyle(() => ({ transform: [{ scale: s.value }] }));
   return (
     <Animated.View style={pulse} accessible={false}>
@@ -243,7 +257,7 @@ export function Pill({
   return (
     <View style={styles.pill}>
       {icon ? <Ionicons name={icon} size={14} color={color} /> : null}
-      <Text style={[styles.pillText, { color }]}>{text}</Text>
+      <Text style={[styles.pillText, numeric, { color, fontWeight: '600' }]}>{text}</Text>
     </View>
   );
 }

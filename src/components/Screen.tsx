@@ -68,7 +68,7 @@ export function Screen({
                 }}
                 accessibilityRole="button"
                 accessibilityLabel="Back"
-                style={styles.iconButton}
+                style={({ pressed }) => [styles.iconButton, pressed && { opacity: 0.7 }]}
               >
                 <Ionicons name="chevron-back" size={24} color={colors.text} />
               </Pressable>
@@ -124,7 +124,7 @@ export function Screen({
   );
 }
 
-/** A round 44-pt icon button for headers. */
+/** A round header control using the platform minimum touch target. */
 export function IconButton({
   icon,
   onPress,

@@ -1,4 +1,4 @@
-import { useReducedMotion } from 'react-native-reanimated';
+import { useMotionPreference } from '@/hooks/useMotionPreference';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { useEffect, useRef, useState } from 'react';
@@ -47,7 +47,7 @@ export function HangPlanComposer({
   onCreated(): void;
   onSavingChange?(saving: boolean): void;
 }) {
-  const reduceMotion = useReducedMotion();
+  const reduceMotion = useMotionPreference();
   const userId = useAuth().session?.user.id;
   const [activity, setActivity] = useState('');
   const [custom, setCustom] = useState('');

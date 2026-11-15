@@ -1,3 +1,4 @@
+import { useMotionPreference } from '@/hooks/useMotionPreference';
 // Waiting room (swiping, after I've answered everything): "3 of 5 finished", avatars with a
 // check, the deadline countdown, and the host's Close now / Cancel. Never anyone's answers.
 // When the Pick closes (host, threshold or deadline) everyone moves to the reveal by themselves.
@@ -36,6 +37,7 @@ import { notifyLater } from '@/lib/notify';
 import { progressLine } from '@/lib/pickUi';
 
 export default function WaitingScreen() {
+  const reducedMotion = useMotionPreference();
   const { id: pickId = '' } = useLocalSearchParams<{ id: string }>();
   const live = usePickLive(pickId);
   const pull = usePullToRefresh(live.refresh);
@@ -111,7 +113,7 @@ export default function WaitingScreen() {
         ) : null}
 
         <View style={styles.hero}>
-          <Animated.View entering={ZoomIn.springify()}>
+          <Animated.View entering={reducedMotion ? undefined : ZoomIn.springify()}>
             <FlameOrb emoji={allDone ? '🔥' : '⏳'} />
           </Animated.View>
           <Text
@@ -148,13 +150,16 @@ export default function WaitingScreen() {
           ) : null}
         </View>
 
-        <Animated.View entering={FadeInDown.delay(150)} style={pickStyles.card}>
+        <Animated.View
+          entering={reducedMotion ? undefined : FadeInDown.delay(150)}
+          style={pickStyles.card}
+        >
           <View style={styles.headRow}>
             <Text style={pickStyles.section}>The group</Text>
             <GroupAvatars people={people} size={28} />
           </View>
           {people.map((p) => (
-            <Animated.View key={p.userId} layout={LinearTransition}>
+            <Animated.View key={p.userId} layout={reducedMotion ? undefined : LinearTransition}>
               <ParticipantRow
                 person={p}
                 status={p.done ? 'Done ✓' : 'Swiping…'}

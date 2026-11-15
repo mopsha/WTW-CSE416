@@ -19,7 +19,7 @@ import { Card } from './Card';
 import { AvatarStack } from './Avatar';
 import { PlanTimeSheet } from './PlanTimeSheet';
 import type { ParticipantProgress } from '@/lib/types';
-import { colors, fonts, space, type } from './theme';
+import { numeric, colors, fonts, space, type } from './theme';
 
 const PLAN_REFRESH_MS = 30_000;
 
@@ -159,7 +159,7 @@ export function PlanBlock({
           onChange={(status) => act('rsvp', () => api.rsvp(pickId, status))}
           accessibilityLabel="Are you going"
         />
-        <Text style={styles.muted}>
+        <Text style={[styles.muted, numeric]}>
           {going + maybe + notGoing
             ? `${going} going · ${maybe} maybe · ${notGoing} can’t · ${plan.participantCount - going - maybe - notGoing} awaiting reply`
             : 'Nobody has answered yet.'}

@@ -3,7 +3,7 @@ import type { HangPost, HangStatus } from '@shared/api/hang.ts';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { haptic } from '@/lib/haptics';
 import { Avatar, Button } from '@/components';
-import { colors, MIN_TARGET, picksTheme, radius, space } from '@/components/theme';
+import { colors, numeric, MIN_TARGET, picksTheme, radius, space } from '@/components/theme';
 
 /** Presentation only: HangCard retains fetching, expiry, eligibility and mutations. */
 export function HangInvitation({
@@ -96,7 +96,7 @@ const s = StyleSheet.create({
   authorDetails: { flex: 1, minWidth: 100 },
   author: { ...picksTheme.secondary, fontWeight: '600', color: colors.text },
   caption: { ...picksTheme.secondary, color: colors.muted },
-  count: { ...picksTheme.secondary, color: colors.muted },
+  count: { ...picksTheme.secondary, ...numeric, color: colors.muted },
   activity: {
     ...picksTheme.ui,
     fontSize: 22,

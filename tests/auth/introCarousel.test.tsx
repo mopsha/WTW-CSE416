@@ -1,3 +1,4 @@
+import { StyleSheet } from 'react-native';
 import React from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
@@ -164,7 +165,11 @@ describe('intro carousel', () => {
     for (const label of ['Terms of Use', 'Privacy Policy']) {
       const l = link(label);
       expect(l.props.hitSlop).toBeUndefined();
-      expect(l.props.style).toMatchObject({ minHeight: 44, minWidth: 44 });
+      expect(StyleSheet.flatten(l.props.style({ pressed: false }))).toMatchObject({
+        minHeight: 44,
+        minWidth: 44,
+      });
+      expect(StyleSheet.flatten(l.props.style({ pressed: true })).opacity).toBe(0.7);
     }
     await act(async () => link('Terms of Use').props.onPress());
     expect(openLegalPage).toHaveBeenCalledWith(TERMS_URL, 'Terms of Use');

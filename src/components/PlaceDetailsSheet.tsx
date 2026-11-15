@@ -1,3 +1,4 @@
+import { useMotionPreference } from '@/hooks/useMotionPreference';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useState } from 'react';
@@ -26,7 +27,7 @@ import type { Candidate, PreferenceValue } from '@/lib/types';
 
 import { ActionBar } from './ActionBar';
 import { Chips } from './PlaceCard';
-import { colors, fonts } from './theme';
+import { colors, fonts, MIN_TARGET } from './theme';
 
 interface Props {
   place: Candidate | null;
@@ -44,10 +45,12 @@ function open(url: string) {
 
 /** Tinder/Hinge-style "more info": scroll for photos, hours and links; answer from here too. */
 export function PlaceDetailsSheet({ place, onClose, onAnswer }: Props) {
+  const reducedMotion = useMotionPreference();
   return (
     <Modal
       visible={!!place}
-      animationType="slide"
+      animationType={reducedMotion ? 'none' : 'slide'}
+      allowSwipeDismissal
       presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
@@ -83,7 +86,7 @@ function Details({ place: base, onClose, onAnswer }: { place: Candidate } & Omit
   )}`;
 
   return (
-    <View style={styles.root}>
+    <View style={styles.root} accessibilityViewIsModal onAccessibilityEscape={onClose}>
       <ScrollView
         contentContainerStyle={{ paddingBottom: 140 }}
         showsVerticalScrollIndicator={false}
@@ -124,7 +127,7 @@ function Details({ place: base, onClose, onAnswer }: { place: Candidate } & Omit
             onPress={onClose}
             accessibilityRole="button"
             accessibilityLabel="Close details"
-            style={styles.close}
+            style={({ pressed }) => [styles.close, pressed && { opacity: 0.7 }]}
           >
             <Ionicons name="chevron-down" size={24} color="#FFFFFF" />
           </Pressable>
@@ -268,8 +271,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 10,
     left: 14,
-    width: 40,
-    height: 40,
+    width: MIN_TARGET,
+    height: MIN_TARGET,
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',

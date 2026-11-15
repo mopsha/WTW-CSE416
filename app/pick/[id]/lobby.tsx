@@ -1,3 +1,4 @@
+import { useMotionPreference } from '@/hooks/useMotionPreference';
 // Lobby (draft): who's in, the join code + QR + Share, the host's invite link, lobby lock and
 // Start / Cancel, and Report / Block on everyone else's row.
 // Everyone moves to the deck by themselves when the host starts (usePickRoute).
@@ -38,6 +39,7 @@ import type { PickDetail } from '@/lib/types';
 const MIN_TO_START = 2;
 
 export default function LobbyScreen() {
+  const reducedMotion = useMotionPreference();
   const { id: pickId = '' } = useLocalSearchParams<{ id: string }>();
   const live = usePickLive(pickId);
   usePickRoute(pickId, 'lobby', live.state);
@@ -153,7 +155,7 @@ export default function LobbyScreen() {
         ) : null}
 
         <Animated.View
-          entering={FadeInDown.duration(400)}
+          entering={reducedMotion ? undefined : FadeInDown.duration(400)}
           style={[pickStyles.card, styles.codeCard]}
         >
           <Text style={pickStyles.eyebrow}>INVITE YOUR CREW</Text>
@@ -242,8 +244,8 @@ export default function LobbyScreen() {
           {people.map((p) => (
             <Animated.View
               key={p.userId}
-              entering={FadeInDown.springify()}
-              layout={LinearTransition}
+              entering={reducedMotion ? undefined : FadeInDown.springify()}
+              layout={reducedMotion ? undefined : LinearTransition}
             >
               <ParticipantRow
                 person={p}

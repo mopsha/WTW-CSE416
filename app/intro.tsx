@@ -157,7 +157,7 @@ export default function IntroScreen() {
           <View style={styles.links}>
             <Pressable
               onPress={() => void openLegalPage(TERMS_URL, 'Terms of Use')}
-              style={styles.linkTarget}
+              style={({ pressed }) => [styles.linkTarget, pressed && { opacity: 0.7 }]}
               accessibilityRole="link"
               accessibilityLabel="Terms of Use"
             >
@@ -166,7 +166,7 @@ export default function IntroScreen() {
             <Text style={styles.caption}> and </Text>
             <Pressable
               onPress={() => void openLegalPage(PRIVACY_URL, 'Privacy Policy')}
-              style={styles.linkTarget}
+              style={({ pressed }) => [styles.linkTarget, pressed && { opacity: 0.7 }]}
               accessibilityRole="link"
               accessibilityLabel="Privacy Policy"
             >

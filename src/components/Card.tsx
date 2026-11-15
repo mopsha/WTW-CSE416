@@ -54,5 +54,5 @@ const styles = StyleSheet.create({
   },
   flat: { borderWidth: 0, backgroundColor: colors.cardHi },
   tappable: { minHeight: MIN_TARGET },
-  pressed: { opacity: 0.85, transform: [{ scale: 0.99 }] },
+  pressed: { opacity: 0.85 },
 });
