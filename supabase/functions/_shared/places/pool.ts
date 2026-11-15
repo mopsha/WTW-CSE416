@@ -1,3 +1,5 @@
+import { matchesDiscovery } from '../domain/discoverFilters.ts';
+import type { DiscoverConstraints } from '../domain/discoverFilters.ts';
 import { matchesFilters, validFilters, type PlaceFilters } from '../domain/placeFilters.ts';
 import { distanceMeters, type LatLng } from '../domain/geo.ts';
 import type { Candidate, Category, PlaceProvider } from './types.ts';
@@ -14,6 +16,7 @@ import { ProviderTimeoutError, withTimeout } from './timeout.ts';
 
 /** Structurally identical to Alan's lifecycle branch. */
 export interface PoolRequest extends PlaceFilters {
+  discovery?: DiscoverConstraints;
   center: LatLng;
   radiusM: number;
   category: Category;
@@ -99,7 +102,10 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
           if (candidates.length)
             return structuredClone(
               candidates
-                .filter((p) => matchesFilters(p, request, now()))
+                .filter(
+                  (p) =>
+                    matchesFilters(p, request, now()) && matchesDiscovery(p, request.discovery),
+                )
                 .slice(0, request.poolSize),
             );
         }
@@ -148,7 +154,7 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
         log('cache_failed');
       }
       const filtered = candidates
-        .filter((p) => matchesFilters(p, request, now()))
+        .filter((p) => matchesFilters(p, request, now()) && matchesDiscovery(p, request.discovery))
         .slice(0, request.poolSize);
       // Preserve the fallback notice even when strict filters remove every fixture.
       if (!filtered.length && source !== mode) throw new NoCandidatesError(true);

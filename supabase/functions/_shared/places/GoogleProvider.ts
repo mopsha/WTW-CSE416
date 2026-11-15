@@ -1,3 +1,4 @@
+import { discoverSearchTypes, validDiscovery } from '../domain/discoverFilters.ts';
 import type { OpeningHours, HoursPoint } from '../domain/openingHours.ts';
 import { categoryMap, matchesCategory } from './categoryMap.ts';
 import type { Candidate, Category, PlaceProvider, PlaceSearch } from './types.ts';
@@ -21,6 +22,7 @@ const FIELDS = [
   'timeZone',
 ];
 export const NEARBY_FIELD_MASK = FIELDS.map((f) => `places.${f}`).join(',');
+export const DISCOVER_FIELD_MASK = `${NEARBY_FIELD_MASK},places.userRatingCount`;
 /** Enough to show a Pick's place, without the fields Google bills at a higher tier. */
 const PICK_FIELDS = [
   'id',
@@ -109,6 +111,7 @@ export function normalizePlace(
   value: unknown,
   category: Category,
   fetchedAt: string,
+  allowedTypes?: readonly string[],
 ): Candidate | null {
   const p = record(value),
     location = record(p.location);
@@ -123,7 +126,7 @@ export function normalizePlace(
     !finite(location.longitude) ||
     Math.abs(location.latitude) > 90 ||
     Math.abs(location.longitude) > 180 ||
-    !matchesCategory(types, category)
+    !(allowedTypes ? types.some((t) => allowedTypes.includes(t)) : matchesCategory(types, category))
   )
     return null;
   if (p.businessStatus === 'CLOSED_PERMANENTLY' || p.businessStatus === 'CLOSED_TEMPORARILY')
@@ -165,6 +168,14 @@ export function normalizePlace(
     photos,
     priceLevel: prices[String(p.priceLevel)] ?? null,
     rating: finite(p.rating) && p.rating >= 0 && p.rating <= 5 ? p.rating : null,
+    ...(p.userRatingCount !== undefined
+      ? {
+          userRatingCount:
+            Number.isInteger(p.userRatingCount) && Number(p.userRatingCount) >= 0
+              ? Number(p.userRatingCount)
+              : null,
+        }
+      : {}),
     openingHours: normalizeHours(p.regularOpeningHours, p.businessStatus),
     timezone: str(record(p.timeZone).id),
     googleMapsUri: str(p.googleMapsUri),
@@ -188,7 +199,10 @@ export function validateSearch(query: PlaceSearch): void {
     !Number.isFinite(query.radiusM) ||
     query.radiusM < 0 ||
     query.radiusM > 50_000 ||
-    (query.category !== undefined && query.category !== 'food' && query.category !== 'activities')
+    (query.category !== undefined &&
+      query.category !== 'food' &&
+      query.category !== 'activities') ||
+    (query.discovery !== undefined && !validDiscovery(query.discovery, query.category))
   ) {
     throw new RangeError('Invalid Places search');
   }
@@ -238,19 +252,22 @@ export class GoogleProvider implements PlaceProvider {
     options?: { signal?: AbortSignal; mask?: string },
   ): Promise<Candidate[]> {
     validateSearch(query);
-    const types = query.category
-      ? categoryMap[query.category]
-      : [...categoryMap.food, ...categoryMap.activities];
+    const types =
+      query.discovery && query.category
+        ? discoverSearchTypes(query.category, query.discovery)
+        : query.category
+          ? categoryMap[query.category]
+          : [...categoryMap.food, ...categoryMap.activities];
     const result = record(
       await this.request(
         'places:searchNearby',
-        options?.mask ?? NEARBY_FIELD_MASK,
+        options?.mask ?? (query.discovery ? DISCOVER_FIELD_MASK : NEARBY_FIELD_MASK),
         {
           method: 'POST',
           body: JSON.stringify({
             includedTypes: types,
             maxResultCount: 20,
-            rankPreference: 'POPULARITY',
+            rankPreference: query.discovery?.sort === 'nearest' ? 'DISTANCE' : 'POPULARITY',
             locationRestriction: {
               circle: {
                 center: { latitude: query.center.lat, longitude: query.center.lng },
@@ -269,7 +286,12 @@ export class GoogleProvider implements PlaceProvider {
       const category =
         query.category ??
         (matchesCategory(strings(record(value).types), 'food') ? 'food' : 'activities');
-      const candidate = normalizePlace(value, category, fetchedAt);
+      const candidate = normalizePlace(
+        value,
+        category,
+        fetchedAt,
+        query.discovery ? types : undefined,
+      );
       return candidate ? [candidate] : [];
     });
   }

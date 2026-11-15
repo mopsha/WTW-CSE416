@@ -4,11 +4,17 @@ import { validateSearch } from './GoogleProvider.ts';
 export const SEARCH_TTL_MS = 5 * 60_000;
 export function cacheKey(query: PlaceSearch): string {
   validateSearch(query);
-  return `v1:${query.center.lat.toFixed(3)}:${query.center.lng.toFixed(3)}:${Math.ceil(query.radiusM / 250) * 250}:${query.category ?? 'all'}`;
+  return `v1:${query.center.lat.toFixed(3)}:${query.center.lng.toFixed(3)}:${Math.ceil(query.radiusM / 250) * 250}:${query.category ?? 'all'}${query.discovery ? ':' + JSON.stringify(query.discovery) : ''}`;
 }
 /** Same bucket is only a lookup hint: reuse requires the exact original query. */
 export function queryIdentity(q: PlaceSearch): string {
-  return JSON.stringify([q.center.lat, q.center.lng, q.radiusM, q.category ?? null]);
+  return JSON.stringify([
+    q.center.lat,
+    q.center.lng,
+    q.radiusM,
+    q.category ?? null,
+    ...(q.discovery ? [q.discovery] : []),
+  ]);
 }
 export function isFresh(fetchedAt: string, now: Date, ttlMs: number): boolean {
   const age = now.getTime() - Date.parse(fetchedAt);

@@ -22,10 +22,17 @@ import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/lib/api';
 import { discoverPlace } from '@/lib/discoverFeed';
 import { messageOf } from '@/lib/errors';
-import { PlaceFilterControls } from '@/components/PlaceFilterControls';
+import { DiscoverFilterSheet } from '@/components/DiscoverFilterSheet';
+import {
+  activeFilterCount,
+  defaultDiscoverFilters,
+  discoverFilterParams,
+  resetDiscoverFilters,
+  DISCOVER_SORTS,
+  type DiscoverSort,
+} from '@/lib/discoverFilters';
 import { ErrorState } from '@/components/ErrorState';
 import { Button } from '@/components/Button';
-import { Chips as ChipGroup } from '@/components/Chips';
 import { QuietEmpty, Sheet } from '@/components/TabUi';
 import { describePlace, PlacePhoto } from '@/components/PlaceCard';
 import { colors, fonts, MIN_TARGET, radius, space, type } from '@/components/theme';
@@ -247,30 +254,33 @@ function PlaceSheet({
 
 export default function DiscoverScreen() {
   const { session } = useAuth();
-  const userId = session?.user.id;
+  const userId = session?.user.id ?? '';
+  return <DiscoverFeed key={userId} userId={userId} />;
+}
+function DiscoverFeed({ userId }: { userId: string }) {
   const [response, setResponse] = useState<{
     key: string;
+    scope: string;
     places: DiscoverPlace[];
     notice: string | null;
     error: string | null;
   } | null>(null);
   const [retry, setRetry] = useState(0);
-  const [priceMax, setPriceMax] = useState(-1);
-  const [openNow, setOpenNow] = useState(false);
-  const [radiusM, setRadiusM] = useState(5000);
+  const [applied, setApplied] = useState(defaultDiscoverFilters);
+  const [sort, setSort] = useState<DiscoverSort>('recommended');
+  const [sortOpen, setSortOpen] = useState(false);
+  const { openNow } = applied;
   const [filter, setFilter] = useState<DiscoverFilter>('all');
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState<DiscoverPlace | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [draftPrice, setDraftPrice] = useState(-1);
-  const [draftRadius, setDraftRadius] = useState(5000);
-  const [draftOpen, setDraftOpen] = useState(false);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [savedFor, setSavedFor] = useState<string | undefined>(undefined);
   const [savedReady, setSavedReady] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
   useEffect(() => {
+    if (!userId) return;
     let active = true;
     api
       .getSaved()
@@ -310,38 +320,48 @@ export default function DiscoverScreen() {
     }
   };
 
-  const requestKey = JSON.stringify([filter, radiusM, priceMax, openNow, retry, userId]);
+  const params = useMemo(
+    () => ({
+      ...CAMPUS,
+      category: filter,
+      ...discoverFilterParams(applied, filter),
+      ...(sort !== 'recommended' ? { sort } : {}),
+    }),
+    [applied, filter, sort],
+  );
+  const scope = JSON.stringify([params, userId]);
+  const requestKey = JSON.stringify([scope, retry]);
   const current = response?.key === requestKey ? response : null;
-  const feed = current?.places ?? EMPTY_PLACES;
+  // A same-query refresh may keep its places; never show old-account/filter results.
+  const feed = (current ?? (response?.scope === scope ? response : null))?.places ?? EMPTY_PLACES;
   const notice = current?.notice ?? null;
   const error = current?.error ?? null;
   const loading = !current;
+  const count = activeFilterCount(applied, filter);
   useEffect(() => {
+    if (!userId) return;
     let active = true;
+    const [requestParams] = JSON.parse(scope) as [Parameters<typeof api.discover>[0], string];
     api
-      .discover({
-        ...CAMPUS,
-        category: filter,
-        radiusM,
-        priceMax: priceMax < 0 ? undefined : priceMax,
-        openNow,
-      })
+      .discover(requestParams)
       .then((result) => {
         if (active)
           setResponse({
             key: requestKey,
+            scope,
             places: result.places.map((p) => discoverPlace(p, CAMPUS)),
             notice: result.notice,
             error: null,
           });
       })
       .catch((e) => {
-        if (active) setResponse({ key: requestKey, places: [], notice: null, error: messageOf(e) });
+        if (active)
+          setResponse({ key: requestKey, scope, places: [], notice: null, error: messageOf(e) });
       });
     return () => {
       active = false;
     };
-  }, [filter, radiusM, priceMax, openNow, requestKey]);
+  }, [requestKey, scope, userId]);
 
   const places = useMemo(
     () => filterDiscover(feed, { category: filter, query }),
@@ -349,13 +369,13 @@ export default function DiscoverScreen() {
   );
   // Preserve the original photo-featured selection, now as full-width cards without duplicates.
   const displayed = useMemo(() => {
-    if (query.trim()) return places;
+    if (query.trim() || count || sort !== 'recommended') return places;
     const featured = filterDiscover(feed, { category: filter })
       .filter((p) => p.photoUrl)
       .slice(0, 6);
     const ids = new Set(featured.map((p) => p.placeId));
     return [...featured, ...places.filter((p) => !ids.has(p.placeId))];
-  }, [feed, filter, places, query]);
+  }, [feed, filter, places, query, count, sort]);
   const show = (p: DiscoverPlace) => {
     haptic.tap();
     setOpen(p);
@@ -454,7 +474,7 @@ export default function DiscoverScreen() {
                 accessibilityRole="switch"
                 accessibilityLabel="Open Now"
                 accessibilityState={{ checked: openNow }}
-                onPress={() => setOpenNow(!openNow)}
+                onPress={() => setApplied((current) => ({ ...current, openNow: !current.openNow }))}
                 style={[styles.filterControl, openNow && styles.filterSelected]}
               >
                 <Ionicons
@@ -470,20 +490,31 @@ export default function DiscoverScreen() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Filters"
+                accessibilityHint={count ? `${count} active filters` : 'No active filters'}
                 onPress={() => {
-                  setDraftPrice(priceMax);
-                  setDraftRadius(radiusM);
-                  setDraftOpen(openNow);
                   setFiltersOpen(true);
                 }}
                 style={styles.filterControl}
               >
                 <Ionicons name="options-outline" size={19} color={colors.text} />
-                <Text style={styles.filterText}>
-                  Filters{priceMax >= 0 || radiusM !== 5000 ? ' · On' : ''}
-                </Text>
+                <Text style={styles.filterText}>Filters{count ? ` · ${count}` : ''}</Text>
               </Pressable>
             </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Sort places"
+              onPress={() => setSortOpen(true)}
+              style={styles.filterControl}
+            >
+              <Ionicons name="swap-vertical-outline" size={18} color={colors.muted} />
+              <Text style={styles.filterText}>
+                {DISCOVER_SORTS.find((o) => o.value === sort)?.label}
+              </Text>
+              <Ionicons name="chevron-down" size={16} color={colors.muted} />
+            </Pressable>
+            <Text style={styles.sub}>
+              Sort and search cover this limited selection of nearby places.
+            </Text>
             {error ? <ErrorState message={error} onRetry={() => setRetry((n) => n + 1)} /> : null}
             <View style={styles.feedIntro}>
               <Text style={styles.feedTitle} accessibilityRole="header">
@@ -505,11 +536,26 @@ export default function DiscoverScreen() {
           loading ? (
             <ActivityIndicator color={colors.primary} accessibilityLabel="Loading places" />
           ) : error ? null : (
-            <QuietEmpty
-              icon="search-outline"
-              title="Nothing matches"
-              body="Try another search, or change your filters."
-            />
+            <View style={{ gap: space.sm }}>
+              <QuietEmpty
+                icon="search-outline"
+                title="No places match your filters."
+                body="Try another search, or adjust the filters for this nearby selection."
+              />
+              <Button
+                label="Adjust filters"
+                variant="secondary"
+                onPress={() => setFiltersOpen(true)}
+              />
+              <Button
+                label="Reset filters"
+                variant="link"
+                onPress={() => {
+                  setQuery('');
+                  setApplied(resetDiscoverFilters(applied, filter));
+                }}
+              />
+            </View>
           )
         }
       />
@@ -518,43 +564,42 @@ export default function DiscoverScreen() {
           <ErrorState message={saveError} onRetry={() => setRetry((n) => n + 1)} />
         </View>
       ) : null}
-      <Sheet visible={filtersOpen} title="Filters" onClose={() => setFiltersOpen(false)}>
-        <Text style={styles.section}>Price and opening hours</Text>
-        <PlaceFilterControls
-          priceMax={draftPrice}
-          openNow={draftOpen}
-          onPrice={setDraftPrice}
-          onOpen={setDraftOpen}
-        />
-        <Text style={styles.section}>Distance</Text>
-        <ChipGroup
-          options={[
-            { value: 1000, label: '1 km' },
-            { value: 5000, label: '5 km' },
-            { value: 16000, label: '16 km' },
-          ]}
-          value={draftRadius}
-          onChange={setDraftRadius}
-          accessibilityLabel="Search radius"
-        />
-        <Button
-          label="Show places"
-          onPress={() => {
-            setPriceMax(draftPrice);
-            setRadiusM(draftRadius);
-            setOpenNow(draftOpen);
+      {filtersOpen ? (
+        <DiscoverFilterSheet
+          tab={filter}
+          applied={applied}
+          onClose={() => setFiltersOpen(false)}
+          onApply={(next) => {
+            setApplied(next);
             setFiltersOpen(false);
           }}
         />
-        <Button
-          label="Reset filters"
-          variant="link"
-          onPress={() => {
-            setDraftPrice(-1);
-            setDraftRadius(5000);
-            setDraftOpen(false);
-          }}
-        />
+      ) : null}
+      <Sheet visible={sortOpen} title="Sort places" onClose={() => setSortOpen(false)}>
+        <Text style={styles.sub}>
+          Orders the returned nearby selection, not every nearby business. Unknown ratings and
+          review counts appear last.
+        </Text>
+        {DISCOVER_SORTS.map((option) => (
+          <Pressable
+            key={option.value}
+            accessibilityRole="radio"
+            accessibilityLabel={option.label}
+            accessibilityState={{ checked: sort === option.value }}
+            onPress={() => {
+              setSort(option.value);
+              setSortOpen(false);
+            }}
+            style={({ pressed }) => [styles.filterControl, pressed && { opacity: 0.65 }]}
+          >
+            <Text style={[styles.filterText, sort === option.value && styles.filterSelectedText]}>
+              {option.label}
+            </Text>
+            {sort === option.value ? (
+              <Ionicons name="checkmark" size={18} color={colors.primary} />
+            ) : null}
+          </Pressable>
+        ))}
       </Sheet>
       <PlaceSheet
         key={`${userId}:${open?.placeId}`}

@@ -1,4 +1,11 @@
-import { formatPlanTime, planTimeOptions, shouldAskDidYouGo, wentSummary } from '@/lib/plans';
+import {
+  changePlanDate,
+  planTimeProblem,
+  formatPlanTime,
+  planTimeOptions,
+  shouldAskDidYouGo,
+  wentSummary,
+} from '@/lib/plans';
 
 // Local times, so these pass in any time zone.
 const local = (y: number, mo: number, d: number, h: number, mi = 0) =>
@@ -18,27 +25,22 @@ describe('formatPlanTime', () => {
 });
 
 describe('planTimeOptions', () => {
-  test('all in the future, earliest first, rounded to 15 minutes', () => {
-    const now = local(2026, 10, 28, 15, 7);
-    const options = planTimeOptions(now);
-    expect(options.map((o) => o.label)).toEqual([
-      'In about an hour',
-      'Tonight 8 PM',
-      'Tomorrow 7 PM',
-      'Saturday 7 PM',
-    ]);
-    const times = options.map((o) => Date.parse(o.value));
-    expect(times.every((t) => t > now.getTime())).toBe(true);
-    expect([...times].sort((a, b) => a - b)).toEqual(times);
-    expect(new Date(options[0]!.value).getMinutes() % 15).toBe(0);
+  test('presets remain future times across midnight and year boundaries', () => {
+    for (const now of [local(2026, 10, 28, 15, 7), local(2026, 12, 31, 23, 45)]) {
+      const options = planTimeOptions(now);
+      expect(Date.parse(options[0]!.value) - now.getTime()).toBe(3600_000);
+      expect(options.every((o) => Date.parse(o.value) > now.getTime())).toBe(true);
+      expect(options.at(-1)!.label).toBe('Tomorrow at 7 PM');
+      expect(new Date(options.at(-1)!.value).getHours()).toBe(19);
+    }
   });
-
-  test('late in the evening, and on Friday, the presets that no longer make sense drop out', () => {
-    const friday = local(2026, 10, 30, 19, 30);
-    expect(planTimeOptions(friday).map((o) => o.label)).toEqual([
-      'In about an hour',
-      'Tomorrow 7 PM',
-    ]);
+  test('tonight is offered only before 7 PM', () => {
+    expect(planTimeOptions(local(2026, 10, 28, 18, 59)).map((o) => o.label)).toContain(
+      'Tonight at 7 PM',
+    );
+    expect(planTimeOptions(local(2026, 10, 28, 19)).map((o) => o.label)).not.toContain(
+      'Tonight at 7 PM',
+    );
   });
 });
 
@@ -77,4 +79,30 @@ test('wentSummary', () => {
   expect(wentSummary({ participantCount: 4, outcomes: { went: 3, didNotGo: 1, again: 2 } })).toBe(
     '3 of 4 went',
   );
+});
+
+test('custom fields preserve the other half of the local draft and enforce API bounds', () => {
+  const current = local(2026, 12, 31, 18, 30);
+  const date = changePlanDate(current, local(2027, 1, 2, 12), 'date');
+  expect(date).toEqual(local(2027, 1, 2, 18, 30));
+  expect(changePlanDate(date, local(2026, 1, 1, 20, 15), 'time')).toEqual(
+    local(2027, 1, 2, 20, 15),
+  );
+  expect(planTimeProblem(new Date(NaN))).toBeTruthy();
+  expect(planTimeProblem(current, current.getTime())).toBeTruthy();
+  expect(
+    planTimeProblem(new Date(current.getTime() + 31 * 86400_000), current.getTime()),
+  ).toBeTruthy();
+  expect(planTimeProblem(new Date(current.getTime() + 3600_000), current.getTime())).toBeNull();
+});
+
+test('tomorrow presets preserve local 7 PM across daylight-saving changes', () => {
+  for (const now of [local(2026, 3, 7, 18), local(2026, 10, 31, 18)]) {
+    const tomorrow = new Date(planTimeOptions(now).at(-1)!.value);
+    expect(tomorrow.getHours()).toBe(19);
+    expect(tomorrow.getDate()).toBe(
+      new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getDate(),
+    );
+    expect(formatPlanTime(tomorrow.toISOString(), now)).toBe('Tomorrow 7:00 PM');
+  }
 });

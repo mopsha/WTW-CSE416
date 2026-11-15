@@ -232,6 +232,8 @@ export function Sheet({
   children,
   onDismiss,
   animationType = 'slide',
+  headerRight,
+  footer,
 }: {
   visible: boolean;
   title: string;
@@ -240,6 +242,8 @@ export function Sheet({
   onDismiss?: () => void;
   /** Opt-in motion preference; other sheets retain their existing transition. */
   animationType?: 'none' | 'slide' | 'fade';
+  headerRight?: ReactNode;
+  footer?: ReactNode;
 }) {
   const wasVisible = useRef(visible);
   useEffect(() => {
@@ -267,16 +271,18 @@ export function Sheet({
           accessibilityRole="button"
           accessibilityLabel={`Close ${title}`}
         />
-        <SafeAreaView edges={['bottom', 'left', 'right']} style={s.sheet}>
+        <SafeAreaView edges={['bottom', 'left', 'right']} style={s.sheet} accessibilityViewIsModal>
           <View style={s.sheetHead}>
-            <Text style={s.section} accessibilityRole="header">
+            <Text style={[s.section, { flex: 1, flexShrink: 1 }]} accessibilityRole="header">
               {title}
             </Text>
+            {headerRight}
             <HeaderAction icon="close" label={`Close ${title}`} onPress={onClose} />
           </View>
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.sheetBody}>
             {children}
           </ScrollView>
+          {footer ? <View style={s.sheetFooter}>{footer}</View> : null}
         </SafeAreaView>
       </KeyboardAvoidingView>
     </Modal>
@@ -371,6 +377,11 @@ const s = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: space.xl,
     paddingTop: space.md,
+  },
+  sheetFooter: {
+    padding: space.lg,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
   },
   sheetBody: { padding: space.xl, gap: space.lg },
 });

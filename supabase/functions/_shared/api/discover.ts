@@ -1,3 +1,5 @@
+import { validDiscovery, type DiscoverConstraints } from '../domain/discoverFilters.ts';
+import { distanceMeters } from '../domain/geo.ts';
 import { ApiError } from './errors.ts';
 import { validFilters } from '../domain/placeFilters.ts';
 import { rankDiscover, type DiscoverPreferences } from '../domain/discoverScore.ts';
@@ -39,6 +41,15 @@ export function parseDiscover(params: URLSearchParams): PoolRequest[] {
   const category = params.get('category') ?? 'all';
   const priceMax = params.has('priceMax') ? Number(params.get('priceMax')) : null;
   const open = params.get('openNow');
+  const selection = (key: string) =>
+    params.has(key) ? params.get(key)!.split(',').sort() : undefined;
+  const discovery: DiscoverConstraints = {
+    ...(params.has('cuisines') ? { cuisines: selection('cuisines') } : {}),
+    ...(params.has('foodTypes') ? { foodTypes: selection('foodTypes') } : {}),
+    ...(params.has('activityTypes') ? { activityTypes: selection('activityTypes') } : {}),
+    ...(params.has('minRating') ? { minRating: Number(params.get('minRating')) } : {}),
+    ...(params.has('sort') ? { sort: params.get('sort') as DiscoverConstraints['sort'] } : {}),
+  };
   if (
     lat === null ||
     lng === null ||
@@ -54,7 +65,8 @@ export function parseDiscover(params: URLSearchParams): PoolRequest[] {
     !['all', 'food', 'activities'].includes(category) ||
     (open !== null && open !== 'true' && open !== 'false') ||
     (params.has('priceMax') && !params.get('priceMax')?.trim()) ||
-    !validFilters({ priceMax })
+    !validFilters({ priceMax }) ||
+    !validDiscovery(discovery, category)
   ) {
     throw new ApiError(400, 'INVALID_INPUT', 'Invalid Discover location or filters');
   }
@@ -67,6 +79,7 @@ export function parseDiscover(params: URLSearchParams): PoolRequest[] {
     poolSize: 30,
     priceMax,
     openNow: open === 'true',
+    discovery,
   }));
 }
 
@@ -87,10 +100,23 @@ export async function discover(
       }
     }),
   );
-  const places = rankDiscover(
-    groups.flatMap((group) => group.places),
-    preferences,
-    requests[0]!.center,
-  );
+  const candidates = groups.flatMap((group) => group.places);
+  const center = requests[0]!.center;
+  const sort = requests[0]!.discovery?.sort ?? 'recommended';
+  const metric = (p: Candidate) =>
+    sort === 'nearest'
+      ? -distanceMeters(center, p)
+      : sort === 'rating'
+        ? (p.rating ?? -1)
+        : (p.userRatingCount ?? -1);
+  const places =
+    sort === 'recommended'
+      ? rankDiscover(candidates, preferences, center)
+      : [...new Map(candidates.map((p) => [p.placeId, p])).values()]
+          .sort(
+            (a, b) =>
+              metric(b) - metric(a) || (a.placeId < b.placeId ? -1 : a.placeId > b.placeId ? 1 : 0),
+          )
+          .slice(0, 20);
   return { places, fallback: groups.some((group) => group.fallback) };
 }

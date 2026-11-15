@@ -409,6 +409,11 @@ export function createApiClient({
         `/groups/${encodeURIComponent(groupId)}/ideas/${encodeURIComponent(id)}`,
       ),
     discover: (params: {
+      cuisines?: readonly string[];
+      foodTypes?: readonly string[];
+      activityTypes?: readonly string[];
+      minRating?: number;
+      sort?: import('@shared/domain/discoverFilters.ts').DiscoverSort;
       lat: number;
       lng: number;
       radiusM?: number;

@@ -4,6 +4,7 @@ import './directChat_test.ts';
 import './groupChat_test.ts';
 // Include feature route coverage in the existing CI entry point.
 import './groupIdeas_test.ts';
+import { createPoolBuilder } from '../_shared/places/pool.ts';
 import { createApp } from './app.ts';
 import { ApiError } from '../_shared/api/errors.ts';
 import type { HeartbeatStore } from '../_shared/api/heartbeat.ts';
@@ -2673,5 +2674,90 @@ Deno.test(
         status,
       );
     }
+  },
+);
+
+Deno.test(
+  'Discover V2 validates allowlists before charging, applies combined filters and sorting, and keeps private responses',
+  async () => {
+    let calls = 0;
+    let searches = 0;
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async (req) => {
+        if (!req.headers.has('authorization'))
+          throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+        return { id: ANN };
+      },
+      checkLimit: async (scope, userId) => {
+        equal(scope, 'discover');
+        equal(userId, ANN);
+        calls++;
+      },
+      discoverStore: {
+        preferences: async () => ({}),
+        saved: async () => [],
+        save: async () => {},
+        remove: async () => {},
+      },
+      discoverPool: createPoolBuilder({
+        search: async () => {
+          searches++;
+          return [
+            {
+              placeId: 'low',
+              name: 'Low',
+              category: 'food',
+              lat: 40,
+              lng: -73,
+              types: ['restaurant', 'italian_restaurant', 'pizza_restaurant'],
+              rating: 3,
+              userRatingCount: 500,
+            },
+            {
+              placeId: 'match',
+              name: 'Match',
+              category: 'food',
+              lat: 40,
+              lng: -73,
+              types: ['restaurant', 'italian_restaurant', 'pizza_restaurant'],
+              rating: 4.5,
+              userRatingCount: 100,
+            },
+            {
+              placeId: 'other',
+              name: 'Other',
+              category: 'food',
+              lat: 40,
+              lng: -73,
+              types: ['restaurant', 'chinese_restaurant'],
+              rating: 5,
+              userRatingCount: 200,
+            },
+          ];
+        },
+      }),
+    });
+    const query =
+      '/discover?lat=40&lng=-73&category=food&cuisines=italian&foodTypes=pizza&minRating=4&sort=reviews';
+    equal((await app.request(query)).status, 401);
+    const headers = { authorization: 'Bearer test' };
+    equal((await app.request(query.replace('italian', 'invented'), { headers })).status, 400);
+    equal(calls, 0);
+    equal(searches, 0);
+    const response = await app.request(query, { headers });
+    equal(response.status, 200);
+    equal(response.headers.get('cache-control'), 'private, no-store');
+    const body = await response.json();
+    equal(
+      body.places.map((p: { placeId: string }) => p.placeId),
+      ['match'],
+    );
+    equal('nextPage' in body, false);
+    equal(calls, 1);
+    equal(searches, 1);
   },
 );

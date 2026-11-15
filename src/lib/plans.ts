@@ -30,21 +30,40 @@ function at(base: Date, addDays: number, hour: number): Date {
   return new Date(base.getFullYear(), base.getMonth(), base.getDate() + addDays, hour, 0, 0, 0);
 }
 
-// ponytail: presets instead of a date picker (none is installed); add
-// @react-native-community/datetimepicker if testers want exact times.
-/** A few one-tap times, all in the future, earliest first. */
+/** Calendar presets use the device timezone, including daylight-saving transitions. */
 export function planTimeOptions(now: Date = new Date()): { label: string; value: string }[] {
-  const soon = new Date(now.getTime() + 60 * 60_000);
-  soon.setMinutes(Math.ceil(soon.getMinutes() / 15) * 15, 0, 0);
-  const options = [{ label: 'In about an hour', at: soon }];
-  const tonight = at(now, 0, 20);
-  if (tonight.getTime() - now.getTime() > 90 * 60_000) {
-    options.push({ label: 'Tonight 8 PM', at: tonight });
-  }
-  options.push({ label: 'Tomorrow 7 PM', at: at(now, 1, 19) });
-  const toSaturday = (6 - now.getDay() + 7) % 7;
-  if (toSaturday >= 2) options.push({ label: 'Saturday 7 PM', at: at(now, toSaturday, 19) });
+  const options = [{ label: 'In 1 hour', at: new Date(now.getTime() + 60 * 60_000) }];
+  const tonight = at(now, 0, 19);
+  if (tonight.getTime() > now.getTime()) options.push({ label: 'Tonight at 7 PM', at: tonight });
+  options.push({ label: 'Tomorrow at 7 PM', at: at(now, 1, 19) });
   return options.map((o) => ({ label: o.label, value: o.at.toISOString() }));
+}
+
+export function planTimeProblem(date: Date, now = Date.now()): string | null {
+  const value = date.getTime();
+  if (!Number.isFinite(value)) return 'Choose a valid date and time.';
+  if (value <= now) return 'Choose a time in the future.';
+  if (value - now > 30 * 24 * 60 * 60_000) return 'Choose a time within 30 days.';
+  return null;
+}
+
+/** Change only the selected calendar fields; keep the other half of the draft. */
+export function changePlanDate(current: Date, selected: Date, mode: 'date' | 'time'): Date {
+  return mode === 'date'
+    ? new Date(
+        selected.getFullYear(),
+        selected.getMonth(),
+        selected.getDate(),
+        current.getHours(),
+        current.getMinutes(),
+      )
+    : new Date(
+        current.getFullYear(),
+        current.getMonth(),
+        current.getDate(),
+        selected.getHours(),
+        selected.getMinutes(),
+      );
 }
 
 /**

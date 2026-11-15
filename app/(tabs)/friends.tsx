@@ -11,17 +11,18 @@ import { GroupInvitations } from '@/components/GroupInvitations';
 // Friends: discover public usernames, answer requests,
 // and see who you're friends with. Every write goes through the API (src/lib/api.ts).
 // Joining a Pick still happens by code; inviting friends to a Pick comes later.
-import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Keyboard, StyleSheet, Text, View } from 'react-native';
 
 import type { FriendPerson, FriendsList } from '@shared/api/friends.ts';
 
 import { Button, colors, ErrorState, fonts, MIN_TARGET, radius, Screen, space } from '@/components';
+import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import { useAction } from '@/hooks/useAction';
 import { api } from '@/lib/api';
 import { confirmAction } from '@/lib/confirm';
-import { messageOf } from '@/lib/errors';
+import { isAccessDenied, messageOf } from '@/lib/errors';
 import { haptic } from '@/lib/haptics';
 import { QuietEmpty, Segments, Sheet } from '@/components/TabUi';
 import { useSession } from '@/hooks/useAuth';
@@ -38,8 +39,12 @@ function day(iso: string): string {
 }
 
 export default function FriendsScreen() {
-  const { requests } = useLocalSearchParams<{ requests?: string }>();
   const session = useSession();
+  return <FriendsContent key={session.user.id} userId={session.user.id} />;
+}
+
+function FriendsContent({ userId }: { userId: string }) {
+  const { requests } = useLocalSearchParams<{ requests?: string }>();
   const [tab, setTab] = useState<'friends' | 'groups'>('friends');
   const [adding, setAdding] = useState(false);
   const [requestsOpen, setRequestsOpen] = useState(false);
@@ -48,7 +53,7 @@ export default function FriendsScreen() {
     () => () => {
       handoff.current = null;
     },
-    [session.user.id],
+    [userId],
   );
   const finishHandoff = useCallback(() => {
     const target = handoff.current;
@@ -65,26 +70,53 @@ export default function FriendsScreen() {
   const action = useAction();
   const openingMessage = useRef(false);
 
+  const latest = useRef(0);
+  const active = useRef(false);
+  const clear = useCallback(() => {
+    active.current = false;
+    latest.current++;
+    setList(null);
+    setGroups(null);
+    setLoadError(null);
+    setGroupError(null);
+    setRefreshing(false);
+  }, []);
   const load = useCallback(async () => {
-    try {
-      setList(await api.listFriends());
-      setLoadError(null);
-    } catch (e) {
-      setLoadError(messageOf(e));
-    }
-    try {
-      setGroups(await queries.listMyGroups(session.user.id));
-      setGroupError(null);
-    } catch (e) {
-      setGroupError(messageOf(e));
-    }
-  }, [session.user.id]);
-
-  useFocusEffect(
-    useCallback(() => {
-      void load();
-    }, [load]),
-  );
+    if (!active.current) return;
+    const request = ++latest.current;
+    const current = () => active.current && request === latest.current;
+    await Promise.all([
+      (async () => {
+        try {
+          const next = await api.listFriends();
+          if (!current()) return;
+          setList(next);
+          setLoadError(null);
+        } catch (e) {
+          if (!current()) return;
+          if (isAccessDenied(e)) setList(null);
+          setLoadError(messageOf(e));
+        }
+      })(),
+      (async () => {
+        try {
+          const next = await queries.listMyGroups(userId);
+          if (!current()) return;
+          setGroups(next);
+          setGroupError(null);
+        } catch (e) {
+          if (!current()) return;
+          if (isAccessDenied(e)) setGroups(null);
+          setGroupError(messageOf(e));
+        }
+      })(),
+    ]);
+  }, [userId]);
+  const refresh = useCallback(() => {
+    active.current = true;
+    return load();
+  }, [load]);
+  usePrivateRefresh(refresh, clear);
 
   const act = async (key: string, fn: () => Promise<unknown>) => {
     if (await action.run(key, fn)) {
@@ -112,7 +144,9 @@ export default function FriendsScreen() {
       refreshing={refreshing}
       onRefresh={() => {
         setRefreshing(true);
-        void load().finally(() => setRefreshing(false));
+        void load().finally(() => {
+          if (active.current) setRefreshing(false);
+        });
       }}
     >
       <View style={styles.header}>
@@ -138,7 +172,7 @@ export default function FriendsScreen() {
       />
       <GroupInvitations
         variant="compact"
-        key={session.user.id}
+        key={userId}
         refreshing={refreshing}
         onAccepted={() => void load()}
         renderContainer={({ count, loading, error, content }) => (

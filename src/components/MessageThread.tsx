@@ -38,6 +38,7 @@ interface MessageDraftState {
   body: string;
   attempt: { body: string; clientId: string } | null;
   pending: boolean;
+  viewport?: { offset: number; atBottom: boolean };
   notify?: () => void;
 }
 export type MessageDraft = { current: MessageDraftState };
@@ -92,6 +93,7 @@ export function MessageThread({
     if (composerRef && chat.unavailable) {
       stateRef.current.body = '';
       stateRef.current.attempt = null;
+      stateRef.current.viewport = undefined;
       stateRef.current.notify?.();
     }
   }, [chat.unavailable, composerRef, stateRef]);
@@ -106,6 +108,16 @@ export function MessageThread({
   }, []);
   const history = useRef<ScrollView>(null);
   const atBottom = useRef(true);
+  const scrollOffset = useRef(0);
+  useLayoutEffect(() => {
+    atBottom.current = chat.unavailable ? true : (stateRef.current.viewport?.atBottom ?? true);
+    scrollOffset.current = chat.unavailable ? 0 : (stateRef.current.viewport?.offset ?? 0);
+  }, [stateRef, chat.unavailable]);
+  const restoreScroll = () => {
+    if (chat.loading) return;
+    if (atBottom.current) history.current?.scrollToEnd({ animated: false });
+    else history.current?.scrollTo({ y: scrollOffset.current, animated: false });
+  };
   async function send() {
     const current = stateRef.current;
     if (current.pending || chat.unavailable) return;
@@ -206,18 +218,17 @@ export function MessageThread({
             tintColor={colors.primary}
           />
         }
-        onLayout={() => {
-          if (atBottom.current) history.current?.scrollToEnd({ animated: false });
-        }}
+        onLayout={restoreScroll}
         keyboardShouldPersistTaps="handled"
         onScroll={(event) => {
+          if (chat.loading) return;
           const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+          scrollOffset.current = contentOffset.y;
           atBottom.current = contentOffset.y + layoutMeasurement.height >= contentSize.height - 32;
+          stateRef.current.viewport = { offset: scrollOffset.current, atBottom: atBottom.current };
         }}
         scrollEventThrottle={100}
-        onContentSizeChange={() => {
-          if (atBottom.current) history.current?.scrollToEnd({ animated: false });
-        }}
+        onContentSizeChange={restoreScroll}
       >
         {chat.loading && !refreshing ? (
           <View style={s.empty}>

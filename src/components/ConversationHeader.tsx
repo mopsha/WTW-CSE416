@@ -1,5 +1,7 @@
 import type { AvatarRef } from '@shared/api/avatars.ts';
 import type { ReactNode } from 'react';
+import { GroupAvatar } from './GroupAvatar';
+import { haptic } from '@/lib/haptics';
 import { SocialIdentity } from './friends/SocialRow';
 import { router } from 'expo-router';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -7,6 +9,7 @@ import { IconButton } from '@/components';
 import { colors, MIN_TARGET, space } from './theme';
 export function ConversationHeader({
   name,
+  group = false,
   uri,
   userId,
   avatarRef,
@@ -19,6 +22,7 @@ export function ConversationHeader({
   right,
 }: {
   name?: string;
+  group?: boolean;
   uri?: string | null;
   userId?: string;
   avatarRef?: AvatarRef | null;
@@ -33,7 +37,11 @@ export function ConversationHeader({
   const identity = (
     <>
       {name ? (
-        <SocialIdentity name={name} uri={uri} userId={userId} avatarRef={avatarRef} size={40} />
+        group ? (
+          <GroupAvatar name={name} />
+        ) : (
+          <SocialIdentity name={name} uri={uri} userId={userId} avatarRef={avatarRef} size={40} />
+        )
       ) : loading ? (
         <ActivityIndicator color={colors.muted} accessibilityLabel="Loading conversation" />
       ) : null}
@@ -63,8 +71,11 @@ export function ConversationHeader({
       />
       {onPress && name ? (
         <Pressable
-          style={s.identity}
-          onPress={onPress}
+          style={({ pressed }) => [s.identity, pressed && { opacity: 0.65 }]}
+          onPress={() => {
+            haptic.tap();
+            onPress();
+          }}
           accessibilityRole="button"
           accessibilityLabel={accessibilityLabel ?? name}
         >
