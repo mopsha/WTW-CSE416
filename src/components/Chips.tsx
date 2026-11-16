@@ -17,6 +17,7 @@ interface Props<T extends string | number> {
   onChange: (value: T) => void;
   /** Names the group for screen readers (e.g. "Pool size"). */
   accessibilityLabel: string;
+  disabled?: boolean;
 }
 
 /** Pick one of a few options (category, pool size, deadline...). */
@@ -25,6 +26,7 @@ export function Chips<T extends string | number>({
   value,
   onChange,
   accessibilityLabel,
+  disabled = false,
 }: Props<T>) {
   return (
     <View style={styles.row} accessibilityRole="radiogroup" accessibilityLabel={accessibilityLabel}>
@@ -34,16 +36,18 @@ export function Chips<T extends string | number>({
           <Pressable
             key={String(o.value)}
             onPress={() => {
-              if (selected) return;
+              if (selected || disabled) return;
               haptic.tick();
               onChange(o.value);
             }}
+            disabled={disabled}
             accessibilityRole="radio"
             accessibilityLabel={o.accessibilityLabel ?? o.label}
-            accessibilityState={{ selected, checked: selected }}
+            accessibilityState={{ selected, checked: selected, disabled }}
             style={({ pressed }) => [
               styles.chip,
               selected && styles.selected,
+              disabled && styles.disabled,
               pressed && !selected && styles.pressed,
             ]}
           >
@@ -111,6 +115,7 @@ const styles = StyleSheet.create({
   },
   selected: { backgroundColor: colors.primary, borderColor: colors.primary },
   pressed: { opacity: 0.75 },
+  disabled: { opacity: 0.4 },
   label: { fontFamily: fonts.semibold, fontSize: 15, color: colors.text },
   selectedLabel: { color: colors.primaryText },
 });

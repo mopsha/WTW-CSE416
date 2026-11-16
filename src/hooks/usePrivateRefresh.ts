@@ -6,7 +6,7 @@ export const PRIVATE_REFRESH_MS = 5000;
 export function usePrivateRefresh(
   refresh: () => Promise<void>,
   clear: () => void,
-  periodMs = PRIVATE_REFRESH_MS,
+  periodMs: number | null = PRIVATE_REFRESH_MS,
 ) {
   useFocusEffect(
     useCallback(() => {
@@ -35,7 +35,7 @@ export function usePrivateRefresh(
         }
       }
       void load();
-      const timer = setInterval(() => void load(), periodMs);
+      const timer = periodMs === null ? null : setInterval(() => void load(), periodMs);
       const sub = AppState.addEventListener('change', (state) => {
         foreground = state === 'active';
         if (foreground) void load();
@@ -43,7 +43,7 @@ export function usePrivateRefresh(
       });
       return () => {
         active = false;
-        clearInterval(timer);
+        if (timer !== null) clearInterval(timer);
         sub.remove();
         clear();
       };

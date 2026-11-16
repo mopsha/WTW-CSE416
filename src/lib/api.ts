@@ -243,11 +243,15 @@ export function createApiClient({
   async function request<T>(
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
-    { body, auth = true }: { body?: unknown; auth?: boolean } = {},
+    { body, auth = true, viewer }: { body?: unknown; auth?: boolean; viewer?: string } = {},
   ): Promise<T> {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (auth) {
-      const token = await getAccessToken();
+      // Scoped reversible queues must never borrow a replacement account's token.
+      const session = viewer === undefined ? undefined : await getSession?.();
+      if (viewer !== undefined && session?.user.id !== viewer)
+        throw new ApiError('account_changed', 'Account changed. Please try again.', 401);
+      const token = viewer === undefined ? await getAccessToken() : session?.accessToken;
       if (!token) throw new ApiError('not_signed_in', 'Please sign in again.', 401);
       headers.Authorization = `Bearer ${token}`;
     }
@@ -432,22 +436,24 @@ export function createApiClient({
         notice: string | null;
       }>('GET', `/discover?${query}`);
     },
-    getSaved: () => request<{ places: { placeId: string; createdAt: string }[] }>('GET', '/saved'),
-    savePlace: (placeId: string) =>
-      request<StatusResponse>('POST', `/saved/${encodeURIComponent(placeId)}`),
-    removeSaved: (placeId: string) =>
-      request<StatusResponse>('DELETE', `/saved/${encodeURIComponent(placeId)}`),
-    getHang: () =>
+    getSaved: (viewer?: string) =>
+      request<{ places: { placeId: string; createdAt: string }[] }>('GET', '/saved', { viewer }),
+    savePlace: (placeId: string, viewer?: string) =>
+      request<StatusResponse>('POST', `/saved/${encodeURIComponent(placeId)}`, { viewer }),
+    removeSaved: (placeId: string, viewer?: string) =>
+      request<StatusResponse>('DELETE', `/saved/${encodeURIComponent(placeId)}`, { viewer }),
+    getHang: (viewer?: string) =>
       request<{
         posts: import('@shared/api/hang.ts').HangPost[];
         sharedAvailable: boolean;
         notice: string;
-      }>('GET', '/hang'),
+      }>('GET', '/hang', { viewer }),
     createHang: (input: import('@shared/api/hang.ts').HangInput) =>
       request<import('@shared/api/hang.ts').HangPost>('POST', '/hang', { body: input }),
-    respondHang: (id: string, status: import('@shared/api/hang.ts').HangStatus) =>
+    respondHang: (id: string, status: import('@shared/api/hang.ts').HangStatus, viewer?: string) =>
       request<StatusResponse>('POST', `/hang/${encodeURIComponent(id)}/respond`, {
         body: { status },
+        viewer,
       }),
     hangPick: (id: string, input: CreatePickInput) =>
       request<{ pickId: string; isParticipant: boolean }>(
@@ -635,7 +641,8 @@ export function createApiClient({
 
     // After the winner (Alan): plan time, RSVP, "Did you go?", reasons, history, Pick again.
     /** Plan time, RSVP and outcome counts (never who said what), plus my own answers. */
-    getPlan: (pickId: string) => request<PlanSummary>('GET', `${pickPath(pickId)}/plan`),
+    getPlan: (pickId: string, viewer?: string) =>
+      request<PlanSummary>('GET', `${pickPath(pickId)}/plan`, { viewer }),
     /** One plain-language sentence per finalist, once the Pick has closed. No numbers. */
     getReasons: (pickId: string) =>
       request<{ reasons: { placeId: string; rank: number; reason: string }[] }>(
@@ -645,8 +652,8 @@ export function createApiClient({
     /** Host only, completed Picks: when the group is going. Must be within 30 days. */
     setPlanTime: (pickId: string, planAt: string) =>
       request<{ planAt: string }>('POST', `${pickPath(pickId)}/plan-time`, { body: { planAt } }),
-    rsvp: (pickId: string, status: RsvpStatus) =>
-      request<StatusResponse>('POST', `${pickPath(pickId)}/rsvp`, { body: { status } }),
+    rsvp: (pickId: string, status: RsvpStatus, viewer?: string) =>
+      request<StatusResponse>('POST', `${pickPath(pickId)}/rsvp`, { body: { status }, viewer }),
     /** "Did you go?" (and optionally "would you go again?"). Changeable. */
     recordOutcome: (pickId: string, went: boolean, again: boolean | null = null) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/outcome`, { body: { went, again } }),

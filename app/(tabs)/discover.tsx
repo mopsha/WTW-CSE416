@@ -1,12 +1,16 @@
+import { useSavedChoices } from '@/hooks/useSavedChoices';
+import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
+import type { SavedChoices } from '@/lib/savedChoices';
+import { UndoFeedback } from '@/components/UndoFeedback';
+import type { ReactNode } from 'react';
 import { useMotionPreference } from '@/hooks/useMotionPreference';
 import { PlaceCardsSkeleton } from '@/components/LoadingStates';
 // Discover: bounded individual feed; preserve local fixture presentation in mock mode.
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
   Linking,
   Modal,
@@ -121,21 +125,17 @@ function PlaceTile({
       </Pressable>
       <Pressable
         onPress={onSave}
-        disabled={!ready || busy}
+        disabled={!ready}
         accessibilityRole="button"
         accessibilityLabel={`${saved ? 'Unsave' : 'Save'} ${place.name}`}
-        accessibilityState={{ selected: saved, disabled: !ready || busy, busy }}
+        accessibilityState={{ selected: saved, disabled: !ready, busy }}
         style={styles.bookmark}
       >
-        {busy ? (
-          <ActivityIndicator color={colors.photoText} />
-        ) : (
-          <Ionicons
-            name={saved ? 'bookmark' : 'bookmark-outline'}
-            size={23}
-            color={colors.photoText}
-          />
-        )}
+        <Ionicons
+          name={saved ? 'bookmark' : 'bookmark-outline'}
+          size={23}
+          color={colors.photoText}
+        />
       </Pressable>
     </View>
   );
@@ -144,35 +144,30 @@ function PlaceTile({
 function PlaceSheet({
   place,
   onClose,
-  onSaved,
+  savedChoices,
+  undo,
 }: {
   place: DiscoverPlace | null;
   onClose: () => void;
-  onSaved: (id: string, saved: boolean) => void;
+  savedChoices: SavedChoices;
+  undo: ReactNode;
 }) {
   const reducedMotion = useMotionPreference();
-  const [saved, setSaved] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [ready, setReady] = useState(false);
-  useEffect(() => {
-    let active = true;
-    if (place)
-      api
-        .getSaved()
-        .then((result) => {
-          if (active) {
-            setSaved(result.places.some((p) => p.placeId === place.placeId));
-            setReady(true);
-          }
-        })
-        .catch((e) => {
-          if (active) setError(messageOf(e));
-        });
-    return () => {
-      active = false;
+  const revision = useSyncExternalStore(
+    savedChoices.subscribe,
+    savedChoices.snapshot,
+    savedChoices.snapshot,
+  );
+  const { saved, ready, error } = useMemo(() => {
+    const item = place ? savedChoices.item(place.placeId).snapshot() : null;
+    return {
+      saved: item?.value === true,
+      ready: savedChoices.ready && item?.value != null && !item?.uncertain,
+      error: savedChoices.feedback(),
     };
-  }, [place]);
+    // The controller identity is stable; its external-store revision invalidates these reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedChoices, place, revision]);
   return (
     <Modal
       visible={!!place}
@@ -220,24 +215,15 @@ function PlaceSheet({
                     </View>
                   ))}
               </View>
-              {error ? <ErrorState message={error} /> : null}
+              {error ? (
+                <ErrorState message={error} onRetry={() => void savedChoices.reload()} />
+              ) : null}
               <Button
                 label={saved ? 'Remove saved place' : 'Save place'}
                 variant="secondary"
                 icon="bookmark-outline"
-                loading={busy}
                 disabled={!ready}
-                onPress={() => {
-                  setBusy(true);
-                  setError(null);
-                  void (saved ? api.removeSaved(place.placeId) : api.savePlace(place.placeId))
-                    .then(() => {
-                      setSaved(!saved);
-                      onSaved(place.placeId, !saved);
-                    })
-                    .catch((e) => setError(messageOf(e)))
-                    .finally(() => setBusy(false));
-                }}
+                onPress={() => savedChoices.toggle(place!.placeId)}
               />
               <Button
                 label="Get directions"
@@ -259,6 +245,7 @@ function PlaceSheet({
               />
             </View>
           </ScrollView>
+          {undo}
         </SafeAreaView>
       ) : null}
     </Modal>
@@ -287,51 +274,32 @@ function DiscoverFeed({ userId }: { userId: string }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState<DiscoverPlace | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
-  const [savedFor, setSavedFor] = useState<string | undefined>(undefined);
-  const [savedReady, setSavedReady] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [saving, setSaving] = useState<string | null>(null);
+  const { saved, revision: savedRevision } = useSavedChoices(userId);
+  usePrivateRefresh(saved.reload, saved.clear, null);
   useEffect(() => {
-    if (!userId) return;
-    let active = true;
-    api
-      .getSaved()
-      .then((result) => {
-        if (active) {
-          setSavedIds(new Set(result.places.map((p) => p.placeId)));
-          setSavedReady(true);
-          setSavedFor(userId);
-        }
-      })
-      .catch((e) => {
-        if (active) setSaveError(messageOf(e));
-      });
-    return () => {
-      active = false;
-    };
-  }, [userId, retry]);
-  const updateSaved = (id: string, saved: boolean) =>
-    setSavedIds((ids) => {
-      const next = new Set(ids);
-      if (saved) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  const savePlace = async (place: DiscoverPlace) => {
-    if (saving || !savedReady || savedFor !== userId) return;
-    const wasSaved = savedIds.has(place.placeId);
-    setSaving(place.placeId);
-    setSaveError(null);
-    try {
-      await (wasSaved ? api.removeSaved(place.placeId) : api.savePlace(place.placeId));
-      updateSaved(place.placeId, !wasSaved);
-    } catch (e) {
-      setSaveError(messageOf(e));
-    } finally {
-      setSaving(null);
-    }
-  };
+    if (retry > 0) void saved.reload();
+  }, [saved, retry]);
+  const { undoItem, undoToken, saveError, savedReady } = useMemo(
+    () => ({
+      undoItem: saved.undo ? saved.item(saved.undo.id).snapshot() : null,
+      undoToken: saved.undo?.token,
+      saveError: saved.feedback(),
+      savedReady: saved.ready,
+    }),
+    // The controller is mutable; this subscription revision is a required dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [saved, savedRevision],
+  );
+  const undo =
+    undoToken !== undefined &&
+    undoItem?.value === false &&
+    !undoItem.uncertain &&
+    !undoItem.error ? (
+      <UndoFeedback pending={undoItem.pending} onUndo={() => saved.restore(undoToken)} />
+    ) : null;
+  useLayoutEffect(() => {
+    if (saved.undo) saved.dismissUndo(saved.undo.token);
+  }, [saved, filter, query, sort, applied, open?.placeId]);
 
   const params = useMemo(
     () => ({
@@ -395,6 +363,12 @@ function DiscoverFeed({ userId }: { userId: string }) {
     const ids = new Set(featured.map((p) => p.placeId));
     return [...featured, ...places.filter((p) => !ids.has(p.placeId))];
   }, [feed, filter, places, query, count, sort]);
+  const savedStates = useMemo(
+    () => new Map(displayed.map((p) => [p.placeId, saved.item(p.placeId).snapshot()])),
+    // FlatList/React Compiler need immutable per-revision projections of the stable controller.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [displayed, saved, savedRevision],
+  );
   const show = (p: DiscoverPlace) => {
     haptic.tap();
     setOpen(p);
@@ -404,6 +378,7 @@ function DiscoverFeed({ userId }: { userId: string }) {
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <FlatList
         data={displayed}
+        extraData={savedRevision}
         keyExtractor={(p) => p.placeId}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
@@ -413,10 +388,14 @@ function DiscoverFeed({ userId }: { userId: string }) {
           <PlaceTile
             place={item}
             onPress={() => show(item)}
-            onSave={() => void savePlace(item)}
-            saved={savedFor === userId && savedIds.has(item.placeId)}
-            busy={saving === item.placeId}
-            ready={savedFor === userId && savedReady && saving === null}
+            onSave={() => saved.toggle(item.placeId)}
+            saved={savedStates.get(item.placeId)?.value === true}
+            busy={savedStates.get(item.placeId)?.pending ?? false}
+            ready={
+              savedReady &&
+              !savedStates.get(item.placeId)?.uncertain &&
+              savedStates.get(item.placeId)?.value !== null
+            }
           />
         )}
         ListHeaderComponent={
@@ -578,7 +557,7 @@ function DiscoverFeed({ userId }: { userId: string }) {
           )
         }
       />
-      {saveError ? (
+      {saveError && !open ? (
         <View style={{ paddingHorizontal: space.xl }}>
           <ErrorState message={saveError} onRetry={() => setRetry((n) => n + 1)} />
         </View>
@@ -620,11 +599,13 @@ function DiscoverFeed({ userId }: { userId: string }) {
           </Pressable>
         ))}
       </Sheet>
+      {!open ? undo : null}
       <PlaceSheet
         key={`${userId}:${open?.placeId}`}
         place={feed.some((p) => p.placeId === open?.placeId) ? open : null}
         onClose={() => setOpen(null)}
-        onSaved={updateSaved}
+        savedChoices={saved}
+        undo={undo}
       />
     </SafeAreaView>
   );

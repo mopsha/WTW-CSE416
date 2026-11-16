@@ -1,3 +1,6 @@
+import { useOptimisticChoice } from '@/hooks/useOptimisticChoice';
+import { OptimisticChoice } from '@/lib/optimisticChoice';
+import { canRsvpPlan, projectPlanRsvp } from '@/lib/optimisticRsvp';
 import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import { attendanceDue } from '@shared/domain/pastMoves.ts';
 // The Winner screen's "after" part (Alan): when we're going, who's in (counts only), "Did you
@@ -29,61 +32,49 @@ const RSVP_OPTIONS = [
   { value: 'not_going', label: 'Can’t' },
 ] as const;
 
-export function PlanBlock({
-  pickId,
-  decidedAt,
-  people = [],
-  children,
-}: {
+interface PlanBlockProps {
   pickId: string;
+  viewerId: string;
   decidedAt: string | null;
   people?: ParticipantProgress[];
   children?: ReactNode;
-}) {
+}
+export function PlanBlock(props: PlanBlockProps) {
+  return <PlanBlockContent key={JSON.stringify([props.viewerId, props.pickId])} {...props} />;
+}
+function PlanBlockContent({ pickId, viewerId, decidedAt, people = [], children }: PlanBlockProps) {
   const [scheduling, setScheduling] = useState(false);
   const inFlight = useRef(false);
-  const [plan, setPlan] = useState<PlanSummary | null>(null);
-  const [loadError, setLoadError] = useState(false);
+  const rsvp = useOptimisticChoice(
+    () =>
+      new OptimisticChoice<PlanSummary, RsvpStatus>({
+        read: () => api.getPlan(pickId, viewerId),
+        write: async (status, current) => {
+          await api.rsvp(pickId, status, viewerId);
+          if (!current()) throw new Error('Screen changed');
+        },
+        readAfterWrite: true,
+        project: projectPlanRsvp,
+        selected: (value) => value.myRsvp!,
+        eligible: canRsvpPlan,
+      }),
+  );
+  const plan = rsvp.value;
+  const loadError = rsvp.error;
   const action = useAction();
   const [editingAttendance, setEditingAttendance] = useState(false);
-  // Only the newest reload may update the block, so quick taps can't show a stale answer.
-  const latest = useRef(0);
-
-  const load = useCallback(() => {
-    const request = ++latest.current;
-    return api.getPlan(pickId).then(
-      (next) => {
-        if (request === latest.current) {
-          setPlan(next);
-          setLoadError(false);
-        }
-      },
-      // Keep offline data, but never retain a plan after authorization is denied.
-      (error: unknown) => {
-        if (request === latest.current) setLoadError(true);
-        if (
-          request === latest.current &&
-          typeof error === 'object' &&
-          error !== null &&
-          'status' in error &&
-          [401, 403, 404].includes(Number(error.status))
-        )
-          setPlan(null);
-      },
-    );
-  }, [pickId]);
+  const load = rsvp.choice.refresh;
   const clear = useCallback(() => {
-    latest.current++;
-    setPlan(null);
-    setLoadError(false);
+    rsvp.choice.clear();
     setEditingAttendance(false);
     setScheduling(false);
-  }, []);
+  }, [rsvp.choice]);
   usePrivateRefresh(load, clear, PLAN_REFRESH_MS);
 
   // One action at a time: a second tap while one is in flight is ignored.
   const act = (name: string, fn: () => Promise<unknown>) => {
-    if (inFlight.current) return;
+    if (inFlight.current || rsvp.choice.snapshot().pending || rsvp.choice.snapshot().uncertain)
+      return;
     inFlight.current = true;
     void action
       .run(name, fn)
@@ -123,12 +114,13 @@ export function PlanBlock({
           The plan
         </Text>
         {action.error ? <ErrorBanner message={action.error} /> : null}
+        {rsvp.error ? <ErrorBanner message={rsvp.error} onRetry={() => void load()} /> : null}
 
         {plan.isHost ? (
           <Card
             variant="flat"
             onPress={() => {
-              if (!inFlight.current) setScheduling(true);
+              if (!inFlight.current && !rsvp.pending && !rsvp.uncertain) setScheduling(true);
             }}
             accessibilityLabel={`${plan.planAt ? formatPlanTime(plan.planAt) : 'No time set'}, edit scheduled time`}
           >
@@ -156,7 +148,10 @@ export function PlanBlock({
         <Chips
           options={RSVP_OPTIONS}
           value={(plan.myRsvp ?? '') as RsvpStatus}
-          onChange={(status) => act('rsvp', () => api.rsvp(pickId, status))}
+          disabled={!!action.busy || rsvp.uncertain || !canRsvpPlan(plan)}
+          onChange={(status) => {
+            if (!inFlight.current) rsvp.choice.choose(status);
+          }}
           accessibilityLabel="Are you going"
         />
         <Text style={styles.muted}>
@@ -237,7 +232,7 @@ export function PlanBlock({
             inFlight.current = true;
             try {
               await api.setPlanTime(pickId, value);
-              setPlan((current) => (current ? { ...current, planAt: value } : current));
+              rsvp.choice.accept({ ...plan, planAt: value });
               await load();
             } finally {
               inFlight.current = false;
@@ -250,6 +245,7 @@ export function PlanBlock({
           label="Pick again with the same group"
           variant="secondary"
           loading={action.busy === 'again'}
+          disabled={rsvp.pending || rsvp.uncertain}
           onPress={again}
         />
       ) : null}

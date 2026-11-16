@@ -145,7 +145,8 @@ test.each(['going', 'maybe', 'not_going'])('RSVP %s uses the existing API', asyn
   await mount();
   const { Chips } = jest.requireActual('@/components/Chips');
   await act(async () => tree.root.findByType(Chips).props.onChange(status));
-  expect(api.rsvp).toHaveBeenCalledWith('pick', status);
+  if (status === 'going') expect(api.rsvp).not.toHaveBeenCalled();
+  else expect(api.rsvp).toHaveBeenCalledWith('pick', status, 'me');
 });
 test('non-host has no scheduling or Pick Again control', async () => {
   mockPlan.isHost = false;
