@@ -2,7 +2,8 @@
 -- per-user counter. 200 is half of what 20 Discover loads with 20 photos each could cost.
 alter table public.rate_limit_counters drop constraint rate_limit_counters_scope_check;
 alter table public.rate_limit_counters add constraint rate_limit_counters_scope_check
- check (scope in ('create','start','refresh','discover','discover_photo'));
+ check (scope in ('create','start','refresh','discover','avatar_read','avatar_resolve',
+  'username_lookup','discover_photo'));
 create or replace function public.consume_user_limit(p_scope text, p_user_id uuid, p_pick_id text default null) returns boolean
 language plpgsql set search_path = '' as $$
 declare v_calls integer; v_limit integer; v_subject text; v_bucket text;
