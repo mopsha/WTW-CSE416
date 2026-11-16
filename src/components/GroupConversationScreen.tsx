@@ -612,13 +612,17 @@ function GroupConversation({
                       key={p.id}
                       onPress={() => router.push({ pathname: '/pick/[id]', params: { id: p.id } })}
                       accessibilityRole="button"
-                      accessibilityLabel={`${pickTitle(p.category)}, ${STATE_LABEL[p.state]}`}
+                      accessibilityLabel={`${pickTitle(p.category)}, ${p.proposedAt && p.state === 'draft' ? 'Availability requested' : STATE_LABEL[p.state]}`}
                       style={styles.member}
                     >
                       <Text style={{ fontSize: 22 }}>{pickEmoji(p.category)}</Text>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.name}>{pickTitle(p.category)}</Text>
-                        <Text style={styles.sub}>{STATE_LABEL[p.state]}</Text>
+                        <Text style={styles.sub}>
+                          {p.proposedAt && p.state === 'draft'
+                            ? 'Availability requested'
+                            : STATE_LABEL[p.state]}
+                        </Text>
                       </View>
                       <Ionicons name="chevron-forward" size={20} color={colors.muted} />
                     </Pressable>

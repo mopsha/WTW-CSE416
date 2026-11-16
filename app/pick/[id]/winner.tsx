@@ -40,7 +40,7 @@ export default function WinnerScreen() {
 }
 function WinnerContent({ pickId, userId }: { pickId: string; userId: string }) {
   const live = usePickLive(pickId);
-  usePickRoute(pickId, 'winner', live.state);
+  usePickRoute(pickId, 'winner', live.state, { canVote: live.progress?.availability?.canVote });
   const { reveal, retry } = useReveal(pickId, userId, live.state);
 
   if (reveal.status === 'error') {
@@ -98,7 +98,13 @@ function WinnerContent({ pickId, userId }: { pickId: string; userId: string }) {
         <Ionicons name="checkmark-circle" size={16} color={colors.yes} />
         <Text style={styles.savedText}>Saved to your history</Text>
       </View>
-      <PlanBlock viewerId={userId} pickId={pickId} decidedAt={pick.decidedAt} people={people}>
+      <PlanBlock
+        timeLocked={!!pick.availability}
+        viewerId={userId}
+        pickId={pickId}
+        decidedAt={pick.decidedAt}
+        people={people}
+      >
         {runnersUp.length ? (
           <View style={{ gap: space.sm }}>
             <Text style={styles.heading} accessibilityRole="header">

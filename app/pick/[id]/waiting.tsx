@@ -49,7 +49,10 @@ export default function WaitingScreen() {
   const { toast } = useProgressToasts(progress);
 
   // If my answers were cleared (the host refreshed the pool), I belong back on the deck.
-  usePickRoute(pickId, 'waiting', live.state, { allAnswered: me?.done ?? true });
+  usePickRoute(pickId, 'waiting', live.state, {
+    allAnswered: me?.done ?? true,
+    canVote: live.progress?.availability?.canVote,
+  });
   useEffect(() => {
     if (live.state === 'swiping' && me && !me.done) {
       router.replace({ pathname: '/pick/[id]/swipe', params: { id: pickId } });
@@ -100,6 +103,7 @@ export default function WaitingScreen() {
   return (
     <SafeAreaView style={pickStyles.screen} edges={['top', 'left', 'right', 'bottom']}>
       <PickTopBar
+        proposedAt={live.progress?.availability?.proposedAt}
         title="Waiting for the group"
         tabularCountdown
         subtitle={countdown.label}

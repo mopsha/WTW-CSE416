@@ -1,3 +1,4 @@
+import { proposedTimeProblem } from '@shared/domain/availability.ts';
 import { mockPeopleRoute } from './people';
 import { handleMockPastMoves } from './pastMoves';
 import { handleMockDirectChat, mockDirectNotices, resetMockDirectChat } from './directChat';
@@ -47,6 +48,8 @@ import {
   mockInvite,
 } from './groups';
 import {
+  availabilityOf,
+  votersOf,
   acceptMockInvite,
   createMockInvite,
   createMockPick,
@@ -190,6 +193,7 @@ function getPick(pick: MockPick) {
   const mine = pick.participants.find((p) => p.userId === MOCK_USER_ID);
   return {
     id: pick.id,
+    ...(pick.availability ? { availability: availabilityOf(pick) } : {}),
     state: pick.state,
     category: pick.category,
     center: pick.center,
@@ -314,8 +318,65 @@ const ROUTES: Record<string, Handler> = {
   'GET ': (pick) => json(200, getPick(pick)),
   'GET progress': (pick) => json(200, progressOf(pick)),
 
+  'POST availability': (pick, body) => {
+    const value = body as { revision?: unknown; response?: unknown; userId?: unknown } | null;
+    const a = pick.availability;
+    if (!a || pick.state !== 'draft' || a.locked || Date.parse(a.proposedAt) <= Date.now())
+      return wrongState('Availability is closed');
+    if (value?.revision !== a.revision) return wrongState('Time changed; reconfirm');
+    if (value.userId !== undefined || !['yes', 'maybe', 'cant'].includes(String(value.response)))
+      return fail(400, 'INVALID_INPUT', 'Invalid availability response');
+    const rows = a.participants.filter((p) => p.userId !== MOCK_USER_ID);
+    a.participants = [
+      ...rows,
+      {
+        userId: MOCK_USER_ID,
+        displayName: 'You',
+        response: value.response as 'yes' | 'maybe' | 'cant',
+      },
+    ];
+    emit(pick.id);
+    return json(200, { status: 'ok' });
+  },
+  'POST proposed-time': hostOnly((pick, body) => {
+    const value = body as { revision?: unknown; proposedAt?: unknown } | null;
+    const a = pick.availability;
+    if (!a || pick.state !== 'draft' || a.locked || value?.revision !== a.revision)
+      return wrongState('Time changed or availability closed');
+    const invalid = proposedTimeProblem(value?.proposedAt);
+    if (invalid) return fail(400, 'INVALID_INPUT', invalid);
+    if (
+      a.deadlineMinutes > 0 &&
+      Date.parse(String(value?.proposedAt)) <= Date.now() + (a.deadlineMinutes + 30) * 60000
+    )
+      return fail(
+        400,
+        'INVALID_INPUT',
+        'Leave time for swiping and the final vote before the outing.',
+      );
+    if (a.proposedAt !== value!.proposedAt) {
+      a.proposedAt = String(value!.proposedAt);
+      a.revision++;
+      a.participants = [{ userId: pick.hostId, displayName: 'Host', response: 'yes' }];
+    }
+    emit(pick.id);
+    return json(200, { status: 'ok' });
+  }),
   'POST start': hostOnly((pick) => {
+    if (pick.availability?.locked && pick.state !== 'canceled')
+      return json(200, { state: 'swiping', candidateCount: pick.candidates.length });
     if (pick.state !== 'draft') return wrongState('Pick must be draft to start');
+    if (pick.availability) {
+      const a = availabilityOf(pick)!;
+      if (
+        proposedTimeProblem(a.proposedAt) ||
+        (a.deadlineMinutes > 0 &&
+          Date.parse(a.proposedAt) <= Date.now() + (a.deadlineMinutes + 30) * 60000)
+      )
+        return wrongState('Update the outing time before starting.');
+      if (a.participants.filter((p) => p.response === 'yes' || p.response === 'maybe').length < 2)
+        return wrongState('At least two Yes or Maybe responses are required.');
+    }
     if (pick.participants.length < 2) {
       return fail(409, 'NOT_ENOUGH_PARTICIPANTS', 'A Pick needs at least 2 participants to start');
     }
@@ -328,6 +389,18 @@ const ROUTES: Record<string, Handler> = {
     }
     if (!candidates.length) return fail(409, 'NO_CANDIDATES', 'No places match these filters');
     pick.candidates = candidates;
+    if (pick.availability) {
+      pick.availability.cohortUserIds = availabilityOf(pick)!
+        .participants.filter((p) => p.response === 'yes' || p.response === 'maybe')
+        .map((p) => p.userId);
+      pick.availability.locked = true;
+      pick.planAt = pick.availability.proposedAt;
+      const cachedPlan = mockPlans.get(pick.id);
+      if (cachedPlan) cachedPlan.planAt = pick.planAt;
+      pick.deadlineAt = pick.availability.deadlineMinutes
+        ? new Date(Date.now() + pick.availability.deadlineMinutes * 60000).toISOString()
+        : null;
+    }
     pick.state = 'swiping';
     emit(pick.id);
     scheduleBots(pick);
@@ -335,6 +408,7 @@ const ROUTES: Record<string, Handler> = {
   }),
 
   'POST refresh': hostOnly((pick, body) => {
+    if (pick.availability) return wrongState('Availability deck is fixed for this round');
     if (pick.state !== 'draft' && pick.state !== 'swiping') {
       return wrongState('Pick must be draft or swiping to refresh');
     }
@@ -390,6 +464,8 @@ const ROUTES: Record<string, Handler> = {
   }),
 
   'POST swipes': (pick, body) => {
+    if (pick.availability && !votersOf(pick).some((p) => p.userId === MOCK_USER_ID))
+      return fail(403, 'FORBIDDEN', 'Not in the locked voting cohort');
     if (pick.state !== 'swiping') return wrongState('Pick must be swiping');
     if (body === undefined) return fail(400, 'INVALID_JSON', 'Request body must be valid JSON');
     const { placeId, value } = (typeof body === 'object' && body !== null ? body : {}) as Record<
@@ -421,6 +497,8 @@ const ROUTES: Record<string, Handler> = {
   }),
 
   'POST vote': (pick, body) => {
+    if (pick.availability && !votersOf(pick).some((p) => p.userId === MOCK_USER_ID))
+      return fail(403, 'FORBIDDEN', 'Not in the locked voting cohort');
     if (pick.state !== 'final_vote') return wrongState('Voting is not open for this Pick');
     const placeId =
       typeof body === 'object' && body !== null && 'placeId' in body ? body.placeId : null;
@@ -464,6 +542,7 @@ const ROUTES: Record<string, Handler> = {
   },
 
   'POST plan-time': hostOnly((pick, body) => {
+    if (pick.availability) return wrongState('The outing time was agreed before swiping');
     const planAt = (body as { planAt?: unknown } | null)?.planAt;
     const at = typeof planAt === 'string' ? Date.parse(planAt) : NaN;
     if (Number.isNaN(at) || at < Date.now() || at - Date.now() > 30 * 86_400_000) {
@@ -729,6 +808,8 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     return json(r.status, r.body);
   }
 
+  if (method === 'GET' && path === '/picks/capabilities')
+    return json(200, { availabilityFirst: true });
   if (method === 'POST' && path === '/picks') return createPick(readBody(init));
   if (method === 'POST' && path === '/picks/join') return joinPick(readBody(init));
   if (method === 'POST' && path === '/me') return updateMe(readBody(init));

@@ -1,3 +1,4 @@
+import type { Availability } from '../domain/availability.ts';
 // GET /picks/:id/progress: who's in, who's done swiping, who has voted. Counts only: never
 // what anyone answered or voted for. The app's live screens poll this when Realtime is down
 // (src/hooks/usePickLive.ts). Owner: Mike. Week 3.
@@ -6,6 +7,7 @@ import { ApiError } from './errors.ts';
 import type { PickState } from '../domain/pickState.ts';
 
 export interface ProgressSnapshot {
+  availability?: Availability;
   state: PickState;
   /** Null once the host deleted their account (0017); such a Pick is completed or canceled. */
   hostId: string | null;
@@ -25,7 +27,7 @@ export interface ProgressSnapshot {
 
 /** Database adapter (service role). Reads only. */
 export interface ProgressStore {
-  loadProgress(pickId: string): Promise<ProgressSnapshot | null>;
+  loadProgress(pickId: string, userId?: string): Promise<ProgressSnapshot | null>;
 }
 
 export interface ParticipantProgress {
@@ -38,6 +40,7 @@ export interface ParticipantProgress {
 }
 
 export interface PickProgress {
+  availability?: Availability;
   state: PickState;
   /** The deadline that matters now: swiping's in swiping, the vote's in final_vote. */
   deadlineAt: string | null;
@@ -67,6 +70,7 @@ export function toProgress(snapshot: ProgressSnapshot, userId: string): PickProg
       voted: p.voted,
     }));
   return {
+    ...(snapshot.availability ? { availability: snapshot.availability } : {}),
     state: snapshot.state,
     // The swipe deadline has usually passed by the time a vote starts; count down the vote's.
     deadlineAt: snapshot.state === 'final_vote' ? snapshot.voteDeadlineAt : snapshot.deadlineAt,
@@ -83,11 +87,19 @@ export async function getProgress(
   pickId: string,
   userId: string,
 ): Promise<PickProgress> {
-  const snapshot = await store.loadProgress(pickId);
+  const snapshot = await store.loadProgress(pickId, userId);
   if (!snapshot) throw new ApiError(404, 'PICK_NOT_FOUND', 'Pick not found');
   // Same rule as GET /picks/:id: strangers learn nothing, not even who's in.
   if (!snapshot.participants.some((p) => p.userId === userId)) {
     throw new ApiError(403, 'FORBIDDEN', 'You must be a participant in this Pick');
+  }
+  if (snapshot.availability?.locked) {
+    const eligible = new Set(snapshot.availability.cohortUserIds);
+    // These responses are frozen at lock; the store removes revoked users.
+    return toProgress(
+      { ...snapshot, participants: snapshot.participants.filter((p) => eligible.has(p.userId)) },
+      userId,
+    );
   }
   return toProgress(snapshot, userId);
 }

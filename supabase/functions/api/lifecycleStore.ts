@@ -1,3 +1,4 @@
+import { createAvailabilityStore } from './availabilityStore.ts';
 import { createGroupIdeasStore } from './groupIdeasStore.ts';
 import fixtures from '../../seed/places.json' with { type: 'json' };
 import type { Candidate } from '../_shared/places/types.ts';
@@ -39,6 +40,7 @@ export function createLifecycleStore(): LifecycleStore {
     return data;
   }
   return {
+    availability: createAvailabilityStore(),
     groupIdeas: (groupId, hostId) => createGroupIdeasStore().list(hostId, groupId),
     candidateUuid: () => crypto.randomUUID(),
     async savedCandidates(hostId) {

@@ -20,9 +20,12 @@ export default function PickEntry() {
 
   useEffect(() => {
     if (!state || state === 'canceled') return;
-    const target = screenForState(state, { allAnswered: me?.done });
+    const target = screenForState(state, {
+      allAnswered: me?.done,
+      canVote: progress?.availability?.canVote,
+    });
     router.replace({ pathname: pathFor(target), params: { id: pickId } });
-  }, [state, me?.done, pickId]);
+  }, [state, me?.done, pickId, progress?.availability?.canVote]);
 
   if (state === 'canceled') {
     return (

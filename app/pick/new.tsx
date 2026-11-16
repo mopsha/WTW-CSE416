@@ -1,3 +1,5 @@
+import { PlanTimeSheet } from '@/components/PlanTimeSheet';
+import { formatPlanTime } from '@/lib/plans';
 import { useAuth } from '@/hooks/useAuth';
 import {
   CategoryCards,
@@ -87,10 +89,12 @@ export default function CreatePickScreen() {
     <CreatePickForm
       key={JSON.stringify([session?.user.id, params.groupId, params.hangId])}
       {...params}
+      viewerId={session?.user.id}
     />
   );
 }
 function CreatePickForm({
+  viewerId,
   groupId,
   groupName,
   hangId,
@@ -100,7 +104,10 @@ function CreatePickForm({
   groupName?: string;
   hangId?: string;
   hangActivity?: string;
+  viewerId?: string;
 }) {
+  const [whenInitial, setWhenInitial] = useState<string | null>(null);
+  const [proposedAt, setProposedAt] = useState<string | null>(null);
   const [category, setCategory] = useState<PickCategory>(hangId ? 'activities' : 'food');
   const [customOptions, setCustomOptions] = useState<CustomOption[]>([{ name: '' }, { name: '' }]);
   const [includeSaved, setIncludeSaved] = useState(false);
@@ -120,7 +127,7 @@ function CreatePickForm({
   const [submitting, setSubmitting] = useState(false);
 
   const [editor, setEditor] = useState<
-    'location' | 'filters' | 'pool' | 'deadline' | 'threshold' | null
+    'when' | 'location' | 'filters' | 'pool' | 'deadline' | 'threshold' | null
   >(null);
   const [filterDraft, setFilterDraft] = useState({ priceMax, openNow });
   const active = useRef(true);
@@ -147,6 +154,8 @@ function CreatePickForm({
   const openEditor = (next: NonNullable<typeof editor>) => {
     if (sending.current) return;
     Keyboard.dismiss();
+    if (next === 'when')
+      setWhenInitial(proposedAt ?? new Date(Date.now() + 3 * 3600000).toISOString());
     if (next === 'filters') setFilterDraft({ priceMax, openNow });
     setEditor(next);
   };
@@ -188,7 +197,12 @@ function CreatePickForm({
         ? { customOptions, ...(mix !== 'none' ? { mixCategory: mix } : {}) }
         : {}),
       // Computed at tap time so "1 hr" means an hour from now, not from when the screen opened.
-      deadlineAt: deadlineMin ? new Date(Date.now() + deadlineMin * 60_000).toISOString() : null,
+      deadlineAt: proposedAt
+        ? null
+        : deadlineMin
+          ? new Date(Date.now() + deadlineMin * 60_000).toISOString()
+          : null,
+      ...(proposedAt && !hangId ? { proposedAt, swipeDeadlineMinutes: deadlineMin } : {}),
       closeThreshold,
     };
     const found = validateCreatePick(input);
@@ -205,6 +219,8 @@ function CreatePickForm({
     setSubmitting(true);
     setSubmitError(null);
     try {
+      if (input.proposedAt && !viewerId)
+        throw new Error('Sign in again before creating this availability Pick.');
       if (hangId) {
         const result = await api.hangPick(hangId, input);
         if (!active.current) return;
@@ -215,8 +231,12 @@ function CreatePickForm({
         return;
       }
       const { pickId } = groupId
-        ? await api.createGroupPick(input, groupId)
-        : await api.createPick(input);
+        ? input.proposedAt
+          ? await api.createGroupPick(input, groupId, viewerId)
+          : await api.createGroupPick(input, groupId)
+        : input.proposedAt
+          ? await api.createPick(input, viewerId)
+          : await api.createPick(input);
       if (!active.current) return;
       haptic.success();
       // Straight to the Lobby, replacing this form so Back goes to Picks.
@@ -313,6 +333,15 @@ function CreatePickForm({
         ) : null}
         <Section title="Plan Details">
           <SettingsGroup>
+            {!hangId ? (
+              <SettingRow
+                label="When"
+                value={proposedAt ? formatPlanTime(proposedAt) : 'Decide later'}
+                icon="calendar-outline"
+                disabled={submitting}
+                onPress={() => openEditor('when')}
+              />
+            ) : null}
             {publicPlaces ? (
               <SettingRow
                 label="Where"
@@ -324,6 +353,14 @@ function CreatePickForm({
             ) : null}
             <SettingRow label="Who's joining?" value={participantSummary} icon="people-outline" />
           </SettingsGroup>
+          {proposedAt ? (
+            <Text style={styles.hint}>
+              Friends confirm availability before swiping. The swipe deadline starts when the host
+              begins.
+            </Text>
+          ) : null}
+          {errorFor('proposedAt', 'When')}
+          {errorFor('swipeDeadlineMinutes', 'Swipe deadline')}
           {errorFor('center', 'Where')}
           {errorFor('radiusM', 'How far')}
         </Section>
@@ -416,6 +453,19 @@ function CreatePickForm({
           accessibilityHint="Creates the Pick so you can invite friends"
         />
       </View>
+      {editor === 'when' ? (
+        <PlanTimeSheet
+          initial={whenInitial}
+          onClose={closeEditor}
+          onDecideLater={() => {
+            setProposedAt(null);
+            closeEditor();
+          }}
+          onSave={async (value) => {
+            setProposedAt(value);
+          }}
+        />
+      ) : null}
       {editor === 'location' ? (
         <NewPickLocationEditor
           initial={{ center, label: placeLabel, miles }}
@@ -429,7 +479,7 @@ function CreatePickForm({
           }}
         />
       ) : null}
-      {editor && editor !== 'location' ? (
+      {editor && editor !== 'location' && editor !== 'when' ? (
         <Sheet
           visible
           title={
@@ -486,7 +536,8 @@ function CreatePickForm({
           ) : editor === 'deadline' ? (
             <>
               <Text style={styles.hint}>
-                When swiping closes, not when you’re going out. Starts when you create the Pick.
+                When swiping closes, not when you’re going out. Scheduled Picks start this clock
+                when the host starts swiping; other Picks start it at creation.
               </Text>
               <ChoiceList
                 options={DEADLINES}

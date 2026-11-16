@@ -1,3 +1,4 @@
+import { PlanTimeSheet } from '@/components/PlanTimeSheet';
 import React from 'react';
 import {
   AccessibilityInfo,
@@ -691,4 +692,43 @@ test('landscape keeps map outside scroll gestures while search and radius remain
   const scrolls = tree.root.findAllByType(ScrollView);
   expect(scrolls.some((scroll: any) => scroll.findAllByType(MapPicker).length > 0)).toBe(false);
   await act(async () => button('Cancel').props.onPress());
+});
+
+test('When defaults to Decide later and commits optional proposed time with deferred deadline', async () => {
+  const at = new Date(Date.now() + 2 * 86400000).toISOString();
+  await render();
+  expect(row('When').props.value).toBe('Decide later');
+  await press('When');
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onSave(at));
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onClose());
+  expect(row('When').props.value).not.toBe('Decide later');
+  await act(async () => button('Create Pick').props.onPress());
+  expect(api.createPick).toHaveBeenCalledWith(
+    expect.objectContaining({ proposedAt: at, swipeDeadlineMinutes: 60, deadlineAt: null }),
+    'owner',
+  );
+});
+test('When cancellation discards changes and Decide later restores legacy payload', async () => {
+  await render();
+  await press('When');
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onClose());
+  expect(row('When').props.value).toBe('Decide later');
+  await press('When');
+  await act(async () =>
+    tree.root
+      .findByType(PlanTimeSheet)
+      .props.onSave(new Date(Date.now() + 2 * 86400000).toISOString()),
+  );
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onClose());
+  await press('When');
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onDecideLater());
+  await act(async () => button('Create Pick').props.onPress());
+  expect(jest.mocked(api.createPick).mock.calls[0]![0]).not.toHaveProperty('proposedAt');
+});
+test('Hang conversion keeps scheduling control absent and existing payload unchanged', async () => {
+  mockParams = { hangId: 'hang' };
+  await render();
+  expect(row('When')).toBeUndefined();
+  await act(async () => button('Create Pick').props.onPress());
+  expect(jest.mocked(api.hangPick).mock.calls[0]![1]).not.toHaveProperty('proposedAt');
 });

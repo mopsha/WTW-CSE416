@@ -1,3 +1,5 @@
+import { respondAvailability, changeProposedTime } from '../_shared/api/availability.ts';
+import { AVAILABILITY_CAPABILITY } from '../_shared/domain/availability.ts';
 import {
   parseRecentWinnerIds,
   resolveRecentWinners,
@@ -115,6 +117,7 @@ export function createApp(
     getUser(req: Request): Promise<{ id: string }>;
     store: HeartbeatStore;
     progressStore?: ProgressStore;
+    availabilityEnabled?: boolean;
     lifecycleStore: LifecycleStore;
     poolBuilder: PoolBuilder;
     pickPlaces?: PickPlaces;
@@ -326,7 +329,10 @@ export function createApp(
   app.get('/picks/:id/progress', async (c) => {
     const user = await deps.getUser(c.req.raw);
     if (!deps.progressStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Progress is not available');
-    return c.json(await getProgress(deps.progressStore, c.req.param('id'), user.id));
+    const progress = await getProgress(deps.progressStore, c.req.param('id'), user.id);
+    if (progress.availability && c.req.header('X-Client-Info') !== AVAILABILITY_CAPABILITY)
+      throw new ApiError(409, 'UPDATE_REQUIRED', 'Update WTW to open this availability Pick.');
+    return c.json(progress);
   });
   app.get('/discover', async (c) => {
     const user = await deps.getUser(c.req.raw);
@@ -372,7 +378,16 @@ export function createApp(
   app.post('/picks', async (c) => {
     const user = await deps.getUser(c.req.raw);
     const body = await readJsonBody(c);
-    parseCreatePick(body);
+    const input = parseCreatePick(body);
+    if (
+      input.proposedAt &&
+      (!deps.availabilityEnabled || c.req.header('X-Client-Info') !== AVAILABILITY_CAPABILITY)
+    )
+      throw new ApiError(
+        409,
+        'AVAILABILITY_NOT_ENABLED',
+        'Availability Picks require the updated WTW app and an enabled server.',
+      );
     await deps.checkLimit?.('create', user.id);
     // With { groupId }, everyone in the group is added too (0012_groups.sql).
     return c.json(
@@ -395,16 +410,49 @@ export function createApp(
       ),
     });
   });
+  app.get('/picks/capabilities', async (c) => {
+    await deps.getUser(c.req.raw);
+    c.header('Cache-Control', 'private, no-store');
+    return c.json({ availabilityFirst: !!deps.availabilityEnabled });
+  });
   app.get('/picks/:id', async (c) => {
     c.header('Cache-Control', 'private, no-store');
     const user = await deps.getUser(c.req.raw);
+    const pick = await getPick(
+      deps.lifecycleStore,
+      c.req.param('id'),
+      user.id,
+      deps.refreshHours,
+      deps.pickPlaces,
+      c.req.header('X-Client-Info') === AVAILABILITY_CAPABILITY,
+    );
+    if (pick.availability && c.req.header('X-Client-Info') !== AVAILABILITY_CAPABILITY)
+      throw new ApiError(409, 'UPDATE_REQUIRED', 'Update WTW to open this availability Pick.');
+    return c.json(pick);
+  });
+  app.post('/picks/:id/availability', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.lifecycleStore.availability)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Availability is unavailable');
     return c.json(
-      await getPick(
-        deps.lifecycleStore,
+      await respondAvailability(
+        deps.lifecycleStore.availability,
         c.req.param('id'),
         user.id,
-        deps.refreshHours,
-        deps.pickPlaces,
+        await readJsonBody(c),
+      ),
+    );
+  });
+  app.post('/picks/:id/proposed-time', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.lifecycleStore.availability)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Availability is unavailable');
+    return c.json(
+      await changeProposedTime(
+        deps.lifecycleStore.availability,
+        c.req.param('id'),
+        user.id,
+        await readJsonBody(c),
       ),
     );
   });
@@ -417,6 +465,7 @@ export function createApp(
         c.req.param('id'),
         user.id,
         () => deps.checkLimit?.('start', user.id, c.req.param('id')) ?? Promise.resolve(),
+        c.req.header('X-Client-Info') === AVAILABILITY_CAPABILITY,
       ),
     );
   });

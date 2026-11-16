@@ -1,3 +1,4 @@
+import type { Availability } from '@shared/domain/availability.ts';
 // In-memory "backend" state for mock mode. Resets when the app reloads, or via resetMockData().
 // It plays the server's part of the whole loop (lobby -> swipe -> close -> vote -> winner) with
 // three pretend friends, Ava, Ben and Cam, who join, swipe and vote on timers, so the live
@@ -41,6 +42,7 @@ export interface MockParticipant {
 }
 
 export interface MockPick extends PlaceFilters {
+  availability?: Availability;
   id: string;
   hostId: string;
   state: PickState;
@@ -328,6 +330,18 @@ export function createMockPick(input: CreatePickInput, hostId = MOCK_USER_ID): M
     participants: [{ ...me(), userId: hostId, name: hostId === MOCK_USER_ID ? 'You' : 'Host' }],
     createdAt: Date.now(),
   });
+  if (input.proposedAt)
+    pick.availability = {
+      proposedAt: input.proposedAt,
+      revision: 1,
+      locked: false,
+      canVote: false,
+      cohortUserIds: [],
+      deadlineMinutes: input.swipeDeadlineMinutes ?? 60,
+      participants: [
+        { userId: hostId, displayName: hostId === MOCK_USER_ID ? 'You' : 'Host', response: 'yes' },
+      ],
+    };
   mockPicks.set(id, pick);
   return pick;
 }
@@ -337,10 +351,10 @@ export function decide(pick: MockPick, now = new Date()) {
   if (pick.state !== 'swiping' && pick.state !== 'completed') return;
   pick.ranked = rankCandidates(
     pick.candidates.map((c) => ({ placeId: c.placeId, lat: c.lat, lng: c.lng })),
-    pick.participants.flatMap((p) =>
+    votersOf(pick).flatMap((p) =>
       [...p.answers].map(([placeId, v]) => ({ placeId, answer: answerFromDb(v) })),
     ),
-    pick.participants.length,
+    votersOf(pick).length,
     pick.center,
   );
   const decision = clearWinner(pick.ranked);
@@ -369,8 +383,8 @@ export function decide(pick: MockPick, now = new Date()) {
 export function maybeAutoClose(pick: MockPick, now = new Date()) {
   if (pick.state !== 'swiping') return;
   const due = dueToClose({
-    done: pick.participants.filter((p) => isDone(pick, p)).length,
-    n: pick.participants.length,
+    done: votersOf(pick).filter((p) => isDone(pick, p)).length,
+    n: votersOf(pick).length,
     thresholdPct: pick.closeThreshold,
     deadlineAt: pick.deadlineAt ? new Date(pick.deadlineAt) : null,
     now,
@@ -387,7 +401,7 @@ export function finalistsOf(pick: MockPick) {
 export function settleVote(pick: MockPick, now = new Date()) {
   if (pick.state !== 'final_vote') return;
   const finalists = finalistsOf(pick);
-  const ballots = pick.participants.flatMap((p) => (p.vote ? [p.vote] : []));
+  const ballots = votersOf(pick).flatMap((p) => (p.vote ? [p.vote] : []));
   const winner = voteWinner(finalists, ballots);
   const counts = finalists.map((f) => ballots.filter((b) => b === f.placeId).length);
   const top = Math.max(...counts);
@@ -399,7 +413,7 @@ export function settleVote(pick: MockPick, now = new Date()) {
 }
 
 export function maybeSettleVote(pick: MockPick) {
-  if (pick.state === 'final_vote' && pick.participants.every((p) => p.vote)) settleVote(pick);
+  if (pick.state === 'final_vote' && votersOf(pick).every((p) => p.vote)) settleVote(pick);
 }
 
 // ---------------------------------------------------------------------------
@@ -413,14 +427,26 @@ export function scheduleBots(pick: MockPick) {
   const key = `${pick.id}:${pick.state}`;
   if (!botsEnabled || scheduled.has(key)) return;
   scheduled.add(key);
-  const bots = () => pick.participants.filter((p) => p.userId !== MOCK_USER_ID);
+  const bots = () => votersOf(pick).filter((p) => p.userId !== MOCK_USER_ID);
 
   if (pick.state === 'draft') {
     [0, 1, 2].forEach((i) =>
       later(1500 + i * 1800, () => {
         if (pick.state !== 'draft' && pick.state !== 'swiping') return;
-        if (pick.participants.some((p) => p.userId === FRIEND_IDS[i])) return;
-        pick.participants.push(friend(i));
+        const existing = pick.participants.find((p) => p.userId === FRIEND_IDS[i]);
+        if (existing && !pick.availability) return;
+        if (!existing) pick.participants.push(friend(i));
+        if (
+          pick.availability &&
+          !pick.availability.locked &&
+          !pick.availability.participants.some((p) => p.userId === FRIEND_IDS[i])
+        ) {
+          pick.availability.participants.push({
+            userId: FRIEND_IDS[i]!,
+            displayName: friend(i).name,
+            response: i === 0 ? 'yes' : i === 1 ? 'maybe' : 'cant',
+          });
+        }
         emit(pick.id);
       }),
     );
@@ -451,7 +477,13 @@ export function scheduleBots(pick: MockPick) {
 // Read models
 // ---------------------------------------------------------------------------
 export function summaryOf(pick: MockPick): PickSummary {
-  return { id: pick.id, state: pick.state, category: pick.category, deadlineAt: pick.deadlineAt };
+  return {
+    id: pick.id,
+    state: pick.state,
+    category: pick.category,
+    deadlineAt: pick.deadlineAt,
+    ...(pick.availability ? { proposedAt: pick.availability.proposedAt } : {}),
+  };
 }
 
 export function outcomeOf(pick: MockPick): PickOutcome {
@@ -463,9 +495,32 @@ export function outcomeOf(pick: MockPick): PickOutcome {
   };
 }
 
+export function votersOf(pick: MockPick) {
+  return pick.availability
+    ? pick.participants.filter(
+        (p) =>
+          pick.availability!.locked &&
+          pick.availability!.cohortUserIds.includes(p.userId) &&
+          !mockBlocks.has(p.userId),
+      )
+    : pick.participants;
+}
+export function availabilityOf(pick: MockPick, viewer = MOCK_USER_ID): Availability | undefined {
+  if (!pick.availability) return undefined;
+  return {
+    ...pick.availability,
+    canVote: pick.availability.locked && pick.availability.cohortUserIds.includes(viewer),
+    participants: pick.participants.map((p) => ({
+      userId: p.userId,
+      displayName: p.name,
+      response:
+        pick.availability!.participants.find((r) => r.userId === p.userId)?.response ?? null,
+    })),
+  };
+}
 export function progressOf(pick: MockPick): PickProgress {
   // Host first, then join order: the same order as the real GET /picks/:id/progress.
-  const participants = pick.participants
+  const participants = (pick.availability?.locked ? votersOf(pick) : pick.participants)
     .map((p) => ({
       userId: p.userId,
       displayName: p.userId === MOCK_USER_ID ? (mockProfile.displayName ?? p.name) : p.name,
@@ -476,6 +531,7 @@ export function progressOf(pick: MockPick): PickProgress {
     }))
     .sort((a, b) => Number(b.isHost) - Number(a.isHost));
   return {
+    ...(pick.availability ? { availability: availabilityOf(pick) } : {}),
     state: pick.state,
     // Like the real route: in the final vote, count down the vote's own deadline.
     deadlineAt: pick.state === 'final_vote' ? pick.voteDeadlineAt : pick.deadlineAt,
