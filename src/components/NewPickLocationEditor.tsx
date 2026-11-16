@@ -123,20 +123,21 @@ export function NewPickLocationEditor({
       animationType={reduced ? 'none' : 'slide'}
       onRequestClose={cancel}
       onShow={() => {
-        if (Platform.OS === 'web') heading.current?.focus();
-        else if (heading.current)
+        if (Platform.OS === 'web') {
+          // TextProps does not include tabIndex in native-only typechecks.
+          // On web the ref is a DOM element; make only that element focusable.
+          if (typeof HTMLElement !== 'undefined' && heading.current instanceof HTMLElement) {
+            heading.current.setAttribute('tabindex', '-1');
+            heading.current.focus();
+          }
+        } else if (heading.current)
           AccessibilityInfo.sendAccessibilityEvent(heading.current, 'focus');
       }}
     >
       <Screen scroll={false} contentStyle={s.frame}>
         <View onAccessibilityEscape={cancel} style={s.fill} accessibilityViewIsModal>
           <View style={s.header}>
-            <Text
-              ref={heading}
-              tabIndex={Platform.OS === 'web' ? -1 : undefined}
-              style={s.heading}
-              accessibilityRole="header"
-            >
+            <Text ref={heading} accessible style={s.heading} accessibilityRole="header">
               Where
             </Text>
             <Button label="Cancel" variant="link" onPress={cancel} />
