@@ -45,11 +45,11 @@ test('canceled Picks use creation dates; invalid or absent dates are omitted saf
   expect(recentHistory([pick('older', { decidedAt: '2026-11-08T12:00:00Z' }), canceled])[0]).toBe(
     canceled,
   );
-  expect(historySubtitle(canceled)).toContain('Canceled · Food Pick · ');
+  expect(historySubtitle(canceled)).toContain('Canceled · ');
   expect(historyDate(pick('id', { decidedAt: 'bad date', createdAt: canceled.createdAt }))).toBe(
     canceled.createdAt,
   );
-  expect(historySubtitle(pick('id', { decidedAt: 'bad date' }))).toBe('Decided · Food Pick');
+  expect(historySubtitle(pick('id', { decidedAt: 'bad date' }))).toBe('Decided');
   expect(recentHistory([])).toEqual([]);
 });
 
@@ -62,4 +62,14 @@ test('server timestamp microseconds are preserved before applying the ID tie bre
   const older = pick('a', { decidedAt: '2026-01-01T12:00:00.000001+00:00' });
   const newer = pick('b', { decidedAt: '2026-01-01T12:00:00.000002+00:00' });
   expect(recentHistory([older, newer]).map((p) => p.id)).toEqual(['b', 'a']);
+});
+
+test('type context is omitted only when the visible title already supplies it', () => {
+  const fallback = pick('missing', { category: 'food' });
+  expect(historySubtitle(fallback)).toBe('Decided');
+  expect(historyTitle(fallback)).toBe('Food Pick');
+  expect(historySubtitle(fallback, 'Live Google Cafe')).toBe('Decided · Food Pick');
+  const canceled = pick('cancel', { state: 'canceled', category: 'activities' });
+  expect(historyTitle(canceled)).toBe('Activities Pick');
+  expect(historySubtitle(canceled)).toBe('Canceled');
 });

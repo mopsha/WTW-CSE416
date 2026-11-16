@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import React from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import { PlanBlock } from '@/components/PlanBlock';
@@ -279,4 +280,29 @@ test('a Hang that already started a Pick stays visible and can still take RSVPs'
   expect(text()).not.toContain('no longer available');
   await act(async () => invitation.props.onRespond('down'));
   expect(api.respondHang).toHaveBeenCalledWith('hang', 'down', 'A');
+});
+
+test('converted Hang hosts keep the enabled Let’s Pick entry and navigate with the original Hang identity', async () => {
+  jest
+    .mocked(api.getHang)
+    .mockResolvedValue({
+      posts: [{ ...post(), authorId: 'A', pickId: 'existing-draft' }],
+      sharedAvailable: true,
+      notice: '',
+    });
+  await act(async () => {
+    tree = create(<HangCard />);
+  });
+  const invitation = tree.root.findByType(HangInvitation);
+  expect(invitation.props.disabled).toBe(false);
+  const start = tree.root.findAll(
+    (n: any) => n.props.label === 'Let’s Pick' && typeof n.props.onPress === 'function',
+  )[0];
+  expect(start.props.disabled).toBe(false);
+  await act(async () => start.props.onPress());
+  expect(router.push).toHaveBeenCalledWith({
+    pathname: '/pick/new',
+    params: { hangId: 'hang', hangActivity: 'Walk' },
+  });
+  expect(tree.root.findByType(HangInvitation).props.post.pickId).toBe('existing-draft');
 });

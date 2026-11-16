@@ -26,11 +26,11 @@ export function recentHistory(picks: readonly PickSummary[]): PickSummary[] {
 export function historyTitle(pick: PickSummary): string {
   return (pick.state === 'completed' && pick.winnerName?.trim()) || pickTitle(pick.category);
 }
-export function historySubtitle(pick: PickSummary): string {
+export function historySubtitle(pick: PickSummary, displayedTitle = historyTitle(pick)): string {
   const date = historyDate(pick);
   return [
     STATE_LABEL[pick.state],
-    pickTitle(pick.category),
+    displayedTitle.trim() === pickTitle(pick.category) ? null : pickTitle(pick.category),
     date
       ? new Date(date).toLocaleDateString(undefined, {
           month: 'short',

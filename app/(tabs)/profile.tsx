@@ -140,7 +140,7 @@ function OwnProfile() {
 
 const styles = StyleSheet.create({
   content: { gap: space.lg, paddingTop: space.sm },
-  account: { marginTop: space.xl, gap: space.lg },
+  account: { marginTop: space.xs, gap: space.lg },
   settings: { backgroundColor: profileTheme.surface, borderRadius: radius.md, overflow: 'hidden' },
   footer: { paddingTop: space.sm, paddingBottom: space.lg },
 });
