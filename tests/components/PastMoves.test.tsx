@@ -93,3 +93,18 @@ test.each(['default', 'profile'] as const)(
     jest.useRealTimers();
   },
 );
+
+test('the compact own-profile empty state explains confirmed attendance without inventing memories', async () => {
+  jest.mocked(api.getUserPastMoves).mockResolvedValue({ visible: true, pastMoves: [] });
+  let tree!: Tree;
+  await act(async () => {
+    tree = create(<PastMoves userId="me" variant="profile" />);
+  });
+  const text = JSON.stringify(tree.toJSON());
+  expect(text).toContain('Your memories start here.');
+  expect(text).toContain('Confirmed outings appear here.');
+  expect(text).toContain('Did you go?');
+  expect(text).toContain('on a past Pick');
+  expect(tree.root.findAllByType('test-card')).toHaveLength(0);
+  await act(async () => tree.unmount());
+});
