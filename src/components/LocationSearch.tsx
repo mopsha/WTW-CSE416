@@ -28,7 +28,9 @@ export function LocationSearch({ label, onPick }: Props) {
 
   useEffect(() => {
     const id = ++latest.current;
+    const generation = latest;
     const timer = setTimeout(() => {
+      if (id !== latest.current) return;
       if (query.trim().length < 2) {
         setResults([]);
         return;
@@ -47,11 +49,17 @@ export function LocationSearch({ label, onPick }: Props) {
           if (id === latest.current) setSearching(false);
         });
     }, DEBOUNCE_MS);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      ++generation.current;
+    };
   }, [query]);
 
   const choose = (r: LocationResult) => {
     haptic.tap();
+    ++latest.current;
+    setLocating(false);
+    setSearching(false);
     onPick(r.center, r.label);
     setQuery('');
     setResults([]);
@@ -60,15 +68,23 @@ export function LocationSearch({ label, onPick }: Props) {
 
   const useMine = () => {
     haptic.tap();
+    const id = ++latest.current;
+    setResults([]);
+    setSearching(false);
     setLocating(true);
     setNote(null);
     currentLocation()
       .then((here) => {
+        if (id !== latest.current) return;
         if (here) onPick(here, 'My location');
         else setNote('Location is off for WTW. Search or drop the pin instead.');
       })
-      .catch(() => setNote('Couldn’t find you. Search or drop the pin instead.'))
-      .finally(() => setLocating(false));
+      .catch(() => {
+        if (id === latest.current) setNote('Couldn’t find you. Search or drop the pin instead.');
+      })
+      .finally(() => {
+        if (id === latest.current) setLocating(false);
+      });
   };
 
   return (
@@ -77,7 +93,13 @@ export function LocationSearch({ label, onPick }: Props) {
         <Ionicons name="search" size={18} color={colors.muted} />
         <TextInput
           value={query}
-          onChangeText={setQuery}
+          onChangeText={(value) => {
+            ++latest.current;
+            setLocating(false);
+            setSearching(false);
+            setResults([]);
+            setQuery(value);
+          }}
           placeholder={label || 'Search a place or area'}
           placeholderTextColor={label ? colors.text : colors.muted}
           style={styles.input}
@@ -112,7 +134,7 @@ export function LocationSearch({ label, onPick }: Props) {
         disabled={locating}
         accessibilityRole="button"
         accessibilityLabel="Use my location"
-        accessibilityState={{ busy: locating }}
+        accessibilityState={{ busy: locating, disabled: locating }}
         style={({ pressed }) => [styles.mine, pressed && styles.pressed]}
       >
         {locating ? (
