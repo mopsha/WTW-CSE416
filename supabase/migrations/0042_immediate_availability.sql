@@ -45,6 +45,8 @@ language plpgsql set search_path='' as $$ declare p public.picks; began timestam
  if p_response is null or p_response not in ('yes','maybe','cant') then raise exception using errcode='PT400',message='Invalid availability response'; end if;
  select started_at into began from public.pick_availability where pick_id=p.id and user_id=p_user_id;
  if began is not null and p_response='cant' then raise exception using errcode='PT409',message='Your voting response is kept after your first swipe. Update attendance after results.'; end if;
+ -- The last Yes/Maybe cannot decline: an empty round could never close and would stay swiping.
+ if p_response='cant' and private.availability_eligible_ids(p.id) <@ array[p_user_id] then raise exception using errcode='PT409',message='Someone has to be able to go. Cancel the Pick instead.'; end if;
  insert into public.pick_availability(pick_id,user_id,revision,response) values(p.id,p_user_id,p_revision,p_response)
  on conflict(pick_id,user_id) do update set response=excluded.response,revision=excluded.revision,updated_at=now();
  update public.picks set updated_at=now() where id=p.id;

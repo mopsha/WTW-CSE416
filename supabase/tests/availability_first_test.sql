@@ -91,5 +91,13 @@ select public.pick_availability_respond(id::text,'af000000-0000-4000-8000-000000
 select is(jsonb_array_length(public.pick_load_for_close((select id::text from av_ready))->'participantIds'),1,'declined participant is excluded from completion denominator');
 select lives_ok($$select private.availability_freeze(id::text,(select version::text from picks where id=av_ready.id),'system',null) from av_ready$$,'all answered invitations release default completion guard');
 select is((select count(*) from pick_voting_cohort where pick_id=(select id from av_ready)),1::bigint,'declined participant never enters final cohort');
+-- The last Yes/Maybe cannot decline, or the round could never close and would stay swiping.
+create temp table av_sole(id uuid);
+insert into av_sole values(pg_temp.scheduled());
+insert into pick_participants(pick_id,user_id) select id,'af000000-0000-4000-8000-000000000002' from av_sole;
+select throws_ok($$select public.pick_availability_respond(id::text,'af000000-0000-4000-8000-000000000001',1,'cant') from av_sole$$,'PT409','Someone has to be able to go. Cancel the Pick instead.','sole eligible host cannot decline');
+select public.pick_availability_respond(id::text,'af000000-0000-4000-8000-000000000002',1,'yes') from av_sole;
+select lives_ok($$select public.pick_availability_respond(id::text,'af000000-0000-4000-8000-000000000001',1,'cant') from av_sole$$,'host may decline once another participant can go');
+select throws_ok($$select public.pick_availability_respond(id::text,'af000000-0000-4000-8000-000000000002',1,'cant') from av_sole$$,'PT409','Someone has to be able to go. Cancel the Pick instead.','last remaining eligible participant cannot decline');
 select * from finish();
 rollback;

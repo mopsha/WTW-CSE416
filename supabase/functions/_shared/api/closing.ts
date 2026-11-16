@@ -138,7 +138,9 @@ async function attemptClose(
     ).length;
     const due = dueToClose({
       done,
-      n: pick.participantIds.length,
+      // Scheduled Picks: unanswered invitations count toward the threshold, so the
+      // auto-Yes host finishing alone cannot close an early-close (<100%) round.
+      n: pick.participantIds.length + (pick.awaitingResponses ?? 0),
       thresholdPct: pick.closeThreshold,
       deadlineAt: pick.deadlineAt ? new Date(pick.deadlineAt) : null,
       now,

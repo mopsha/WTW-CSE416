@@ -345,6 +345,13 @@ const ROUTES: Record<string, Handler> = {
       return wrongState(
         'Your voting response is kept after your first swipe. Update attendance after results.',
       );
+    if (
+      value.response === 'cant' &&
+      a.participants.every(
+        (p) => p.userId === MOCK_USER_ID || !['yes', 'maybe'].includes(p.response ?? ''),
+      )
+    )
+      return wrongState('Someone has to be able to go. Cancel the Pick instead.');
     a.participants = [
       ...a.participants.filter((p) => p.userId !== MOCK_USER_ID),
       {

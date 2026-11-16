@@ -397,7 +397,10 @@ export function maybeAutoClose(pick: MockPick, now = new Date()) {
     return;
   const due = dueToClose({
     done: votersOf(pick).filter((p) => isDone(pick, p)).length,
-    n: votersOf(pick).length,
+    // Unanswered invitations count, matching closing.ts (host alone cannot close early).
+    n:
+      votersOf(pick).length +
+      (availabilityOf(pick)?.participants.filter((p) => p.response === null).length ?? 0),
     thresholdPct: pick.closeThreshold,
     deadlineAt: pick.deadlineAt ? new Date(pick.deadlineAt) : null,
     now,

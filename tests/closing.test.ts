@@ -249,7 +249,7 @@ test.each(['manual', 'deadline', 'explicit threshold', 'all responded'] as const
       mode === 'deadline'
         ? { deadlineAt: new Date(0).toISOString() }
         : mode === 'explicit threshold'
-          ? { closeThreshold: 75 }
+          ? { closeThreshold: 60 }
           : mode === 'all responded'
             ? { awaitingResponses: 0 }
             : {},
@@ -271,6 +271,20 @@ test('scheduled host-only default keeps code invitations possible, and zero vote
   const empty = fixture(scheduledFinished({ participantIds: [], awaitingResponses: 0 }));
   expect(await closePick(empty, 'pick', 'system', null)).toBeNull();
   await expect(closePick(empty, 'pick', 'host', 'host')).rejects.toMatchObject({ status: 409 });
+});
+test('scheduled early close counts unanswered invitations, so the host finishing alone cannot close it', async () => {
+  const pick = scheduledFinished({
+    closeThreshold: 50,
+    participantIds: ['host'],
+    awaitingResponses: 3,
+    invitedCount: 4,
+  });
+  const store = fixture(pick);
+  expect(await closePick(store, 'pick', 'system', null)).toBeNull();
+  expect(store.applyClose).not.toHaveBeenCalled();
+  // Two of the four have finished: 50% is due.
+  const half = fixture({ ...pick, participantIds: ['host', 'guest'], awaitingResponses: 2 });
+  expect(await closePick(half, 'pick', 'system', null)).not.toBeNull();
 });
 test('an availability change during ranking retries with a fresh version and cohort', async () => {
   const store = fixture(scheduledFinished({ awaitingResponses: 0 }));
