@@ -1,5 +1,5 @@
 import React from 'react';
-import { AppState, Text, Switch } from 'react-native';
+import { AppState, FlatList, Text, Switch } from 'react-native';
 import DiscoverScreen from '../../app/(tabs)/discover';
 import { api } from '@/lib/api';
 import { CAMPUS } from '@/lib/places';
@@ -14,7 +14,13 @@ jest.mock('expo-router', () => ({
 }));
 jest.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ session: { user: { id: mockUser } } }) }));
 jest.mock('@/lib/api', () => ({
-  api: { discover: jest.fn(), getSaved: jest.fn(), savePlace: jest.fn(), removeSaved: jest.fn() },
+  api: {
+    discover: jest.fn(),
+    discoverPhoto: jest.fn(),
+    getSaved: jest.fn(),
+    savePlace: jest.fn(),
+    removeSaved: jest.fn(),
+  },
 }));
 jest.mock('@/lib/haptics', () => ({ haptic: { tap: jest.fn() } }));
 jest.mock('@/components/PlaceCard', () => ({
@@ -186,6 +192,48 @@ test('save/unsave, supplied imagery and photo-provider credits remain available'
   await act(async () => press(tree, 'Campus Cafe'));
   expect(textOf(tree)).toContain('Ana Photographer');
   expect(textOf(tree)).toContain('Google Maps');
+  await act(async () => tree.unmount());
+});
+test('lazy covers load once when a card is viewed, then add the photographer credit', async () => {
+  const lazy: Candidate = {
+    ...places[1]!,
+    photos: [{ name: 'places/m/photos/1', authorAttributions: [{ displayName: 'Bo Lens' }] }],
+  };
+  jest.mocked(api.discover).mockResolvedValue({ places: [lazy], fallback: false, notice: null });
+  let resolve!: (value: { photoUrl: string }) => void;
+  jest.mocked(api.discoverPhoto).mockReturnValue(new Promise((r) => (resolve = r)));
+  const tree = await mount();
+  // Pending: a placeholder, not the plain icon cover, and nothing fetched until viewed.
+  expect(tree.root.findByType('test-photo').props.uri).toBeNull();
+  expect(api.discoverPhoto).not.toHaveBeenCalled();
+  const list = tree.root.findByType(FlatList);
+  const item = list.props.data[0];
+  await act(async () => {
+    for (let i = 0; i < 2; i++)
+      list.props.onViewableItemsChanged({ viewableItems: [{ item, isViewable: true }] });
+  });
+  expect(api.discoverPhoto).toHaveBeenCalledTimes(1);
+  expect(api.discoverPhoto).toHaveBeenCalledWith('places/m/photos/1');
+  await act(async () => resolve({ photoUrl: 'https://example.test/museum.jpg' }));
+  expect(tree.root.findByType('test-photo').props.uri).toBe('https://example.test/museum.jpg');
+  await act(async () => press(tree, 'Local Museum'));
+  expect(textOf(tree)).toContain('Bo Lens');
+  expect(api.discoverPhoto).toHaveBeenCalledTimes(1);
+  await act(async () => tree.unmount());
+});
+test('a failed lazy cover falls back to the icon cover without retrying', async () => {
+  const lazy: Candidate = {
+    ...places[1]!,
+    photos: [{ name: 'places/m/photos/1', authorAttributions: [] }],
+  };
+  jest.mocked(api.discover).mockResolvedValue({ places: [lazy], fallback: false, notice: null });
+  jest.mocked(api.discoverPhoto).mockRejectedValue(new Error('rate limited'));
+  const tree = await mount();
+  await act(async () => press(tree, 'Local Museum'));
+  expect(tree.root.findAllByType('test-photo')).toHaveLength(0);
+  await act(async () => press(tree, 'Close'));
+  await act(async () => press(tree, 'Local Museum'));
+  expect(api.discoverPhoto).toHaveBeenCalledTimes(1);
   await act(async () => tree.unmount());
 });
 test('failed feed keeps retry and the server notice is rendered without alteration', async () => {

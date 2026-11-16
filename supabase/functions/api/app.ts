@@ -22,7 +22,13 @@ import { parseGroupIdea, type GroupIdeasStore } from '../_shared/api/groupIdeas.
 import { parseId } from '../_shared/api/groups.ts';
 import { cleanupCache, type CacheCleanupStore } from '../_shared/api/cacheCleanup.ts';
 import { parseHang, respondHang, hangPick, type HangStore } from '../_shared/api/hang.ts';
-import { discover, parseDiscover, withPhotos, type ResolvePhoto } from '../_shared/api/discover.ts';
+import {
+  discover,
+  DISCOVER_PHOTO_NAME,
+  parseDiscover,
+  withPhotos,
+  type ResolvePhoto,
+} from '../_shared/api/discover.ts';
 import type { DiscoverPreferences } from '../_shared/domain/discoverScore.ts';
 import { parseCreatePick } from '../_shared/api/lifecycle.ts';
 import { Hono } from 'hono';
@@ -151,7 +157,7 @@ export function createApp(
       remove(userId: string, placeId: string): Promise<void>;
     };
     checkLimit?: (
-      scope: 'create' | 'start' | 'refresh' | 'discover',
+      scope: 'create' | 'start' | 'refresh' | 'discover' | 'discover_photo',
       userId: string,
       pickId?: string,
     ) => Promise<void>;
@@ -340,15 +346,34 @@ export function createApp(
       requests,
       await deps.discoverStore.preferences(user.id),
     );
+    // photos=lazy clients load each cover from /discover/photo when its card is on screen.
+    // Older clients still get every photo up front.
     return c.json({
       ...result,
-      places: deps.discoverPhoto
-        ? await withPhotos(result.places, deps.discoverPhoto)
-        : result.places,
+      places:
+        deps.discoverPhoto && c.req.query('photos') !== 'lazy'
+          ? await withPhotos(result.places, deps.discoverPhoto)
+          : result.places,
       notice: result.fallback
         ? 'Showing fixture places. Live places may be unavailable or the daily provider limit reached.'
         : null,
     });
+  });
+  // One billed Google call per request, so it has its own daily per-user limit.
+  app.get('/discover/photo', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    c.header('Cache-Control', 'private, no-store');
+    const name = c.req.query('name') ?? '';
+    if (name.length > 512 || !DISCOVER_PHOTO_NAME.test(name))
+      throw new ApiError(400, 'INVALID_INPUT', 'Invalid photo');
+    if (!deps.discoverPhoto) throw new ApiError(503, 'PHOTO_UNAVAILABLE', 'Photos unavailable');
+    await deps.checkLimit?.('discover_photo', user.id);
+    try {
+      return c.json({ photoUrl: await deps.discoverPhoto(name) });
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(503, 'PHOTO_UNAVAILABLE', 'Photo unavailable');
+    }
   });
   app.get('/saved', async (c) => {
     const user = await deps.getUser(c.req.raw);

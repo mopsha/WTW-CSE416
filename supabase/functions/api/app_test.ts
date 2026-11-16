@@ -1981,6 +1981,100 @@ Deno.test('text other people see is filtered: POST /me', async () => {
   equal((await res.json()).error.code, 'TEXT_NOT_ALLOWED');
 });
 
+Deno.test(
+  'Lazy Discover skips photos; /discover/photo validates, limits and hides failures',
+  async () => {
+    const resolved: string[] = [];
+    const limited: string[] = [];
+    let failNext = false;
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async (req) => {
+        if (!req.headers.has('authorization'))
+          throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+        return { id: ANN };
+      },
+      checkLimit: async (scope, userId) => {
+        limited.push(`${scope}:${userId}`);
+      },
+      discoverPhoto: async (name) => {
+        resolved.push(name);
+        if (failNext) throw new Error('over cap');
+        return 'https://img.example/1';
+      },
+      discoverStore: {
+        preferences: async () => ({}),
+        saved: async () => [],
+        save: async () => {},
+        remove: async () => {},
+      },
+      discoverPool: {
+        buildPool: async (request) => [
+          {
+            placeId: `${request.category}-1`,
+            name: 'Place',
+            category: request.category,
+            lat: 40,
+            lng: -73,
+            provider: 'google' as const,
+            photos: [{ name: 'places/p1/photos/a1', authorAttributions: [] }],
+          },
+        ],
+      },
+    });
+    const headers = { authorization: 'Bearer test' };
+    const lazy = await (
+      await app.request('/discover?lat=40&lng=-73&photos=lazy', { headers })
+    ).json();
+    equal(resolved.length, 0);
+    equal(lazy.places[0].photoUrl, undefined);
+    equal(lazy.places[0].photos[0].name, 'places/p1/photos/a1');
+    const eager = await (await app.request('/discover?lat=40&lng=-73', { headers })).json();
+    equal(eager.places[0].photoUrl, 'https://img.example/1');
+    resolved.length = 0;
+    limited.length = 0;
+
+    equal((await app.request('/discover/photo?name=places/p1/photos/a1')).status, 401);
+    for (const name of ['', 'places/p1/photos/a1?x=1', '../places:searchNearby', 'places/p1']) {
+      const res = await app.request(`/discover/photo?${new URLSearchParams({ name })}`, {
+        headers,
+      });
+      equal(res.status, 400);
+    }
+    equal(limited.length, 0);
+    const ok = await app.request('/discover/photo?name=places/p1/photos/a1', { headers });
+    equal(ok.status, 200);
+    equal(ok.headers.get('cache-control'), 'private, no-store');
+    equal(await ok.json(), { photoUrl: 'https://img.example/1' });
+    equal(limited, [`discover_photo:${ANN}`]);
+    failNext = true;
+    const failed = await app.request('/discover/photo?name=places/p1/photos/a1', { headers });
+    equal(failed.status, 503);
+    equal((await failed.json()).error.code, 'PHOTO_UNAVAILABLE');
+    equal(resolved, ['places/p1/photos/a1', 'places/p1/photos/a1']);
+  },
+);
+
+Deno.test('Discover photo limit is checked before the provider is called', async () => {
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async () => ({ id: ANN }),
+    checkLimit: async () => {
+      throw new ApiError(429, 'RATE_LIMITED', 'Request limit reached');
+    },
+    discoverPhoto: async () => {
+      throw new Error('Must not call Google');
+    },
+  });
+  equal((await app.request('/discover/photo?name=places/p1/photos/a1')).status, 429);
+});
+
 Deno.test('Discover rate limit is checked before profile or provider access', async () => {
   const app = createApp({
     store,

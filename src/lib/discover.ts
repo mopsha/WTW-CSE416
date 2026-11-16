@@ -21,6 +21,9 @@ export interface DiscoverPlace extends Candidate {
   lng: number;
   /** Miles from the SBU Academic Mall, for sorting and the card. */
   miles: number;
+  /** Google photo to load when the card is on screen, with the photographers to credit. */
+  photoName?: string;
+  photoCredits?: string[];
 }
 
 // [id, name, kind, emoji, address, priceLevel 1-4 | null, lat, lng]

@@ -21,6 +21,7 @@ import {
   Text,
   TextInput,
   View,
+  type ViewToken,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -60,12 +61,27 @@ const FILTERS = [
   { value: 'activities' as const, label: 'Activities' },
 ];
 
+type LazyPlace = DiscoverPlace & { photoPending?: boolean };
+
+/** Adds a lazily loaded cover and its photographer credit once it arrives. */
+function withLazyPhoto(place: DiscoverPlace, photos: Record<string, string | null>): LazyPlace {
+  if (!place.photoName) return place;
+  const url = photos[place.placeId];
+  if (url === undefined) return { ...place, photoPending: true };
+  if (url === null) return place;
+  return {
+    ...place,
+    photoUrl: url,
+    providerCredits: [...(place.providerCredits ?? []), ...(place.photoCredits ?? [])],
+  };
+}
+
 /** Render supplied feed imagery without adding provider requests or invented photos. */
-function Cover({ place, style }: { place: DiscoverPlace; style: object; big?: boolean }) {
+function Cover({ place, style }: { place: LazyPlace; style: object; big?: boolean }) {
   return (
     <View style={[style, { overflow: 'hidden' }]}>
-      {place.photoUrl ? (
-        <PlacePhoto uri={place.photoUrl} style={StyleSheet.absoluteFill} />
+      {place.photoUrl || place.photoPending ? (
+        <PlacePhoto uri={place.photoUrl ?? null} style={StyleSheet.absoluteFill} />
       ) : (
         <View style={[StyleSheet.absoluteFill, styles.emojiCover]}>
           <Ionicons
@@ -86,7 +102,7 @@ function PlaceTile({
   busy,
   ready,
 }: {
-  place: DiscoverPlace;
+  place: LazyPlace;
   onPress: () => void;
   onSave: () => void;
   saved: boolean;
@@ -103,7 +119,7 @@ function PlaceTile({
         accessibilityRole="button"
         accessibilityLabel={describePlace(place)}
         accessibilityHint="Shows place details and directions"
-        style={[styles.tileMain, !place.photoUrl && styles.tileWithoutPhoto]}
+        style={[styles.tileMain, !place.photoUrl && !place.photoPending && styles.tileWithoutPhoto]}
       >
         <Cover place={place} style={StyleSheet.absoluteFill} />
         <LinearGradient
@@ -147,7 +163,7 @@ function PlaceSheet({
   savedChoices,
   undo,
 }: {
-  place: DiscoverPlace | null;
+  place: LazyPlace | null;
   onClose: () => void;
   savedChoices: SavedChoices;
   undo: ReactNode;
@@ -273,6 +289,30 @@ function DiscoverFeed({ userId }: { userId: string }) {
   const [filter, setFilter] = useState<DiscoverFilter>('all');
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState<DiscoverPlace | null>(null);
+  // Covers load one at a time as cards come on screen: placeId -> URL, or null if it failed.
+  // Kept for the screen's life, so changing filters doesn't pay for the same photo again.
+  const [photos, setPhotos] = useState<Record<string, string | null>>({});
+  const [lazyPhotos] = useState(() => {
+    const requested = new Set<string>();
+    const load = (place: DiscoverPlace) => {
+      if (!place.photoName || requested.has(place.placeId)) return;
+      requested.add(place.placeId);
+      api
+        .discoverPhoto(place.photoName)
+        .then(
+          ({ photoUrl }) => photoUrl,
+          () => null,
+        )
+        .then((url) => setPhotos((current) => ({ ...current, [place.placeId]: url })));
+    };
+    return {
+      load,
+      viewabilityConfig: { itemVisiblePercentThreshold: 20, minimumViewTime: 250 },
+      onViewableItemsChanged: ({ viewableItems }: { viewableItems: ViewToken<LazyPlace>[] }) => {
+        for (const token of viewableItems) if (token.isViewable && token.item) load(token.item);
+      },
+    };
+  });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const { saved, revision: savedRevision } = useSavedChoices(userId);
   usePrivateRefresh(saved.reload, saved.clear, null);
@@ -314,7 +354,8 @@ function DiscoverFeed({ userId }: { userId: string }) {
   const requestKey = JSON.stringify([scope, retry]);
   const current = response?.key === requestKey ? response : null;
   // A same-query refresh may keep its places; never show old-account/filter results.
-  const feed = (current ?? (response?.scope === scope ? response : null))?.places ?? EMPTY_PLACES;
+  const loaded = (current ?? (response?.scope === scope ? response : null))?.places ?? EMPTY_PLACES;
+  const feed = useMemo(() => loaded.map((p) => withLazyPhoto(p, photos)), [loaded, photos]);
   const notice = current?.notice ?? null;
   const error = current?.error ?? null;
   const loading = !current;
@@ -358,7 +399,7 @@ function DiscoverFeed({ userId }: { userId: string }) {
   const displayed = useMemo(() => {
     if (query.trim() || count || sort !== 'recommended') return places;
     const featured = filterDiscover(feed, { category: filter })
-      .filter((p) => p.photoUrl)
+      .filter((p) => p.photoUrl || p.photoName)
       .slice(0, 6);
     const ids = new Set(featured.map((p) => p.placeId));
     return [...featured, ...places.filter((p) => !ids.has(p.placeId))];
@@ -371,6 +412,7 @@ function DiscoverFeed({ userId }: { userId: string }) {
   );
   const show = (p: DiscoverPlace) => {
     haptic.tap();
+    lazyPhotos.load(p);
     setOpen(p);
   };
 
@@ -380,6 +422,8 @@ function DiscoverFeed({ userId }: { userId: string }) {
         data={displayed}
         extraData={savedRevision}
         keyExtractor={(p) => p.placeId}
+        viewabilityConfig={lazyPhotos.viewabilityConfig}
+        onViewableItemsChanged={lazyPhotos.onViewableItemsChanged}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         contentContainerStyle={styles.content}
@@ -602,7 +646,7 @@ function DiscoverFeed({ userId }: { userId: string }) {
       {!open ? undo : null}
       <PlaceSheet
         key={`${userId}:${open?.placeId}`}
-        place={feed.some((p) => p.placeId === open?.placeId) ? open : null}
+        place={feed.find((p) => p.placeId === open?.placeId) ?? null}
         onClose={() => setOpen(null)}
         savedChoices={saved}
         undo={undo}
