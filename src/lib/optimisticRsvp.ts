@@ -20,5 +20,5 @@ export function projectHangRsvp(post: HangPost, desired: HangStatus): HangPost {
     ),
   };
 }
-export const canRsvpHang = (post: HangPost) =>
-  !post.pickId && Date.parse(post.expiresAt) > Date.now();
+// A started Pick does not end the hang: the feed keeps it and the server still takes RSVPs.
+export const canRsvpHang = (post: HangPost) => Date.parse(post.expiresAt) > Date.now();

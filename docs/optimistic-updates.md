@@ -50,8 +50,9 @@ intent. An older acknowledgement cannot replace a newer desired response.
 
 The Pick summary endpoint uses `completed` in the database and `decided` in the
 existing mock domain, so both existing completed-state representations are accepted.
-Canceled/uncompleted Pick plans are ineligible. Hang expiry and existing `pickId`
-conversion block speculative responses. The backend still checks membership,
+Canceled/uncompleted Pick plans are ineligible. Hang expiry blocks speculative
+responses; a hang that already started a Pick stays visible and open to RSVPs, as
+on main and in the server. The backend still checks membership,
 blocks, expiry, uniqueness and event state atomically. Pending/unconfirmed Down
 counts cannot enable creation of a Pick; Pick creation and winner selection remain
 server-confirmed. Other PlanBlock actions keep their Phase 1 guards.

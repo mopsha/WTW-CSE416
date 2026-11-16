@@ -210,7 +210,7 @@ test('closed plans reject speculation and cancellation clears a pending projecti
   expect(choice.choose('going')).toBe(false);
   expect(canRsvpPlan({ ...plan(), state: 'voting' })).toBe(false);
 });
-test('hang counts rebase Down → Maybe → Down and reject expired or converted events', () => {
+test('hang counts rebase Down → Maybe → Down and reject expired events', () => {
   const post = {
     id: 'h',
     myStatus: 'down',
@@ -222,7 +222,8 @@ test('hang counts rebase Down → Maybe → Down and reject expired or converted
   expect(projectHangRsvp(maybe, 'down').downCount).toBe(4);
   expect(projectHangRsvp(post, 'down').downCount).toBe(4);
   expect(canRsvpHang({ ...post, expiresAt: new Date(0).toISOString() })).toBe(false);
-  expect(canRsvpHang({ ...post, pickId: 'pick' })).toBe(false);
+  // A started Pick keeps the hang open: the server still takes RSVPs until expiry.
+  expect(canRsvpHang({ ...post, pickId: 'pick' })).toBe(true);
 });
 
 test('an older post-write RSVP read cannot overwrite a newer participant snapshot', async () => {

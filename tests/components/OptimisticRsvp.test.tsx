@@ -235,13 +235,11 @@ test('Hang poll snapshots include concurrent participants without adding our opt
   });
   await act(async () => jest.advanceTimersByTime(30000));
   expect(tree.root.findByType(HangInvitation).props.post.downCount).toBe(4);
-  jest
-    .mocked(api.getHang)
-    .mockResolvedValue({
-      posts: [{ ...post(), myStatus: 'down', downCount: 5 }],
-      sharedAvailable: true,
-      notice: '',
-    });
+  jest.mocked(api.getHang).mockResolvedValue({
+    posts: [{ ...post(), myStatus: 'down', downCount: 5 }],
+    sharedAvailable: true,
+    notice: '',
+  });
   await act(async () => first.resolve({ status: 'ok' }));
   expect(tree.root.findByType(HangInvitation).props.post.downCount).toBe(5);
   // A failed later poll must not promote its retained, older feed payload to a fresh snapshot.
@@ -264,4 +262,21 @@ test('a deleted or inaccessible Hang disappears during a pending response and ca
   await act(async () => first.resolve({ status: 'ok' }));
   expect(tree.root.findAllByType(HangInvitation)).toHaveLength(0);
   expect(api.getHang).toHaveBeenCalledTimes(reads);
+});
+
+test('a Hang that already started a Pick stays visible and can still take RSVPs', async () => {
+  jest.mocked(api.getHang).mockResolvedValue({
+    posts: [{ ...post(), pickId: 'pick' }],
+    sharedAvailable: true,
+    notice: '',
+  });
+  jest.mocked(api.respondHang).mockResolvedValue({ status: 'ok' });
+  await act(async () => {
+    tree = create(<HangCard />);
+  });
+  const invitation = tree.root.findByType(HangInvitation);
+  expect(invitation.props.disabled).toBe(false);
+  expect(text()).not.toContain('no longer available');
+  await act(async () => invitation.props.onRespond('down'));
+  expect(api.respondHang).toHaveBeenCalledWith('hang', 'down', 'A');
 });
