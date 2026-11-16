@@ -1,20 +1,24 @@
-import { parseProfileDetails } from '@shared/api/userProfiles.ts';
-import { router } from 'expo-router';
+import type { Preferences } from '@shared/domain/preferences.ts';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { AppState, TextInput } from 'react-native';
+import { AppState, StyleSheet, View } from 'react-native';
 
 import {
   Button,
   colors,
   ErrorState,
   Illustration,
+  OnboardingCopy,
   OnboardingFrame,
-  onboardingStyles,
   PageDots,
+  PreferencesForm,
+  Screen,
+  space,
 } from '@/components';
+import { TasteSwipe } from '@/components/TasteSwipe';
 import { useProfile } from '@/hooks/useProfile';
-import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
+import { currentLocation } from '@/lib/locationSearch';
 import {
   readLocationPermission,
   readNotificationPermission,
@@ -24,10 +28,15 @@ import {
 } from '@/lib/permissions';
 import { registerForPush } from '@/lib/push';
 import { openDeviceSettings } from '@/lib/settingsPermissions';
+import { preferencesFromSwipes } from '@/lib/tasteDeck';
 
-const STEPS = ['favorites', 'location', 'notifications', 'done'] as const;
-type Step = (typeof STEPS)[number];
+// Location comes first so the practice swipe can show real places nearby.
+const FULL = ['location', 'taste', 'preferences', 'notifications', 'done'] as const;
+// From the Home "Teach WTW your taste" card: just the taste part.
+const TASTE_ONLY = ['taste', 'preferences'] as const;
+type Step = (typeof FULL)[number];
 type PermissionStep = 'location' | 'notifications';
+type LatLng = { lat: number; lng: number };
 
 const COPY: Record<
   PermissionStep,
@@ -47,15 +56,31 @@ const COPY: Record<
   },
 };
 
+/** Where the user is, only if location is already allowed; never prompts, never throws. */
+async function knownLocation(info: PermissionInfo): Promise<LatLng | null> {
+  if (info.status !== 'granted') return null;
+  try {
+    return await currentLocation();
+  } catch {
+    return null;
+  }
+}
+
 // Optional routes are part of the signed-in stack: neither permissions nor this offer gate Picks.
 // Permission steps follow App Store guideline 5.1.1: our button says "Continue" and only that
 // tap shows the system prompt; "Not now" moves on with no prompt; a decided permission is never
 // asked again. Opening a step only reads the status.
 export default function OnboardingScreen() {
-  const { finishOptionalSetup } = useProfile();
-  const [step, setStep] = useState<Step>('favorites');
-  const [cuisine, setCuisine] = useState('');
-  const [activity, setActivity] = useState('');
+  const { mode } = useLocalSearchParams<{ mode?: string }>();
+  const steps: readonly Step[] = mode === 'taste' ? TASTE_ONLY : FULL;
+  const profile = useProfile();
+  const { finishOptionalSetup } = profile;
+  const [step, setStep] = useState<Step>(steps[0]!);
+  // undefined = still looking up (taste-only mode), so the deck is built once, not swapped.
+  const [center, setCenter] = useState<LatLng | null | undefined>(
+    mode === 'taste' ? undefined : null,
+  );
+  const [draft, setDraft] = useState<Preferences>(profile.preferences);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [permission, setPermission] = useState<PermissionInfo | null>(null);
@@ -81,6 +106,19 @@ export default function OnboardingScreen() {
     };
   }, [permissionStep]);
 
+  // Taste-only mode skips the location step: use the location only if it's already allowed.
+  useEffect(() => {
+    if (mode !== 'taste') return;
+    let active = true;
+    void readLocationPermission()
+      .then(knownLocation)
+      .then((c) => active && setCenter(c))
+      .catch(() => active && setCenter(null));
+    return () => {
+      active = false;
+    };
+  }, [mode]);
+
   async function act(work: () => Promise<void>) {
     if (pending.current) return;
     pending.current = true;
@@ -96,16 +134,18 @@ export default function OnboardingScreen() {
     }
   }
 
-  function go(next: Step) {
+  const after = (current: Step): Step | null => steps[steps.indexOf(current) + 1] ?? null;
+  function go(next: Step | null) {
     setPermission(null);
     setError(null);
+    if (next === null) return enter();
     setStep(next);
     if (next === 'done') void markDone();
   }
 
   /** Records that setup was offered. Offline failures just mean it's offered again next start. */
   async function markDone() {
-    if (finished.current) return;
+    if (finished.current || mode === 'taste') return;
     finished.current = true;
     try {
       await finishOptionalSetup();
@@ -120,40 +160,31 @@ export default function OnboardingScreen() {
     void markDone();
   }
 
-  async function saveFavorites() {
-    if (!cuisine.trim() && !activity.trim()) return go('location');
-    const current = await api.getMyUserProfile();
-    await api.updateProfileDetails(
-      parseProfileDetails({
-        username: current.username,
-        shareMetadata: current.shareMetadata ?? false,
-        favoriteCuisine: cuisine.trim() || current.favoriteCuisine,
-        favoriteActivity: activity.trim() || current.favoriteActivity,
-      }),
-    );
-    go('location');
-  }
-
   async function continuePermission() {
     if (step === 'location') {
-      await requestLocationPermission();
-      go('notifications');
+      setCenter(await knownLocation(await requestLocationPermission()));
+      go(after('location'));
     } else {
       const result = await requestNotificationPermission();
       if (result.status === 'granted') void registerForPush();
-      go('done');
+      go(after('notifications'));
     }
   }
 
-  const index = STEPS.indexOf(step);
+  async function savePreferences() {
+    await profile.savePreferences(draft);
+    go(after('preferences'));
+  }
+
+  const dots = <PageDots index={steps.indexOf(step)} total={steps.length} noun="Step" />;
   const top =
     step === 'done' ? (
-      <PageDots index={index} total={STEPS.length} noun="Step" />
+      dots
     ) : (
       <>
-        <PageDots index={index} total={STEPS.length} noun="Step" />
+        {dots}
         <Button
-          label="Skip setup"
+          label={mode === 'taste' ? 'Close' : 'Skip setup'}
           accessibilityHint="Skips the optional setup and opens your Picks"
           variant="link"
           disabled={busy}
@@ -163,48 +194,53 @@ export default function OnboardingScreen() {
     );
   const banner = error ? <ErrorState variant="banner" message={error} /> : null;
 
-  if (step === 'favorites')
+  if (step === 'taste')
     return (
-      <OnboardingFrame
-        top={top}
-        art={<Illustration icon="heart" size={160} />}
-        title="A few favorites?"
-        body="Optional. Add a cuisine and an activity you love to your profile."
-        actions={
-          <>
-            {banner}
-            <Button label="Continue" loading={busy} onPress={() => void act(saveFavorites)} />
-            <Button
-              label="Not now"
-              accessibilityHint="Skips favorites"
-              variant="link"
-              disabled={busy}
-              onPress={() => go('location')}
-            />
-          </>
-        }
-      >
-        <TextInput
-          style={onboardingStyles.input}
-          value={cuisine}
-          onChangeText={setCuisine}
-          maxLength={60}
-          placeholder="Favorite cuisine, e.g. Japanese"
-          placeholderTextColor={colors.muted}
-          accessibilityLabel="Favorite cuisine"
-          editable={!busy}
+      <Screen scroll={false} contentStyle={styles.fill}>
+        <View style={styles.topRow}>{top}</View>
+        <OnboardingCopy
+          title="What sounds good?"
+          body="Swipe right for Yes, left for No, up for Maybe. WTW learns what you like."
         />
-        <TextInput
-          style={onboardingStyles.input}
-          value={activity}
-          onChangeText={setActivity}
-          maxLength={60}
-          placeholder="Favorite activity, e.g. Basketball"
-          placeholderTextColor={colors.muted}
-          accessibilityLabel="Favorite activity"
-          editable={!busy}
+        <TasteSwipe
+          key={center === undefined ? 'locating' : 'ready'}
+          center={center}
+          onDone={(answers) => {
+            setDraft(preferencesFromSwipes(profile.preferences, answers));
+            go('preferences');
+          }}
         />
-      </OnboardingFrame>
+        <Button
+          label="Skip swiping"
+          accessibilityHint="Goes straight to the preferences form"
+          variant="link"
+          onPress={() => {
+            setDraft(profile.preferences);
+            go('preferences');
+          }}
+        />
+      </Screen>
+    );
+
+  if (step === 'preferences')
+    return (
+      <Screen>
+        <View style={styles.topRow}>{top}</View>
+        <OnboardingCopy
+          title="Here’s your taste"
+          body="Fix anything that’s off, then set your budget and how far you’ll go."
+        />
+        <PreferencesForm value={draft} onChange={setDraft} />
+        {banner}
+        <Button label="Save" loading={busy} onPress={() => void act(savePreferences)} />
+        <Button
+          label="Not now"
+          accessibilityHint="Continues without saving preferences"
+          variant="link"
+          disabled={busy}
+          onPress={() => go(after('preferences'))}
+        />
+      </Screen>
     );
 
   if (step === 'done')
@@ -260,7 +296,7 @@ export default function OnboardingScreen() {
               }
               variant="link"
               disabled={busy}
-              onPress={() => go(step === 'location' ? 'notifications' : 'done')}
+              onPress={() => go(after(step))}
             />
           )}
           {status === 'denied' ? (
@@ -277,3 +313,8 @@ export default function OnboardingScreen() {
     />
   );
 }
+
+const styles = StyleSheet.create({
+  fill: { flex: 1, gap: space.md },
+  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+});

@@ -13,7 +13,7 @@ describe('validatePreferences', () => {
       validatePreferences({
         categories: ['food', 'activities', 'food'],
         types: ['pizza_restaurant', 'bowling_alley'],
-        dislikedTypes: ['seafood_restaurant'],
+        dislikedTypes: ['seafood_restaurant', 'zoo'],
         priceMax: 2,
         maxDistanceM: DISTANCE_OPTIONS[1]!.value,
       }),
@@ -21,7 +21,7 @@ describe('validatePreferences', () => {
       preferences: {
         categories: ['food', 'activities'],
         types: ['pizza_restaurant', 'bowling_alley'],
-        dislikedTypes: ['seafood_restaurant'],
+        dislikedTypes: ['seafood_restaurant', 'zoo'],
         priceMax: 2,
         maxDistanceM: DISTANCE_OPTIONS[1]!.value,
       },
@@ -36,7 +36,7 @@ describe('validatePreferences', () => {
     ['not an object', []],
     ['unknown category', { categories: ['nightlife'] }],
     ['unknown type', { types: ['casino'] }],
-    ['activity as a disliked cuisine', { dislikedTypes: ['zoo'] }],
+    ['unknown type to skip', { dislikedTypes: ['casino'] }],
     ['liked and skipped', { types: ['cafe'], dislikedTypes: ['cafe'] }],
     ['budget 0', { priceMax: 0 }],
     ['budget 5', { priceMax: 5 }],
