@@ -1,19 +1,26 @@
+import { useOptimisticChoice } from '@/hooks/useOptimisticChoice';
+import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
+import { OptimisticChoice, mutationStamp } from '@/lib/optimisticChoice';
+import { canRsvpHang, projectHangRsvp } from '@/lib/optimisticRsvp';
 import { useMotionPreference } from '@/hooks/useMotionPreference';
 import { HangPlanComposer } from './HangPlanComposer';
 import { picksTheme } from './theme';
 import { HangInvitation } from './picks/HangInvitation';
-import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { router } from 'expo-router';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Modal, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/lib/api';
-import { messageOf } from '@/lib/errors';
-import type { HangPost } from '@shared/api/hang.ts';
+import { isAccessDenied, messageOf } from '@/lib/errors';
+import type { HangPost, HangStatus } from '@shared/api/hang.ts';
 import { Button, colors, ErrorState, radius, space, type } from './index';
 
 export function HangCard() {
-  const reduceMotion = useMotionPreference();
   const userId = useAuth().session?.user.id;
+  return <HangFeed key={userId ?? 'signed-out'} userId={userId} />;
+}
+function HangFeed({ userId }: { userId: string | undefined }) {
+  const reduceMotion = useMotionPreference();
   const [now, setNow] = useState(() => Date.now());
   const [compose, setCompose] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -21,49 +28,39 @@ export function HangCard() {
   const closeComposer = () => {
     if (!savingRef.current) setCompose(false);
   };
-  const [busy, setBusy] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [retry, setRetry] = useState(0);
+  const latest = useRef(0);
   const [result, setResult] = useState<{
-    key: string;
     posts: HangPost[];
     notice: string;
     error?: string;
+    stamp: number;
   } | null>(null);
-  const key = `${userId}:${retry}`;
-  useFocusEffect(
-    useCallback(() => {
-      if (!userId) return;
-      setRetry((n) => n + 1);
-      const t = setInterval(() => setRetry((n) => n + 1), 30000);
-      return () => clearInterval(t);
-    }, [userId]),
-  );
-  const respond = (id: string, status: 'down' | 'maybe' | 'cant') => {
-    if (busy) return;
-    setBusy(`${id}-${status}`);
-    setActionError(null);
-    void api
-      .respondHang(id, status)
-      .then(() => setRetry((n) => n + 1))
-      .catch((e) => setActionError(messageOf(e)))
-      .finally(() => setBusy(null));
-  };
-  useEffect(() => {
-    let active = true;
-    api
-      .getHang()
-      .then((response) => {
-        if (active) setResult({ key, ...response });
-      })
-      .catch((e) => {
-        if (active) setResult({ key, posts: [], notice: '', error: messageOf(e) });
-      });
-    return () => {
-      active = false;
-    };
-  }, [key]);
-  const current = result?.key === key ? result : null;
+  const clear = useCallback(() => {
+    latest.current++;
+    setResult(null);
+  }, []);
+  const reload = useCallback(async () => {
+    if (!userId) return;
+    const request = ++latest.current;
+    const stamp = mutationStamp();
+    try {
+      const response = await api.getHang(userId);
+      if (request === latest.current) setResult({ ...response, stamp });
+    } catch (error) {
+      if (request !== latest.current) return;
+      if (isAccessDenied(error))
+        setResult({ posts: [], notice: '', error: messageOf(error), stamp });
+      else
+        setResult((previous) => ({
+          posts: previous?.posts ?? [],
+          notice: previous?.notice ?? '',
+          stamp: previous?.stamp ?? stamp,
+          error: messageOf(error),
+        }));
+    }
+  }, [userId]);
+  usePrivateRefresh(reload, clear, 30000);
+  const current = result;
   useEffect(() => {
     const next = Math.min(
       ...(current?.posts ?? []).map((p) => Date.parse(p.expiresAt)).filter((at) => at > now),
@@ -79,20 +76,16 @@ export function HangCard() {
     <View style={styles.feed}>
       <Text style={styles.title}>Who’s down?</Text>
       {!current ? <Text style={styles.muted}>Loading hang plans…</Text> : null}
-      {actionError ? <ErrorState message={actionError} /> : null}
       {current?.notice ? <Text style={styles.muted}>{current.notice}</Text> : null}
-      {current?.error ? (
-        <ErrorState message={current.error} onRetry={() => setRetry((n) => n + 1)} />
-      ) : null}
+      {current?.error ? <ErrorState message={current.error} onRetry={() => void reload()} /> : null}
       {current?.posts
         .filter((p) => Date.parse(p.expiresAt) > now)
         .map((post) => (
-          <HangInvitation
+          <HangResponse
             key={post.id}
             post={post}
             userId={userId}
-            busy={busy}
-            onRespond={(status) => respond(post.id, status)}
+            stamp={current.stamp}
             onStart={() =>
               router.push({
                 pathname: '/pick/new',
@@ -125,7 +118,7 @@ export function HangCard() {
             }}
             onCreated={() => {
               setCompose(false);
-              setRetry((n) => n + 1);
+              void reload();
             }}
           />
         ) : null}
@@ -140,3 +133,62 @@ const styles = StyleSheet.create({
   body: { ...type.body, color: colors.text },
   muted: { ...type.caption, color: colors.muted },
 });
+
+function HangResponse({
+  post,
+  stamp,
+  userId,
+  onStart,
+}: {
+  post: HangPost;
+  stamp: number;
+  userId: string | undefined;
+  onStart: () => void;
+}) {
+  const read = async () => {
+    const next = (await api.getHang(userId)).posts.find((value) => value.id === post.id);
+    if (!next)
+      throw Object.assign(new Error('This hang plan is no longer available.'), { status: 404 });
+    return next;
+  };
+  const rsvp = useOptimisticChoice(
+    () =>
+      new OptimisticChoice<HangPost, HangStatus>(
+        {
+          read,
+          write: async (status, current) => {
+            await api.respondHang(post.id, status, userId);
+            if (!current()) throw new Error('Screen changed');
+          },
+          readAfterWrite: true,
+          project: projectHangRsvp,
+          selected: (value) => value.myStatus!,
+          eligible: canRsvpHang,
+        },
+        post,
+      ),
+  );
+  useLayoutEffect(() => {
+    rsvp.choice.accept(post, stamp);
+  }, [rsvp.choice, post, stamp]);
+  return (
+    <>
+      {rsvp.error ? (
+        <ErrorState message={rsvp.error} onRetry={() => void rsvp.choice.refresh()} />
+      ) : null}
+      {rsvp.value ? (
+        <HangInvitation
+          post={rsvp.value}
+          userId={userId}
+          busy={null}
+          disabled={rsvp.uncertain || !canRsvpHang(rsvp.value)}
+          pending={rsvp.pending}
+          onRespond={(status) => rsvp.choice.choose(status)}
+          onStart={() => {
+            if (!rsvp.pending && !rsvp.uncertain) onStart();
+          }}
+        />
+      ) : null}
+    </>
+  );
+}

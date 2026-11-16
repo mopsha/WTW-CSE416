@@ -22,21 +22,19 @@ test('plan polling retains its 30-second cadence and stops in background/after l
     state = listener;
     return { remove: jest.fn() };
   });
-  jest
-    .mocked(api.getPlan)
-    .mockResolvedValue({
-      state: 'completed',
-      isHost: false,
-      planAt: null,
-      participantCount: 1,
-      rsvps: { going: 0, maybe: 0, notGoing: 0 },
-      myRsvp: null,
-      outcomes: { went: 0, didNotGo: 0, again: 0 },
-      myOutcome: null,
-    });
+  jest.mocked(api.getPlan).mockResolvedValue({
+    state: 'completed',
+    isHost: false,
+    planAt: null,
+    participantCount: 1,
+    rsvps: { going: 0, maybe: 0, notGoing: 0 },
+    myRsvp: null,
+    outcomes: { went: 0, didNotGo: 0, again: 0 },
+    myOutcome: null,
+  });
   let tree!: ReturnType<typeof create>;
   await act(async () => {
-    tree = create(<PlanBlock pickId="pick" decidedAt={null} />);
+    tree = create(<PlanBlock viewerId="me" pickId="pick" decidedAt={null} />);
   });
   expect(api.getPlan).toHaveBeenCalledTimes(1);
   await act(async () => {

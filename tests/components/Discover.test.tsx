@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, Switch } from 'react-native';
+import { AppState, Text, Switch } from 'react-native';
 import DiscoverScreen from '../../app/(tabs)/discover';
 import { api } from '@/lib/api';
 import { CAMPUS } from '@/lib/places';
@@ -8,7 +8,10 @@ import type { Candidate } from '@shared/places/types.ts';
 let mockUser = 'me';
 const { create, act } = jest.requireActual('react-test-renderer');
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
-jest.mock('expo-router', () => ({ router: { push: jest.fn() } }));
+jest.mock('expo-router', () => ({
+  router: { push: jest.fn() },
+  useFocusEffect: (fn: () => void) => jest.requireActual('react').useEffect(fn, [fn]),
+}));
 jest.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ session: { user: { id: mockUser } } }) }));
 jest.mock('@/lib/api', () => ({
   api: { discover: jest.fn(), getSaved: jest.fn(), savePlace: jest.fn(), removeSaved: jest.fn() },
@@ -73,6 +76,8 @@ const places: Candidate[] = [
 ];
 beforeEach(() => {
   jest.resetAllMocks();
+  AppState.currentState = 'active';
+  jest.spyOn(AppState, 'addEventListener').mockReturnValue({ remove: jest.fn() });
   mockUser = 'me';
   jest.mocked(api.discover).mockResolvedValue({ places, fallback: false, notice: null });
   jest.mocked(api.getSaved).mockResolvedValue({ places: [] });
@@ -175,9 +180,9 @@ test('save/unsave, supplied imagery and photo-provider credits remain available'
   const tree = await mount();
   expect(tree.root.findByType('test-photo').props.uri).toBe('https://example.test/cafe.jpg');
   await act(async () => press(tree, 'Save Campus Cafe'));
-  expect(api.savePlace).toHaveBeenCalledWith('food');
+  expect(api.savePlace).toHaveBeenCalledWith('food', 'me');
   await act(async () => press(tree, 'Unsave Campus Cafe'));
-  expect(api.removeSaved).toHaveBeenCalledWith('food');
+  expect(api.removeSaved).toHaveBeenCalledWith('food', 'me');
   await act(async () => press(tree, 'Campus Cafe'));
   expect(textOf(tree)).toContain('Ana Photographer');
   expect(textOf(tree)).toContain('Google Maps');
@@ -374,5 +379,51 @@ test('same-query retry failure retains usable cards without skeletons; a changed
   await act(async () => finish({ places: [], fallback: false, notice: null }));
   expect(tree.root.findAllByProps({ accessibilityLabel: 'Loading places' })).toHaveLength(0);
   expect(tree.root.findByType('test-empty')).toBeDefined();
+  await act(async () => tree.unmount());
+});
+
+test('a deferred favorite updates the card and open details immediately; the latest opposite choice is serialized', async () => {
+  let resolve!: (v: { status: 'ok' }) => void;
+  jest.mocked(api.savePlace).mockReturnValueOnce(
+    new Promise((yes) => {
+      resolve = yes;
+    }),
+  );
+  const tree = await mount();
+  await act(async () => press(tree, 'Save Campus Cafe'));
+  const selected = tree.root.findAll(
+    (n: any) => n.props.accessibilityLabel === 'Unsave Campus Cafe' && !!n.props.onPress,
+  )[0]!;
+  expect(selected.props.accessibilityState.selected).toBe(true);
+  expect(selected.props.disabled).toBe(false);
+  await act(async () => press(tree, 'Campus Cafe'));
+  expect(button(tree, 'Remove saved place')).toBeDefined();
+  await act(async () => button(tree, 'Remove saved place').props.onPress());
+  expect(button(tree, 'Save place')).toBeDefined();
+  expect(api.removeSaved).not.toHaveBeenCalled();
+  await act(async () => resolve({ status: 'ok' }));
+  expect(api.removeSaved).toHaveBeenCalledWith('food', 'me');
+  expect(button(tree, 'Undo')).toBeDefined();
+  await act(async () => button(tree, 'Undo').props.onPress());
+  expect(button(tree, 'Remove saved place')).toBeDefined();
+  await act(async () => tree.unmount());
+});
+
+test('switching accounts during a pending favorite discards its queued inverse and Undo', async () => {
+  let resolve!: (v: { status: 'ok' }) => void;
+  jest.mocked(api.savePlace).mockReturnValueOnce(
+    new Promise((yes) => {
+      resolve = yes;
+    }),
+  );
+  const tree = await mount();
+  await act(async () => press(tree, 'Save Campus Cafe'));
+  await act(async () => press(tree, 'Unsave Campus Cafe'));
+  mockUser = 'B';
+  await act(async () => tree.update(<DiscoverScreen />));
+  await act(async () => resolve({ status: 'ok' }));
+  expect(api.removeSaved).not.toHaveBeenCalled();
+  expect(tree.root.findAllByProps({ accessibilityLabel: 'Unsave Campus Cafe' })).toHaveLength(0);
+  expect(button(tree, 'Undo')).toBeUndefined();
   await act(async () => tree.unmount());
 });

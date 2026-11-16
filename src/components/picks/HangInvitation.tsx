@@ -10,12 +10,16 @@ export function HangInvitation({
   post,
   userId,
   busy,
+  disabled = false,
+  pending: mutationPending = false,
   onRespond,
   onStart,
 }: {
   post: HangPost;
   userId: string | undefined;
   busy: string | null;
+  disabled?: boolean;
+  pending?: boolean;
   onRespond(status: HangStatus): void;
   onStart(): void;
 }) {
@@ -53,10 +57,14 @@ export function HangInvitation({
                 haptic.tap();
                 onRespond(status);
               }}
-              disabled={busy !== null}
+              disabled={disabled || busy !== null}
               accessibilityRole="button"
               accessibilityLabel={`${label}, ${post.activity}`}
-              accessibilityState={{ selected, disabled: busy !== null, busy: pending }}
+              accessibilityState={{
+                selected,
+                disabled: disabled || busy !== null,
+                busy: pending || (mutationPending && selected),
+              }}
               style={({ pressed }) => [s.response, selected && s.selected, pressed && s.pressed]}
             >
               {pending ? (
@@ -77,7 +85,7 @@ export function HangInvitation({
             label="Let’s Pick"
             variant="secondary"
             style={s.hostAction}
-            disabled={!post.downCount || busy !== null}
+            disabled={!post.downCount || busy !== null || mutationPending || disabled}
             onPress={onStart}
           />
         </View>
