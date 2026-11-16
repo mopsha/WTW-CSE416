@@ -39,7 +39,9 @@ export function PicksHero() {
 export function ActivePickPanel({ pick, onPress }: { pick: PickSummary; onPress(): void }) {
   const title = pickTitle(pick.category);
   const status =
-    pick.proposedAt && pick.state === 'draft' ? 'Availability requested' : STATE_LABEL[pick.state];
+    pick.proposedAt && pick.state === 'swiping'
+      ? 'Active · respond to join'
+      : STATE_LABEL[pick.state];
   return (
     <Card
       variant="flat"

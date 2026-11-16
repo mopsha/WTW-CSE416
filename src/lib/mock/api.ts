@@ -132,8 +132,15 @@ function createPick(body: unknown): Response {
     return fail(400, 'INVALID_INPUT', problems.map((p) => p.message).join(' '));
   }
   const pick = createMockPick(body as CreatePickInput);
+  if (pick.availability) {
+    const ready = ROUTES['POST start']!(pick, undefined);
+    if (!ready.ok) {
+      pick.state = 'canceled';
+      return ready;
+    }
+  }
   scheduleBots(pick);
-  return json(201, { pickId: pick.id, state: 'draft' });
+  return json(201, { pickId: pick.id, state: pick.state });
 }
 
 /** POST /picks/join: same validation and errors as the API (try MOCK_INVITE_CODE). */
@@ -319,16 +326,27 @@ const ROUTES: Record<string, Handler> = {
   'GET progress': (pick) => json(200, progressOf(pick)),
 
   'POST availability': (pick, body) => {
-    const value = body as { revision?: unknown; response?: unknown; userId?: unknown } | null;
     const a = pick.availability;
-    if (!a || pick.state !== 'draft' || a.locked || Date.parse(a.proposedAt) <= Date.now())
-      return wrongState('Availability is closed');
-    if (value?.revision !== a.revision) return wrongState('Time changed; reconfirm');
+    const value = body as { revision?: unknown; response?: unknown; userId?: unknown } | null;
+    if (
+      !a ||
+      pick.state !== 'swiping' ||
+      a.locked ||
+      (pick.deadlineAt && Date.parse(pick.deadlineAt) <= Date.now())
+    )
+      return wrongState('The swipe round has closed; refresh this Pick');
+    if (value?.revision !== a.revision) return wrongState('Time changed; refresh this Pick');
     if (value.userId !== undefined || !['yes', 'maybe', 'cant'].includes(String(value.response)))
       return fail(400, 'INVALID_INPUT', 'Invalid availability response');
-    const rows = a.participants.filter((p) => p.userId !== MOCK_USER_ID);
+    if (
+      pick.participants.find((p) => p.userId === MOCK_USER_ID)!.answers.size > 0 &&
+      value.response === 'cant'
+    )
+      return wrongState(
+        'Your voting response is kept after your first swipe. Update attendance after results.',
+      );
     a.participants = [
-      ...rows,
+      ...a.participants.filter((p) => p.userId !== MOCK_USER_ID),
       {
         userId: MOCK_USER_ID,
         displayName: 'You',
@@ -336,34 +354,14 @@ const ROUTES: Record<string, Handler> = {
       },
     ];
     emit(pick.id);
+    maybeAutoClose(pick);
     return json(200, { status: 'ok' });
   },
-  'POST proposed-time': hostOnly((pick, body) => {
-    const value = body as { revision?: unknown; proposedAt?: unknown } | null;
-    const a = pick.availability;
-    if (!a || pick.state !== 'draft' || a.locked || value?.revision !== a.revision)
-      return wrongState('Time changed or availability closed');
-    const invalid = proposedTimeProblem(value?.proposedAt);
-    if (invalid) return fail(400, 'INVALID_INPUT', invalid);
-    if (
-      a.deadlineMinutes > 0 &&
-      Date.parse(String(value?.proposedAt)) <= Date.now() + (a.deadlineMinutes + 30) * 60000
-    )
-      return fail(
-        400,
-        'INVALID_INPUT',
-        'Leave time for swiping and the final vote before the outing.',
-      );
-    if (a.proposedAt !== value!.proposedAt) {
-      a.proposedAt = String(value!.proposedAt);
-      a.revision++;
-      a.participants = [{ userId: pick.hostId, displayName: 'Host', response: 'yes' }];
-    }
-    emit(pick.id);
-    return json(200, { status: 'ok' });
-  }),
+  'POST proposed-time': hostOnly(() =>
+    wrongState('The proposed time is fixed for this decision. Revisit scheduling after results.'),
+  ),
   'POST start': hostOnly((pick) => {
-    if (pick.availability?.locked && pick.state !== 'canceled')
+    if (pick.availability && pick.state !== 'draft' && pick.state !== 'canceled')
       return json(200, { state: 'swiping', candidateCount: pick.candidates.length });
     if (pick.state !== 'draft') return wrongState('Pick must be draft to start');
     if (pick.availability) {
@@ -374,10 +372,8 @@ const ROUTES: Record<string, Handler> = {
           Date.parse(a.proposedAt) <= Date.now() + (a.deadlineMinutes + 30) * 60000)
       )
         return wrongState('Update the outing time before starting.');
-      if (a.participants.filter((p) => p.response === 'yes' || p.response === 'maybe').length < 2)
-        return wrongState('At least two Yes or Maybe responses are required.');
     }
-    if (pick.participants.length < 2) {
+    if (!pick.availability && pick.participants.length < 2) {
       return fail(409, 'NOT_ENOUGH_PARTICIPANTS', 'A Pick needs at least 2 participants to start');
     }
     let candidates;
@@ -390,10 +386,6 @@ const ROUTES: Record<string, Handler> = {
     if (!candidates.length) return fail(409, 'NO_CANDIDATES', 'No places match these filters');
     pick.candidates = candidates;
     if (pick.availability) {
-      pick.availability.cohortUserIds = availabilityOf(pick)!
-        .participants.filter((p) => p.response === 'yes' || p.response === 'maybe')
-        .map((p) => p.userId);
-      pick.availability.locked = true;
       pick.planAt = pick.availability.proposedAt;
       const cachedPlan = mockPlans.get(pick.id);
       if (cachedPlan) cachedPlan.planAt = pick.planAt;
@@ -542,13 +534,14 @@ const ROUTES: Record<string, Handler> = {
   },
 
   'POST plan-time': hostOnly((pick, body) => {
-    if (pick.availability) return wrongState('The outing time was agreed before swiping');
     const planAt = (body as { planAt?: unknown } | null)?.planAt;
     const at = typeof planAt === 'string' ? Date.parse(planAt) : NaN;
     if (Number.isNaN(at) || at < Date.now() || at - Date.now() > 30 * 86_400_000) {
       return fail(400, 'INVALID_INPUT', 'planAt must be a date within the next 30 days');
     }
     if (pick.state !== 'completed') return wrongState('The Pick has no winner yet');
+    if (pick.availability && plans(pick).planAt !== new Date(at).toISOString())
+      plans(pick).rsvps.clear();
     plans(pick).planAt = new Date(at).toISOString();
     return json(200, { planAt: plans(pick).planAt });
   }),
@@ -800,6 +793,23 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
       return fail(400, 'INVALID_INPUT', problems.map((p) => p.message).join(' '));
     }
     const r = mockCreateGroupPick(readBody(init) as CreatePickInput, groupId);
+    if (
+      r.status === 201 &&
+      r.body &&
+      typeof r.body === 'object' &&
+      'pickId' in r.body &&
+      typeof r.body.pickId === 'string'
+    ) {
+      const p = mockPicks.get(r.body.pickId)!;
+      if (p.availability) {
+        const ready = ROUTES['POST start']!(p, undefined);
+        if (!ready.ok) {
+          p.state = 'canceled';
+          return ready;
+        }
+        return json(201, { ...r.body, state: p.state });
+      }
+    }
     return json(r.status, r.body);
   }
   const invite = /^\/picks\/([^/]+)\/invite$/.exec(path);
@@ -809,7 +819,7 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   }
 
   if (method === 'GET' && path === '/picks/capabilities')
-    return json(200, { availabilityFirst: true });
+    return json(200, { availabilityFirst: true, availabilityMode: 'immediate' });
   if (method === 'POST' && path === '/picks') return createPick(readBody(init));
   if (method === 'POST' && path === '/picks/join') return joinPick(readBody(init));
   if (method === 'POST' && path === '/me') return updateMe(readBody(init));

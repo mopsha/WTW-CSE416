@@ -707,6 +707,10 @@ test('When defaults to Decide later and commits optional proposed time with defe
     expect.objectContaining({ proposedAt: at, swipeDeadlineMinutes: 60, deadlineAt: null }),
     'owner',
   );
+  expect(router.replace).toHaveBeenCalledWith({
+    pathname: '/pick/[id]/swipe',
+    params: { id: 'pick' },
+  });
 });
 test('When cancellation discards changes and Decide later restores legacy payload', async () => {
   await render();

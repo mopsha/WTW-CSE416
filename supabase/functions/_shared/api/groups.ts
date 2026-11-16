@@ -175,7 +175,7 @@ export async function createPickMaybeForGroup(
 ) {
   const groupId = parseOptionalGroupId(body);
   if (!groupId) return createPick(lifecycle, userId, body);
-  parseCreatePick(body); // 400 before any database work
+  const input = parseCreatePick(body); // 400 before any database work
   if (!groups) throw new ApiError(503, 'NOT_CONFIGURED', 'Groups are not available');
   if (!(await groups.isMember(groupId, userId))) {
     throw new ApiError(404, 'GROUP_NOT_FOUND', 'Group not found');
@@ -190,7 +190,7 @@ export async function createPickMaybeForGroup(
   }
   // The Pick is good from here on: a failed read only skips the notice.
   const pick = await lifecycle.load(created.pickId, userId).catch(() => null);
-  if (pick) {
+  if (pick && !input.proposedAt) {
     await lifecycle.notifier?.(
       pick.participantIds.filter((id) => id !== userId),
       'added_to_pick',

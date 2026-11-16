@@ -349,6 +349,10 @@ export function createMockPick(input: CreatePickInput, hostId = MOCK_USER_ID): M
 /** swiping -> ranking -> completed (clear winner) or final_vote. Idempotent. */
 export function decide(pick: MockPick, now = new Date()) {
   if (pick.state !== 'swiping' && pick.state !== 'completed') return;
+  if (pick.availability && !pick.availability.locked) {
+    pick.availability.cohortUserIds = votersOf(pick).map((p) => p.userId);
+    pick.availability.locked = true;
+  }
   pick.ranked = rankCandidates(
     pick.candidates.map((c) => ({ placeId: c.placeId, lat: c.lat, lng: c.lng })),
     votersOf(pick).flatMap((p) =>
@@ -382,6 +386,15 @@ export function decide(pick: MockPick, now = new Date()) {
 /** Close when enough people are done or the deadline passed (the real API checks after every swipe; the sweep covers deadlines). */
 export function maybeAutoClose(pick: MockPick, now = new Date()) {
   if (pick.state !== 'swiping') return;
+  if (pick.availability && votersOf(pick).length === 0) return;
+  if (
+    pick.availability &&
+    pick.closeThreshold === 100 &&
+    (!pick.deadlineAt || now.getTime() < Date.parse(pick.deadlineAt)) &&
+    (pick.participants.length < 2 ||
+      availabilityOf(pick)!.participants.some((p) => p.response === null))
+  )
+    return;
   const due = dueToClose({
     done: votersOf(pick).filter((p) => isDone(pick, p)).length,
     n: votersOf(pick).length,
@@ -429,7 +442,7 @@ export function scheduleBots(pick: MockPick) {
   scheduled.add(key);
   const bots = () => votersOf(pick).filter((p) => p.userId !== MOCK_USER_ID);
 
-  if (pick.state === 'draft') {
+  if (pick.state === 'draft' || (pick.state === 'swiping' && pick.availability)) {
     [0, 1, 2].forEach((i) =>
       later(1500 + i * 1800, () => {
         if (pick.state !== 'draft' && pick.state !== 'swiping') return;
@@ -448,6 +461,17 @@ export function scheduleBots(pick: MockPick) {
           });
         }
         emit(pick.id);
+        // Scheduled creation is already active when these demo invitees respond.
+        if (pick.availability && pick.state === 'swiping') {
+          const bot = votersOf(pick).find((p) => p.userId === FRIEND_IDS[i]);
+          if (bot)
+            later(9000 + i * 6500, () => {
+              if (pick.state !== 'swiping') return;
+              pick.candidates.forEach((c, j) => bot.answers.set(c.placeId, bot.script?.[j] ?? 1));
+              emit(pick.id);
+              maybeAutoClose(pick);
+            });
+        }
       }),
     );
   } else if (pick.state === 'swiping') {
@@ -496,31 +520,40 @@ export function outcomeOf(pick: MockPick): PickOutcome {
 }
 
 export function votersOf(pick: MockPick) {
-  return pick.availability
-    ? pick.participants.filter(
-        (p) =>
-          pick.availability!.locked &&
-          pick.availability!.cohortUserIds.includes(p.userId) &&
-          !mockBlocks.has(p.userId),
-      )
-    : pick.participants;
+  if (!pick.availability) return pick.participants;
+  const a = pick.availability;
+  return pick.participants.filter(
+    (p) =>
+      !mockBlocks.has(p.userId) &&
+      (a.locked
+        ? a.cohortUserIds.includes(p.userId)
+        : a.participants.some(
+            (r) => r.userId === p.userId && (r.response === 'yes' || r.response === 'maybe'),
+          )),
+  );
 }
 export function availabilityOf(pick: MockPick, viewer = MOCK_USER_ID): Availability | undefined {
   if (!pick.availability) return undefined;
+  const a = pick.availability;
   return {
-    ...pick.availability,
-    canVote: pick.availability.locked && pick.availability.cohortUserIds.includes(viewer),
+    ...a,
+    canVote: votersOf(pick).some((p) => p.userId === viewer),
+    eligibleUserIds: votersOf(pick).map((p) => p.userId),
+    responseOpen:
+      pick.state === 'swiping' &&
+      !a.locked &&
+      (!pick.deadlineAt || Date.parse(pick.deadlineAt) > Date.now()),
     participants: pick.participants.map((p) => ({
       userId: p.userId,
       displayName: p.name,
-      response:
-        pick.availability!.participants.find((r) => r.userId === p.userId)?.response ?? null,
+      response: a.participants.find((r) => r.userId === p.userId)?.response ?? null,
+      started: p.answers.size > 0,
     })),
   };
 }
 export function progressOf(pick: MockPick): PickProgress {
   // Host first, then join order: the same order as the real GET /picks/:id/progress.
-  const participants = (pick.availability?.locked ? votersOf(pick) : pick.participants)
+  const participants = (pick.availability ? votersOf(pick) : pick.participants)
     .map((p) => ({
       userId: p.userId,
       displayName: p.userId === MOCK_USER_ID ? (mockProfile.displayName ?? p.name) : p.name,

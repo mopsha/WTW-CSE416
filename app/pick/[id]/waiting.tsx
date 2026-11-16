@@ -138,9 +138,11 @@ export default function WaitingScreen() {
             </View>
           ) : null}
           <Text style={pickStyles.muted}>
-            {allDone
-              ? 'Ranking everyone’s swipes…'
-              : 'Your answers are locked in and private. Results drop as soon as the group is done.'}
+            {allDone && progress?.availability
+              ? 'Your swipes are in. The round stays open for responses until its closure rules are met.'
+              : allDone
+                ? 'Ranking everyone’s swipes…'
+                : 'Your answers are locked in and private. Results drop as soon as the group is done.'}
           </Text>
           {countdown.label ? (
             <Pill
@@ -174,6 +176,14 @@ export default function WaitingScreen() {
             </Animated.View>
           ))}
         </Animated.View>
+
+        {progress?.availability ? (
+          <Button
+            label={isHost ? 'Invite friends and view participation' : 'View participation'}
+            variant="secondary"
+            onPress={() => router.push({ pathname: '/pick/[id]/lobby', params: { id: pickId } })}
+          />
+        ) : null}
 
         {action.error ? <ErrorBanner message={action.error} onRetry={action.clearError} /> : null}
 

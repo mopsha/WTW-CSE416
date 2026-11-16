@@ -295,12 +295,12 @@ export function createApiClient({
 
   async function requireAvailabilitySupport(input: CreatePickInput, viewer?: string) {
     if (!input.proposedAt) return;
-    const capabilities = await request<{ availabilityFirst: boolean }>(
+    const capabilities = await request<{ availabilityFirst: boolean; availabilityMode?: string }>(
       'GET',
       '/picks/capabilities',
       { viewer },
     );
-    if (!capabilities.availabilityFirst)
+    if (!capabilities.availabilityFirst || capabilities.availabilityMode !== 'immediate')
       throw new ApiError(
         'availability_not_enabled',
         'Availability Picks are not enabled on this server yet.',

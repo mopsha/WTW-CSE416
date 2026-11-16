@@ -67,17 +67,22 @@ test('entering final_vote sets a fresh vote deadline, independent of the swipe d
     voteDeadlineAt: new Date(now.getTime() + VOTE_WINDOW_MS).toISOString(),
   });
   expect(Date.parse(written.voteDeadlineAt!)).toBeGreaterThan(now.getTime());
-  expect(Date.parse(written.voteDeadlineAt!)).toBeGreaterThan(Date.parse('2026-10-19T11:59:00.000Z'));
+  expect(Date.parse(written.voteDeadlineAt!)).toBeGreaterThan(
+    Date.parse('2026-10-19T11:59:00.000Z'),
+  );
 });
 
 describe('re-running closePick never moves an existing vote deadline', () => {
-  test.each(['host', 'system'] as const)('a %s call on a Pick already in final_vote writes nothing', async (actor) => {
-    const store = fixture(snapshot({ state: 'final_vote', finalistIds: ['a', 'b'] }));
-    const later = new Date('2026-10-19T13:00:00.000Z');
-    const result = await closePick(store, 'pick', actor, actor === 'host' ? 'host' : null, later);
-    expect(result).toEqual({ state: 'final_vote', winnerPlaceId: null, finalists: ['a', 'b'] });
-    expect(store.applyClose).not.toHaveBeenCalled();
-  });
+  test.each(['host', 'system'] as const)(
+    'a %s call on a Pick already in final_vote writes nothing',
+    async (actor) => {
+      const store = fixture(snapshot({ state: 'final_vote', finalistIds: ['a', 'b'] }));
+      const later = new Date('2026-10-19T13:00:00.000Z');
+      const result = await closePick(store, 'pick', actor, actor === 'host' ? 'host' : null, later);
+      expect(result).toEqual({ state: 'final_vote', winnerPlaceId: null, finalists: ['a', 'b'] });
+      expect(store.applyClose).not.toHaveBeenCalled();
+    },
+  );
 
   test('losing a race to a close that already entered final_vote does not write a second deadline', async () => {
     const store = fixture();
@@ -92,10 +97,17 @@ describe('re-running closePick never moves an existing vote deadline', () => {
 });
 
 test('a clear winner records no vote deadline', async () => {
-  const preferences = ['host', 'guest'].map((userId) => ({ userId, placeId: 'a', value: 2 as const }));
+  const preferences = ['host', 'guest'].map((userId) => ({
+    userId,
+    placeId: 'a',
+    value: 2 as const,
+  }));
   const store = fixture(snapshot({ candidates: [{ placeId: 'a', lat: 0, lng: 0 }], preferences }));
   await closePick(store, 'pick', 'host', 'host');
-  expect(store.applyClose.mock.calls[0]![4]).toMatchObject({ state: 'completed', voteDeadlineAt: null });
+  expect(store.applyClose.mock.calls[0]![4]).toMatchObject({
+    state: 'completed',
+    voteDeadlineAt: null,
+  });
 });
 
 test('a system close is a no-op until the threshold or deadline is actually due', async () => {
@@ -119,7 +131,11 @@ test('a system close fires once every participant has answered every candidate',
 });
 
 test('persists a clear winner, hiding scores from the result', async () => {
-  const preferences = ['host', 'guest'].map((userId) => ({ userId, placeId: 'a', value: 2 as const }));
+  const preferences = ['host', 'guest'].map((userId) => ({
+    userId,
+    placeId: 'a',
+    value: 2 as const,
+  }));
   const store = fixture(snapshot({ candidates: [{ placeId: 'a', lat: 0, lng: 0 }], preferences }));
   const result = await closePick(store, 'pick', 'host', 'host');
   expect(result).toEqual({ state: 'completed', winnerPlaceId: 'a', finalists: [] });
@@ -135,7 +151,11 @@ test('is idempotent: a second close reports the already-settled decision', async
   const closed = snapshot({ state: 'final_vote', finalistIds: ['a', 'b', 'c', 'd'] });
   const store = fixture(closed);
   const result = await closePick(store, 'pick', 'host', 'host');
-  expect(result).toEqual({ state: 'final_vote', winnerPlaceId: null, finalists: ['a', 'b', 'c', 'd'] });
+  expect(result).toEqual({
+    state: 'final_vote',
+    winnerPlaceId: null,
+    finalists: ['a', 'b', 'c', 'd'],
+  });
   expect(store.applyClose).not.toHaveBeenCalled();
 });
 
@@ -206,4 +226,64 @@ describe('version races while still swiping (bug #16)', () => {
 test('rejects closing a canceled Pick as a host call', async () => {
   const store = fixture(snapshot({ state: 'canceled' }));
   await expect(closePick(store, 'pick', 'host', 'host')).rejects.toMatchObject({ status: 409 });
+});
+
+const scheduledFinished = (overrides: Partial<ClosingSnapshot> = {}) =>
+  snapshot({
+    awaitingResponses: 1,
+    invitedCount: 3,
+    preferences: ['host', 'guest'].flatMap((userId) =>
+      ['a', 'b', 'c', 'd'].map((placeId) => ({ userId, placeId, value: 1 as const })),
+    ),
+    ...overrides,
+  });
+test('scheduled default completion leaves unanswered invitations open', async () => {
+  const store = fixture(scheduledFinished());
+  expect(await closePick(store, 'pick', 'system', null)).toBeNull();
+  expect(store.applyClose).not.toHaveBeenCalled();
+});
+test.each(['manual', 'deadline', 'explicit threshold', 'all responded'] as const)(
+  'scheduled %s may close without a host approval stage',
+  async (mode) => {
+    const pick = scheduledFinished(
+      mode === 'deadline'
+        ? { deadlineAt: new Date(0).toISOString() }
+        : mode === 'explicit threshold'
+          ? { closeThreshold: 75 }
+          : mode === 'all responded'
+            ? { awaitingResponses: 0 }
+            : {},
+    );
+    const store = fixture(pick);
+    const result = await closePick(
+      store,
+      'pick',
+      mode === 'manual' ? 'host' : 'system',
+      mode === 'manual' ? 'host' : null,
+    );
+    expect(result).not.toBeNull();
+    expect(store.applyClose).toHaveBeenCalledTimes(1);
+  },
+);
+test('scheduled host-only default keeps code invitations possible, and zero voters never produce a winner', async () => {
+  const alone = fixture(scheduledFinished({ invitedCount: 1, participantIds: ['host'] }));
+  expect(await closePick(alone, 'pick', 'system', null)).toBeNull();
+  const empty = fixture(scheduledFinished({ participantIds: [], awaitingResponses: 0 }));
+  expect(await closePick(empty, 'pick', 'system', null)).toBeNull();
+  await expect(closePick(empty, 'pick', 'host', 'host')).rejects.toMatchObject({ status: 409 });
+});
+test('an availability change during ranking retries with a fresh version and cohort', async () => {
+  const store = fixture(scheduledFinished({ awaitingResponses: 0 }));
+  store.applyClose.mockRejectedValueOnce(new ApiError(409, 'PICK_CONFLICT', 'Changed'));
+  store.loadForClose
+    .mockResolvedValueOnce(scheduledFinished({ awaitingResponses: 0 }))
+    .mockResolvedValue(
+      scheduledFinished({
+        version: '2',
+        awaitingResponses: 0,
+        participantIds: ['host', 'guest', 'late'],
+      }),
+    );
+  await closePick(store, 'pick', 'host', 'host');
+  expect(store.applyClose.mock.calls[1]![1]).toBe('2');
 });

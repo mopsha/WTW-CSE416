@@ -67,9 +67,9 @@ export function PickTopBar({
         {proposedAt ? (
           <Text
             style={styles.topSub}
-            accessibilityLabel={`Outing time, ${formatPlanTime(proposedAt)}`}
+            accessibilityLabel={`Original proposed time, ${formatPlanTime(proposedAt)}`}
           >
-            {formatPlanTime(proposedAt)}
+            Proposed: {formatPlanTime(proposedAt)}
           </Text>
         ) : null}
       </View>

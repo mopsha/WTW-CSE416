@@ -9,7 +9,7 @@ function equal(a: unknown, b: unknown) {
 const unexpected = async (): Promise<never> => {
   throw new Error('Unexpected mutation');
 };
-function fixture(enabled = true) {
+function fixture(enabled = true, failBuild = false) {
   const a: Availability = {
     proposedAt: new Date(Date.now() + 2 * 86400000).toISOString(),
     revision: 1,
@@ -61,7 +61,10 @@ function fixture(enabled = true) {
       },
       start: unexpected,
       refresh: unexpected,
-      cancel: unexpected,
+      cancel: async () => {
+        pick.state = 'canceled';
+        calls.push(['cancel']);
+      },
       availability: {
         load: async () => a,
         respond: async (...args) => {
@@ -69,17 +72,19 @@ function fixture(enabled = true) {
         },
         changeTime: async (...args) => {
           calls.push(['time', ...args]);
+          throw new ApiError(409, 'FIXED_TIME', 'Fixed for this decision');
         },
         claim: async () => {
-          if (a.locked) return { started: true, candidateCount: 1 };
+          if (pick.state !== 'draft') return { started: true, candidateCount: 1 };
           if (reserved) throw new ApiError(409, 'BUSY', 'Starting');
           reserved = true;
           return { started: false, token: 'token' };
         },
         finish: async () => {
-          a.locked = true;
+          a.locked = false;
           a.canVote = true;
-          a.cohortUserIds = ['actor', 'friend'];
+          a.eligibleUserIds = ['actor'];
+          a.cohortUserIds = [];
           pick.state = 'swiping';
         },
         abort: async () => {
@@ -90,6 +95,7 @@ function fixture(enabled = true) {
     poolBuilder: {
       buildPool: async () => {
         builds++;
+        if (failBuild) throw new ApiError(503, 'PROVIDER_UNAVAILABLE', 'Try again');
         return [{ placeId: 'cafe', name: 'Cafe', category: 'food', lat: 40, lng: -73 }];
       },
     },
@@ -106,7 +112,7 @@ function fixture(enabled = true) {
       method: body === undefined ? 'GET' : 'POST',
       headers: {
         ...(auth ? { Authorization: 'Bearer actor' } : {}),
-        ...(modern ? { 'X-Client-Info': 'availability-v1' } : {}),
+        ...(modern ? { 'X-Client-Info': 'availability-v2' } : {}),
         'Content-Type': 'application/json',
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -116,9 +122,13 @@ function fixture(enabled = true) {
 Deno.test('availability capabilities authenticate and expose staged rollout flag', async () => {
   const f = fixture();
   equal((await f.request('/picks/capabilities', undefined, true, false)).status, 401);
-  equal(await (await f.request('/picks/capabilities')).json(), { availabilityFirst: true });
+  equal(await (await f.request('/picks/capabilities')).json(), {
+    availabilityFirst: true,
+    availabilityMode: 'immediate',
+  });
   equal(await (await fixture(false).request('/picks/capabilities')).json(), {
     availabilityFirst: false,
+    availabilityMode: 'immediate',
   });
 });
 Deno.test(
@@ -175,7 +185,7 @@ Deno.test(
     ]);
   },
 );
-Deno.test('time edits are canonical, revision-scoped, and not attendance writes', async () => {
+Deno.test('active time edits reject rather than invalidate participation', async () => {
   const f = fixture();
   equal(
     (await f.request('/picks/pick/proposed-time', { revision: 1, proposedAt: 'bad' })).status,
@@ -184,7 +194,7 @@ Deno.test('time edits are canonical, revision-scoped, and not attendance writes'
   equal(
     (await f.request('/picks/pick/proposed-time', { revision: 1, proposedAt: f.a.proposedAt }))
       .status,
-    200,
+    409,
   );
   equal(f.calls, [['time', 'pick', 'actor', 1, f.a.proposedAt]]);
 });
@@ -203,5 +213,37 @@ Deno.test(
     equal(f.builds(), 1);
     equal((await f.request('/picks/pick/start', {})).status, 200);
     equal(f.builds(), 1);
+  },
+);
+
+Deno.test(
+  'creation initializes swiping without a second host action; failed generation cancels draft',
+  async () => {
+    const input = {
+      category: 'food',
+      center: { lat: 40, lng: -73 },
+      radiusM: 3000,
+      poolSize: 20,
+      closeThreshold: 100,
+      deadlineAt: null,
+      swipeDeadlineMinutes: 60,
+    };
+    const ok = fixture();
+    const response = await ok.request('/picks', { ...input, proposedAt: ok.a.proposedAt });
+    equal(response.status, 201);
+    equal((await response.json()).state, 'swiping');
+    equal(ok.builds(), 1);
+    equal(ok.a.canVote, true);
+    equal(ok.a.locked, false);
+    const failed = fixture(true, true);
+    equal(
+      (await failed.request('/picks', { ...input, proposedAt: failed.a.proposedAt })).status,
+      503,
+    );
+    equal(failed.a.canVote, false);
+    equal(
+      failed.calls.some((call) => JSON.stringify(call) === '["cancel"]'),
+      true,
+    );
   },
 );

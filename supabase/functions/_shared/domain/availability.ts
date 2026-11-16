@@ -1,14 +1,22 @@
-/** Pre-swipe availability is separate from post-result RSVP and attendance. */
+/** Individual decision-round availability is separate from post-result RSVP and attendance. */
 export type AvailabilityResponse = 'yes' | 'maybe' | 'cant';
-export const AVAILABILITY_CAPABILITY = 'availability-v1';
+export const AVAILABILITY_CAPABILITY = 'availability-v2';
 export interface Availability {
   proposedAt: string;
+  groupName?: string | null;
   revision: number;
   locked: boolean;
   canVote: boolean;
   cohortUserIds: string[];
+  eligibleUserIds?: string[];
+  responseOpen?: boolean;
   deadlineMinutes: number;
-  participants: { userId: string; displayName: string; response: AvailabilityResponse | null }[];
+  participants: {
+    userId: string;
+    displayName: string;
+    response: AvailabilityResponse | null;
+    started?: boolean;
+  }[];
 }
 export function proposedTimeProblem(value: unknown, now = Date.now()): string | null {
   const parts =

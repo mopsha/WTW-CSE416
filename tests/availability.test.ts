@@ -177,12 +177,17 @@ test.each([
   ).rejects.toMatchObject({ status: 400 });
   expect(store.availability.respond).not.toHaveBeenCalled();
 });
-test('time changes carry expected revision and canonical timezone serialization', async () => {
+test('retired time-edit request preserves revision and canonical timestamp but rejects an active edit', async () => {
   const { store } = fixture();
-  await changeProposedTime(store.availability, 'pick', 'host', {
-    revision: 2,
-    proposedAt: '2026-11-18T14:00:00-05:00',
-  });
+  store.availability.changeTime.mockRejectedValueOnce(
+    new ApiError(409, 'FIXED_TIME', 'Fixed for this decision'),
+  );
+  await expect(
+    changeProposedTime(store.availability, 'pick', 'host', {
+      revision: 2,
+      proposedAt: '2026-11-18T14:00:00-05:00',
+    }),
+  ).rejects.toMatchObject({ status: 409 });
   expect(store.availability.changeTime).toHaveBeenCalledWith(
     'pick',
     'host',
@@ -211,7 +216,7 @@ test('start is server-confirmed and candidate generation is inside reservation',
     'token',
     expect.any(Array),
   );
-  expect(store.notifier).toHaveBeenCalledWith(['yes', 'maybe'], 'pick_started', 'pick');
+  expect(store.notifier).not.toHaveBeenCalled();
 });
 test('retry of committed start does not generate another pool or resend notifications', async () => {
   const { store, pool } = fixture();
@@ -304,4 +309,18 @@ test('calendar-invalid timestamps are rejected, and DST overlap offsets retain d
   );
   expect(first.proposedAt).toBe('2026-11-01T05:30:00.000Z');
   expect(second.proposedAt).toBe('2026-11-01T06:30:00.000Z');
+});
+
+test('ambiguous initialization success reconciles the committed round without aborting it', async () => {
+  const { store, pool, pick } = fixture();
+  store.availability.finish.mockImplementation(async () => {
+    pick.state = 'swiping';
+    pick.candidates = [{ placeId: 'cafe', snapshot: { name: 'Cafe', lat: 40, lng: -73 } }];
+    throw new Error('Connection lost after commit');
+  });
+  await expect(startPick(store, pool, 'pick', 'host', undefined, true)).resolves.toEqual({
+    state: 'swiping',
+    candidateCount: 1,
+  });
+  expect(store.availability.abort).not.toHaveBeenCalled();
 });

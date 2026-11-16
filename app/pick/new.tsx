@@ -239,8 +239,11 @@ function CreatePickForm({
           : await api.createPick(input);
       if (!active.current) return;
       haptic.success();
-      // Straight to the Lobby, replacing this form so Back goes to Picks.
-      router.replace({ pathname: '/pick/[id]/lobby', params: { id: pickId } });
+      // Scheduled creation is already active; replace the form so Back goes to Picks.
+      router.replace({
+        pathname: input.proposedAt ? '/pick/[id]/swipe' : '/pick/[id]/lobby',
+        params: { id: pickId },
+      });
     } catch (e) {
       if (!active.current) return;
       setSubmitError(messageOf(e));
@@ -355,8 +358,7 @@ function CreatePickForm({
           </SettingsGroup>
           {proposedAt ? (
             <Text style={styles.hint}>
-              Friends confirm availability before swiping. The swipe deadline starts when the host
-              begins.
+              Friends can start swiping as soon as they confirm their availability.
             </Text>
           ) : null}
           {errorFor('proposedAt', 'When')}
@@ -537,7 +539,7 @@ function CreatePickForm({
             <>
               <Text style={styles.hint}>
                 When swiping closes, not when you’re going out. Scheduled Picks start this clock
-                when the host starts swiping; other Picks start it at creation.
+                when creation finishes; other Picks start it at creation.
               </Text>
               <ChoiceList
                 options={DEADLINES}

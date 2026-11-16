@@ -49,6 +49,7 @@ export function redirectFor(
 ): PickScreen | null {
   if (opts.canVote === false && !['draft', 'completed', 'canceled'].includes(state))
     return current === 'lobby' ? null : 'lobby';
+  if (current === 'lobby' && state === 'swiping' && opts.canVote === true) return null;
   if (ALLOWED[state].includes(current)) return null;
   const justClosed = opts.from === 'swiping' || opts.from === 'ranking';
   if (justClosed && (state === 'final_vote' || state === 'completed')) return 'results';

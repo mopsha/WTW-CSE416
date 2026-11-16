@@ -98,13 +98,7 @@ function WinnerContent({ pickId, userId }: { pickId: string; userId: string }) {
         <Ionicons name="checkmark-circle" size={16} color={colors.yes} />
         <Text style={styles.savedText}>Saved to your history</Text>
       </View>
-      <PlanBlock
-        timeLocked={!!pick.availability}
-        viewerId={userId}
-        pickId={pickId}
-        decidedAt={pick.decidedAt}
-        people={people}
-      >
+      <PlanBlock viewerId={userId} pickId={pickId} decidedAt={pick.decidedAt} people={people}>
         {runnersUp.length ? (
           <View style={{ gap: space.sm }}>
             <Text style={styles.heading} accessibilityRole="header">

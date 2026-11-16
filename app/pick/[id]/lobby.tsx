@@ -25,6 +25,7 @@ import {
   pickStyles,
 } from '@/components/PickParts';
 import { colors, fonts } from '@/components/theme';
+import { Screen } from '@/components';
 import { useAction } from '@/hooks/useAction';
 import { useCountdown } from '@/hooks/useCountdown';
 import { usePickLive } from '@/hooks/usePickLive';
@@ -146,6 +147,12 @@ function LobbyContent() {
       ]
     : [];
 
+  if (/not found|access denied|forbidden|account changed/i.test(live.error ?? loadError ?? ''))
+    return (
+      <Screen title="Pick unavailable" back>
+        <ErrorBanner message="This Pick is no longer available to this account." />
+      </Screen>
+    );
   const availability = live.progress?.availability ?? pick?.availability;
   if (availability && live.state !== 'completed' && live.state !== 'canceled')
     return (
@@ -155,12 +162,18 @@ function LobbyContent() {
         value={availability}
         isHost={isHost}
         state={live.state ?? 'draft'}
-        onStart={start}
         onCancel={() => void cancel()}
         refresh={live.refresh}
         pending={!!action.busy}
+        onInvite={code ? share : undefined}
+        doneCount={live.progress?.doneCount ?? 0}
+        total={live.progress?.total ?? 0}
         error={action.error ?? live.error}
-        context={`${pickTitle(pick?.category)} · ${people.find((p) => p.isHost)?.displayName ?? 'Your host'} · ${((pick?.radiusM ?? 3219) / 1609.344).toFixed(1)} mi around the selected location`}
+        context={
+          pick
+            ? `${pickTitle(pick.category)} · ${pick.category === 'custom' ? `${pick.poolSize} options` : `${pick.poolSize} places · ${(pick.radiusM / 1609.344).toFixed(1)} mi around the selected location`}`
+            : undefined
+        }
       />
     );
   return (

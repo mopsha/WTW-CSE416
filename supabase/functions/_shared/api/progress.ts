@@ -93,8 +93,12 @@ export async function getProgress(
   if (!snapshot.participants.some((p) => p.userId === userId)) {
     throw new ApiError(403, 'FORBIDDEN', 'You must be a participant in this Pick');
   }
-  if (snapshot.availability?.locked) {
-    const eligible = new Set(snapshot.availability.cohortUserIds);
+  if (snapshot.availability) {
+    const eligible = new Set(
+      snapshot.availability.locked
+        ? snapshot.availability.cohortUserIds
+        : (snapshot.availability.eligibleUserIds ?? []),
+    );
     // These responses are frozen at lock; the store removes revoked users.
     return toProgress(
       { ...snapshot, participants: snapshot.participants.filter((p) => eligible.has(p.userId)) },

@@ -13,6 +13,8 @@ import {
 } from '../domain/ranking.ts';
 
 export interface ClosingSnapshot {
+  awaitingResponses?: number;
+  invitedCount?: number;
   id: string;
   hostId: string | null;
   state: PickState;
@@ -149,6 +151,22 @@ async function attemptClose(
     throw new ApiError(409, 'NO_CANDIDATES', 'Pick has no candidates');
   }
 
+  if (pick.awaitingResponses !== undefined && pick.participantIds.length === 0) {
+    if (actor === 'system') return null;
+    throw new ApiError(
+      409,
+      'NO_ELIGIBLE_PARTICIPANTS',
+      'No eligible respondents; wait for a response or cancel',
+    );
+  }
+  if (
+    actor === 'system' &&
+    pick.closeThreshold === 100 &&
+    ((pick.awaitingResponses ?? 0) > 0 ||
+      (pick.invitedCount !== undefined && pick.invitedCount < 2)) &&
+    (!pick.deadlineAt || now.getTime() < Date.parse(pick.deadlineAt))
+  )
+    return null;
   const ranked = rankCandidates(
     pick.candidates,
     pick.preferences.map((p) => ({ placeId: p.placeId, answer: answerFromDb(p.value) })),

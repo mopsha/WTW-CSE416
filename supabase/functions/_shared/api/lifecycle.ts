@@ -369,18 +369,16 @@ export async function startPick(
       await beforeBuild?.();
       const candidates = await buildCandidates(pool, pick, store);
       await store.availability.finish(pickId, userId, claim.token, candidates);
-      // Recipients are the server-confirmed cohort, never optimistic responders.
-      const settled = await store.availability.load(pickId, userId);
-      await store.notifier?.(
-        settled?.participants
-          .filter((p) => p.response === 'yes' || p.response === 'maybe')
-          .map((p) => p.userId)
-          .filter((id) => id !== userId) ?? [],
-        'pick_started',
-        pickId,
-      );
+      // The initialized round invites everyone; nobody needs a second host start.
       return { state: 'swiping' as const, candidateCount: candidates.length };
     } catch (error) {
+      const settled = await store.load(pickId, userId).catch(() => null);
+      if (
+        settled &&
+        !['draft', 'canceled'].includes(settled.state) &&
+        settled.candidates.length > 0
+      )
+        return { state: settled.state, candidateCount: settled.candidates.length };
       await store.availability.abort(pickId, userId, claim.token).catch(() => {});
       throw error;
     }

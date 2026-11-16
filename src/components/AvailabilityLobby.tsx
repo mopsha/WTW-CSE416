@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { router } from 'expo-router';
 import { Text, View } from 'react-native';
 import { Button, Screen, Chips, colors, space, type, ErrorState, Avatar } from '@/components';
-import { PlanTimeSheet } from './PlanTimeSheet';
 import {
   availabilityCounts,
   type Availability,
@@ -11,30 +11,35 @@ import type { PickState } from '@/lib/types';
 import { useAuth } from '@/hooks/useAuth';
 import { useAction } from '@/hooks/useAction';
 import { api } from '@/lib/api';
+import { pathFor, screenForState } from '@/lib/pickRoute';
 import { formatPlanTime } from '@/lib/plans';
-/** Owned by the existing lobby; metadata and eligibility always come from the server. */
+/** Individual entry into the existing active Pick, never a host approval stage. */
 export function AvailabilityLobby({
   pickId,
   value,
   isHost,
   state,
-  onStart,
   onCancel,
   refresh,
   pending,
   context,
   error,
+  onInvite,
+  doneCount = 0,
+  total = 0,
 }: {
   pickId: string;
   value: Availability;
   isHost: boolean;
   state: PickState;
-  onStart: () => void;
   onCancel: () => void;
   refresh: () => Promise<void>;
   pending: boolean;
   context?: string;
   error?: string | null;
+  onInvite?: () => void;
+  doneCount?: number;
+  total?: number;
 }) {
   const { session } = useAuth();
   const viewer = session?.user.id;
@@ -46,49 +51,129 @@ export function AvailabilityLobby({
       active.current = false;
     };
   }, []);
-  const [editing, setEditing] = useState(false);
-  const counts = availabilityCounts(value);
-  const myResponse = value.participants.find((p) => p.userId === viewer)?.response;
-  const open = state === 'draft' && !value.locked;
+  const me = value.participants.find((p) => p.userId === viewer);
+  const [selection, setSelection] = useState<AvailabilityResponse | null>(null);
+  const selected =
+    me?.started && selection === 'cant'
+      ? (me.response ?? 'yes')
+      : (selection ?? me?.response ?? 'none');
+  const [following, setFollowing] = useState(me?.response === 'cant');
+  const navigateAfterConfirmation = useRef<AvailabilityResponse | null>(null);
+  const open = state === 'swiping' && !value.locked && value.responseOpen !== false;
   const busy = pending || !!action.busy;
+  const counts = availabilityCounts(value);
+  useEffect(() => {
+    const desired = navigateAfterConfirmation.current;
+    if (!desired || action.busy || me?.response !== desired) return;
+    navigateAfterConfirmation.current = null;
+    if (desired === 'cant') {
+      setFollowing(true);
+      return;
+    }
+    const target = screenForState(state, { canVote: value.canVote });
+    if (target !== 'lobby') router.replace({ pathname: pathFor(target), params: { id: pickId } });
+  }, [me?.response, action.busy, state, value.canVote, pickId]);
+  const submit = () =>
+    void action.run('availability', async () => {
+      if (!viewer || selected === 'none') return;
+      try {
+        await api.respondAvailability(pickId, value.revision, selected, viewer);
+        if (active.current) {
+          await refresh();
+          if (active.current) navigateAfterConfirmation.current = selected;
+        }
+      } catch (e) {
+        if (active.current) await refresh(); // reconcile closed rounds or an ambiguous write
+        throw e;
+      }
+    });
   return (
     <Screen
-      title={open ? 'Are you down?' : 'Waiting for the plan'}
+      title={following || !open ? 'Following the Pick' : 'You’re invited'}
       back
       onRefresh={() => void refresh()}
     >
-      {context ? <Text style={{ ...type.body, color: colors.text }}>{context}</Text> : null}
-      <Text accessibilityRole="header" style={{ ...type.heading, color: colors.primary }}>
-        {formatPlanTime(value.proposedAt)}
+      {context ? <Text style={{ ...type.heading, color: colors.text }}>{context}</Text> : null}
+      {value.groupName ? (
+        <Text style={{ ...type.body, color: colors.text }}>{value.groupName}</Text>
+      ) : null}
+      <Text style={{ ...type.heading, color: colors.primary }} accessibilityRole="header">
+        {formatPlanTime(value.proposedAt)} · Proposed time
       </Text>
-      <Text style={{ ...type.body, color: colors.text }}>
-        {open
-          ? 'Confirm availability before swiping begins. Yes and Maybe responses can join this decision round.'
-          : 'The voting group is locked. You can view the winning plan when it is ready.'}
+      <Text style={{ ...type.heading, color: colors.text }} accessibilityRole="header">
+        Are you down?
       </Text>
+      {open && !following ? (
+        <>
+          <Chips<AvailabilityResponse | 'none'>
+            accessibilityLabel="Your availability"
+            value={selected}
+            disabled={busy || !viewer}
+            options={
+              me?.started
+                ? [
+                    { value: 'yes', label: 'I’m in' },
+                    { value: 'maybe', label: 'Maybe' },
+                  ]
+                : [
+                    { value: 'yes', label: 'I’m in' },
+                    { value: 'maybe', label: 'Maybe' },
+                    { value: 'cant', label: 'Can’t' },
+                  ]
+            }
+            onChange={(choice) => {
+              if (choice !== 'none') setSelection(choice);
+            }}
+          />
+          <Text style={{ ...type.caption, color: colors.muted }}>
+            Time not ideal? The group can revisit the time after deciding.
+          </Text>
+          <Text style={{ ...type.caption, color: colors.muted }}>
+            Yes or Maybe lets you join immediately. Availability is not attendance confirmation.
+          </Text>
+          {me?.started ? (
+            <Text style={{ ...type.caption, color: colors.muted }}>
+              Your voting place is kept after your first swipe. You can change Yes to Maybe, and
+              update attendance after results.
+            </Text>
+          ) : null}
+          <Button
+            label={
+              selected === 'none'
+                ? 'Choose your response'
+                : selected === 'cant'
+                  ? 'View Pick'
+                  : 'Start swiping'
+            }
+            disabled={busy || selected === 'none' || !viewer}
+            loading={action.busy === 'availability'}
+            onPress={submit}
+          />
+        </>
+      ) : (
+        <>
+          <Text style={{ ...type.body, color: colors.text }}>
+            {open
+              ? 'You’re following without voting. You can change your availability while swiping remains open.'
+              : 'This round is closed to new responses. You can follow the decision and see the results.'}
+          </Text>
+          {open ? (
+            <Button
+              label="Change availability"
+              variant="secondary"
+              disabled={busy}
+              onPress={() => setFollowing(false)}
+            />
+          ) : null}
+        </>
+      )}
       <Text accessibilityLiveRegion="polite" style={{ ...type.body, color: colors.text }}>
         {counts.yes} in · {counts.maybe} maybe · {counts.cant} can’t · {counts.awaiting} awaiting
       </Text>
-      {open ? (
-        <Chips<AvailabilityResponse | 'none'>
-          accessibilityLabel="Your availability"
-          value={myResponse ?? 'none'}
-          disabled={busy || !viewer}
-          options={[
-            { value: 'yes', label: 'I’m in' },
-            { value: 'maybe', label: 'Maybe' },
-            { value: 'cant', label: 'Can’t' },
-          ]}
-          onChange={(response) => {
-            if (response === 'none') return;
-            void action.run(response, async () => {
-              if (!viewer) return;
-              await api.respondAvailability(pickId, value.revision, response, viewer);
-              if (active.current) await refresh();
-            });
-          }}
-        />
-      ) : null}
+      <Text style={{ ...type.caption, color: colors.muted }}>
+        {total} eligible · {value.participants.filter((p) => p.started).length} started ·{' '}
+        {doneCount} finished swiping
+      </Text>
       {value.participants.map((p) => (
         <View
           key={p.userId}
@@ -112,37 +197,21 @@ export function AvailabilityLobby({
           </Text>
         </View>
       ))}
-      <Text style={{ ...type.caption, color: colors.muted }}>
-        Open Now describes places open when the deck is generated, not future opening-hour
-        guarantees.
-      </Text>
-      {value.deadlineMinutes === 0 ? (
+      {isHost ? (
         <Text style={{ ...type.caption, color: colors.muted }}>
-          No swipe deadline is set. The host must close swiping in time for the outing; the final
-          vote can take 30 minutes.
+          At 100%, unanswered invitations keep automatic completion open. You can close manually or
+          use the swipe deadline. A lower configured threshold can close earlier.
         </Text>
       ) : null}
-      {isHost && open ? (
-        <>
-          <Text style={{ ...type.caption, color: colors.muted }}>
-            Starting includes only current Yes and Maybe respondents. Others can still view the
-            eventual plan. At least two respondents are required.
-          </Text>
-          <Button
-            label="Start Swiping"
-            disabled={busy || counts.yes + counts.maybe < 2}
-            loading={pending}
-            onPress={onStart}
-          />
-          <Button
-            label="Change Time"
-            variant="secondary"
-            disabled={busy}
-            onPress={() => setEditing(true)}
-          />
-        </>
+      {isHost && onInvite ? (
+        <Button label="Share invite" variant="secondary" onPress={onInvite} />
       ) : null}
-      {isHost && !open && (state === 'swiping' || state === 'final_vote') ? (
+      {value.deadlineMinutes === 0 ? (
+        <Text style={{ ...type.caption, color: colors.muted }}>
+          No swipe deadline. The host can close the round manually.
+        </Text>
+      ) : null}
+      {isHost && (state === 'swiping' || state === 'final_vote') ? (
         <Button
           label={state === 'swiping' ? 'Close swiping' : 'Close final vote'}
           disabled={busy}
@@ -159,17 +228,7 @@ export function AvailabilityLobby({
         <Button label="Cancel Pick" variant="danger" disabled={busy} onPress={onCancel} />
       ) : null}
       {error ? <ErrorState message={error} onRetry={() => void refresh()} /> : null}
-      {action.error ? <ErrorState message={action.error} onRetry={() => void refresh()} /> : null}
-      {editing && viewer ? (
-        <PlanTimeSheet
-          initial={value.proposedAt}
-          onClose={() => setEditing(false)}
-          onSave={async (proposedAt) => {
-            await api.changeProposedTime(pickId, value.revision, proposedAt, viewer);
-            if (active.current) await refresh();
-          }}
-        />
-      ) : null}
+      {action.error ? <ErrorState message={action.error} onRetry={submit} /> : null}
     </Screen>
   );
 }

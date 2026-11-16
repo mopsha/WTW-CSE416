@@ -29,7 +29,7 @@ beforeEach(() => {
   resetMockData();
 });
 afterAll(() => setMockBots(true));
-test('mock scheduled flow retains invitees, locks Yes/Maybe cohort and carries time into results', async () => {
+test('mock scheduled flow retains invitees, joins independently, freezes Yes/Maybe at closure and carries time into results', async () => {
   const api = client();
   const settings = input();
   const { pickId } = await api.createPick(settings);
@@ -42,17 +42,18 @@ test('mock scheduled flow retains invitees, locks Yes/Maybe cohort and carries t
     { userId: 'maybe', displayName: 'Maybe', response: 'maybe' },
     { userId: 'cant', displayName: 'Cant', response: 'cant' },
   );
-  const start = Date.now();
-  await api.startPick(pickId);
-  await api.startPick(pickId);
-  expect(pick.availability?.cohortUserIds).toEqual([MOCK_USER_ID, 'yes', 'maybe']);
+  expect(pick.state).toBe('swiping');
+  expect(pick.availability?.locked).toBe(false);
+  expect(pick.availability?.cohortUserIds).toEqual([]);
   expect(pick.participants).toHaveLength(5);
-  expect(Date.parse(pick.deadlineAt!)).toBeGreaterThanOrEqual(start + 60 * 60000);
+  expect(Date.parse(pick.deadlineAt!)).toBeGreaterThan(Date.now() + 59 * 60000);
   expect((await api.getProgress(pickId)).total).toBe(3);
+  await api.submitSwipe(pickId, pick.candidates[0]!.placeId, 2);
   await expect(api.respondAvailability(pickId, 1, 'cant', MOCK_USER_ID)).rejects.toMatchObject({
     status: 409,
   });
   await api.closePick(pickId);
+  expect(pick.availability?.cohortUserIds).toEqual([MOCK_USER_ID, 'yes', 'maybe']);
   if (pick.state === 'final_vote') await api.closeVote(pickId);
   expect((await api.getPlan(pickId)).planAt).toBe(settings.proposedAt);
   expect((await api.getPlan(pickId)).myOutcome).toBeNull();
@@ -107,7 +108,11 @@ test('account change during capability discovery prevents sending the scheduled 
   const pending = api.createPick(input(), MOCK_USER_ID);
   await reached;
   account = { ...owner, user: { id: 'replacement', email: null } };
-  resolveCapability(new Response(JSON.stringify({ availabilityFirst: true }), { status: 200 }));
+  resolveCapability(
+    new Response(JSON.stringify({ availabilityFirst: true, availabilityMode: 'immediate' }), {
+      status: 200,
+    }),
+  );
   await expect(pending).rejects.toMatchObject({ code: 'account_changed' });
   expect(fetch).toHaveBeenCalledTimes(1);
 });

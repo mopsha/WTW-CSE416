@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 // The host's controls while swiping: close now, refresh the places, cancel. A bottom sheet
 // behind one header button, so the deck stays uncluttered.
 import { Ionicons } from '@expo/vector-icons';
@@ -81,7 +82,9 @@ export function HostMenu({ pickId, onChanged, allowRefresh = true }: Props) {
         accessibilityRole="button"
         accessibilityLabel="Host options"
         accessibilityHint={
-          allowRefresh ? 'Close swiping, refresh the places, or cancel' : 'Close swiping or cancel'
+          allowRefresh
+            ? 'Close swiping, refresh the places, or cancel'
+            : 'Invite friends, view participation, close swiping, or cancel'
         }
         style={({ pressed }) => [menuStyles.trigger, pressed && { opacity: 0.7 }]}
       >
@@ -104,6 +107,17 @@ export function HostMenu({ pickId, onChanged, allowRefresh = true }: Props) {
           busy={action.busy === 'close'}
           onPress={() => void closeNow()}
         />
+        {!allowRefresh ? (
+          <MenuItem
+            icon="people"
+            label="Invite friends and view participation"
+            hint="Share this active Pick or see availability"
+            onPress={() => {
+              setOpen(false);
+              router.push({ pathname: '/pick/[id]/lobby', params: { id: pickId } });
+            }}
+          />
+        ) : null}
         {allowRefresh ? (
           <MenuItem
             icon="refresh"
