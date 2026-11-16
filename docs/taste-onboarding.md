@@ -31,21 +31,57 @@ fields can still be edited on the profile.
 
 **Home nudge** (`src/components/TasteNudge.tsx`): shown while preferences were never saved
 (`onboarded` false). It opens `/onboarding?mode=taste` (taste + preferences only, no permission
-prompts, and it never marks optional setup finished). Dismissal is stored on the device
-(`wtw.tasteNudgeDismissed.v1`).
+prompts, and it never marks optional setup finished). Dismissal is stored per account on the device
+(`wtw.tasteNudgeDismissed.v1.<userId>`).
 
 **Pick defaults** (`pickDefaults` in `src/lib/preferences.ts`): a new Pick starts with my single
 category (if I picked exactly one), my budget and my distance. A Hang still starts as activities.
 
-## PR 2: taste-aware Picks (backend, planned)
+## PR 2: taste-aware Picks and learning
 
-- Group taste score per candidate, computed when the host starts the Pick: liked members
-  count +1 and disliked members count −1, normalized by group size. It uses the people actually
-  in the Pick and is computed server-side only; nobody's preferences are shown to others.
-- Deck: saved, custom and group-idea spots keep their priority. Provider results fill about 70%
-  of the deck by taste and about 30% from the normal mix. Nothing is removed.
-- Tiebreak: `pick_candidates.taste_score` is stored at build time (our own number, since Google
-  snapshots keep no types). Rank order becomes score → taste → distance → placeId.
-- "Matches your taste" badge on swipe cards, from my own liked types only.
-- Quiet learning: `learned_taste(user_id, place_type, score)`, nudged by real swipes; explicit
-  answers always win. "Reset what WTW learned" goes in preferences.
+**Group taste** (`_shared/domain/groupTaste.ts`, pure):
+
+- Each place counts as one survey type, `tasteTypeOf(types)`: its first own Google type that is
+  a survey type.
+- Each member's value for a type runs from −1 to 1. Explicit likes and dislikes win; otherwise
+  the learned score is used, capped at ±1 once it reaches 3.
+- The group score is the average over everyone in the Pick when it starts.
+
+**Deck** (`buildCandidates`): saved, custom and group-idea spots keep their priority. Then
+`tasteOrder` gives about 70% of the provider slots to the best positive group matches, and the
+rest keep the normal varied interleave. Nothing is removed. With no taste data the deck is
+unchanged.
+
+**Tiebreak.** At start/refresh the API sends each candidate's `tasteScore` (only when non-zero).
+`0044_taste_learning.sql` stores it in `private.pick_candidate_taste`, which the app can't read:
+a group score could reveal someone's preferences in a two-person Pick. `pick_load_for_close`
+adds it back for the API, and ranking becomes score → **taste** → distance → placeId. The final
+vote's tie chain already follows rank order.
+
+**Badge.** Each candidate snapshot carries `tasteType`, our survey label stored next to
+`category`. The swipe card shows "Matches your taste" when that type is one I said I like. It
+uses only my own answers. _Review note for Josh: `tasteType` is a label derived from Google's
+types at the same level as `category`; confirm it fits the Places storage rules._
+
+**Learning** (`learned_taste`, database triggers in 0044):
+
+| Signal                 | Change                                                  |
+| ---------------------- | ------------------------------------------------------- |
+| Swipe Yes / Maybe / No | +1 / +0.3 / −1 (changing an answer replaces its signal) |
+| Final vote             | +1 (changing your vote moves it)                        |
+| Pick winner            | +2 for everyone in the Pick                             |
+
+- Scores halve every 30 days, and each new signal adds to the faded value. They are clamped
+  to −10..10.
+- Only typed candidates teach; custom options and untyped places don't.
+- The learning runs in triggers, so every write path is covered and nothing else changes.
+
+**Preferences screen** (Profile → Preferences, or Settings → Food & activity preferences):
+
+- "What WTW noticed" lists learned likes and passes that my answers don't already cover.
+  `GET /me/learned-taste` returns the decayed scores and drops anything below 0.5.
+- "Reset what WTW learned" (`DELETE /me/learned-taste`) clears the learning only.
+- "Swipe again" reopens the practice deck, then returns to where it was opened from.
+
+**Not yet**: "people like you also liked…" (collaborative filtering). That needs real usage
+data first.

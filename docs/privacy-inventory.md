@@ -22,6 +22,8 @@ tracking. Nothing is sent to analytics; there is no analytics SDK.
 | Being in a Pick | `pick_participants` (joined, finished time) | Who's in, live progress | Participants of that Pick | With the Pick | Yes |
 | Your swipes | `preferences` (Yes/Maybe/No per place) | Ranking | **Only you** (RLS); the server uses them to score; reasons use counts only | With the Pick | Yes |
 | Your final vote | `final_votes` | The tie-break vote | **Only you** | With the Pick | Yes (via `pick_participants`) |
+| What WTW learned about your taste | `learned_taste` (a score per place type, e.g. Thai, Bowling), updated from your swipes, final votes and Picks you won | Ordering Pick decks and breaking ties toward what the group likes | **Only you**, through `GET /me/learned-taste`; no client grant. Others never see it; it only shapes the group's deck order | Fades by half every 30 days; reset any time in Preferences ("Reset what WTW learned") | Yes |
+| Group taste per candidate | `private.pick_candidate_taste` (one number per place in a Pick) | Ranking tiebreak only | Server only (private schema), never sent to the app, because in a small group it could reveal someone's preferences | With the Pick | With the Pick |
 | Ranking | `ranking_results` (rank, finalist, score) | Showing results | Participants see rank + finalist; scores are never sent to the app | With the Pick | With the Pick |
 | Join codes | `pick_join_codes` | Joining by code/QR | Participants | 7 days, then useless | With the Pick |
 | Notifications | `notifications` (type, Pick, small payload such as a cancel reason) | In-app inbox | **Only you** | Indefinitely (no cleanup job yet) | Yes |

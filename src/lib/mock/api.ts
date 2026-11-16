@@ -748,6 +748,12 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     });
   }
   if (method === 'POST' && path === '/me/preferences') return updatePreferences(readBody(init));
+  if (method === 'GET' && path === '/me/learned-taste')
+    return json(200, { learned: mockProfile.learned });
+  if (method === 'DELETE' && path === '/me/learned-taste') {
+    mockProfile.learned = [];
+    return json(200, { status: 'ok' });
+  }
   if (method === 'POST' && path === '/push-tokens') return registerPushToken(readBody(init));
   if (method === 'DELETE' && path === '/me') {
     forgetMockAccount();

@@ -129,6 +129,8 @@ export const mockProfile: {
   birthdaySetupRequired: boolean;
   optionalSetupPending: boolean;
   pushTokens: string[];
+  /** GET /me/learned-taste. Mock mode doesn't learn; tests and demos can seed it. */
+  learned: { type: string; score: number }[];
 } = {
   birthdayRequired: false,
   birthdaySetupRequired: false,
@@ -137,6 +139,7 @@ export const mockProfile: {
   preferences: EMPTY_PREFERENCES,
   onboarded: false,
   pushTokens: [],
+  learned: [],
 };
 
 /** Back to a brand-new account (what DELETE /me leaves behind). */
@@ -145,6 +148,7 @@ export function resetMockProfile() {
     displayName: null,
     preferences: EMPTY_PREFERENCES,
     onboarded: false,
+    learned: [],
     birthdayRequired: false,
     birthdaySetupRequired: false,
     optionalSetupPending: true,

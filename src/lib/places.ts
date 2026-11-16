@@ -51,6 +51,7 @@ export function candidateFromSnapshot(placeId: string, snapshot: unknown): Candi
     lng: s.provider === 'custom' && s.locationProvided === false ? null : num(s.lng),
     openNow: typeof s.openNow === 'boolean' ? s.openNow : null,
     closesAt: str(s.closesAt),
+    ...(str(s.tasteType) ? { tasteType: str(s.tasteType)! } : {}),
   };
 }
 
