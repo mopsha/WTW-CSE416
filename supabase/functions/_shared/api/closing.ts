@@ -69,7 +69,8 @@ function countAnswers(pick: ClosingSnapshot, userId: string): number {
   return pick.preferences.filter((p) => p.userId === userId).length;
 }
 
-function existingResult(pick: ClosingSnapshot): CloseResult {
+function existingResult(pick: ClosingSnapshot): CloseResult | null {
+  if (pick.state === 'canceled') return null;
   return {
     state: pick.state === 'completed' ? 'completed' : 'final_vote',
     winnerPlaceId: pick.winnerPlaceId,
@@ -125,6 +126,7 @@ async function attemptClose(
   }
   if (pick.state !== 'swiping') {
     if (pick.state === 'completed' || pick.state === 'final_vote') return existingResult(pick);
+    if (pick.state === 'canceled' && pick.awaitingResponses !== undefined) return null;
     if (actor === 'system') return null;
     throw new ApiError(409, 'INVALID_PICK_STATE', `Pick is ${pick.state}`);
   }

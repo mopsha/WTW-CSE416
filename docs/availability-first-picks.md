@@ -30,9 +30,9 @@ Before a first swipe, responses may change freely. The first accepted preference
 
 ## Completion, deadlines and final cohort
 
-Current authorized Yes/Maybe users form the swipe/ranking denominator. Can't and unanswered invitees do not count as finished. At the default 100% threshold, automatic completion waits while invitations remain unanswered, even if every current eligible user finished. It also keeps a host-only default round open so friends can be invited after creation. Once at least two invitees exist and all have responded or lost access, existing completion calculations apply to the eligible respondents. Declines do not block that calculation.
+The completion denominator is current authorized Yes/Maybe users **plus unanswered invitations**, counted once each. Can't is excluded. Ranking and final voting use authorized eligible Yes/Maybe users only. Can't and unanswered invitees do not count as finished. At the default 100% threshold, automatic completion waits while invitations remain unanswered, even if every current eligible user finished. It also keeps a host-only default round open so friends can be invited after creation. Once at least two invitees exist and all have responded or lost access, existing completion calculations apply to the eligible respondents. Declines do not block that calculation.
 
-Explicit thresholds below 100% keep their existing completed-eligible percentage semantics and may close with unanswered invitations. An authorized host can manually close without waiting. A reached deadline also permits canonical closure with unanswered invitations. No deadline stores null and remains manually closable. A round with zero eligible respondents does not manufacture a winner: automatic closure is a no-op; host closure explains that a response or cancellation is needed. These rules are explained in the host participation view.
+Explicit thresholds below 100% compare completed eligible users against eligible users plus unanswered invitations; they may close before every invitation is answered when that percentage is met. This retains Mike’s 8edfff8 correction and avoids premature host-only closure. An authorized host can manually close without waiting. A reached deadline also permits canonical closure with unanswered invitations. No deadline stores null and remains manually closable. Revocation that leaves zero eligible respondents immediately cancels the scheduled swiping round under its row lock, including No deadline rounds. It never generates a winner or opens final voting. These rules are explained in the host participation view.
 
 The finished-swiping screen reflects the response window and links back to participation/invites, including after the host finishes their own deck.
 
@@ -50,7 +50,7 @@ The original proposal is fixed throughout the decision. The old proposed-time en
 
 ## Migration inventory and compatibility
 
-Historical main migrations 0001–0040 are untouched. Branch-specific `0041_availability_first_picks.sql` is preserved; additive **`0042_immediate_availability.sql`** implements this revision. Although 0041 is unique to the unmerged branch and previous notes said undeployed, application to every shared environment could not be independently verified. The brief explicitly requires additive history when uncertain. Apply 0041 then 0042 after main's migrations. 0042 backfills started status from preferences, unlocks only previously swiping scheduled cohorts for dynamic participation, and retains already finalized cohorts. Existing ordinary records have null proposed time and preserve their behavior.
+Historical main migrations 0001–0040 are untouched. Branch-specific `0041_availability_first_picks.sql` is preserved; additive **`0042_immediate_availability.sql`** implements this revision. Although 0041 is unique to the unmerged branch and previous notes said undeployed, application to every shared environment could not be independently verified. The brief explicitly requires additive history when uncertain. Apply 0041, 0042, then **0043_empty_scheduled_rounds.sql** after main’s migrations. 0043 is additive; 0041/0042 and Mike’s fixes remain unchanged. 0042 backfills started status from preferences, unlocks only previously swiping scheduled cohorts for dynamic participation, and retains already finalized cohorts. Existing ordinary records have null proposed time and preserve their behavior.
 
 `ENABLE_AVAILABILITY_PICKS` still defaults off. Capability discovery requires `availabilityFirst: true` and `availabilityMode: 'immediate'`; the client uses the existing `X-Client-Info` header with `availability-v2`. This prevents a v2 client silently creating the old waiting flow or an unscheduled Pick against an older backend. Older clients cannot bypass scheduled read/start/swipe/vote restrictions by ignoring the UI. Scheduled creation must remain disabled until compatible clients are available; do not assume simultaneous TestFlight upgrades. Ordinary Picks do not gain capability requests.
 
@@ -60,21 +60,18 @@ Hang-derived Picks remain unscheduled under this feature: no unnecessary availab
 
 Validation was run with local Node 23.11.0 (Node 22 was unavailable), Expo 57.0.25, React Native 0.86.3 and TypeScript 6.0.3. Installed versions match package-lock; no dependency/lockfile changes. A separate git-archive source copy overlaid with this revision excludes ignored `.expo` and `expo-env.d.ts`, using the lockfile-matching installed dependencies. This is clean-source TypeScript validation, not a fresh Node-22 `npm ci` run.
 
-Validation completed:
+Validation completed for the final lifecycle revision:
 
-- `npm run typecheck`: passed.
-- Separate clean-source `npm run typecheck`: passed without generated Expo type files.
-- `npm run lint`: passed.
-- Focused Jest: 5 suites, 103 tests passed.
-- Full Jest: 193 suites, 1,619 tests passed.
-- Deno check of the API entrypoint: passed.
-- Full Deno/API directory: 152 tests passed (including imported regression modules).
-- All 42 SQL/pgTAP files: 727 assertions passed against a fresh migration application.
-- All 9 deterministic concurrent transaction scenarios: passed on that fresh database.
-- Android and iOS Expo exports: passed, outputs `/tmp/wtw-immediate-android` and `/tmp/wtw-immediate-ios`.
-- Working-tree and staged `git diff --check`: passed; no conflict markers or unresolved files. Nothing staged by this revision.
+- Local TypeScript, clean-source TypeScript without `.expo`/`expo-env.d.ts`, and ESLint passed.
+- Focused Jest: 4 suites / 73 tests; full Jest: 193 suites / 1,623 tests passed.
+- Deno entrypoint check and all 152 API test executions passed.
+- Fresh isolated PostgreSQL migration application; all 43 SQL files / 750 assertions passed.
+- All 16 deterministic two-connection scenarios passed, retaining the original nine plus concurrent last declines and both orderings of removal versus manual/deadline closure and Yes responses.
+- A separate pre-0043 stranded-round reproduction remained swiping before migration and was repaired to canceled by 0043.
+- Android and iOS exports passed; outputs `/tmp/wtw-final72-android` and `/tmp/wtw-final72-ios`.
+- Working-tree and staged diff checks passed; nothing staged by this revision.
 
-Logs and SQL assertion details are outside the repository under `/tmp/wtw-immediate-*`. Local migrations were applied from scratch to disposable PostgreSQL 14 with actual pgTAP. All SQL/RLS tests run there; the harness supplies Auth/Storage schema and inert cron/net/vault stubs, omitting only unavailable extension installation in temporary copies. Repository migrations are not patched for the harness.
+Logs and SQL assertion details are outside the repository under `/tmp/wtw-final72-*`. Local migrations were applied from scratch to disposable PostgreSQL 14 with actual pgTAP. All SQL/RLS tests run there; the harness supplies Auth/Storage schema and inert cron/net/vault stubs, omitting only unavailable extension installation in temporary copies. Repository migrations are not patched for the harness.
 
 **Release gates:** Docker is unavailable, so the full Supabase-container/Edge Function integration environment cannot run locally. Isolated PostgreSQL is not equivalent to Supabase Auth, PostgREST, Storage protection, realtime, or actual scheduled jobs. CI's full integration job must pass, including Node-22 clean install, before approval. Native simulator/device tools are unavailable; test VoiceOver/TalkBack, compact layouts, real invitation notifications/deep links, offline/retry, account switching, background deadline transitions, response/close races and post-result reconfirmation on iOS and Android. Exports verify bundling, not native interaction.
 
@@ -82,7 +79,7 @@ Logs and SQL assertion details are outside the repository under `/tmp/wtw-immedi
 
 1. Review the migration and product rules, especially first-swipe response locking and default completion waits.
 2. Pass Node-22 CI and full local Supabase integration, including ordinary/Hang regression and scheduler tests.
-3. Apply 0041 then 0042 through the approved release process; deploy matching backend with creation **off**.
+3. Apply 0041, 0042, then 0043 through the approved release process; deploy matching backend with creation **off**.
 4. Verify ordinary/Hang behavior, capability response, RPC grants, RLS and historical data handling.
 5. Distribute compatible clients and complete native QA.
 6. Only after separate approval, enable staged scheduled creation and monitor failures/closure.
@@ -141,3 +138,19 @@ This includes retained original PR 2 files and this revision's additions; it is 
 - `tests/components/NewPick.test.tsx`
 - `tests/db/availability_concurrency.py`
 - `tests/lib/availabilityFlow.test.ts`
+
+## Final empty-round lifecycle correction
+
+Root cause: the last-eligible decline guard only governs response mutations. A legitimate group removal, block, Pick roster removal or account deletion could still remove the last eligible voter. Both application closure and SQL freeze then refused to rank an empty cohort, leaving an active round past its deadline.
+
+Chosen recovery: **immediate cancellation on participant deletion while a scheduled Pick is swiping and no authorized Yes/Maybe users remain**. Waiting for a deadline leaves No deadline rounds stranded, so the trigger is safer and requires no new public endpoint or state. It locks the parent Pick, checks the current authorized eligible IDs after deletion, and persists the existing `canceled` state and `cancel_reason`. Terminal or unscheduled Picks are untouched. Historical results and existing cancellation reasons are preserved. The migration locks and repairs pre-existing empty scheduled swipe rounds as well.
+
+Authorization is unchanged: clients cannot write the participant table; removal still requires the existing authorized server operation. The trigger is security-definer with an empty search path and no public/anon/authenticated execution grant. It does not make an unauthorized caller able to cancel a Pick. Response, closure and removal serialize on the same Pick lock, and roster changes bump its version. Revocation-first cancels and rejects late Yes/closure; confirmed-Yes-first can preserve a legitimate remaining voter. Closure-first retains the canonical final-vote result and its existing revocation/deadline rules rather than retroactively canceling finalized ranking. Cancellation discovered during an application close retry now returns a safe no-op instead of a fabricated final-vote result or winner notification. Ordinary already-canceled host-close behavior remains unchanged.
+
+The exact regression SQL covers host Yes → friend Yes → host Can't → canonical group removal → canceled state retained after the deadline, with no winner, final cohort, or ballots. It also covers direct removal with No deadline, blocking, surviving eligible users, ordinary Picks, completed history, repeated removal, preserved cancellation reason and late-response rejection. Fresh migrations and a separate backfill check cover already-stranded data.
+
+Downstream effects reuse existing cancellation paths: canceled Picks leave the active Home set and appear as canceled history; lifecycle routing shows the canceled view, never results. Its wording is neutral for automatic cancellations. Deadline, reminder and plan jobs use existing state filters and no longer select the canceled swipe round. Canonical background cancellations do not emit host-cancel push notifications; this follows existing group-revocation and expired-coordinate cancellation behavior. No winner/vote notification is sent by the racing closer. Account, Hang conversion, and ordinary Pick semantics stay intact.
+
+Final revision files: `0043_empty_scheduled_rounds.sql`, `closing.ts`, mock `store.ts`, canceled Pick `index.tsx`, `empty_scheduled_rounds_test.sql`, `closing.test.ts`, `availability_concurrency.py`, this report, and `docs/pr-72-description.md`. These extend the retained complete inventory above.
+
+The corrected, ready-to-paste PR description is in [pr-72-description.md](pr-72-description.md). It has not been posted to GitHub. The confirmed lifecycle merge blocker is fixed locally and ready for review/approval subject to green CI and the documented Supabase/native release gates. Feature creation remains off; no remote operation was performed.

@@ -386,7 +386,11 @@ export function decide(pick: MockPick, now = new Date()) {
 /** Close when enough people are done or the deadline passed (the real API checks after every swipe; the sweep covers deadlines). */
 export function maybeAutoClose(pick: MockPick, now = new Date()) {
   if (pick.state !== 'swiping') return;
-  if (pick.availability && votersOf(pick).length === 0) return;
+  if (pick.availability && votersOf(pick).length === 0) {
+    pick.state = 'canceled';
+    emit(pick.id);
+    return;
+  }
   if (
     pick.availability &&
     pick.closeThreshold === 100 &&

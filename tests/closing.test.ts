@@ -301,3 +301,22 @@ test('an availability change during ranking retries with a fresh version and coh
   await closePick(store, 'pick', 'host', 'host');
   expect(store.applyClose.mock.calls[1]![1]).toBe('2');
 });
+
+test('revocation cancellation racing ranking is reconciled without a vote result or notification', async () => {
+  const store = fixture(scheduledFinished({ awaitingResponses: 0 }));
+  store.applyClose.mockRejectedValueOnce(new ApiError(409, 'PICK_CONFLICT', 'Changed'));
+  store.loadForClose
+    .mockResolvedValueOnce(scheduledFinished({ awaitingResponses: 0 }))
+    .mockResolvedValue(snapshot({ state: 'canceled' }));
+  const notifier = jest.fn();
+  expect(await closePick({ ...store, notifier }, 'pick', 'system', null)).toBeNull();
+  expect(notifier).not.toHaveBeenCalled();
+});
+test.each(['host', 'system'] as const)(
+  'already canceled scheduled closure is safe for %s retries',
+  async (actor) => {
+    const store = fixture(scheduledFinished({ state: 'canceled' }));
+    expect(await closePick(store, 'pick', actor, actor === 'host' ? 'host' : null)).toBeNull();
+    expect(store.applyClose).not.toHaveBeenCalled();
+  },
+);

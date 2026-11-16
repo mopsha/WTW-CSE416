@@ -36,7 +36,7 @@ export default function PickEntry() {
           body={
             progress?.hostDeleted
               ? `The host (${DELETED_USER_NAME}) deleted their account. Nothing was decided, and nobody’s answers were shared.`
-              : 'The host called it off. Nothing was decided, and nobody’s answers were shared.'
+              : 'This Pick was canceled. Nothing was decided, and nobody’s answers were shared.'
           }
         >
           <GradientButton label="Start a new Pick" onPress={() => router.replace('/pick/new')} />

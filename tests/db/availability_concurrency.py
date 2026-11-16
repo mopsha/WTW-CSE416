@@ -38,7 +38,7 @@ def close(pick, actor='host'):
     return "select public.pick_close_apply('%s','%s',%s,(select version::text from public.picks where id='%s'),%s);" % (pick, actor, who, pick, ranking)
 
 results = []
-for case in ['close vs Yes', 'Yes vs close', 'deadline vs Maybe', 'first swipe vs Cant', 'Cant vs first swipe', 'manual vs automatic close', 'cancel vs response', 'revoke vs response', 'duplicate initialization']:
+for case in ['close vs Yes', 'Yes vs close', 'deadline vs Maybe', 'first swipe vs Cant', 'Cant vs first swipe', 'manual vs automatic close', 'cancel vs response', 'revoke vs response', 'duplicate initialization', 'last eligible declines', 'empty revoke vs manual close', 'empty revoke vs deadline close', 'manual close vs empty revoke', 'deadline close vs empty revoke', 'Yes vs empty revoke', 'empty revoke vs Yes']:
     pick = setup(case == 'duplicate initialization')
     response = "select public.pick_availability_respond('%s','%s',1,'yes');" % (pick, user(2))
     first, second = close(pick), response
@@ -60,6 +60,24 @@ for case in ['close vs Yes', 'Yes vs close', 'deadline vs Maybe', 'first swipe v
         first = "delete from public.pick_participants where pick_id='%s' and user_id='%s';" % (pick, user(2))
     elif case == 'duplicate initialization':
         first = second = "select public.pick_availability_claim('%s','%s');" % (pick, user(1))
+    expect_success = case in ['manual close vs empty revoke', 'deadline close vs empty revoke', 'Yes vs empty revoke']
+    if case == 'last eligible declines':
+        query(response)
+        first = "select public.pick_availability_respond('%s','%s',1,'cant');" % (pick, user(1))
+        second = response.replace("'yes'", "'cant'")
+    elif 'empty revoke' in case:
+        query(response)
+        query("select public.pick_availability_respond('%s','%s',1,'cant')" % (pick, user(1)))
+        removal = "delete from public.pick_participants where pick_id='%s' and user_id='%s';" % (pick,user(2))
+        if 'deadline' in case:
+            query("update public.picks set deadline_at=now()-interval '1 second' where id='%s'" % pick)
+        if 'Yes' in case:
+            query("insert into public.pick_participants(pick_id,user_id) values('%s','%s')" % (pick,user(3)))
+            join = "select public.pick_availability_respond('%s','%s',1,'yes');" % (pick,user(3))
+            first, second = (join,removal) if case.startswith('Yes') else (removal,join)
+        else:
+            closure = close(pick, 'system' if 'deadline' in case else 'host')
+            first, second = (removal,closure) if case.startswith('empty') else (closure,removal)
     holder = subprocess.Popen(base, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     contender = None
     try:
@@ -80,10 +98,25 @@ for case in ['close vs Yes', 'Yes vs close', 'deadline vs Maybe', 'first swipe v
         holder.stdin.flush()
         holder.wait(timeout=10)
         _, error = contender.communicate(timeout=10)
-        if not contender.returncode:
-            raise AssertionError('Expected a rejected stale/conflicting contender')
-        if not any(text in error for text in ['closed', 'changed', 'first swipe', 'Confirm Yes', 'Pick not found', 'initializing']):
-            raise AssertionError(error)
+        if expect_success:
+            if contender.returncode: raise AssertionError(error)
+        else:
+            if not contender.returncode:
+                raise AssertionError('Expected a rejected stale/conflicting contender')
+            if not any(text in error for text in ['closed', 'changed', 'first swipe', 'Confirm Yes', 'Pick not found', 'initializing', 'Someone has to be able to go']):
+                raise AssertionError(error)
+        if case.startswith('empty revoke'):
+            assert query("select state from public.picks where id='%s'" % pick) == 'canceled'
+            assert query("select count(*) from public.pick_voting_cohort where pick_id='%s'" % pick) == '0'
+            assert query("select winner_place_id is null from public.picks where id='%s'" % pick) == 't'
+        if case in ['manual close vs empty revoke', 'deadline close vs empty revoke']:
+            assert query("select state from public.picks where id='%s'" % pick) == 'final_vote'
+        if case == 'Yes vs empty revoke':
+            assert query("select state from public.picks where id='%s'" % pick) == 'swiping'
+            assert query("select cardinality(private.availability_eligible_ids('%s'))" % pick) == '1'
+        if case == 'last eligible declines':
+            assert query("select cardinality(private.availability_eligible_ids('%s'))" % pick) == '1'
+
         if case == 'Yes vs close':
             query(close(pick))  # canonical closer retries a version conflict
             assert query("select count(*) from public.pick_voting_cohort where pick_id='%s' and user_id='%s'" % (pick, user(2))) == '1'
