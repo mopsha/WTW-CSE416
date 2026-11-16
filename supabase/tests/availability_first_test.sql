@@ -94,10 +94,10 @@ select is((select count(*) from pick_voting_cohort where pick_id=(select id from
 -- The last Yes/Maybe cannot decline, or the round could never close and would stay swiping.
 create temp table av_sole(id uuid);
 insert into av_sole values(pg_temp.scheduled());
-insert into pick_participants(pick_id,user_id) select id,'af000000-0000-4000-8000-000000000002' from av_sole;
+insert into pick_participants(pick_id,user_id) select id,'af000000-0000-4000-8000-000000000003' from av_sole;
 select throws_ok($$select public.pick_availability_respond(id::text,'af000000-0000-4000-8000-000000000001',1,'cant') from av_sole$$,'PT409','Someone has to be able to go. Cancel the Pick instead.','sole eligible host cannot decline');
-select public.pick_availability_respond(id::text,'af000000-0000-4000-8000-000000000002',1,'yes') from av_sole;
+select public.pick_availability_respond(id::text,'af000000-0000-4000-8000-000000000003',1,'yes') from av_sole;
 select lives_ok($$select public.pick_availability_respond(id::text,'af000000-0000-4000-8000-000000000001',1,'cant') from av_sole$$,'host may decline once another participant can go');
-select throws_ok($$select public.pick_availability_respond(id::text,'af000000-0000-4000-8000-000000000002',1,'cant') from av_sole$$,'PT409','Someone has to be able to go. Cancel the Pick instead.','last remaining eligible participant cannot decline');
+select throws_ok($$select public.pick_availability_respond(id::text,'af000000-0000-4000-8000-000000000003',1,'cant') from av_sole$$,'PT409','Someone has to be able to go. Cancel the Pick instead.','last remaining eligible participant cannot decline');
 select * from finish();
 rollback;
