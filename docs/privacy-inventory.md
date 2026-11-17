@@ -248,3 +248,11 @@ reconfirm deployment status before rollout. If any copy is deployed, preserve it
 and use a forward-only correction. Cached origin/main ends at 0037; cached pending
 branches use 0039/0040, with no second 0038 filename found. Live pending-PR
 numbering still needs confirmation. No shared database was changed.
+
+## Post-result time suggestions (0046)
+
+| Data | Where | Why we keep it | Who can see it | Kept | Deleted with the account? |
+|---|---|---|---|---|---|
+| Suggested outing time, proposer, status and creation time | `pick_time_suggestions` | Participant proposals and host review after a scheduled Pick completes | Currently authorized participants; proposer must remain authorized, with blocking enforced. API returns display name, not private profile fields | With the Pick; withdrawal marks a row withdrawn rather than erasing history | Yes, proposer rows cascade from profiles; deleting a Pick cascades its suggestions |
+
+Schedule revisions and group-provenance markers on `picks` support stale-write prevention and authorization. Suggestion notifications contain event/suggestion IDs and a reconfirmation marker, without proposed times or names. Existing notification retention and recipient isolation apply. See [implementation and rollout](post-result-time-suggestions.md).

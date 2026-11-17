@@ -283,13 +283,11 @@ test('a Hang that already started a Pick stays visible and can still take RSVPs'
 });
 
 test('converted Hang hosts keep the enabled Let’s Pick entry and navigate with the original Hang identity', async () => {
-  jest
-    .mocked(api.getHang)
-    .mockResolvedValue({
-      posts: [{ ...post(), authorId: 'A', pickId: 'existing-draft' }],
-      sharedAvailable: true,
-      notice: '',
-    });
+  jest.mocked(api.getHang).mockResolvedValue({
+    posts: [{ ...post(), authorId: 'A', pickId: 'existing-draft' }],
+    sharedAvailable: true,
+    notice: '',
+  });
   await act(async () => {
     tree = create(<HangCard />);
   });
@@ -305,4 +303,20 @@ test('converted Hang hosts keep the enabled Let’s Pick entry and navigate with
     params: { hangId: 'hang', hangActivity: 'Walk' },
   });
   expect(tree.root.findByType(HangInvitation).props.post.pickId).toBe('existing-draft');
+});
+
+test('scheduled RSVP carries the revision the participant saw when choosing', async () => {
+  const first = deferred<{ status: 'ok' }>();
+  jest
+    .mocked(api.getPlan)
+    .mockResolvedValue({
+      ...plan(),
+      planAt: new Date(Date.now() + 86400000).toISOString(),
+      scheduleRevision: 3,
+    });
+  jest.mocked(api.rsvp).mockReturnValueOnce(first.promise);
+  await mountPlan();
+  await act(async () => tree.root.findByType(Chips).props.onChange('going'));
+  expect(api.rsvp).toHaveBeenCalledWith('pick', 'going', 'A', 3);
+  await act(async () => first.resolve({ status: 'ok' }));
 });
