@@ -39,6 +39,21 @@ export function PreferencesForm({
 }) {
   const likedFood = value.types.filter((t) => FOOD.has(t));
   const likedActivities = value.types.filter((t) => !FOOD.has(t));
+  const skippedFood = value.dislikedTypes.filter((t) => FOOD.has(t));
+  const skippedActivities = value.dislikedTypes.filter((t) => !FOOD.has(t));
+  /** Liking takes a type off the skip list and skipping takes it off the likes. */
+  const like = (types: string[]) =>
+    onChange({
+      ...value,
+      types,
+      dislikedTypes: value.dislikedTypes.filter((t) => !types.includes(t)),
+    });
+  const skip = (dislikedTypes: string[]) =>
+    onChange({
+      ...value,
+      dislikedTypes,
+      types: value.types.filter((t) => !dislikedTypes.includes(t)),
+    });
 
   return (
     <>
@@ -54,28 +69,15 @@ export function PreferencesForm({
         <MultiChips
           options={FOOD_TYPE_OPTIONS}
           values={likedFood}
-          onChange={(food) =>
-            onChange({
-              ...value,
-              types: [...food, ...likedActivities],
-              // Loving something takes it off the skip list.
-              dislikedTypes: value.dislikedTypes.filter((t) => !food.includes(t)),
-            })
-          }
+          onChange={(food) => like([...food, ...likedActivities])}
           accessibilityLabel="Food you love"
         />
       </Section>
       <Section title="Food you'd rather skip">
         <MultiChips
           options={FOOD_TYPE_OPTIONS}
-          values={value.dislikedTypes}
-          onChange={(dislikedTypes) =>
-            onChange({
-              ...value,
-              dislikedTypes,
-              types: value.types.filter((t) => !dislikedTypes.includes(t)),
-            })
-          }
+          values={skippedFood}
+          onChange={(food) => skip([...food, ...skippedActivities])}
           accessibilityLabel="Food you'd rather skip"
         />
       </Section>
@@ -83,8 +85,16 @@ export function PreferencesForm({
         <MultiChips
           options={ACTIVITY_TYPE_OPTIONS}
           values={likedActivities}
-          onChange={(activities) => onChange({ ...value, types: [...likedFood, ...activities] })}
+          onChange={(activities) => like([...likedFood, ...activities])}
           accessibilityLabel="Things you like doing"
+        />
+      </Section>
+      <Section title="Things you'd rather skip">
+        <MultiChips
+          options={ACTIVITY_TYPE_OPTIONS}
+          values={skippedActivities}
+          onChange={(activities) => skip([...skippedFood, ...activities])}
+          accessibilityLabel="Things you'd rather skip"
         />
       </Section>
       <Section title="Budget" hint="The most you usually want to spend.">

@@ -1,4 +1,6 @@
 import { useAuth } from '@/hooks/useAuth';
+import { useProfile } from '@/hooks/useProfile';
+import { pickDefaults } from '@/lib/preferences';
 import {
   CategoryCards,
   ChoiceList,
@@ -76,6 +78,8 @@ type FormScrollView = ScrollView & { getInnerViewRef(): View | null };
 
 export default function CreatePickScreen() {
   const { session } = useAuth();
+  // Remount once the profile loads so the form starts from my saved preferences.
+  const { loading } = useProfile();
   const params = useLocalSearchParams<{
     groupId?: string;
     groupName?: string;
@@ -85,7 +89,7 @@ export default function CreatePickScreen() {
   // Each account/creation context owns its drafts and in-flight callbacks.
   return (
     <CreatePickForm
-      key={JSON.stringify([session?.user.id, params.groupId, params.hangId])}
+      key={JSON.stringify([session?.user.id, params.groupId, params.hangId, loading])}
       {...params}
     />
   );
@@ -101,15 +105,20 @@ function CreatePickForm({
   hangId?: string;
   hangActivity?: string;
 }) {
-  const [category, setCategory] = useState<PickCategory>(hangId ? 'activities' : 'food');
+  // My saved preferences start the form; a Hang always starts as activities.
+  const profile = useProfile();
+  const [defaults] = useState(() => pickDefaults(profile.preferences));
+  const [category, setCategory] = useState<PickCategory>(
+    hangId ? 'activities' : (defaults.category ?? 'food'),
+  );
   const [customOptions, setCustomOptions] = useState<CustomOption[]>([{ name: '' }, { name: '' }]);
   const [includeSaved, setIncludeSaved] = useState(false);
   const [includeGroupIdeas, setIncludeGroupIdeas] = useState(false);
   const [mix, setMix] = useState<'none' | 'food' | 'activities'>('none');
   const [center, setCenter] = useState<LatLng>(DEFAULT_CENTER);
   const [placeLabel, setPlaceLabel] = useState('SBU Academic Mall');
-  const [miles, setMiles] = useState(2);
-  const [priceMax, setPriceMax] = useState(-1);
+  const [miles, setMiles] = useState(defaults.miles ?? 2);
+  const [priceMax, setPriceMax] = useState(defaults.priceMax ?? -1);
   const [openNow, setOpenNow] = useState(false);
   const [poolSize, setPoolSize] = useState(DEFAULT_POOL_SIZE);
   const [deadlineMin, setDeadlineMin] = useState(60);
