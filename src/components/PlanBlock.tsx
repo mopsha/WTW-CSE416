@@ -1,3 +1,4 @@
+import { TimeSuggestions } from './TimeSuggestions';
 import { useOptimisticChoice } from '@/hooks/useOptimisticChoice';
 import { OptimisticChoice } from '@/lib/optimisticChoice';
 import { canRsvpPlan, projectPlanRsvp } from '@/lib/optimisticRsvp';
@@ -53,12 +54,15 @@ function PlanBlockContent({
 }: PlanBlockProps) {
   const [scheduling, setScheduling] = useState(false);
   const inFlight = useRef(false);
+  const rsvpRevision = useRef<number | undefined>(undefined);
   const rsvp = useOptimisticChoice(
     () =>
       new OptimisticChoice<PlanSummary, RsvpStatus>({
         read: () => api.getPlan(pickId, viewerId),
         write: async (status, current) => {
-          await api.rsvp(pickId, status, viewerId);
+          const revision = rsvpRevision.current;
+          if (revision === undefined) await api.rsvp(pickId, status, viewerId);
+          else await api.rsvp(pickId, status, viewerId, revision);
           if (!current()) throw new Error('Screen changed');
         },
         readAfterWrite: true,
@@ -158,7 +162,10 @@ function PlanBlockContent({
           value={(plan.myRsvp ?? '') as RsvpStatus}
           disabled={!!action.busy || rsvp.uncertain || !canRsvpPlan(plan)}
           onChange={(status) => {
-            if (!inFlight.current) rsvp.choice.choose(status);
+            if (!inFlight.current) {
+              rsvpRevision.current = plan.scheduleRevision;
+              rsvp.choice.choose(status);
+            }
           }}
           accessibilityLabel="Are you going"
         />
@@ -168,6 +175,14 @@ function PlanBlockContent({
             : 'Nobody has answered yet.'}
         </Text>
       </Card>
+      {plan.timeSuggestionsAllowed && plan.state === 'completed' && plan.planAt ? (
+        <TimeSuggestions
+          pickId={pickId}
+          viewerId={viewerId}
+          planAt={plan.planAt}
+          onChanged={load}
+        />
+      ) : null}
       {shouldAskDidYouGo(plan, decidedAt) ||
       (editingAttendance && attendanceDue(plan.planAt, decidedAt)) ? (
         <Card>

@@ -10,6 +10,8 @@ export type RsvpStatus = 'going' | 'maybe' | 'not_going';
 const RSVP_STATUSES: readonly RsvpStatus[] = ['going', 'maybe', 'not_going'];
 
 export interface PlanSummary {
+  timeSuggestionsAllowed?: boolean;
+  scheduleRevision?: number;
   state: string;
   isHost: boolean;
   planAt: string | null;
@@ -38,7 +40,7 @@ export interface HistoryItem {
 export interface PlansStore {
   /** Returns everyone else in the Pick. */
   setPlanTime(pickId: string, userId: string, planAt: string): Promise<string[]>;
-  rsvp(pickId: string, userId: string, status: RsvpStatus): Promise<void>;
+  rsvp(pickId: string, userId: string, status: RsvpStatus, revision?: number | null): Promise<void>;
   outcome(pickId: string, userId: string, went: boolean, again: boolean | null): Promise<void>;
   loadPlan(pickId: string, userId: string): Promise<PlanSummary>;
   history(userId: string, groupId: string | null): Promise<HistoryItem[]>;
@@ -103,8 +105,31 @@ export async function setPlanTime(
 }
 
 /** POST /picks/:id/rsvp { status }. */
-export async function rsvp(store: PlansStore, pickId: string, userId: string, body: unknown) {
-  await store.rsvp(pickId, userId, parseRsvp(body));
+export async function rsvp(
+  store: PlansStore,
+  pickId: string,
+  userId: string,
+  body: unknown,
+  requireRevision = false,
+) {
+  const input = asObject(body, 'an RSVP object');
+  const status = parseRsvp(input);
+  if (
+    input.revision !== undefined &&
+    (typeof input.revision !== 'number' ||
+      !Number.isInteger(input.revision) ||
+      input.revision < 0 ||
+      input.revision > 2147483647)
+  )
+    throw new ApiError(400, 'INVALID_INPUT', 'Invalid schedule revision');
+  if (input.revision !== undefined || requireRevision)
+    await store.rsvp(
+      pickId,
+      userId,
+      status,
+      typeof input.revision === 'number' ? input.revision : null,
+    );
+  else await store.rsvp(pickId, userId, status);
   return { status: 'ok' as const };
 }
 

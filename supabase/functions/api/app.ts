@@ -1,3 +1,8 @@
+import {
+  suggestTime,
+  actOnTimeSuggestion,
+  type TimeSuggestionsStore,
+} from '../_shared/api/timeSuggestions.ts';
 import { respondAvailability, changeProposedTime } from '../_shared/api/availability.ts';
 import { AVAILABILITY_CAPABILITY } from '../_shared/domain/availability.ts';
 import {
@@ -118,6 +123,8 @@ export function createApp(
     store: HeartbeatStore;
     progressStore?: ProgressStore;
     availabilityEnabled?: boolean;
+    timeSuggestionsEnabled?: boolean;
+    timeSuggestionsStore?: TimeSuggestionsStore;
     lifecycleStore: LifecycleStore;
     poolBuilder: PoolBuilder;
     pickPlaces?: PickPlaces;
@@ -438,7 +445,11 @@ export function createApp(
   app.get('/picks/capabilities', async (c) => {
     await deps.getUser(c.req.raw);
     c.header('Cache-Control', 'private, no-store');
-    return c.json({ availabilityFirst: !!deps.availabilityEnabled, availabilityMode: 'immediate' });
+    return c.json({
+      availabilityFirst: !!deps.availabilityEnabled,
+      availabilityMode: 'immediate',
+      ...(deps.timeSuggestionsEnabled ? { timeSuggestions: true } : {}),
+    });
   });
   app.get('/picks/:id', async (c) => {
     c.header('Cache-Control', 'private, no-store');
@@ -619,6 +630,47 @@ export function createApp(
     const user = await deps.getUser(c.req.raw);
     return c.json(await getReasons(requirePlans(), c.req.param('id'), user.id));
   });
+  const requireTimeSuggestions = () => {
+    if (!deps.timeSuggestionsEnabled || !deps.timeSuggestionsStore)
+      throw new ApiError(
+        409,
+        'TIME_SUGGESTIONS_DISABLED',
+        'Time suggestions are not enabled on this server.',
+      );
+    return deps.timeSuggestionsStore;
+  };
+  app.get('/picks/:id/time-suggestions', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    c.header('Cache-Control', 'private, no-store');
+    return c.json(await requireTimeSuggestions().load(c.req.param('id'), user.id));
+  });
+  app.post('/picks/:id/time-suggestions', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    return c.json(
+      await suggestTime(
+        requireTimeSuggestions(),
+        c.req.param('id'),
+        user.id,
+        await readJsonBody(c),
+      ),
+    );
+  });
+  app.post('/picks/:id/time-suggestions/:suggestion/:action', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const action = c.req.param('action');
+    if (action !== 'accept' && action !== 'withdraw')
+      throw new ApiError(404, 'NOT_FOUND', 'Not found');
+    return c.json(
+      await actOnTimeSuggestion(
+        requireTimeSuggestions(),
+        c.req.param('id'),
+        user.id,
+        c.req.param('suggestion'),
+        action,
+        await readJsonBody(c),
+      ),
+    );
+  });
   app.post('/picks/:id/plan-time', async (c) => {
     const user = await deps.getUser(c.req.raw);
     const body = await readJsonBody(c);
@@ -627,7 +679,9 @@ export function createApp(
   app.post('/picks/:id/rsvp', async (c) => {
     const user = await deps.getUser(c.req.raw);
     const body = await readJsonBody(c);
-    return c.json(await rsvp(requirePlans(), c.req.param('id'), user.id, body));
+    return c.json(
+      await rsvp(requirePlans(), c.req.param('id'), user.id, body, !!deps.timeSuggestionsEnabled),
+    );
   });
   app.post('/picks/:id/outcome', async (c) => {
     const user = await deps.getUser(c.req.raw);

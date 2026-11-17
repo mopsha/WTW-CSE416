@@ -36,8 +36,13 @@ export function createPlansStore(): PlansStore {
         p_plan_at: planAt,
       })) ?? []) as string[];
     },
-    async rsvp(pickId, userId, status) {
-      await rpc('pick_rsvp', { p_pick_id: pickId, p_user_id: userId, p_status: status });
+    async rsvp(pickId, userId, status, revision) {
+      await rpc('pick_rsvp', {
+        p_pick_id: pickId,
+        p_user_id: userId,
+        p_status: status,
+        ...(revision === undefined ? {} : { p_revision: revision }),
+      });
     },
     async outcome(pickId, userId, went, again) {
       await rpc('pick_outcome', {

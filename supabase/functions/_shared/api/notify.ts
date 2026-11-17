@@ -16,6 +16,7 @@ export const NOTIFICATION_TYPES = [
   'winner_decided',
   'pick_canceled',
   'plan_time_set',
+  'time_suggested',
   'plan_reminder',
   'did_you_go',
 ] as const;
@@ -44,10 +45,21 @@ export const PUSH_TEXT: Readonly<Record<NotificationType, { title: string; body:
   vote_needed: { title: 'Time to vote', body: 'Your Pick is down to a final vote.' },
   winner_decided: { title: 'It’s decided', body: 'Your Pick has a winner.' },
   pick_canceled: { title: 'Pick canceled', body: 'The host canceled a Pick.' },
+  time_suggested: {
+    title: 'New time suggestion',
+    body: 'Someone suggested a different time. Open WTW to review it.',
+  },
   plan_time_set: { title: 'Plan time set', body: 'Your plan has a time. Are you going?' },
   plan_reminder: { title: 'Starting soon', body: 'Your plan starts in about an hour.' },
   did_you_go: { title: 'Did you go?', body: 'Tap to tell your group.' },
 };
+
+/** Push and inbox use the same generic, privacy-safe schedule-change wording. */
+export function notificationText(type: NotificationType, payload: Record<string, unknown> = {}) {
+  if (type === 'plan_time_set' && payload.reconfirmRsvp === true)
+    return { title: 'Plan time changed', body: 'The schedule changed. Open WTW to RSVP again.' };
+  return PUSH_TEXT[type] ?? { title: 'WTW', body: 'Something happened.' };
+}
 
 export interface NotificationRow {
   id: string;
@@ -160,7 +172,7 @@ export function createNotifier(
         fetchFn,
         tokens,
         {
-          ...PUSH_TEXT[type],
+          ...notificationText(type, payload),
           data: {
             type,
             pickId,
