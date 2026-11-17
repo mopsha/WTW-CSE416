@@ -33,6 +33,7 @@ const RSVP_OPTIONS = [
 ] as const;
 
 interface PlanBlockProps {
+  timeLocked?: boolean;
   pickId: string;
   viewerId: string;
   decidedAt: string | null;
@@ -42,7 +43,14 @@ interface PlanBlockProps {
 export function PlanBlock(props: PlanBlockProps) {
   return <PlanBlockContent key={JSON.stringify([props.viewerId, props.pickId])} {...props} />;
 }
-function PlanBlockContent({ pickId, viewerId, decidedAt, people = [], children }: PlanBlockProps) {
+function PlanBlockContent({
+  pickId,
+  viewerId,
+  decidedAt,
+  people = [],
+  children,
+  timeLocked = false,
+}: PlanBlockProps) {
   const [scheduling, setScheduling] = useState(false);
   const inFlight = useRef(false);
   const rsvp = useOptimisticChoice(
@@ -116,7 +124,7 @@ function PlanBlockContent({ pickId, viewerId, decidedAt, people = [], children }
         {action.error ? <ErrorBanner message={action.error} /> : null}
         {rsvp.error ? <ErrorBanner message={rsvp.error} onRetry={() => void load()} /> : null}
 
-        {plan.isHost ? (
+        {plan.isHost && !timeLocked ? (
           <Card
             variant="flat"
             onPress={() => {
@@ -223,7 +231,7 @@ function PlanBlockContent({ pickId, viewerId, decidedAt, people = [], children }
       {attendanceReady && summary ? <Text style={styles.went}>{summary}</Text> : null}
 
       {children}
-      {scheduling && plan.isHost ? (
+      {scheduling && plan.isHost && !timeLocked ? (
         <PlanTimeSheet
           initial={plan.planAt}
           onClose={() => setScheduling(false)}

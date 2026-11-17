@@ -28,7 +28,11 @@ const ALLOWED: Record<PickState, readonly PickScreen[]> = {
  * Where a fresh arrival should go: `swiping` sends people who have answered everything to the
  * waiting view instead of an empty deck.
  */
-export function screenForState(state: PickState, opts: { allAnswered?: boolean } = {}): PickScreen {
+export function screenForState(
+  state: PickState,
+  opts: { allAnswered?: boolean; canVote?: boolean } = {},
+): PickScreen {
+  if (opts.canVote === false && !['draft', 'completed', 'canceled'].includes(state)) return 'lobby';
   if (state === 'swiping') return opts.allAnswered ? 'waiting' : 'swipe';
   return ALLOWED[state][0]!;
 }
@@ -41,8 +45,11 @@ export function screenForState(state: PickState, opts: { allAnswered?: boolean }
 export function redirectFor(
   current: PickScreen,
   state: PickState,
-  opts: { allAnswered?: boolean; from?: PickState | null } = {},
+  opts: { allAnswered?: boolean; canVote?: boolean; from?: PickState | null } = {},
 ): PickScreen | null {
+  if (opts.canVote === false && !['draft', 'completed', 'canceled'].includes(state))
+    return current === 'lobby' ? null : 'lobby';
+  if (current === 'lobby' && state === 'swiping' && opts.canVote === true) return null;
   if (ALLOWED[state].includes(current)) return null;
   const justClosed = opts.from === 'swiping' || opts.from === 'ranking';
   if (justClosed && (state === 'final_vote' || state === 'completed')) return 'results';

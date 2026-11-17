@@ -20,9 +20,12 @@ export default function PickEntry() {
 
   useEffect(() => {
     if (!state || state === 'canceled') return;
-    const target = screenForState(state, { allAnswered: me?.done });
+    const target = screenForState(state, {
+      allAnswered: me?.done,
+      canVote: progress?.availability?.canVote,
+    });
     router.replace({ pathname: pathFor(target), params: { id: pickId } });
-  }, [state, me?.done, pickId]);
+  }, [state, me?.done, pickId, progress?.availability?.canVote]);
 
   if (state === 'canceled') {
     return (
@@ -33,7 +36,7 @@ export default function PickEntry() {
           body={
             progress?.hostDeleted
               ? `The host (${DELETED_USER_NAME}) deleted their account. Nothing was decided, and nobody’s answers were shared.`
-              : 'The host called it off. Nothing was decided, and nobody’s answers were shared.'
+              : 'This Pick was canceled. Nothing was decided, and nobody’s answers were shared.'
           }
         >
           <GradientButton label="Start a new Pick" onPress={() => router.replace('/pick/new')} />

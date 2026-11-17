@@ -131,7 +131,10 @@ export default function SwipeScreen() {
   const allAnswered = total > 0 && ids.every((id) => answers.has(id));
   const allSaved = allAnswered && ids.every((id) => answers.get(id)?.status === 'saved');
 
-  usePickRoute(pickId, 'swipe', live.state ?? pick?.state ?? null, { allAnswered });
+  usePickRoute(pickId, 'swipe', live.state ?? pick?.state ?? null, {
+    allAnswered,
+    canVote: live.progress?.availability?.canVote ?? pick?.availability?.canVote,
+  });
   const { toast } = useProgressToasts(live.progress);
   const countdown = useCountdown(live.deadline ?? pick?.deadlineAt ?? null);
 
@@ -224,12 +227,17 @@ export default function SwipeScreen() {
   return (
     <SafeAreaView style={pickStyles.screen} edges={['top', 'bottom', 'left', 'right']}>
       <PickTopBar
+        proposedAt={live.progress?.availability?.proposedAt}
         title={pickTitle(pick?.category)}
         tabularCountdown
         subtitle={subtitle || null}
         right={
           pick?.isHost ? (
-            <HostMenu pickId={pickId} onChanged={() => void live.refresh()} />
+            <HostMenu
+              allowRefresh={!pick?.availability}
+              pickId={pickId}
+              onChanged={() => void live.refresh()}
+            />
           ) : (
             <GroupAvatars people={others} size={26} />
           )

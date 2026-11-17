@@ -1,3 +1,5 @@
+import { respondAvailability, changeProposedTime } from '../_shared/api/availability.ts';
+import { AVAILABILITY_CAPABILITY } from '../_shared/domain/availability.ts';
 import {
   parseRecentWinnerIds,
   resolveRecentWinners,
@@ -122,6 +124,7 @@ export function createApp(
     getUser(req: Request): Promise<{ id: string }>;
     store: HeartbeatStore;
     progressStore?: ProgressStore;
+    availabilityEnabled?: boolean;
     lifecycleStore: LifecycleStore;
     poolBuilder: PoolBuilder;
     pickPlaces?: PickPlaces;
@@ -333,7 +336,10 @@ export function createApp(
   app.get('/picks/:id/progress', async (c) => {
     const user = await deps.getUser(c.req.raw);
     if (!deps.progressStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Progress is not available');
-    return c.json(await getProgress(deps.progressStore, c.req.param('id'), user.id));
+    const progress = await getProgress(deps.progressStore, c.req.param('id'), user.id);
+    if (progress.availability && c.req.header('X-Client-Info') !== AVAILABILITY_CAPABILITY)
+      throw new ApiError(409, 'UPDATE_REQUIRED', 'Update WTW to open this availability Pick.');
+    return c.json(progress);
   });
   app.get('/discover', async (c) => {
     const user = await deps.getUser(c.req.raw);
@@ -379,13 +385,47 @@ export function createApp(
   app.post('/picks', async (c) => {
     const user = await deps.getUser(c.req.raw);
     const body = await readJsonBody(c);
-    parseCreatePick(body);
+    const input = parseCreatePick(body);
+    if (
+      input.proposedAt &&
+      (!deps.availabilityEnabled || c.req.header('X-Client-Info') !== AVAILABILITY_CAPABILITY)
+    )
+      throw new ApiError(
+        409,
+        'AVAILABILITY_NOT_ENABLED',
+        'Availability Picks require the updated WTW app and an enabled server.',
+      );
     await deps.checkLimit?.('create', user.id);
     // With { groupId }, everyone in the group is added too (0012_groups.sql).
-    return c.json(
-      await createPickMaybeForGroup(deps.lifecycleStore, deps.groupsStore, user.id, body),
-      201,
+    const created = await createPickMaybeForGroup(
+      deps.lifecycleStore,
+      deps.groupsStore,
+      user.id,
+      body,
     );
+    if (input.proposedAt) {
+      try {
+        await startPick(
+          deps.lifecycleStore,
+          deps.poolBuilder,
+          created.pickId,
+          user.id,
+          () => deps.checkLimit?.('start', user.id, created.pickId) ?? Promise.resolve(),
+          true,
+        );
+      } catch (error) {
+        await deps.lifecycleStore.cancel(created.pickId, user.id, null).catch(() => {});
+        throw error;
+      }
+      const ready = await deps.lifecycleStore.load(created.pickId, user.id);
+      await deps.lifecycleStore.notifier?.(
+        ready?.participantIds.filter((id) => id !== user.id) ?? [],
+        'added_to_pick',
+        created.pickId,
+      );
+      return c.json({ ...created, state: 'swiping' as const }, 201);
+    }
+    return c.json(created, 201);
   });
   app.post('/picks/recent-winners', async (c) => {
     c.header('Cache-Control', 'private, no-store');
@@ -402,16 +442,49 @@ export function createApp(
       ),
     });
   });
+  app.get('/picks/capabilities', async (c) => {
+    await deps.getUser(c.req.raw);
+    c.header('Cache-Control', 'private, no-store');
+    return c.json({ availabilityFirst: !!deps.availabilityEnabled, availabilityMode: 'immediate' });
+  });
   app.get('/picks/:id', async (c) => {
     c.header('Cache-Control', 'private, no-store');
     const user = await deps.getUser(c.req.raw);
+    const pick = await getPick(
+      deps.lifecycleStore,
+      c.req.param('id'),
+      user.id,
+      deps.refreshHours,
+      deps.pickPlaces,
+      c.req.header('X-Client-Info') === AVAILABILITY_CAPABILITY,
+    );
+    if (pick.availability && c.req.header('X-Client-Info') !== AVAILABILITY_CAPABILITY)
+      throw new ApiError(409, 'UPDATE_REQUIRED', 'Update WTW to open this availability Pick.');
+    return c.json(pick);
+  });
+  app.post('/picks/:id/availability', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.lifecycleStore.availability)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Availability is unavailable');
+    const result = await respondAvailability(
+      deps.lifecycleStore.availability,
+      c.req.param('id'),
+      user.id,
+      await readJsonBody(c),
+    );
+    await closePick(deps.closingStore, c.req.param('id'), 'system', null);
+    return c.json(result);
+  });
+  app.post('/picks/:id/proposed-time', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.lifecycleStore.availability)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Availability is unavailable');
     return c.json(
-      await getPick(
-        deps.lifecycleStore,
+      await changeProposedTime(
+        deps.lifecycleStore.availability,
         c.req.param('id'),
         user.id,
-        deps.refreshHours,
-        deps.pickPlaces,
+        await readJsonBody(c),
       ),
     );
   });
@@ -424,6 +497,7 @@ export function createApp(
         c.req.param('id'),
         user.id,
         () => deps.checkLimit?.('start', user.id, c.req.param('id')) ?? Promise.resolve(),
+        c.req.header('X-Client-Info') === AVAILABILITY_CAPABILITY,
       ),
     );
   });

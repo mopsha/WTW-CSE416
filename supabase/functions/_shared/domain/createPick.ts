@@ -1,3 +1,4 @@
+import { proposedTimeProblem } from './availability.ts';
 // Create Pick input: the body of POST /picks (owner: Mike; server side: Alan).
 // The app validates before sending and the API must validate again with the same
 // function, so both sides agree on the limits. Limits mirror the picks table checks.
@@ -27,6 +28,8 @@ export const MIN_DEADLINE_LEAD_MS = 5 * 60_000;
 export const MAX_DEADLINE_LEAD_MS = 7 * 24 * 60 * 60_000;
 
 export interface CreatePickInput extends PlaceFilters, PlanOptions {
+  proposedAt?: string;
+  swipeDeadlineMinutes?: number;
   includeGroupIdeas?: boolean;
   groupId?: string | null;
   category: PickCategory;
@@ -60,6 +63,29 @@ export function validateCreatePick(input: unknown, now: number = Date.now()): Cr
     string,
     unknown
   >;
+
+  if (body.proposedAt !== undefined) {
+    const problem = proposedTimeProblem(body.proposedAt, now);
+    if (problem) add('proposedAt', problem);
+    if (
+      !Number.isInteger(body.swipeDeadlineMinutes) ||
+      ![0, 30, 60, 180, 1440].includes(body.swipeDeadlineMinutes as number)
+    )
+      add('swipeDeadlineMinutes', 'Choose a supported swipe deadline.');
+    if (body.deadlineAt !== null)
+      add('deadlineAt', 'Availability Picks start the swipe deadline when swiping begins.');
+    if (
+      typeof body.proposedAt === 'string' &&
+      typeof body.swipeDeadlineMinutes === 'number' &&
+      body.swipeDeadlineMinutes > 0 &&
+      Date.parse(body.proposedAt) <= now + body.swipeDeadlineMinutes * 60000 + 30 * 60000
+    )
+      add(
+        'proposedAt',
+        'Leave time for the swipe deadline and 30-minute final vote before the outing.',
+      );
+  } else if (body.swipeDeadlineMinutes !== undefined)
+    add('swipeDeadlineMinutes', 'A deferred deadline requires a proposed outing time.');
 
   if (!PICK_CATEGORIES.includes(body.category as PickCategory)) {
     add('category', 'Choose food, activities, both or a custom plan.');

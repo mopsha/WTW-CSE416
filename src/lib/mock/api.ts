@@ -1,3 +1,4 @@
+import { proposedTimeProblem } from '@shared/domain/availability.ts';
 import { mockPeopleRoute } from './people';
 import { handleMockPastMoves } from './pastMoves';
 import { handleMockDirectChat, mockDirectNotices, resetMockDirectChat } from './directChat';
@@ -47,6 +48,8 @@ import {
   mockInvite,
 } from './groups';
 import {
+  availabilityOf,
+  votersOf,
   acceptMockInvite,
   createMockInvite,
   createMockPick,
@@ -129,8 +132,15 @@ function createPick(body: unknown): Response {
     return fail(400, 'INVALID_INPUT', problems.map((p) => p.message).join(' '));
   }
   const pick = createMockPick(body as CreatePickInput);
+  if (pick.availability) {
+    const ready = ROUTES['POST start']!(pick, undefined);
+    if (!ready.ok) {
+      pick.state = 'canceled';
+      return ready;
+    }
+  }
   scheduleBots(pick);
-  return json(201, { pickId: pick.id, state: 'draft' });
+  return json(201, { pickId: pick.id, state: pick.state });
 }
 
 /** POST /picks/join: same validation and errors as the API (try MOCK_INVITE_CODE). */
@@ -190,6 +200,7 @@ function getPick(pick: MockPick) {
   const mine = pick.participants.find((p) => p.userId === MOCK_USER_ID);
   return {
     id: pick.id,
+    ...(pick.availability ? { availability: availabilityOf(pick) } : {}),
     state: pick.state,
     category: pick.category,
     center: pick.center,
@@ -314,9 +325,62 @@ const ROUTES: Record<string, Handler> = {
   'GET ': (pick) => json(200, getPick(pick)),
   'GET progress': (pick) => json(200, progressOf(pick)),
 
+  'POST availability': (pick, body) => {
+    const a = pick.availability;
+    const value = body as { revision?: unknown; response?: unknown; userId?: unknown } | null;
+    if (
+      !a ||
+      pick.state !== 'swiping' ||
+      a.locked ||
+      (pick.deadlineAt && Date.parse(pick.deadlineAt) <= Date.now())
+    )
+      return wrongState('The swipe round has closed; refresh this Pick');
+    if (value?.revision !== a.revision) return wrongState('Time changed; refresh this Pick');
+    if (value.userId !== undefined || !['yes', 'maybe', 'cant'].includes(String(value.response)))
+      return fail(400, 'INVALID_INPUT', 'Invalid availability response');
+    if (
+      pick.participants.find((p) => p.userId === MOCK_USER_ID)!.answers.size > 0 &&
+      value.response === 'cant'
+    )
+      return wrongState(
+        'Your voting response is kept after your first swipe. Update attendance after results.',
+      );
+    if (
+      value.response === 'cant' &&
+      a.participants.every(
+        (p) => p.userId === MOCK_USER_ID || !['yes', 'maybe'].includes(p.response ?? ''),
+      )
+    )
+      return wrongState('Someone has to be able to go. Cancel the Pick instead.');
+    a.participants = [
+      ...a.participants.filter((p) => p.userId !== MOCK_USER_ID),
+      {
+        userId: MOCK_USER_ID,
+        displayName: 'You',
+        response: value.response as 'yes' | 'maybe' | 'cant',
+      },
+    ];
+    emit(pick.id);
+    maybeAutoClose(pick);
+    return json(200, { status: 'ok' });
+  },
+  'POST proposed-time': hostOnly(() =>
+    wrongState('The proposed time is fixed for this decision. Revisit scheduling after results.'),
+  ),
   'POST start': hostOnly((pick) => {
+    if (pick.availability && pick.state !== 'draft' && pick.state !== 'canceled')
+      return json(200, { state: 'swiping', candidateCount: pick.candidates.length });
     if (pick.state !== 'draft') return wrongState('Pick must be draft to start');
-    if (pick.participants.length < 2) {
+    if (pick.availability) {
+      const a = availabilityOf(pick)!;
+      if (
+        proposedTimeProblem(a.proposedAt) ||
+        (a.deadlineMinutes > 0 &&
+          Date.parse(a.proposedAt) <= Date.now() + (a.deadlineMinutes + 30) * 60000)
+      )
+        return wrongState('Update the outing time before starting.');
+    }
+    if (!pick.availability && pick.participants.length < 2) {
       return fail(409, 'NOT_ENOUGH_PARTICIPANTS', 'A Pick needs at least 2 participants to start');
     }
     let candidates;
@@ -328,6 +392,14 @@ const ROUTES: Record<string, Handler> = {
     }
     if (!candidates.length) return fail(409, 'NO_CANDIDATES', 'No places match these filters');
     pick.candidates = candidates;
+    if (pick.availability) {
+      pick.planAt = pick.availability.proposedAt;
+      const cachedPlan = mockPlans.get(pick.id);
+      if (cachedPlan) cachedPlan.planAt = pick.planAt;
+      pick.deadlineAt = pick.availability.deadlineMinutes
+        ? new Date(Date.now() + pick.availability.deadlineMinutes * 60000).toISOString()
+        : null;
+    }
     pick.state = 'swiping';
     emit(pick.id);
     scheduleBots(pick);
@@ -335,6 +407,7 @@ const ROUTES: Record<string, Handler> = {
   }),
 
   'POST refresh': hostOnly((pick, body) => {
+    if (pick.availability) return wrongState('Availability deck is fixed for this round');
     if (pick.state !== 'draft' && pick.state !== 'swiping') {
       return wrongState('Pick must be draft or swiping to refresh');
     }
@@ -390,6 +463,8 @@ const ROUTES: Record<string, Handler> = {
   }),
 
   'POST swipes': (pick, body) => {
+    if (pick.availability && !votersOf(pick).some((p) => p.userId === MOCK_USER_ID))
+      return fail(403, 'FORBIDDEN', 'Not in the locked voting cohort');
     if (pick.state !== 'swiping') return wrongState('Pick must be swiping');
     if (body === undefined) return fail(400, 'INVALID_JSON', 'Request body must be valid JSON');
     const { placeId, value } = (typeof body === 'object' && body !== null ? body : {}) as Record<
@@ -421,6 +496,8 @@ const ROUTES: Record<string, Handler> = {
   }),
 
   'POST vote': (pick, body) => {
+    if (pick.availability && !votersOf(pick).some((p) => p.userId === MOCK_USER_ID))
+      return fail(403, 'FORBIDDEN', 'Not in the locked voting cohort');
     if (pick.state !== 'final_vote') return wrongState('Voting is not open for this Pick');
     const placeId =
       typeof body === 'object' && body !== null && 'placeId' in body ? body.placeId : null;
@@ -470,6 +547,8 @@ const ROUTES: Record<string, Handler> = {
       return fail(400, 'INVALID_INPUT', 'planAt must be a date within the next 30 days');
     }
     if (pick.state !== 'completed') return wrongState('The Pick has no winner yet');
+    if (pick.availability && plans(pick).planAt !== new Date(at).toISOString())
+      plans(pick).rsvps.clear();
     plans(pick).planAt = new Date(at).toISOString();
     return json(200, { planAt: plans(pick).planAt });
   }),
@@ -721,6 +800,23 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
       return fail(400, 'INVALID_INPUT', problems.map((p) => p.message).join(' '));
     }
     const r = mockCreateGroupPick(readBody(init) as CreatePickInput, groupId);
+    if (
+      r.status === 201 &&
+      r.body &&
+      typeof r.body === 'object' &&
+      'pickId' in r.body &&
+      typeof r.body.pickId === 'string'
+    ) {
+      const p = mockPicks.get(r.body.pickId)!;
+      if (p.availability) {
+        const ready = ROUTES['POST start']!(p, undefined);
+        if (!ready.ok) {
+          p.state = 'canceled';
+          return ready;
+        }
+        return json(201, { ...r.body, state: p.state });
+      }
+    }
     return json(r.status, r.body);
   }
   const invite = /^\/picks\/([^/]+)\/invite$/.exec(path);
@@ -729,6 +825,8 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     return json(r.status, r.body);
   }
 
+  if (method === 'GET' && path === '/picks/capabilities')
+    return json(200, { availabilityFirst: true, availabilityMode: 'immediate' });
   if (method === 'POST' && path === '/picks') return createPick(readBody(init));
   if (method === 'POST' && path === '/picks/join') return joinPick(readBody(init));
   if (method === 'POST' && path === '/me') return updateMe(readBody(init));

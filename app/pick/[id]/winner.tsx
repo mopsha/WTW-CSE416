@@ -40,7 +40,7 @@ export default function WinnerScreen() {
 }
 function WinnerContent({ pickId, userId }: { pickId: string; userId: string }) {
   const live = usePickLive(pickId);
-  usePickRoute(pickId, 'winner', live.state);
+  usePickRoute(pickId, 'winner', live.state, { canVote: live.progress?.availability?.canVote });
   const { reveal, retry } = useReveal(pickId, userId, live.state);
 
   if (reveal.status === 'error') {

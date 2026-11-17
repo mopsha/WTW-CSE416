@@ -43,6 +43,7 @@ const notifier = createNotifier(notifyStore, (url, init) => fetch(url, init));
 const app = createApp(
   {
     getUser,
+    availabilityEnabled: Deno.env.get('ENABLE_AVAILABILITY_PICKS') === 'true',
     hangStore: createHangStore(notifier),
     store: createStore(),
     progressStore: createProgressStore(),

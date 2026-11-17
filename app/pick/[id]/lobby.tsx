@@ -1,3 +1,5 @@
+import { AvailabilityLobby } from '@/components/AvailabilityLobby';
+import { useAuth } from '@/hooks/useAuth';
 import { useMotionPreference } from '@/hooks/useMotionPreference';
 // Lobby (draft): who's in, the join code + QR + Share, the host's invite link, lobby lock and
 // Start / Cancel, and Report / Block on everyone else's row.
@@ -23,6 +25,7 @@ import {
   pickStyles,
 } from '@/components/PickParts';
 import { colors, fonts } from '@/components/theme';
+import { Screen } from '@/components';
 import { useAction } from '@/hooks/useAction';
 import { useCountdown } from '@/hooks/useCountdown';
 import { usePickLive } from '@/hooks/usePickLive';
@@ -39,10 +42,15 @@ import type { PickDetail } from '@/lib/types';
 const MIN_TO_START = 2;
 
 export default function LobbyScreen() {
+  const { session } = useAuth();
+  const { id: pickId = '' } = useLocalSearchParams<{ id: string }>();
+  return <LobbyContent key={`${session?.user.id}:${pickId}`} />;
+}
+function LobbyContent() {
   const reducedMotion = useMotionPreference();
   const { id: pickId = '' } = useLocalSearchParams<{ id: string }>();
   const live = usePickLive(pickId);
-  usePickRoute(pickId, 'lobby', live.state);
+  usePickRoute(pickId, 'lobby', live.state, { canVote: live.progress?.availability?.canVote });
 
   const [pick, setPick] = useState<PickDetail | null>(null);
   const [code, setCode] = useState<JoinCode | null | undefined>(undefined);
@@ -139,9 +147,39 @@ export default function LobbyScreen() {
       ]
     : [];
 
+  if (/not found|access denied|forbidden|account changed/i.test(live.error ?? loadError ?? ''))
+    return (
+      <Screen title="Pick unavailable" back>
+        <ErrorBanner message="This Pick is no longer available to this account." />
+      </Screen>
+    );
+  const availability = live.progress?.availability ?? pick?.availability;
+  if (availability && live.state !== 'completed' && live.state !== 'canceled')
+    return (
+      <AvailabilityLobby
+        key={`${pickId}:${availability.revision}`}
+        pickId={pickId}
+        value={availability}
+        isHost={isHost}
+        state={live.state ?? 'draft'}
+        onCancel={() => void cancel()}
+        refresh={live.refresh}
+        pending={!!action.busy}
+        onInvite={code ? share : undefined}
+        doneCount={live.progress?.doneCount ?? 0}
+        total={live.progress?.total ?? 0}
+        error={action.error ?? live.error}
+        context={
+          pick
+            ? `${pickTitle(pick.category)} · ${pick.category === 'custom' ? `${pick.poolSize} options` : `${pick.poolSize} places · ${(pick.radiusM / 1609.344).toFixed(1)} mi around the selected location`}`
+            : undefined
+        }
+      />
+    );
   return (
     <SafeAreaView style={pickStyles.screen} edges={['top', 'left', 'right', 'bottom']}>
       <PickTopBar
+        proposedAt={live.progress?.availability?.proposedAt}
         title={`${pickTitle(pick?.category)} ${pickEmoji(pick?.category)}`}
         subtitle="Lobby · waiting to start"
         right={<LiveDot mode={live.mode} offline={!!live.error} />}
