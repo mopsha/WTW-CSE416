@@ -1,6 +1,8 @@
 import { PlanTimeSheet } from '@/components/PlanTimeSheet';
 import { formatPlanTime } from '@/lib/plans';
 import { useAuth } from '@/hooks/useAuth';
+import { useProfile } from '@/hooks/useProfile';
+import { pickDefaults } from '@/lib/preferences';
 import {
   CategoryCards,
   ChoiceList,
@@ -109,15 +111,21 @@ function CreatePickForm({
 }) {
   const [whenInitial, setWhenInitial] = useState<string | null>(null);
   const [proposedAt, setProposedAt] = useState<string | null>(null);
-  const [category, setCategory] = useState<PickCategory>(hangId ? 'activities' : 'food');
+  // The root navigator waits for the profile. Snapshot defaults once per creation
+  // context so later preference refreshes cannot overwrite edits or open drafts.
+  const profile = useProfile();
+  const [defaults] = useState(() => pickDefaults(profile.preferences));
+  const [category, setCategory] = useState<PickCategory>(
+    hangId ? 'activities' : (defaults.category ?? 'food'),
+  );
   const [customOptions, setCustomOptions] = useState<CustomOption[]>([{ name: '' }, { name: '' }]);
   const [includeSaved, setIncludeSaved] = useState(false);
   const [includeGroupIdeas, setIncludeGroupIdeas] = useState(false);
   const [mix, setMix] = useState<'none' | 'food' | 'activities'>('none');
   const [center, setCenter] = useState<LatLng>(DEFAULT_CENTER);
   const [placeLabel, setPlaceLabel] = useState('SBU Academic Mall');
-  const [miles, setMiles] = useState(2);
-  const [priceMax, setPriceMax] = useState(-1);
+  const [miles, setMiles] = useState(defaults.miles ?? 2);
+  const [priceMax, setPriceMax] = useState(defaults.priceMax ?? -1);
   const [openNow, setOpenNow] = useState(false);
   const [poolSize, setPoolSize] = useState(DEFAULT_POOL_SIZE);
   const [deadlineMin, setDeadlineMin] = useState(60);

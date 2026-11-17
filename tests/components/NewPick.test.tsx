@@ -1,3 +1,4 @@
+import { EMPTY_PREFERENCES, type Preferences } from '@shared/domain/preferences.ts';
 import { PlanTimeSheet } from '@/components/PlanTimeSheet';
 import React from 'react';
 import {
@@ -24,6 +25,11 @@ import { DEFAULT_POOL_SIZE, milesToMeters } from '@shared/domain/createPick.ts';
 
 const { create, act } = jest.requireActual('react-test-renderer');
 let mockAccount = 'owner';
+let mockPreferences: Preferences = EMPTY_PREFERENCES;
+let mockProfileLoading = false;
+jest.mock('@/hooks/useProfile', () => ({
+  useProfile: () => ({ preferences: mockPreferences, loading: mockProfileLoading }),
+}));
 let mockReducedMotion = false;
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => mockReducedMotion }));
 jest.mock('@/hooks/useAuth', () => ({
@@ -93,6 +99,8 @@ const press = async (label: string) =>
   });
 beforeEach(async () => {
   jest.clearAllMocks();
+  mockPreferences = EMPTY_PREFERENCES;
+  mockProfileLoading = false;
   jest.spyOn(AppState, 'addEventListener').mockReturnValue({ remove: jest.fn() });
   jest
     .mocked(api.getPickCapabilities)
@@ -864,4 +872,80 @@ test('explicit enabled capability shows When and is not refetched by form edits'
   await act(async () => chips('Category').props.onChange('activities'));
   expect(api.getPickCapabilities).toHaveBeenCalledTimes(1);
   expect(api.getPickCapabilities).toHaveBeenCalledWith('owner');
+});
+
+test('saved category, budget and clamped distance defaults coexist with scheduled creation', async () => {
+  mockPreferences = {
+    ...EMPTY_PREFERENCES,
+    categories: ['activities'],
+    priceMax: 2,
+    maxDistanceM: 25 * 1609,
+  };
+  await render();
+  expect(chips('Category').props.value).toBe('activities');
+  expect(row('Where').props.value).toContain('10 mi');
+  await press('When');
+  const at = new Date(Date.now() + 2 * 86400000).toISOString();
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onSave(at));
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onClose());
+  await act(async () => button('Create Pick').props.onPress());
+  expect(api.createPick).toHaveBeenCalledWith(
+    expect.objectContaining({
+      category: 'activities',
+      priceMax: 2,
+      radiusM: milesToMeters(10),
+      proposedAt: at,
+      swipeDeadlineMinutes: 60,
+      deadlineAt: null,
+    }),
+    'owner',
+  );
+});
+test('late profile updates do not reset selected category, scheduled time or open location draft', async () => {
+  mockProfileLoading = true;
+  await render();
+  await act(async () => chips('Category').props.onChange('activities'));
+  await press('When');
+  const at = new Date(Date.now() + 2 * 86400000).toISOString();
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onSave(at));
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onClose());
+  await press('Where');
+  const search = tree.root.findByType(LocationSearch);
+  await act(async () => search.props.onPick({ lat: 41, lng: -72 }, 'Draft location'));
+  mockPreferences = { ...EMPTY_PREFERENCES, categories: ['food'], priceMax: 4, maxDistanceM: 1609 };
+  mockProfileLoading = false;
+  await act(async () => tree.update(<CreatePickScreen />));
+  expect(chips('Category').props.value).toBe('activities');
+  expect(tree.root.findAllByType(LocationSearch)).toHaveLength(1);
+  await act(async () => button('Use this location').props.onPress());
+  expect(row('When').props.value).not.toBe('Decide later');
+  await act(async () => button('Create Pick').props.onPress());
+  expect(api.createPick).toHaveBeenCalledWith(
+    expect.objectContaining({
+      category: 'activities',
+      priceMax: null,
+      center: { lat: 41, lng: -72 },
+      proposedAt: at,
+    }),
+    'owner',
+  );
+  expect(api.getPickCapabilities).toHaveBeenCalledTimes(1);
+});
+test('Hang category prefill takes precedence over saved food defaults without scheduling', async () => {
+  mockParams = { hangId: 'hang', hangActivity: 'Basketball' };
+  mockPreferences = {
+    ...EMPTY_PREFERENCES,
+    categories: ['food'],
+    priceMax: 3,
+    maxDistanceM: 5 * 1609,
+  };
+  await render();
+  expect(chips('Category').props.value).toBe('activities');
+  expect(row('When')).toBeUndefined();
+  await act(async () => button('Create Pick').props.onPress());
+  expect(api.hangPick).toHaveBeenCalledWith(
+    'hang',
+    expect.objectContaining({ category: 'activities', priceMax: 3, radiusM: milesToMeters(5) }),
+  );
+  expect(api.getPickCapabilities).not.toHaveBeenCalled();
 });

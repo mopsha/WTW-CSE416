@@ -9,6 +9,7 @@ import { GoogleCredit } from '@/components/GoogleCredit';
 import { api } from '@/lib/api';
 import { HangCard } from '@/components/HangCard';
 import { JoinCodeCard } from '@/components/JoinCodeCard';
+import { TasteNudge } from '@/components/TasteNudge';
 import { NotificationBell } from '@/components/NotificationBell';
 import { HeaderAction, ListRow, Sheet } from '@/components/TabUi';
 import { ErrorBanner } from '@/components/ErrorBanner';
@@ -201,6 +202,7 @@ function PicksHome({ userId }: { userId: string }) {
           <Ionicons name="chevron-forward" size={16} color={colors.muted} />
         </Pressable>
       </View>
+      <TasteNudge />
       {error ? <ErrorBanner message={error} onRetry={() => void load()} /> : null}
       {picks === null && !error ? <ActivePicksSkeleton /> : null}
       {active.length ? (

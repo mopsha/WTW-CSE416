@@ -25,6 +25,7 @@ jest.mock('@/lib/mock/groups', () => ({ resetMockGroups: jest.fn() }));
 jest.mock('@/lib/mock/store', () => ({ MOCK_INVITE_CODE: 'ABC123', resetMockData: jest.fn() }));
 jest.mock('@/components/NotificationBell', () => ({ NotificationBell: () => null }));
 jest.mock('@/components/JoinCodeCard', () => ({ JoinCodeCard: () => null }));
+jest.mock('@/components/TasteNudge', () => ({ TasteNudge: () => null }));
 jest.mock('@/components/HangCard', () => ({
   HangCard: () =>
     jest
