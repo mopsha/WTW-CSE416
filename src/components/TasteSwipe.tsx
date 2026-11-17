@@ -1,5 +1,6 @@
 // Onboarding's practice swipe: ~12 cards, each teaching one preference type. Real nearby places
-// when we know where the user is (two Discover calls), offline type cards otherwise.
+// when we know where the user is (two Discover calls), offline type cards otherwise. Photos load
+// one card ahead, like Discover, so skipping the deck doesn't pay for a dozen covers.
 import type { Candidate as ApiCandidate } from '@shared/places/types.ts';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
@@ -16,7 +17,11 @@ import { colors, space } from './theme';
 
 type LatLng = { lat: number; lng: number };
 export type TasteAnswer = { card: TasteCard<unknown>; value: PreferenceValue };
-type Shown = TasteCard<unknown> & { view: Candidate };
+type Shown = TasteCard<unknown> & {
+  view: Candidate;
+  /** Google cover to load once the card is next up, with the photographers to credit. */
+  photo?: { name: string; credits: string[] };
+};
 
 function typeCard(card: TasteCard<unknown>): Candidate {
   return {
@@ -44,13 +49,29 @@ async function loadDeck(center: LatLng | null): Promise<Shown[]> {
         .catch(() => [] as ApiCandidate[]);
     [food, activities] = await Promise.all([load('food'), load('activities')]);
   }
-  return buildTasteDeck(food, activities).map((card) => ({
-    ...card,
-    view:
-      card.place && center && card.place.category !== 'custom'
-        ? { ...discoverPlace(card.place, center), cuisine: tasteLabel(card.type) }
-        : typeCard(card),
-  }));
+  return buildTasteDeck(food, activities).map((card) => {
+    if (!card.place || !center || card.place.category === 'custom')
+      return { ...card, view: typeCard(card) };
+    const { photoName, photoCredits, ...view } = discoverPlace(card.place, center);
+    return {
+      ...card,
+      view: { ...view, cuisine: tasteLabel(card.type) },
+      ...(photoName ? { photo: { name: photoName, credits: photoCredits ?? [] } } : {}),
+    };
+  });
+}
+
+/** The card with its cover and the photographer credit Google requires, once loaded. */
+function withPhoto(card: Shown, url: string | null | undefined): Candidate {
+  if (!card.photo || !url) return card.view;
+  return {
+    ...card.view,
+    photoUrl: url,
+    attributions: [
+      ...(card.view.attributions ?? []),
+      ...card.photo.credits.map((provider) => ({ provider })),
+    ],
+  };
 }
 
 export function TasteSwipe({
@@ -66,6 +87,34 @@ export function TasteSwipe({
   const card = useRef<SwipeCardHandle>(null);
   // Cards answered so far, synchronously: a screen-reader action can answer a card twice.
   const answered = useRef(0);
+  // placeId -> cover URL, or null if it failed. Each photo is requested once.
+  const [photos, setPhotos] = useState<Record<string, string | null>>({});
+  const requested = useRef(new Set<string>());
+
+  const mounted = useRef(true);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!deck) return;
+    // A photo requested for the next card must still land after this card is answered.
+    for (const next of deck.slice(answers.length, answers.length + 2)) {
+      const id = next.view.placeId;
+      if (!next.photo || requested.current.has(id)) continue;
+      requested.current.add(id);
+      api
+        .discoverPhoto(next.photo.name)
+        .then(
+          ({ photoUrl }) => photoUrl,
+          () => null,
+        )
+        .then((url) => mounted.current && setPhotos((current) => ({ ...current, [id]: url })));
+    }
+  }, [deck, answers.length]);
 
   useEffect(() => {
     if (center === undefined) return;
@@ -99,7 +148,12 @@ export function TasteSwipe({
       <ProgressBar value={answers.length} total={deck.length} />
       <View style={styles.deck}>
         {current ? (
-          <SwipeCard key={current.type} ref={card} place={current.view} onAnswer={answer} />
+          <SwipeCard
+            key={current.type}
+            ref={card}
+            place={withPhoto(current, photos[current.view.placeId])}
+            onAnswer={answer}
+          />
         ) : null}
       </View>
       {current ? (
