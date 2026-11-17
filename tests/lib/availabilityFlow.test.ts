@@ -116,3 +116,21 @@ test('account change during capability discovery prevents sending the scheduled 
   await expect(pending).rejects.toMatchObject({ code: 'account_changed' });
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+test.each([null, {}, { availabilityFirst: false }, { availabilityFirst: 'true' }])(
+  'capability read fails closed for %p',
+  async (payload) => {
+    const fetch = jest.fn<ReturnType<FetchLike>, Parameters<FetchLike>>(
+      async () => new Response(JSON.stringify(payload), { status: 200 }),
+    );
+    const api = createApiClient({
+      baseUrl: 'https://test',
+      getAccessToken: async () => MOCK_ACCESS_TOKEN,
+      getSession: async () => owner,
+      fetch,
+    });
+    expect((await api.getPickCapabilities(MOCK_USER_ID)).availabilityFirst).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0]![0]).toBe('https://test/picks/capabilities');
+  },
+);

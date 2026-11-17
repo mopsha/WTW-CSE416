@@ -11,9 +11,10 @@ import {
 import { NewPickLocationEditor } from '@/components/NewPickLocationEditor';
 import { Sheet } from '@/components/TabUi';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import {
   AccessibilityInfo,
+  AppState,
   Keyboard,
   Platform,
   ScrollView,
@@ -130,6 +131,50 @@ function CreatePickForm({
     'when' | 'location' | 'filters' | 'pool' | 'deadline' | 'threshold' | null
   >(null);
   const [filterDraft, setFilterDraft] = useState({ priceMax, openNow });
+  const [schedulingEnabled, setSchedulingEnabled] = useState(false);
+  const schedulingAllowed = useRef(false);
+  const capabilityGeneration = useRef(0);
+  const disableScheduling = useCallback(() => {
+    capabilityGeneration.current += 1;
+    schedulingAllowed.current = false;
+    setSchedulingEnabled(false);
+    setProposedAt(null);
+    setWhenInitial(null);
+    setEditor((current) => (current === 'when' ? null : current));
+    setProblems((current) => {
+      const next = { ...current };
+      delete next.proposedAt;
+      delete next.swipeDeadlineMinutes;
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    if (!viewerId || hangId) return;
+    let alive = true;
+    const refresh = async () => {
+      disableScheduling();
+      const request = capabilityGeneration.current;
+      try {
+        const capability = await api.getPickCapabilities(viewerId);
+        if (!alive || request !== capabilityGeneration.current) return;
+        const enabled = capability?.availabilityFirst === true;
+        schedulingAllowed.current = enabled;
+        setSchedulingEnabled(enabled);
+      } catch {
+        // Optional scheduling stays hidden; ordinary creation never waits for this read.
+      }
+    };
+    void refresh();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refresh();
+    });
+    return () => {
+      alive = false;
+      subscription.remove();
+    };
+  }, [viewerId, hangId, disableScheduling]);
+
+  const schedulingVersion = capabilityGeneration.current;
   const active = useRef(true);
   useEffect(() => {
     active.current = true;
@@ -152,7 +197,7 @@ function CreatePickForm({
       ? `Everyone in ${groupName ?? 'the group'} is added as soon as you create it.`
       : 'Invite friends after creating your Pick.';
   const openEditor = (next: NonNullable<typeof editor>) => {
-    if (sending.current) return;
+    if (sending.current || (next === 'when' && !schedulingAllowed.current)) return;
     Keyboard.dismiss();
     if (next === 'when')
       setWhenInitial(proposedAt ?? new Date(Date.now() + 3 * 3600000).toISOString());
@@ -177,6 +222,7 @@ function CreatePickForm({
     if (sending.current || !active.current) return;
     const id = ++attempt.current;
     setReveal(null);
+    const scheduledAt = schedulingAllowed.current && !hangId ? proposedAt : null;
     const input: CreatePickInput = {
       category,
       center,
@@ -197,12 +243,12 @@ function CreatePickForm({
         ? { customOptions, ...(mix !== 'none' ? { mixCategory: mix } : {}) }
         : {}),
       // Computed at tap time so "1 hr" means an hour from now, not from when the screen opened.
-      deadlineAt: proposedAt
+      deadlineAt: scheduledAt
         ? null
         : deadlineMin
           ? new Date(Date.now() + deadlineMin * 60_000).toISOString()
           : null,
-      ...(proposedAt && !hangId ? { proposedAt, swipeDeadlineMinutes: deadlineMin } : {}),
+      ...(scheduledAt ? { proposedAt: scheduledAt, swipeDeadlineMinutes: deadlineMin } : {}),
       closeThreshold,
     };
     const found = validateCreatePick(input);
@@ -246,6 +292,18 @@ function CreatePickForm({
       });
     } catch (e) {
       if (!active.current) return;
+      if (
+        input.proposedAt &&
+        e &&
+        typeof e === 'object' &&
+        'code' in e &&
+        (['availability_not_enabled', 'AVAILABILITY_NOT_ENABLED', 'network_error'].includes(
+          String(e.code),
+        ) ||
+          ('status' in e &&
+            (e.status === 404 || (typeof e.status === 'number' && e.status >= 500))))
+      )
+        disableScheduling();
       setSubmitError(messageOf(e));
       setReveal({ field: 'submit', id });
     } finally {
@@ -336,7 +394,7 @@ function CreatePickForm({
         ) : null}
         <Section title="Plan Details">
           <SettingsGroup>
-            {!hangId ? (
+            {!hangId && schedulingEnabled ? (
               <SettingRow
                 label="When"
                 value={proposedAt ? formatPlanTime(proposedAt) : 'Decide later'}
@@ -356,7 +414,7 @@ function CreatePickForm({
             ) : null}
             <SettingRow label="Who's joining?" value={participantSummary} icon="people-outline" />
           </SettingsGroup>
-          {proposedAt ? (
+          {schedulingEnabled && proposedAt ? (
             <Text style={styles.hint}>
               Friends can start swiping as soon as they confirm their availability.
             </Text>
@@ -455,7 +513,7 @@ function CreatePickForm({
           accessibilityHint="Creates the Pick so you can invite friends"
         />
       </View>
-      {editor === 'when' ? (
+      {schedulingEnabled && editor === 'when' ? (
         <PlanTimeSheet
           initial={whenInitial}
           onClose={closeEditor}
@@ -464,7 +522,8 @@ function CreatePickForm({
             closeEditor();
           }}
           onSave={async (value) => {
-            setProposedAt(value);
+            if (schedulingAllowed.current && schedulingVersion === capabilityGeneration.current)
+              setProposedAt(value);
           }}
         />
       ) : null}
@@ -538,8 +597,10 @@ function CreatePickForm({
           ) : editor === 'deadline' ? (
             <>
               <Text style={styles.hint}>
-                When swiping closes, not when you’re going out. Scheduled Picks start this clock
-                when creation finishes; other Picks start it at creation.
+                When swiping closes, not when you’re going out.
+                {schedulingEnabled
+                  ? ' Scheduled Picks start this clock when creation finishes; other Picks start it at creation.'
+                  : ' This clock starts at creation.'}
               </Text>
               <ChoiceList
                 options={DEADLINES}

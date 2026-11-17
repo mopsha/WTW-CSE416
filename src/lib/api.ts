@@ -293,13 +293,23 @@ export function createApiClient({
     return json as T;
   }
 
-  async function requireAvailabilitySupport(input: CreatePickInput, viewer?: string) {
-    if (!input.proposedAt) return;
-    const capabilities = await request<{ availabilityFirst: boolean; availabilityMode?: string }>(
+  async function getPickCapabilities(
+    viewer?: string,
+  ): Promise<{ availabilityFirst: boolean; availabilityMode?: string }> {
+    const value = await request<{ availabilityFirst?: unknown; availabilityMode?: string } | null>(
       'GET',
       '/picks/capabilities',
       { viewer },
     );
+    return {
+      availabilityFirst: value?.availabilityFirst === true,
+      availabilityMode: value?.availabilityMode,
+    };
+  }
+
+  async function requireAvailabilitySupport(input: CreatePickInput, viewer?: string) {
+    if (!input.proposedAt) return;
+    const capabilities = await getPickCapabilities(viewer);
     if (!capabilities.availabilityFirst || capabilities.availabilityMode !== 'immediate')
       throw new ApiError(
         'availability_not_enabled',
@@ -311,6 +321,7 @@ export function createApiClient({
   const groupPath = (groupId: string) => `/groups/${encodeURIComponent(groupId)}`;
 
   return {
+    getPickCapabilities,
     async getAvatarCapabilities(
       viewer: string,
       signal?: AbortSignal,

@@ -2,6 +2,7 @@ import { PlanTimeSheet } from '@/components/PlanTimeSheet';
 import React from 'react';
 import {
   AccessibilityInfo,
+  AppState,
   Keyboard,
   Modal,
   Platform,
@@ -51,7 +52,12 @@ jest.mock('@/lib/haptics', () => ({
   haptic: { tap: jest.fn(), tick: jest.fn(), success: jest.fn() },
 }));
 jest.mock('@/lib/api', () => ({
-  api: { createPick: jest.fn(), createGroupPick: jest.fn(), hangPick: jest.fn() },
+  api: {
+    getPickCapabilities: jest.fn(),
+    createPick: jest.fn(),
+    createGroupPick: jest.fn(),
+    hangPick: jest.fn(),
+  },
 }));
 jest.mock('@/lib/locationSearch', () => ({ DEFAULT_CENTER: { lat: 40.915, lng: -73.123 } }));
 jest.mock('@/components/MapPicker', () => ({ MapPicker: () => null }));
@@ -87,6 +93,10 @@ const press = async (label: string) =>
   });
 beforeEach(async () => {
   jest.clearAllMocks();
+  jest.spyOn(AppState, 'addEventListener').mockReturnValue({ remove: jest.fn() });
+  jest
+    .mocked(api.getPickCapabilities)
+    .mockResolvedValue({ availabilityFirst: true, availabilityMode: 'immediate' });
   mockMeasureLayout.mockReset().mockImplementation(measureNative);
   // The preset's ScrollView methods are no-op mocks. Make their distinct runtime
   // contracts explicit rather than allowing undefined/numeric measurements.
@@ -735,4 +745,123 @@ test('Hang conversion keeps scheduling control absent and existing payload uncha
   expect(row('When')).toBeUndefined();
   await act(async () => button('Create Pick').props.onPress());
   expect(jest.mocked(api.hangPick).mock.calls[0]![1]).not.toHaveProperty('proposedAt');
+});
+
+test('disabled capability hides scheduling and keeps ordinary creation usable', async () => {
+  jest.mocked(api.getPickCapabilities).mockResolvedValueOnce({ availabilityFirst: false });
+  await render();
+  expect(row('When')).toBeUndefined();
+  await act(async () => button('Create Pick').props.onPress());
+  const input = jest.mocked(api.createPick).mock.calls[0]![0];
+  expect(input).not.toHaveProperty('proposedAt');
+  expect(input).not.toHaveProperty('swipeDeadlineMinutes');
+  expect(input.deadlineAt).not.toBeNull();
+});
+test('failed capability lookup hides When without blocking ordinary creation', async () => {
+  jest.mocked(api.getPickCapabilities).mockRejectedValueOnce(new Error('Offline'));
+  await render();
+  expect(row('When')).toBeUndefined();
+  await act(async () => button('Create Pick').props.onPress());
+  expect(api.createPick).toHaveBeenCalledTimes(1);
+});
+test('loading capability does not block an ordinary Pick; late account response is ignored', async () => {
+  let resolve!: (value: { availabilityFirst: boolean; availabilityMode: string }) => void;
+  jest.mocked(api.getPickCapabilities).mockReturnValueOnce(
+    new Promise((r) => {
+      resolve = r;
+    }),
+  );
+  await render();
+  expect(row('When')).toBeUndefined();
+  await act(async () => button('Create Pick').props.onPress());
+  expect(api.createPick).toHaveBeenCalledTimes(1);
+  jest.mocked(api.getPickCapabilities).mockResolvedValueOnce({ availabilityFirst: false });
+  mockAccount = 'replacement';
+  await act(async () => tree.update(<CreatePickScreen />));
+  await act(async () => resolve({ availabilityFirst: true, availabilityMode: 'immediate' }));
+  expect(row('When')).toBeUndefined();
+  expect(api.getPickCapabilities).toHaveBeenLastCalledWith('replacement');
+});
+test('foreground capability loss invalidates an open time editor, keeps other fields, and rejects late editor saves', async () => {
+  let onActive: ((state: 'active') => void) | undefined;
+  const subscription = jest
+    .spyOn(AppState, 'addEventListener')
+    .mockImplementation((_event, listener) => {
+      onActive = listener;
+      return { remove: jest.fn() };
+    });
+  try {
+    await render();
+    await choose('Number of places', 30);
+    await press('When');
+    const save = tree.root.findByType(PlanTimeSheet).props.onSave;
+    await act(async () => save(new Date(Date.now() + 2 * 86400000).toISOString()));
+    jest.mocked(api.getPickCapabilities).mockResolvedValueOnce({ availabilityFirst: false });
+    await act(async () => onActive?.('active'));
+    await act(async () => save(new Date(Date.now() + 2 * 86400000).toISOString()));
+    expect(row('When')).toBeUndefined();
+    expect(tree.root.findAllByType(PlanTimeSheet)).toHaveLength(0);
+    await act(async () => button('Create Pick').props.onPress());
+    const input = jest.mocked(api.createPick).mock.calls[0]![0];
+    expect(input.poolSize).toBe(30);
+    expect(input).not.toHaveProperty('proposedAt');
+    expect(input).not.toHaveProperty('swipeDeadlineMinutes');
+    expect(input.deadlineAt).not.toBeNull();
+  } finally {
+    subscription.mockRestore();
+  }
+});
+test('latest capability refresh wins over a delayed enabled response', async () => {
+  let onActive: ((state: 'active') => void) | undefined;
+  const subscription = jest
+    .spyOn(AppState, 'addEventListener')
+    .mockImplementation((_event, listener) => {
+      onActive = listener;
+      return { remove: jest.fn() };
+    });
+  try {
+    let resolve!: (value: { availabilityFirst: boolean; availabilityMode: string }) => void;
+    jest.mocked(api.getPickCapabilities).mockReturnValueOnce(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    await render();
+    jest.mocked(api.getPickCapabilities).mockResolvedValueOnce({ availabilityFirst: false });
+    await act(async () => onActive?.('active'));
+    await act(async () => resolve({ availabilityFirst: true, availabilityMode: 'immediate' }));
+    expect(row('When')).toBeUndefined();
+  } finally {
+    subscription.mockRestore();
+  }
+});
+
+test('creation preflight disabling scheduling clears the selection for a normal retry', async () => {
+  await render();
+  await press('When');
+  await act(async () =>
+    tree.root
+      .findByType(PlanTimeSheet)
+      .props.onSave(new Date(Date.now() + 2 * 86400000).toISOString()),
+  );
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onClose());
+  jest
+    .mocked(api.createPick)
+    .mockRejectedValueOnce(
+      Object.assign(new Error('Disabled'), { code: 'availability_not_enabled', status: 409 }),
+    );
+  await act(async () => button('Create Pick').props.onPress());
+  expect(row('When')).toBeUndefined();
+  await act(async () => button('Create Pick').props.onPress());
+  expect(jest.mocked(api.createPick).mock.calls[1]![0]).not.toHaveProperty('proposedAt');
+  expect(jest.mocked(api.createPick).mock.calls[1]![0]).not.toHaveProperty('swipeDeadlineMinutes');
+});
+
+test('explicit enabled capability shows When and is not refetched by form edits', async () => {
+  jest.mocked(api.getPickCapabilities).mockResolvedValueOnce({ availabilityFirst: true });
+  await render();
+  expect(row('When')).toBeDefined();
+  await act(async () => chips('Category').props.onChange('activities'));
+  expect(api.getPickCapabilities).toHaveBeenCalledTimes(1);
+  expect(api.getPickCapabilities).toHaveBeenCalledWith('owner');
 });
