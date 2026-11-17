@@ -55,6 +55,8 @@ export interface Candidate {
   groupId?: string;
   createdBy?: string;
   locationProvided?: boolean;
+  /** The survey type this place counts as (e.g. "sushi_restaurant"), for "Matches your taste". */
+  tasteType?: string;
 }
 
 export interface MyPreference {

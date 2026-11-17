@@ -12,6 +12,12 @@ import type { GroupIdea } from './groupIdeas.ts';
 // goes through canTransition.
 
 import { priorityCandidates } from '../domain/candidatePriority.ts';
+import {
+  groupTasteScore,
+  tasteOrder,
+  tasteTypeOf,
+  type MemberTaste,
+} from '../domain/groupTaste.ts';
 import { ApiError } from './errors.ts';
 import { requireCleanText } from './text.ts';
 import type { Notifier } from './notify.ts';
@@ -59,6 +65,11 @@ export interface CandidateSnapshot {
   placeId: string;
   /** Frozen place data shown during this Pick; must include numeric lat/lng. */
   snapshot: object;
+  /**
+   * How much the participants like this place's type, -1 to 1 (groupTaste.ts). Server-only:
+   * kept out of the snapshot, where it could reveal someone's preferences in a small group.
+   */
+  tasteScore?: number;
 }
 
 export interface LifecyclePick extends PlaceFilters {
@@ -98,6 +109,8 @@ export interface LifecycleStore {
   savedCandidates?(hostId: string): Promise<Candidate[]>;
   groupIdeas?(groupId: string, hostId: string): Promise<GroupIdea[]>;
   candidateUuid?(): string;
+  /** Each participant's saved and learned taste, for the deck order and tiebreak. */
+  memberTastes?(userIds: string[]): Promise<MemberTaste[]>;
   /** The top three ranked places, which are the ones worth paying for photos of. */
   finalistIds?(pickId: string): Promise<string[]>;
   /** Tells the other participants when the host starts or cancels. Optional in tests. */
@@ -301,6 +314,11 @@ async function buildCandidates(
     );
   }
   let candidates = priorityCandidates(priority, [], pick.poolSize);
+  // Group taste picks most of the provider slots; the rest keep the varied interleave.
+  const tastes = (await store.memberTastes?.(pick.participantIds)) ?? [];
+  const hasTaste = tastes.some(
+    (t) => t.liked.length || t.disliked.length || Object.keys(t.learned).length,
+  );
   const foundByCategory: Candidate[][] = [];
   for (const category of providerCategories(pick.category, pick.mixCategory)) {
     if (candidates.length >= pick.poolSize && !pick.includeGroupIdeas) break;
@@ -310,7 +328,9 @@ async function buildCandidates(
           center: pick.center,
           radiusM: pick.radiusM,
           category,
-          poolSize: priority.length ? 30 : pick.poolSize,
+          // Taste needs more places than the deck holds to choose among. Free: the provider
+          // always fetches a full page and the cache key ignores poolSize.
+          poolSize: priority.length || hasTaste ? 30 : pick.poolSize,
           priceMax: pick.priceMax,
           openNow: pick.openNow,
         }),
@@ -319,7 +339,13 @@ async function buildCandidates(
       if (!(error instanceof NoCandidatesError)) throw error;
     }
   }
-  candidates = priorityCandidates(priority, interleaveCandidates(foundByCategory), pick.poolSize);
+  const taste = (c: Candidate) => groupTasteScore(tastes, tasteTypeOf(c.types));
+  const found = tasteOrder(
+    interleaveCandidates(foundByCategory),
+    taste,
+    pick.poolSize - priority.length,
+  );
+  candidates = priorityCandidates(priority, found, pick.poolSize);
   if (pick.includeGroupIdeas)
     candidates = mixGroupIdeaCandidates(
       candidates,
@@ -328,7 +354,18 @@ async function buildCandidates(
       pick.customOptions?.length ?? 0,
     );
   if (!candidates.length) throw new ApiError(409, 'NO_CANDIDATES', 'No places found for this Pick');
-  return candidates.map((c) => ({ placeId: c.placeId, snapshot: candidateSnapshot(c) }));
+  return candidates.map((c) => {
+    const tasteType = tasteTypeOf(c.types);
+    const tasteScore = taste(c);
+    return {
+      placeId: c.placeId,
+      // The survey type (e.g. "sushi_restaurant"): our label, like `category`, for the
+      // "Matches your taste" badge and swipe learning (0044_taste_learning.sql).
+      snapshot: { ...candidateSnapshot(c), ...(tasteType ? { tasteType } : {}) },
+      // Omitted when neutral, so Picks without taste data send exactly what they used to.
+      ...(tasteScore ? { tasteScore } : {}),
+    };
+  });
 }
 
 export async function startPick(

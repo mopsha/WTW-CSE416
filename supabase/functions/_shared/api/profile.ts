@@ -3,9 +3,12 @@
 // GET /me -> { displayName, preferences, onboarded }
 // POST /me { displayName } -> { displayName }
 // POST /me/preferences { preferences } -> { preferences, onboarded: true }
+// GET /me/learned-taste -> { learned: [{ type, score }] }, strongest first, decayed to now
+// DELETE /me/learned-taste -> { status: 'ok' } ("Reset what WTW learned")
 // Every route reads or writes the verified caller's row; there is no way to touch someone else's.
 
 import { readPreferences, validatePreferences, type Preferences } from '../domain/preferences.ts';
+import { decayedScore, TASTE_TYPES } from '../domain/groupTaste.ts';
 import { ApiError } from './errors.ts';
 import { requireCleanText } from './text.ts';
 
@@ -27,6 +30,47 @@ export interface ProfileStore {
   } | null>;
   /** Saves the survey and stamps preferences_updated_at (which means "onboarded"). */
   setPreferences(userId: string, preferences: Preferences): Promise<void>;
+  /** Raw learned_taste rows (0044_taste_learning.sql). */
+  learnedTaste?(
+    userId: string,
+  ): Promise<{ place_type: string; score: number; updated_at: string }[]>;
+  resetLearnedTaste?(userId: string): Promise<void>;
+}
+
+/** Below this (after decay) a learned score is too faint to mention. */
+export const LEARNED_VISIBLE = 0.5;
+
+export interface LearnedTaste {
+  /** A survey place type, e.g. "thai_restaurant". */
+  type: string;
+  /** Decayed score, -10 to 10; positive means likes. */
+  score: number;
+}
+
+function requireLearning(store: ProfileStore) {
+  if (!store.learnedTaste || !store.resetLearnedTaste)
+    throw new ApiError(503, 'NOT_CONFIGURED', 'Taste learning is not available');
+  return { read: store.learnedTaste, reset: store.resetLearnedTaste };
+}
+
+/** What WTW has learned about me, strongest first; faint and unknown types are left out. */
+export async function getLearnedTaste(
+  store: ProfileStore,
+  userId: string,
+  now = new Date(),
+): Promise<{ learned: LearnedTaste[] }> {
+  const rows = await requireLearning(store).read.call(store, userId);
+  const learned = rows
+    .filter((r) => TASTE_TYPES.has(r.place_type))
+    .map((r) => ({ type: r.place_type, score: decayedScore(r.score, r.updated_at, now) }))
+    .filter((r) => Math.abs(r.score) >= LEARNED_VISIBLE)
+    .sort((a, b) => b.score - a.score || (a.type < b.type ? -1 : 1));
+  return { learned };
+}
+
+export async function resetLearnedTaste(store: ProfileStore, userId: string) {
+  await requireLearning(store).reset.call(store, userId);
+  return { status: 'ok' as const };
 }
 
 export interface MeResponse {
