@@ -377,7 +377,7 @@ export async function buildCandidates(
     return {
       placeId: c.placeId,
       // The survey type (e.g. "sushi_restaurant"): our label, like `category`, for the
-      // "Matches your taste" badge and swipe learning (0044_taste_learning.sql).
+      // "Matches your taste" badge and swipe learning (0047_taste_learning.sql).
       snapshot: { ...candidateSnapshot(c), ...(tasteType ? { tasteType } : {}) },
       // Omitted when neutral, so Picks without taste data send exactly what they used to.
       ...(tasteScore ? { tasteScore } : {}),

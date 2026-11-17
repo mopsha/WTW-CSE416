@@ -1,5 +1,5 @@
 // Group taste for Picks (owner: Alan). Spec: docs/taste-onboarding.md#pr-2.
-// Pure TypeScript. Mirrors the decay in 0044_taste_learning.sql (private.learn_taste).
+// Pure TypeScript. Mirrors the decay in 0047_taste_learning.sql (private.learn_taste).
 
 import { ACTIVITY_TYPE_OPTIONS, FOOD_TYPE_OPTIONS, readPreferences } from './preferences.ts';
 

@@ -1,4 +1,4 @@
--- Taste learning (0044_taste_learning.sql, Alan). Run: supabase test db (after supabase db reset).
+-- Taste learning (0047_taste_learning.sql, Alan). Run: supabase test db (after supabase db reset).
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;

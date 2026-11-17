@@ -758,7 +758,7 @@ export function createApp(
     if (!deps.profileStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Profiles are not available');
     return c.json(await updatePreferences(deps.profileStore, user.id, body));
   });
-  // What WTW learned from my swipes, votes and winners (0044); private to me.
+  // What WTW learned from my swipes, votes and winners (0047); private to me.
   app.get('/me/learned-taste', async (c) => {
     c.header('Cache-Control', 'private, no-store');
     const user = await deps.getUser(c.req.raw);

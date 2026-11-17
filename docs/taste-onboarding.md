@@ -53,7 +53,7 @@ rest keep the normal varied interleave. Nothing is removed. With no taste data t
 unchanged.
 
 **Tiebreak.** At start/refresh the API sends each candidate's `tasteScore` (only when non-zero).
-`0044_taste_learning.sql` stores it in `private.pick_candidate_taste`, which the app can't read:
+`0047_taste_learning.sql` stores it in `private.pick_candidate_taste`, which the app can't read:
 a group score could reveal someone's preferences in a two-person Pick. `pick_load_for_close`
 adds it back for the API, and ranking becomes score → **taste** → distance → placeId. The final
 vote's tie chain already follows rank order.
@@ -64,7 +64,7 @@ uses only my own answers. `tasteType` is derived from Google's place types, so f
 candidates `purge_google_coordinates` removes it with the coordinates after 30 days. By then the
 Pick has closed (or been canceled), so learning no longer needs it.
 
-**Learning** (`taste_signals`, read through the `learned_taste` view; database triggers in 0044):
+**Learning** (`taste_signals`, read through the `learned_taste` view; database triggers in 0047):
 
 | Signal                 | Change                                                  |
 | ---------------------- | ------------------------------------------------------- |

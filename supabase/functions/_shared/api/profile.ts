@@ -30,7 +30,7 @@ export interface ProfileStore {
   } | null>;
   /** Saves the survey and stamps preferences_updated_at (which means "onboarded"). */
   setPreferences(userId: string, preferences: Preferences): Promise<void>;
-  /** Raw learned_taste rows (0044_taste_learning.sql). */
+  /** Raw learned_taste rows (0047_taste_learning.sql). */
   learnedTaste?(
     userId: string,
   ): Promise<{ place_type: string; score: number; updated_at: string }[]>;
