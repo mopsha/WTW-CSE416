@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 // The host's controls while swiping: close now, refresh the places, cancel. A bottom sheet
 // behind one header button, so the deck stays uncluttered.
 import { Ionicons } from '@expo/vector-icons';
@@ -14,12 +15,13 @@ import { ErrorBanner } from './ErrorBanner';
 import { colors, fonts, MIN_TARGET } from './theme';
 
 interface Props {
+  allowRefresh?: boolean;
   pickId: string;
   /** Called after an action succeeds (e.g. re-read the Pick). */
   onChanged?: () => void;
 }
 
-export function HostMenu({ pickId, onChanged }: Props) {
+export function HostMenu({ pickId, onChanged, allowRefresh = true }: Props) {
   const [open, setOpen] = useState(false);
   const action = useAction();
 
@@ -79,7 +81,11 @@ export function HostMenu({ pickId, onChanged }: Props) {
         }}
         accessibilityRole="button"
         accessibilityLabel="Host options"
-        accessibilityHint="Close swiping, refresh the places, or cancel"
+        accessibilityHint={
+          allowRefresh
+            ? 'Close swiping, refresh the places, or cancel'
+            : 'Invite friends, view participation, close swiping, or cancel'
+        }
         style={({ pressed }) => [menuStyles.trigger, pressed && { opacity: 0.7 }]}
       >
         <Ionicons name="options" size={20} color={colors.text} />
@@ -101,13 +107,26 @@ export function HostMenu({ pickId, onChanged }: Props) {
           busy={action.busy === 'close'}
           onPress={() => void closeNow()}
         />
-        <MenuItem
-          icon="refresh"
-          label="Get new places"
-          hint="Rebuilds the pool; clears answers if anyone has swiped"
-          busy={action.busy === 'refresh'}
-          onPress={() => void refresh()}
-        />
+        {!allowRefresh ? (
+          <MenuItem
+            icon="people"
+            label="Invite friends and view participation"
+            hint="Share this active Pick or see availability"
+            onPress={() => {
+              setOpen(false);
+              router.push({ pathname: '/pick/[id]/lobby', params: { id: pickId } });
+            }}
+          />
+        ) : null}
+        {allowRefresh ? (
+          <MenuItem
+            icon="refresh"
+            label="Get new places"
+            hint="Rebuilds the pool; clears answers if anyone has swiped"
+            busy={action.busy === 'refresh'}
+            onPress={() => void refresh()}
+          />
+        ) : null}
         <MenuItem
           icon="close-circle"
           label="Cancel Pick"

@@ -1,3 +1,4 @@
+import type { Availability } from '@shared/domain/availability.ts';
 import type { PlaceFilters } from '@shared/domain/placeFilters.ts';
 import type { PickState } from '@shared/domain/pickState.ts';
 
@@ -13,6 +14,7 @@ export const PREFERENCE_LABEL: Readonly<Record<PreferenceValue, string>> = {
 };
 
 export interface PickSummary {
+  proposedAt?: string | null;
   id: string;
   state: PickState;
   category: string;
@@ -97,6 +99,7 @@ export type DecidedBy = 'clear_winner' | 'vote' | 'tie_break';
 
 /** GET /picks/:id (Alan's lifecycle route): the Pick, MY candidate order and MY answers. */
 export interface PickDetail extends PlaceFilters {
+  availability?: Availability;
   includeGroupIdeas?: boolean;
   groupId?: string | null;
   id: string;
@@ -134,6 +137,7 @@ export interface ParticipantProgress {
 
 /** GET /picks/:id/progress: counts only, safe to show everyone in the Pick. */
 export interface PickProgress {
+  availability?: Availability;
   state: PickState;
   deadlineAt: string | null;
   participants: ParticipantProgress[];

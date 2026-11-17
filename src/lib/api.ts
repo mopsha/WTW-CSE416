@@ -1,3 +1,4 @@
+import { AVAILABILITY_CAPABILITY, type AvailabilityResponse } from '@shared/domain/availability.ts';
 import type { Birthday } from '@shared/api/birthdays.ts';
 import type { PersonIdentity } from '@shared/api/people.ts';
 import type { PastMovesResult } from '@shared/api/pastMoves.ts';
@@ -245,7 +246,10 @@ export function createApiClient({
     path: string,
     { body, auth = true, viewer }: { body?: unknown; auth?: boolean; viewer?: string } = {},
   ): Promise<T> {
-    const headers: Record<string, string> = { Accept: 'application/json' };
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      'X-Client-Info': AVAILABILITY_CAPABILITY,
+    };
     if (auth) {
       // Scoped reversible queues must never borrow a replacement account's token.
       const session = viewer === undefined ? undefined : await getSession?.();
@@ -289,10 +293,35 @@ export function createApiClient({
     return json as T;
   }
 
+  async function getPickCapabilities(
+    viewer?: string,
+  ): Promise<{ availabilityFirst: boolean; availabilityMode?: string }> {
+    const value = await request<{ availabilityFirst?: unknown; availabilityMode?: string } | null>(
+      'GET',
+      '/picks/capabilities',
+      { viewer },
+    );
+    return {
+      availabilityFirst: value?.availabilityFirst === true,
+      availabilityMode: value?.availabilityMode,
+    };
+  }
+
+  async function requireAvailabilitySupport(input: CreatePickInput, viewer?: string) {
+    if (!input.proposedAt) return;
+    const capabilities = await getPickCapabilities(viewer);
+    if (!capabilities.availabilityFirst || capabilities.availabilityMode !== 'immediate')
+      throw new ApiError(
+        'availability_not_enabled',
+        'Availability Picks are not enabled on this server yet.',
+        409,
+      );
+  }
   const pickPath = (pickId: string) => `/picks/${encodeURIComponent(pickId)}`;
   const groupPath = (groupId: string) => `/groups/${encodeURIComponent(groupId)}`;
 
   return {
+    getPickCapabilities,
     async getAvatarCapabilities(
       viewer: string,
       signal?: AbortSignal,
@@ -463,8 +492,10 @@ export function createApiClient({
       ),
     health: () => request<StatusResponse>('GET', '/health', { auth: false }),
     /** Validate with validateCreatePick first; the server rejects bad input with 400 INVALID_INPUT. */
-    createPick: (input: CreatePickInput) =>
-      request<CreatePickResponse>('POST', '/picks', { body: input }),
+    createPick: async (input: CreatePickInput, viewer?: string) => {
+      if (input.proposedAt) await requireAvailabilitySupport(input, viewer);
+      return request<CreatePickResponse>('POST', '/picks', { body: input, viewer });
+    },
     /**
      * Join by code (any case, spaces ignored). 404 JOIN_CODE_NOT_FOUND for an unknown or expired
      * code, 409 PICK_CLOSED once the Pick is past swiping. Already in it: same { pickId }.
@@ -498,10 +529,13 @@ export function createApiClient({
 
     // Groups (0012_groups.sql). Reads are RLS queries (queries.listMyGroups / getGroup).
     /** A draft Pick with everyone in the group already in it. 404 GROUP_NOT_FOUND if I'm not in it. */
-    createGroupPick: (input: CreatePickInput, groupId: string) =>
-      request<CreatePickResponse & { groupId: string; added: number }>('POST', '/picks', {
+    createGroupPick: async (input: CreatePickInput, groupId: string, viewer?: string) => {
+      if (input.proposedAt) await requireAvailabilitySupport(input, viewer);
+      return request<CreatePickResponse & { groupId: string; added: number }>('POST', '/picks', {
         body: { ...input, groupId },
-      }),
+        viewer,
+      });
+    },
     /** Host only: add friends to a draft or swiping Pick. 403 NOT_FRIENDS for anyone else. */
     inviteToPick: (pickId: string, userIds: string[]) =>
       request<{ added: number }>('POST', `${pickPath(pickId)}/invite`, { body: { userIds } }),
@@ -574,6 +608,21 @@ export function createApiClient({
     /** Who's in and who's done (never what anyone answered). The Realtime fallback polls this. */
     getProgress: (pickId: string) => request<PickProgress>('GET', `${pickPath(pickId)}/progress`),
     /** Host only: draft -> swiping. Needs at least 2 participants. */
+    respondAvailability: (
+      pickId: string,
+      revision: number,
+      response: AvailabilityResponse,
+      viewer: string,
+    ) =>
+      request<StatusResponse>('POST', `${pickPath(pickId)}/availability`, {
+        body: { revision, response },
+        viewer,
+      }),
+    changeProposedTime: (pickId: string, revision: number, proposedAt: string, viewer: string) =>
+      request<StatusResponse>('POST', `${pickPath(pickId)}/proposed-time`, {
+        body: { revision, proposedAt },
+        viewer,
+      }),
     startPick: (pickId: string) =>
       request<{ state: PickState; candidateCount: number }>('POST', `${pickPath(pickId)}/start`),
     /**

@@ -12,15 +12,15 @@ export function usePickRoute(
   pickId: string,
   screen: PickScreen,
   state: PickState | null,
-  opts: { allAnswered?: boolean } = {},
+  opts: { allAnswered?: boolean; canVote?: boolean } = {},
 ) {
   const previous = useRef<PickState | null>(null);
-  const { allAnswered } = opts;
+  const { allAnswered, canVote } = opts;
 
   useEffect(() => {
     if (!state) return;
-    const target = redirectFor(screen, state, { allAnswered, from: previous.current });
+    const target = redirectFor(screen, state, { allAnswered, canVote, from: previous.current });
     previous.current = state;
     if (target) router.replace({ pathname: pathFor(target), params: { id: pickId } });
-  }, [pickId, screen, state, allAnswered]);
+  }, [pickId, screen, state, allAnswered, canVote]);
 }

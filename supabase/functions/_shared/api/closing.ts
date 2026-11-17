@@ -13,6 +13,8 @@ import {
 } from '../domain/ranking.ts';
 
 export interface ClosingSnapshot {
+  awaitingResponses?: number;
+  invitedCount?: number;
   id: string;
   hostId: string | null;
   state: PickState;
@@ -67,7 +69,8 @@ function countAnswers(pick: ClosingSnapshot, userId: string): number {
   return pick.preferences.filter((p) => p.userId === userId).length;
 }
 
-function existingResult(pick: ClosingSnapshot): CloseResult {
+function existingResult(pick: ClosingSnapshot): CloseResult | null {
+  if (pick.state === 'canceled') return null;
   return {
     state: pick.state === 'completed' ? 'completed' : 'final_vote',
     winnerPlaceId: pick.winnerPlaceId,
@@ -123,6 +126,7 @@ async function attemptClose(
   }
   if (pick.state !== 'swiping') {
     if (pick.state === 'completed' || pick.state === 'final_vote') return existingResult(pick);
+    if (pick.state === 'canceled' && pick.awaitingResponses !== undefined) return null;
     if (actor === 'system') return null;
     throw new ApiError(409, 'INVALID_PICK_STATE', `Pick is ${pick.state}`);
   }
@@ -136,7 +140,9 @@ async function attemptClose(
     ).length;
     const due = dueToClose({
       done,
-      n: pick.participantIds.length,
+      // Scheduled Picks: unanswered invitations count toward the threshold, so the
+      // auto-Yes host finishing alone cannot close an early-close (<100%) round.
+      n: pick.participantIds.length + (pick.awaitingResponses ?? 0),
       thresholdPct: pick.closeThreshold,
       deadlineAt: pick.deadlineAt ? new Date(pick.deadlineAt) : null,
       now,
@@ -149,6 +155,22 @@ async function attemptClose(
     throw new ApiError(409, 'NO_CANDIDATES', 'Pick has no candidates');
   }
 
+  if (pick.awaitingResponses !== undefined && pick.participantIds.length === 0) {
+    if (actor === 'system') return null;
+    throw new ApiError(
+      409,
+      'NO_ELIGIBLE_PARTICIPANTS',
+      'No eligible respondents; wait for a response or cancel',
+    );
+  }
+  if (
+    actor === 'system' &&
+    pick.closeThreshold === 100 &&
+    ((pick.awaitingResponses ?? 0) > 0 ||
+      (pick.invitedCount !== undefined && pick.invitedCount < 2)) &&
+    (!pick.deadlineAt || now.getTime() < Date.parse(pick.deadlineAt))
+  )
+    return null;
   const ranked = rankCandidates(
     pick.candidates,
     pick.preferences.map((p) => ({ placeId: p.placeId, answer: answerFromDb(p.value) })),

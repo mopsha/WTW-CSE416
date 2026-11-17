@@ -1,6 +1,9 @@
+import { EMPTY_PREFERENCES, type Preferences } from '@shared/domain/preferences.ts';
+import { PlanTimeSheet } from '@/components/PlanTimeSheet';
 import React from 'react';
 import {
   AccessibilityInfo,
+  AppState,
   Keyboard,
   Modal,
   Platform,
@@ -22,6 +25,11 @@ import { DEFAULT_POOL_SIZE, milesToMeters } from '@shared/domain/createPick.ts';
 
 const { create, act } = jest.requireActual('react-test-renderer');
 let mockAccount = 'owner';
+let mockPreferences: Preferences = EMPTY_PREFERENCES;
+let mockProfileLoading = false;
+jest.mock('@/hooks/useProfile', () => ({
+  useProfile: () => ({ preferences: mockPreferences, loading: mockProfileLoading }),
+}));
 let mockReducedMotion = false;
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => mockReducedMotion }));
 jest.mock('@/hooks/useAuth', () => ({
@@ -50,7 +58,12 @@ jest.mock('@/lib/haptics', () => ({
   haptic: { tap: jest.fn(), tick: jest.fn(), success: jest.fn() },
 }));
 jest.mock('@/lib/api', () => ({
-  api: { createPick: jest.fn(), createGroupPick: jest.fn(), hangPick: jest.fn() },
+  api: {
+    getPickCapabilities: jest.fn(),
+    createPick: jest.fn(),
+    createGroupPick: jest.fn(),
+    hangPick: jest.fn(),
+  },
 }));
 jest.mock('@/lib/locationSearch', () => ({ DEFAULT_CENTER: { lat: 40.915, lng: -73.123 } }));
 jest.mock('@/components/MapPicker', () => ({ MapPicker: () => null }));
@@ -86,6 +99,12 @@ const press = async (label: string) =>
   });
 beforeEach(async () => {
   jest.clearAllMocks();
+  mockPreferences = EMPTY_PREFERENCES;
+  mockProfileLoading = false;
+  jest.spyOn(AppState, 'addEventListener').mockReturnValue({ remove: jest.fn() });
+  jest
+    .mocked(api.getPickCapabilities)
+    .mockResolvedValue({ availabilityFirst: true, availabilityMode: 'immediate' });
   mockMeasureLayout.mockReset().mockImplementation(measureNative);
   // The preset's ScrollView methods are no-op mocks. Make their distinct runtime
   // contracts explicit rather than allowing undefined/numeric measurements.
@@ -691,4 +710,242 @@ test('landscape keeps map outside scroll gestures while search and radius remain
   const scrolls = tree.root.findAllByType(ScrollView);
   expect(scrolls.some((scroll: any) => scroll.findAllByType(MapPicker).length > 0)).toBe(false);
   await act(async () => button('Cancel').props.onPress());
+});
+
+test('When defaults to Decide later and commits optional proposed time with deferred deadline', async () => {
+  const at = new Date(Date.now() + 2 * 86400000).toISOString();
+  await render();
+  expect(row('When').props.value).toBe('Decide later');
+  await press('When');
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onSave(at));
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onClose());
+  expect(row('When').props.value).not.toBe('Decide later');
+  await act(async () => button('Create Pick').props.onPress());
+  expect(api.createPick).toHaveBeenCalledWith(
+    expect.objectContaining({ proposedAt: at, swipeDeadlineMinutes: 60, deadlineAt: null }),
+    'owner',
+  );
+  expect(router.replace).toHaveBeenCalledWith({
+    pathname: '/pick/[id]/swipe',
+    params: { id: 'pick' },
+  });
+});
+test('When cancellation discards changes and Decide later restores legacy payload', async () => {
+  await render();
+  await press('When');
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onClose());
+  expect(row('When').props.value).toBe('Decide later');
+  await press('When');
+  await act(async () =>
+    tree.root
+      .findByType(PlanTimeSheet)
+      .props.onSave(new Date(Date.now() + 2 * 86400000).toISOString()),
+  );
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onClose());
+  await press('When');
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onDecideLater());
+  await act(async () => button('Create Pick').props.onPress());
+  expect(jest.mocked(api.createPick).mock.calls[0]![0]).not.toHaveProperty('proposedAt');
+});
+test('Hang conversion keeps scheduling control absent and existing payload unchanged', async () => {
+  mockParams = { hangId: 'hang' };
+  await render();
+  expect(row('When')).toBeUndefined();
+  await act(async () => button('Create Pick').props.onPress());
+  expect(jest.mocked(api.hangPick).mock.calls[0]![1]).not.toHaveProperty('proposedAt');
+});
+
+test('disabled capability hides scheduling and keeps ordinary creation usable', async () => {
+  jest.mocked(api.getPickCapabilities).mockResolvedValueOnce({ availabilityFirst: false });
+  await render();
+  expect(row('When')).toBeUndefined();
+  await act(async () => button('Create Pick').props.onPress());
+  const input = jest.mocked(api.createPick).mock.calls[0]![0];
+  expect(input).not.toHaveProperty('proposedAt');
+  expect(input).not.toHaveProperty('swipeDeadlineMinutes');
+  expect(input.deadlineAt).not.toBeNull();
+});
+test('failed capability lookup hides When without blocking ordinary creation', async () => {
+  jest.mocked(api.getPickCapabilities).mockRejectedValueOnce(new Error('Offline'));
+  await render();
+  expect(row('When')).toBeUndefined();
+  await act(async () => button('Create Pick').props.onPress());
+  expect(api.createPick).toHaveBeenCalledTimes(1);
+});
+test('loading capability does not block an ordinary Pick; late account response is ignored', async () => {
+  let resolve!: (value: { availabilityFirst: boolean; availabilityMode: string }) => void;
+  jest.mocked(api.getPickCapabilities).mockReturnValueOnce(
+    new Promise((r) => {
+      resolve = r;
+    }),
+  );
+  await render();
+  expect(row('When')).toBeUndefined();
+  await act(async () => button('Create Pick').props.onPress());
+  expect(api.createPick).toHaveBeenCalledTimes(1);
+  jest.mocked(api.getPickCapabilities).mockResolvedValueOnce({ availabilityFirst: false });
+  mockAccount = 'replacement';
+  await act(async () => tree.update(<CreatePickScreen />));
+  await act(async () => resolve({ availabilityFirst: true, availabilityMode: 'immediate' }));
+  expect(row('When')).toBeUndefined();
+  expect(api.getPickCapabilities).toHaveBeenLastCalledWith('replacement');
+});
+test('foreground capability loss invalidates an open time editor, keeps other fields, and rejects late editor saves', async () => {
+  let onActive: ((state: 'active') => void) | undefined;
+  const subscription = jest
+    .spyOn(AppState, 'addEventListener')
+    .mockImplementation((_event, listener) => {
+      onActive = listener;
+      return { remove: jest.fn() };
+    });
+  try {
+    await render();
+    await choose('Number of places', 30);
+    await press('When');
+    const save = tree.root.findByType(PlanTimeSheet).props.onSave;
+    await act(async () => save(new Date(Date.now() + 2 * 86400000).toISOString()));
+    jest.mocked(api.getPickCapabilities).mockResolvedValueOnce({ availabilityFirst: false });
+    await act(async () => onActive?.('active'));
+    await act(async () => save(new Date(Date.now() + 2 * 86400000).toISOString()));
+    expect(row('When')).toBeUndefined();
+    expect(tree.root.findAllByType(PlanTimeSheet)).toHaveLength(0);
+    await act(async () => button('Create Pick').props.onPress());
+    const input = jest.mocked(api.createPick).mock.calls[0]![0];
+    expect(input.poolSize).toBe(30);
+    expect(input).not.toHaveProperty('proposedAt');
+    expect(input).not.toHaveProperty('swipeDeadlineMinutes');
+    expect(input.deadlineAt).not.toBeNull();
+  } finally {
+    subscription.mockRestore();
+  }
+});
+test('latest capability refresh wins over a delayed enabled response', async () => {
+  let onActive: ((state: 'active') => void) | undefined;
+  const subscription = jest
+    .spyOn(AppState, 'addEventListener')
+    .mockImplementation((_event, listener) => {
+      onActive = listener;
+      return { remove: jest.fn() };
+    });
+  try {
+    let resolve!: (value: { availabilityFirst: boolean; availabilityMode: string }) => void;
+    jest.mocked(api.getPickCapabilities).mockReturnValueOnce(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    await render();
+    jest.mocked(api.getPickCapabilities).mockResolvedValueOnce({ availabilityFirst: false });
+    await act(async () => onActive?.('active'));
+    await act(async () => resolve({ availabilityFirst: true, availabilityMode: 'immediate' }));
+    expect(row('When')).toBeUndefined();
+  } finally {
+    subscription.mockRestore();
+  }
+});
+
+test('creation preflight disabling scheduling clears the selection for a normal retry', async () => {
+  await render();
+  await press('When');
+  await act(async () =>
+    tree.root
+      .findByType(PlanTimeSheet)
+      .props.onSave(new Date(Date.now() + 2 * 86400000).toISOString()),
+  );
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onClose());
+  jest
+    .mocked(api.createPick)
+    .mockRejectedValueOnce(
+      Object.assign(new Error('Disabled'), { code: 'availability_not_enabled', status: 409 }),
+    );
+  await act(async () => button('Create Pick').props.onPress());
+  expect(row('When')).toBeUndefined();
+  await act(async () => button('Create Pick').props.onPress());
+  expect(jest.mocked(api.createPick).mock.calls[1]![0]).not.toHaveProperty('proposedAt');
+  expect(jest.mocked(api.createPick).mock.calls[1]![0]).not.toHaveProperty('swipeDeadlineMinutes');
+});
+
+test('explicit enabled capability shows When and is not refetched by form edits', async () => {
+  jest.mocked(api.getPickCapabilities).mockResolvedValueOnce({ availabilityFirst: true });
+  await render();
+  expect(row('When')).toBeDefined();
+  await act(async () => chips('Category').props.onChange('activities'));
+  expect(api.getPickCapabilities).toHaveBeenCalledTimes(1);
+  expect(api.getPickCapabilities).toHaveBeenCalledWith('owner');
+});
+
+test('saved category, budget and clamped distance defaults coexist with scheduled creation', async () => {
+  mockPreferences = {
+    ...EMPTY_PREFERENCES,
+    categories: ['activities'],
+    priceMax: 2,
+    maxDistanceM: 25 * 1609,
+  };
+  await render();
+  expect(chips('Category').props.value).toBe('activities');
+  expect(row('Where').props.value).toContain('10 mi');
+  await press('When');
+  const at = new Date(Date.now() + 2 * 86400000).toISOString();
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onSave(at));
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onClose());
+  await act(async () => button('Create Pick').props.onPress());
+  expect(api.createPick).toHaveBeenCalledWith(
+    expect.objectContaining({
+      category: 'activities',
+      priceMax: 2,
+      radiusM: milesToMeters(10),
+      proposedAt: at,
+      swipeDeadlineMinutes: 60,
+      deadlineAt: null,
+    }),
+    'owner',
+  );
+});
+test('late profile updates do not reset selected category, scheduled time or open location draft', async () => {
+  mockProfileLoading = true;
+  await render();
+  await act(async () => chips('Category').props.onChange('activities'));
+  await press('When');
+  const at = new Date(Date.now() + 2 * 86400000).toISOString();
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onSave(at));
+  await act(async () => tree.root.findByType(PlanTimeSheet).props.onClose());
+  await press('Where');
+  const search = tree.root.findByType(LocationSearch);
+  await act(async () => search.props.onPick({ lat: 41, lng: -72 }, 'Draft location'));
+  mockPreferences = { ...EMPTY_PREFERENCES, categories: ['food'], priceMax: 4, maxDistanceM: 1609 };
+  mockProfileLoading = false;
+  await act(async () => tree.update(<CreatePickScreen />));
+  expect(chips('Category').props.value).toBe('activities');
+  expect(tree.root.findAllByType(LocationSearch)).toHaveLength(1);
+  await act(async () => button('Use this location').props.onPress());
+  expect(row('When').props.value).not.toBe('Decide later');
+  await act(async () => button('Create Pick').props.onPress());
+  expect(api.createPick).toHaveBeenCalledWith(
+    expect.objectContaining({
+      category: 'activities',
+      priceMax: null,
+      center: { lat: 41, lng: -72 },
+      proposedAt: at,
+    }),
+    'owner',
+  );
+  expect(api.getPickCapabilities).toHaveBeenCalledTimes(1);
+});
+test('Hang category prefill takes precedence over saved food defaults without scheduling', async () => {
+  mockParams = { hangId: 'hang', hangActivity: 'Basketball' };
+  mockPreferences = {
+    ...EMPTY_PREFERENCES,
+    categories: ['food'],
+    priceMax: 3,
+    maxDistanceM: 5 * 1609,
+  };
+  await render();
+  expect(chips('Category').props.value).toBe('activities');
+  expect(row('When')).toBeUndefined();
+  await act(async () => button('Create Pick').props.onPress());
+  expect(api.hangPick).toHaveBeenCalledWith(
+    'hang',
+    expect.objectContaining({ category: 'activities', priceMax: 3, radiusM: milesToMeters(5) }),
+  );
+  expect(api.getPickCapabilities).not.toHaveBeenCalled();
 });
