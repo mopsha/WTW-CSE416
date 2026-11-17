@@ -1,3 +1,4 @@
+import { createTimeSuggestionsStore } from './timeSuggestionsStore.ts';
 import { createRecentWinnersStore } from './recentWinnersStore.ts';
 import { winnerDetails } from './places.ts';
 import { createPastMovesStore } from './pastMovesStore.ts';
@@ -44,6 +45,8 @@ const app = createApp(
   {
     getUser,
     availabilityEnabled: Deno.env.get('ENABLE_AVAILABILITY_PICKS') === 'true',
+    timeSuggestionsEnabled: Deno.env.get('ENABLE_TIME_SUGGESTIONS') === 'true',
+    timeSuggestionsStore: { ...createTimeSuggestionsStore(), notifier },
     hangStore: createHangStore(notifier),
     store: createStore(),
     progressStore: createProgressStore(),

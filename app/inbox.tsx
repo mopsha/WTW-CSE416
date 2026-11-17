@@ -31,6 +31,7 @@ const ICONS: Record<NotificationType, keyof typeof Ionicons.glyphMap> = {
   winner_decided: 'trophy-outline',
   pick_canceled: 'close-circle-outline',
   plan_time_set: 'calendar-outline',
+  time_suggested: 'calendar-outline',
   plan_reminder: 'alarm-outline',
   did_you_go: 'help-circle-outline',
 };

@@ -1,3 +1,4 @@
+import './timeSuggestions_test.ts';
 import './availability_test.ts';
 import './avatars_test.ts';
 import './pastMoves_test.ts';
