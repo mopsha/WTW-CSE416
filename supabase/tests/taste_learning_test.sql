@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(31);
+select plan(34);
 
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
 values
@@ -75,7 +75,7 @@ select private.learn_taste('71111111-1111-4111-8111-111111111111', gen_random_uu
 set local role service_role;
 select is((select score from learned_taste
   where user_id = '71111111-1111-4111-8111-111111111111' and place_type = 'park'),
-  10::real, 'scores are clamped to 10');
+  10::real, 'one signal is clamped to 10');
 
 -- A winner teaches everyone in the Pick (+2).
 update picks set state = 'completed', winner_place_id = 't-sushi', decided_at = now(),
@@ -201,6 +201,34 @@ select pick_availability_finish((select id::text from sched), '71111111-1111-411
     {"placeId":"s-plain","snapshot":{"name":"Plain","lat":40,"lng":-73}}]'::jsonb);
 select is((select count(*)::int from private.pick_candidate_taste where pick_id = (select id from sched)),
   1, 'scheduled Picks store taste scores when they start');
+
+-- The ±10 cap applies after the API fades the total (groupTaste.decayedScore), not here:
+-- twenty 60-day-old +1 signals total 20 as of their own time, which fades to 5.
+reset role;
+select private.learn_taste('72222222-2222-4222-8222-222222222222', gen_random_uuid(), 'zoo', 1)
+  from generate_series(1, 20);
+set local role service_role;
+update taste_signals set at = now() - interval '60 days'
+  where user_id = '72222222-2222-4222-8222-222222222222' and place_type = 'zoo';
+select ok(abs((select score from learned_taste where user_id = '72222222-2222-4222-8222-222222222222'
+  and place_type = 'zoo') - 20) < 0.01, 'the view does not cap before the final fade');
+
+-- Group scores from an older deck are ignored, and the sweep removes ones for finished Picks.
+update private.pick_candidate_taste set candidate_created_at = candidate_created_at - interval '1 hour'
+  where pick_id = (select id from sched) and place_id = 's-sushi';
+select is((select e ->> 'tasteScore' from jsonb_array_elements(
+  pick_load_for_close((select id::text from sched)) -> 'candidates') e
+  where e ->> 'placeId' = 's-sushi'), '0', 'a score for an older deck''s candidate is ignored');
+update private.pick_candidate_taste set candidate_created_at = now()
+  where pick_id = (select id from sched);
+reset role;
+alter table public.picks disable trigger forget_candidate_taste;
+update picks set state = 'canceled' where id = (select id from sched);
+alter table public.picks enable trigger forget_candidate_taste;
+set local role service_role;
+select purge_google_coordinates(now() - interval '30 days');
+select is((select count(*)::int from private.pick_candidate_taste where pick_id = (select id from sched)),
+  0, 'the sweep removes group scores the close left behind');
 
 -- Privacy: clients can't read learned taste or the group scores.
 reset role;

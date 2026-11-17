@@ -23,10 +23,15 @@ export function tasteTypeOf(types: readonly string[] | undefined): string | null
   return types?.find((t) => TASTE_TYPES.has(t)) ?? null;
 }
 
-/** A stored learned score, faded by time since it was last updated. */
+/** Learned scores stay within ±this, after fading. */
+export const LEARNED_MAX = 10;
+
+/** A stored learned score, faded by time since it was last updated, then capped. */
 export function decayedScore(score: number, updatedAt: string, now: Date): number {
   const days = Math.max(0, now.getTime() - Date.parse(updatedAt)) / DAY_MS;
-  return Number.isFinite(days) ? score * 0.5 ** (days / HALF_LIFE_DAYS) : 0;
+  if (!Number.isFinite(days)) return 0;
+  const faded = score * 0.5 ** (days / HALF_LIFE_DAYS);
+  return Math.max(-LEARNED_MAX, Math.min(LEARNED_MAX, faded));
 }
 
 /** One participant's taste: what they said, plus what WTW learned (already decayed). */

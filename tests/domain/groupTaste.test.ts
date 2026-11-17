@@ -27,6 +27,14 @@ test('learned scores halve every 30 days and never grow', () => {
   expect(decayedScore(4, 'not a date', now)).toBe(0);
 });
 
+test('the ±10 cap applies after fading, not before', () => {
+  const now = new Date('2026-12-01T00:00:00Z');
+  // Twenty +1 signals from 60 days ago: 20 / 4 = 5, not min(20, 10) / 4.
+  expect(decayedScore(20, '2026-10-02T00:00:00Z', now)).toBeCloseTo(5);
+  expect(decayedScore(40, '2026-11-30T00:00:00Z', now)).toBe(10);
+  expect(decayedScore(-40, '2026-11-30T00:00:00Z', now)).toBe(-10);
+});
+
 test('explicit answers beat learned ones; learned is capped at ±1', () => {
   const member = {
     liked: ['cafe'],

@@ -73,7 +73,7 @@ Pick has closed (or been canceled), so learning no longer needs it.
 | Pick winner            | +2 for everyone in the Pick                             |
 
 - Each signal is its own row, keyed by a hash of its swipe, ballot or winner, and halves every
-  30 days. A type's score is their sum, clamped to −10..10. Changing an answer replaces that
+  30 days. A type's score is their faded sum, capped at −10..10 after fading. Changing an answer replaces that
   row, so it never takes back more or less than the original added, even after a reset or decay.
 - Only typed candidates teach; custom options and untyped places don't.
 - The learning runs in triggers, so every write path is covered and nothing else changes. It's

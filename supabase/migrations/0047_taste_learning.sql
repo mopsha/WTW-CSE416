@@ -3,7 +3,7 @@
 -- 1. learned_taste: per user, per survey place type, a score WTW learns from real use:
 --    swipes (Yes +1, Maybe +0.3, No -1), final votes (+1) and Pick winners (+2 for everyone in
 --    the Pick). Each signal halves every 30 days (same formula as
---    _shared/domain/groupTaste.ts decayedScore) and the total stays within -10..10. Explicit
+--    _shared/domain/groupTaste.ts decayedScore), and the faded total is capped at -10..10. Explicit
 --    survey answers always win over learned scores; that merge happens in the API
 --    (groupTaste.memberValue).
 --    Signals are stored one per source (a swipe, a ballot, a winner), so a changed answer replaces
@@ -32,12 +32,12 @@ alter table public.taste_signals enable row level security;
 revoke all on table public.taste_signals from public, anon, authenticated;
 grant all on table public.taste_signals to service_role;
 
--- Each type's total, decayed to its latest signal. Readers decay it from updated_at to now
--- (groupTaste.decayedScore), which gives every signal its own age.
+-- Each type's total, decayed to its latest signal. Readers decay it from updated_at to now and
+-- then cap it at ±10 (groupTaste.decayedScore), which gives every signal its own age. Capping
+-- here instead would cap before that last fade.
 create view public.learned_taste with (security_invoker = true) as
   select user_id, place_type,
-         greatest(-10, least(10, sum(weight * power(0.5,
-           extract(epoch from latest - at) / (30 * 86400.0)))))::real as score,
+         sum(weight * power(0.5, extract(epoch from latest - at) / (30 * 86400.0)))::real as score,
          latest as updated_at
   from (select *, max(at) over (partition by user_id, place_type) as latest
         from public.taste_signals) s
@@ -45,13 +45,15 @@ create view public.learned_taste with (security_invoker = true) as
 revoke all on table public.learned_taste from public, anon, authenticated;
 grant select on table public.learned_taste to service_role;
 
+-- No foreign keys: a cascade from refresh, close or account deletion would wait on these optional
+-- rows. Instead each row names the candidate row it scored (candidate_created_at), readers ignore
+-- rows from an older deck, and cleanup is best effort (forget_candidate_taste, the sweep).
 create table private.pick_candidate_taste (
   pick_id uuid not null,
   place_id text not null,
+  candidate_created_at timestamptz not null,
   taste_score real not null check (taste_score between -1 and 1),
-  primary key (pick_id, place_id),
-  foreign key (pick_id, place_id) references public.pick_candidates (pick_id, place_id)
-    on delete cascade
+  primary key (pick_id, place_id)
 );
 revoke all on table private.pick_candidate_taste from public, anon, authenticated;
 grant select, insert, update, delete on table private.pick_candidate_taste to service_role;
@@ -139,13 +141,16 @@ create trigger learn_from_winner after update of winner_place_id on public.picks
 create function private.save_candidate_taste(p_pick_id text, p_candidates jsonb) returns void
 language plpgsql set search_path = '' set lock_timeout = '200ms' as $$
 begin
-  insert into private.pick_candidate_taste (pick_id, place_id, taste_score)
+  insert into private.pick_candidate_taste (pick_id, place_id, candidate_created_at, taste_score)
   -- numeric first: a huge JSON number would overflow real before the clamp.
-  select private.try_uuid(p_pick_id), e ->> 'placeId',
+  select c.pick_id, c.place_id, c.created_at,
          greatest(-1, least(1, (e ->> 'tasteScore')::numeric))::real
   from jsonb_array_elements(p_candidates) e
+  join public.pick_candidates c
+    on c.pick_id = private.try_uuid(p_pick_id) and c.place_id = e ->> 'placeId'
   where jsonb_typeof(e -> 'tasteScore') = 'number' and (e ->> 'tasteScore')::numeric <> 0
-  on conflict (pick_id, place_id) do update set taste_score = excluded.taste_score;
+  on conflict (pick_id, place_id) do update set
+    candidate_created_at = excluded.candidate_created_at, taste_score = excluded.taste_score;
 exception when others then
   null;
 end $$;
@@ -184,7 +189,7 @@ exception when others then
   null;
 end $$;
 
--- Refresh replaces pick_candidates, which cascades the old taste rows away first.
+-- Refresh replaces pick_candidates; the old deck's group scores no longer match (see the table).
 alter function public.pick_refresh(text, uuid, jsonb) rename to pick_refresh_before_taste;
 alter function public.pick_refresh_before_taste(text, uuid, jsonb) set schema private;
 create function public.pick_refresh(p_pick_id text, p_user_id uuid, p_candidates jsonb) returns void
@@ -207,8 +212,11 @@ begin
     select jsonb_agg(e || jsonb_build_object('tasteScore', coalesce(t.taste_score, 0))
                      order by x.ord)
     from jsonb_array_elements(v -> 'candidates') with ordinality as x(e, ord)
+    left join public.pick_candidates c
+      on c.pick_id = (v ->> 'id')::uuid and c.place_id = e ->> 'placeId'
     left join private.pick_candidate_taste t
-      on t.pick_id = (v ->> 'id')::uuid and t.place_id = e ->> 'placeId'
+      on t.pick_id = c.pick_id and t.place_id = c.place_id
+     and t.candidate_created_at = c.created_at
   ), '[]'::jsonb));
 end $$;
 
@@ -228,15 +236,27 @@ begin
   set snapshot = snapshot - 'lat' - 'lng' - 'tasteType'
   where snapshot ->> 'provider' = 'google' and snapshot ? 'lat' and created_at < p_cutoff;
   get diagnostics v_removed = row_count;
+  -- Group scores forget_candidate_taste couldn't remove (a locked row, or a deleted Pick).
+  delete from private.pick_candidate_taste t
+  where t.ctid in (
+    select x.ctid from private.pick_candidate_taste x
+    where not exists (select 1 from public.picks p
+                      where p.id = x.pick_id and p.state in ('draft', 'swiping'))
+    for update skip locked);
   return v_removed;
 end $$;
 
--- Group scores only matter until the Pick is ranked; remove them as soon as it leaves swiping,
--- so they never outlive the Pick's active phase (or a participant's account).
+-- Group scores only matter until the Pick is ranked; remove them as soon as it leaves swiping.
+-- Best effort, so it never holds up a close: a locked row is left for the next sweep
+-- (purge_google_coordinates).
 create function private.forget_candidate_taste() returns trigger
 language plpgsql security definer set search_path = '' as $$
 begin
-  delete from private.pick_candidate_taste where pick_id = new.id;
+  delete from private.pick_candidate_taste t
+  where t.ctid in (select x.ctid from private.pick_candidate_taste x
+                   where x.pick_id = new.id for update skip locked);
+  return new;
+exception when others then
   return new;
 end $$;
 create trigger forget_candidate_taste after update of state on public.picks
