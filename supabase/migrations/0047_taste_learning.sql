@@ -141,6 +141,10 @@ create trigger learn_from_winner after update of winner_place_id on public.picks
 create function private.save_candidate_taste(p_pick_id text, p_candidates jsonb) returns void
 language plpgsql set search_path = '' set lock_timeout = '200ms' as $$
 begin
+  -- A refreshed deck replaces the old scores. Locked ones stay; readers ignore them anyway.
+  delete from private.pick_candidate_taste t
+  where t.ctid in (select x.ctid from private.pick_candidate_taste x
+                   where x.pick_id = private.try_uuid(p_pick_id) for update skip locked);
   insert into private.pick_candidate_taste (pick_id, place_id, candidate_created_at, taste_score)
   -- numeric first: a huge JSON number would overflow real before the clamp.
   select c.pick_id, c.place_id, c.created_at,
