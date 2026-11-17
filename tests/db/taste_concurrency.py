@@ -51,7 +51,7 @@ for name, (lock, write) in cases.items():
     pick = setup()
     holder = subprocess.Popen(base, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     try:
-        holder.stdin.write("set statement_timeout='20s'; begin;\n" + lock.format(p=pick) + ";\n\\echo LOCKED\n")
+        holder.stdin.write("set statement_timeout='20s'; begin;\n" + lock.replace('{p}', pick) + ";\n\\echo LOCKED\n")
         holder.stdin.flush()
         while True:
             line = holder.stdout.readline()
@@ -60,7 +60,7 @@ for name, (lock, write) in cases.items():
             if 'LOCKED' in line:
                 break
         # The core write must finish while the optional rows are still locked.
-        result = subprocess.run(base + ['-c', "set statement_timeout='5s'; " + write.format(p=pick)], capture_output=True, text=True, timeout=10)
+        result = subprocess.run(base + ['-c', "set statement_timeout='5s'; " + write.replace('{p}', pick)], capture_output=True, text=True, timeout=10)
         if result.returncode:
             raise AssertionError('%s: %s' % (name, result.stderr))
         if name.startswith('close'):

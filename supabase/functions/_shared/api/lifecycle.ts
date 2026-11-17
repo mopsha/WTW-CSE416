@@ -372,12 +372,13 @@ export async function buildCandidates(
     );
   if (!candidates.length) throw new ApiError(409, 'NO_CANDIDATES', 'No places found for this Pick');
   return candidates.map((c) => {
-    const tasteType = tasteTypeOf(c.types);
+    // The survey type (e.g. "sushi_restaurant") for the "Matches your taste" badge and swipe
+    // learning (0047_taste_learning.sql). Google's types can't be stored, so Google places get
+    // theirs on each read instead (pickPlaces.ts), and their swipes don't teach.
+    const tasteType = c.provider === 'google' ? null : tasteTypeOf(c.types);
     const tasteScore = taste(c);
     return {
       placeId: c.placeId,
-      // The survey type (e.g. "sushi_restaurant"): our label, like `category`, for the
-      // "Matches your taste" badge and swipe learning (0047_taste_learning.sql).
       snapshot: { ...candidateSnapshot(c), ...(tasteType ? { tasteType } : {}) },
       // Omitted when neutral, so Picks without taste data send exactly what they used to.
       ...(tasteScore ? { tasteScore } : {}),

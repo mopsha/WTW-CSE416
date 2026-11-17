@@ -157,6 +157,23 @@ describe('startPick', () => {
     expect(sent[0]!.snapshot.tasteType).toBe('sushi_restaurant');
     expect(sent[2]!.snapshot).not.toHaveProperty('tasteType');
   });
+  test("never stores a Google place's type, but still scores it for the deck", async () => {
+    const store = {
+      ...fixture(pick({ poolSize: 1 })),
+      memberTastes: jest.fn().mockResolvedValue([
+        { liked: ['sushi_restaurant'], disliked: [], learned: {} },
+      ]),
+    };
+    const google: Candidate = {
+      ...candidate('g'),
+      provider: 'google',
+      types: ['sushi_restaurant'],
+    };
+    await startPick(store, poolOf([google]), 'pick', 'host');
+    const [sent] = store.start.mock.calls[0]![2] as { snapshot: object; tasteScore?: number }[];
+    expect(sent!.snapshot).not.toHaveProperty('tasteType');
+    expect(sent!.tasteScore).toBe(1);
+  });
   test('rejects a non-host', async () => {
     const store = fixture();
     const pool = poolOf([candidate('a')]);

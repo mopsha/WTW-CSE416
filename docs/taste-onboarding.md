@@ -60,9 +60,10 @@ vote's tie chain already follows rank order.
 
 **Badge.** Each candidate snapshot carries `tasteType`, our survey label stored next to
 `category`. The swipe card shows "Matches your taste" when that type is one I said I like. It
-uses only my own answers. `tasteType` is derived from Google's place types, so for Google
-candidates `purge_google_coordinates` removes it with the coordinates after 30 days. By then the
-Pick has closed (or been canceled), so learning no longer needs it.
+uses only my own answers. For Google places `tasteType` would be Google's place types, which
+the Places terms don't let us store, so it's never saved: the API adds it to each read from the
+live result (`pickPlaces.ts`). The deck order and tiebreak still use those types, but only as
+the group's score, computed when the deck is built.
 
 **Learning** (`taste_signals`, read through the `learned_taste` view; database triggers in 0047):
 
@@ -75,7 +76,10 @@ Pick has closed (or been canceled), so learning no longer needs it.
 - Each signal is its own row, keyed by a hash of its swipe, ballot or winner, and halves every
   30 days. A type's score is their faded sum, capped at −10..10 after fading. Changing an answer replaces that
   row, so it never takes back more or less than the original added, even after a reset or decay.
-- Only typed candidates teach; custom options and untyped places don't.
+- Only typed candidates teach; custom options and untyped places don't. Google places are
+  untyped in storage (see Badge), so for now learning only comes from non-Google places. Making
+  Google places teach would need the API to record signals from live types, or a check that
+  storing the survey label is allowed.
 - The learning runs in triggers, so every write path is covered and nothing else changes. It's
   best effort: a lock wait or other failure skips the signal instead of failing the swipe,
   vote, start or refresh.

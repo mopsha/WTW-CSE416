@@ -13,8 +13,9 @@
 --    used only to break ranking ties. Kept out of pick_candidates, which participants can read:
 --    in a two-person Pick a group score would reveal the other person's preferences.
 -- The place type comes from the candidate snapshot's "tasteType", our own survey label (like
--- "category"), set by the API when it builds the deck. It's derived from Google's place types,
--- so purge_google_coordinates removes it with the coordinates after 30 days.
+-- "category"), set by the API when it builds the deck. Google places never carry it: it would
+-- be Google's place types, which can't be stored, so the API adds it on each read for the badge
+-- and their swipes, votes and wins don't teach. (purge_google_coordinates strips it anyway.)
 
 -- One row per source. source is a hash of what produced it (see taste_source), so the table
 -- records which place types a user leaned toward, not which places.
@@ -224,7 +225,7 @@ begin
   ), '[]'::jsonb));
 end $$;
 
--- tasteType comes from Google's place types, so it goes when the coordinates do (0034).
+-- Google snapshots shouldn't carry tasteType; strip it with the coordinates (0034) regardless.
 create or replace function public.purge_google_coordinates(p_cutoff timestamptz) returns integer
 language plpgsql set search_path = '' as $$
 declare v_removed integer;
