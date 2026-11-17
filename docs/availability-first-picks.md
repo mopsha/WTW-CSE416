@@ -14,7 +14,7 @@ The optional When editor remains: Decide later creates an ordinary unscheduled d
 
 Invitees see the actual proposed instant, available category/option context, group name when applicable, and an accessible local choice: I'm in / Maybe / Can't. No provider request is added to populate this screen. The primary action is disabled until a choice; it persists through the authenticated server, refreshes, then routes confirmed Yes/Maybe directly to swiping or the current lifecycle screen. Can't stays in a read-only following view and can change before participating. Recoverable failures keep the selected choice. Pending actions prevent duplicates; account/Pick/revision keys and scoped requests prevent replacement-account effects. Authorization failures clear protected content through existing hooks.
 
-The exact temporary explanation is: **“Time not ideal? The group can revisit the time after deciding.”** Existing scheduling supports host rescheduling after results, but has no participant-created time-suggestion/date-option model. Such suggestions are deferred to PR 3; there is no nonfunctional suggestion button or promise that participants can submit suggestions now.
+The exact temporary explanation is: **“Time not ideal? The group can revisit the time after deciding.”** Existing scheduling supports host rescheduling after results, but has no participant-created time-suggestion/date-option model. PR 2 deferred participant suggestions. PR 3 adds a separately gated post-result implementation; see [post-result time suggestions](post-result-time-suggestions.md). Pre-swipe availability remains unchanged.
 
 ## Initialization and recovery
 

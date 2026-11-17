@@ -295,15 +295,16 @@ export function createApiClient({
 
   async function getPickCapabilities(
     viewer?: string,
-  ): Promise<{ availabilityFirst: boolean; availabilityMode?: string }> {
-    const value = await request<{ availabilityFirst?: unknown; availabilityMode?: string } | null>(
-      'GET',
-      '/picks/capabilities',
-      { viewer },
-    );
+  ): Promise<{ availabilityFirst: boolean; availabilityMode?: string; timeSuggestions?: boolean }> {
+    const value = await request<{
+      availabilityFirst?: unknown;
+      availabilityMode?: string;
+      timeSuggestions?: unknown;
+    } | null>('GET', '/picks/capabilities', { viewer });
     return {
       availabilityFirst: value?.availabilityFirst === true,
       availabilityMode: value?.availabilityMode,
+      timeSuggestions: value?.timeSuggestions === true,
     };
   }
 
@@ -689,6 +690,29 @@ export function createApiClient({
       request<StatusResponse>('POST', `/notifications/${encodeURIComponent(id)}/read`),
 
     // After the winner (Alan): plan time, RSVP, "Did you go?", reasons, history, Pick again.
+    getTimeSuggestions: (id: string, viewer: string) =>
+      request<import('@shared/api/timeSuggestions.ts').TimeSuggestions>(
+        'GET',
+        `${pickPath(id)}/time-suggestions`,
+        { viewer },
+      ),
+    suggestTime: (id: string, planAt: string, revision: number, viewer: string) =>
+      request<{ id: string }>('POST', `${pickPath(id)}/time-suggestions`, {
+        viewer,
+        body: { planAt, revision },
+      }),
+    actOnTimeSuggestion: (
+      id: string,
+      suggestion: string,
+      action: 'accept' | 'withdraw',
+      revision: number,
+      viewer: string,
+    ) =>
+      request<{ id: string }>(
+        'POST',
+        `${pickPath(id)}/time-suggestions/${encodeURIComponent(suggestion)}/${action}`,
+        { viewer, body: { revision } },
+      ),
     /** Plan time, RSVP and outcome counts (never who said what), plus my own answers. */
     getPlan: (pickId: string, viewer?: string) =>
       request<PlanSummary>('GET', `${pickPath(pickId)}/plan`, { viewer }),
@@ -701,8 +725,11 @@ export function createApiClient({
     /** Host only, completed Picks: when the group is going. Must be within 30 days. */
     setPlanTime: (pickId: string, planAt: string) =>
       request<{ planAt: string }>('POST', `${pickPath(pickId)}/plan-time`, { body: { planAt } }),
-    rsvp: (pickId: string, status: RsvpStatus, viewer?: string) =>
-      request<StatusResponse>('POST', `${pickPath(pickId)}/rsvp`, { body: { status }, viewer }),
+    rsvp: (pickId: string, status: RsvpStatus, viewer?: string, revision?: number) =>
+      request<StatusResponse>('POST', `${pickPath(pickId)}/rsvp`, {
+        body: { status, ...(revision === undefined ? {} : { revision }) },
+        viewer,
+      }),
     /** "Did you go?" (and optionally "would you go again?"). Changeable. */
     recordOutcome: (pickId: string, went: boolean, again: boolean | null = null) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/outcome`, { body: { went, again } }),

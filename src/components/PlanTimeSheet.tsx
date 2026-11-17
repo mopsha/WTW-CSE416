@@ -14,11 +14,17 @@ export function PlanTimeSheet({
   onClose,
   onSave,
   onDecideLater,
+  title = 'Set a time',
+  submitLabel = 'Save time',
+  explanation,
 }: {
   initial: string | null;
   onClose(): void;
   onSave(value: string): Promise<void>;
   onDecideLater?: () => void;
+  title?: string;
+  submitLabel?: string;
+  explanation?: string;
 }) {
   const [draft, setDraft] = useState(() =>
     initial ? new Date(initial) : new Date(Date.now() + 3600_000),
@@ -90,11 +96,11 @@ export function PlanTimeSheet({
     <Sheet
       visible
       dismissDisabled={busy}
-      title="Set a time"
+      title={title}
       footer={
         <View style={{ gap: space.sm }}>
           <Button
-            label="Save time"
+            label={submitLabel}
             disabled={busy || !!problem}
             loading={busy}
             onPress={() => void save()}
@@ -116,6 +122,9 @@ export function PlanTimeSheet({
         if (!pending.current) onClose();
       }}
     >
+      {explanation ? (
+        <Text style={{ ...type.body, color: colors.muted }}>{explanation}</Text>
+      ) : null}
       <Text style={{ ...type.body, color: colors.text }}>
         {formatPlanTime(draft.toISOString())}
       </Text>
