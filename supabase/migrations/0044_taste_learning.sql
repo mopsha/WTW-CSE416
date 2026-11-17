@@ -139,6 +139,18 @@ language plpgsql set search_path = '' as $$ begin
   perform private.save_candidate_taste(p_pick_id, p_candidates);
 end $$;
 
+-- Scheduled Picks (0041/0042) start through pick_availability_finish, which bypasses pick_start.
+alter function public.pick_availability_finish(text, uuid, uuid, jsonb)
+  rename to pick_availability_finish_before_taste;
+alter function public.pick_availability_finish_before_taste(text, uuid, uuid, jsonb)
+  set schema private;
+create function public.pick_availability_finish(p_pick_id text, p_user_id uuid, p_token uuid,
+  p_candidates jsonb) returns void
+language plpgsql set search_path = '' as $$ begin
+  perform private.pick_availability_finish_before_taste(p_pick_id, p_user_id, p_token, p_candidates);
+  perform private.save_candidate_taste(p_pick_id, p_candidates);
+end $$;
+
 -- Refresh drops the old deck and its swipes (a cascade, which fires no trigger). Take those
 -- swipes' signals back first, so re-swiping the new deck doesn't count them twice. If the inner
 -- refresh then rejects the request, the whole call rolls back, reversal included.
@@ -197,12 +209,15 @@ revoke all on function
   private.swipe_weight(smallint), private.learn_from_swipe(), private.learn_from_vote(),
   private.learn_from_winner(), private.save_candidate_taste(text, jsonb),
   private.pick_start_before_taste(text, uuid, jsonb),
+  private.pick_availability_finish_before_taste(text, uuid, uuid, jsonb),
   private.pick_refresh_before_taste(text, uuid, jsonb),
   private.pick_load_for_close_before_taste(text)
   from public, anon, authenticated;
 grant execute on function private.save_candidate_taste(text, jsonb),
   private.unlearn_pick_swipes(text) to service_role;
 revoke all on function public.pick_start(text, uuid, jsonb), public.pick_refresh(text, uuid, jsonb),
-  public.pick_load_for_close(text) from public, anon, authenticated;
+  public.pick_load_for_close(text), public.pick_availability_finish(text, uuid, uuid, jsonb)
+  from public, anon, authenticated;
 grant execute on function public.pick_start(text, uuid, jsonb), public.pick_refresh(text, uuid, jsonb),
-  public.pick_load_for_close(text) to service_role;
+  public.pick_load_for_close(text), public.pick_availability_finish(text, uuid, uuid, jsonb)
+  to service_role;

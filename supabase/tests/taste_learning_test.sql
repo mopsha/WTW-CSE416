@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(22);
+select plan(23);
 
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
 values
@@ -115,6 +115,20 @@ select is((select array_agg(place_id) from private.pick_candidate_taste where pi
 select ok(abs((select score from learned_taste
   where user_id = '71111111-1111-4111-8111-111111111111' and place_type = 'cafe')) < 0.001,
   'refresh takes back the wiped deck''s swipes, so re-swiping can''t double count');
+
+-- Scheduled Picks start through pick_availability_finish, not pick_start; they store taste too.
+create temporary table sched on commit drop as
+  select (pick_create_options('71111111-1111-4111-8111-111111111111', jsonb_build_object(
+    'category', 'food', 'center', jsonb_build_object('lat', 40, 'lng', -73), 'radiusM', 3000,
+    'poolSize', 10, 'closeThreshold', 100, 'deadlineAt', null,
+    'proposedAt', now() + interval '2 days', 'swipeDeadlineMinutes', 60)) ->> 'id')::uuid as id;
+select pick_availability_finish((select id::text from sched), '71111111-1111-4111-8111-111111111111',
+  (pick_availability_claim((select id::text from sched), '71111111-1111-4111-8111-111111111111')
+    ->> 'token')::uuid,
+  '[{"placeId":"s-sushi","snapshot":{"name":"Sushi","lat":40,"lng":-73,"tasteType":"sushi_restaurant"},"tasteScore":0.5},
+    {"placeId":"s-plain","snapshot":{"name":"Plain","lat":40,"lng":-73}}]'::jsonb);
+select is((select count(*)::int from private.pick_candidate_taste where pick_id = (select id from sched)),
+  1, 'scheduled Picks store taste scores when they start');
 
 -- Privacy: clients can't read learned taste or the group scores.
 reset role;
