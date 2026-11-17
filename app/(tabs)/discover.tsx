@@ -513,11 +513,27 @@ function DiscoverFeed({ userId }: { userId: string }) {
             </ScrollView>
             <View style={styles.filterRow}>
               <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Sort places"
+                onPress={() => setSortOpen(true)}
+                style={[styles.filterControl, styles.toolbarControl]}
+              >
+                <Ionicons name="swap-vertical-outline" size={18} color={colors.muted} />
+                <Text style={styles.filterText}>
+                  {DISCOVER_SORTS.find((o) => o.value === sort)?.label}
+                </Text>
+                <Ionicons name="chevron-down" size={16} color={colors.muted} />
+              </Pressable>
+              <Pressable
                 accessibilityRole="switch"
                 accessibilityLabel="Open Now"
                 accessibilityState={{ checked: openNow }}
                 onPress={() => setApplied((current) => ({ ...current, openNow: !current.openNow }))}
-                style={[styles.filterControl, openNow && styles.filterSelected]}
+                style={[
+                  styles.filterControl,
+                  styles.toolbarControl,
+                  openNow && styles.filterSelected,
+                ]}
               >
                 <Ionicons
                   name="time-outline"
@@ -536,27 +552,14 @@ function DiscoverFeed({ userId }: { userId: string }) {
                 onPress={() => {
                   setFiltersOpen(true);
                 }}
-                style={styles.filterControl}
+                style={[styles.filterControl, styles.toolbarControl]}
               >
                 <Ionicons name="options-outline" size={19} color={colors.text} />
                 <Text style={styles.filterText}>Filters{count ? ` · ${count}` : ''}</Text>
               </Pressable>
             </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Sort places"
-              onPress={() => setSortOpen(true)}
-              style={styles.filterControl}
-            >
-              <Ionicons name="swap-vertical-outline" size={18} color={colors.muted} />
-              <Text style={styles.filterText}>
-                {DISCOVER_SORTS.find((o) => o.value === sort)?.label}
-              </Text>
-              <Ionicons name="chevron-down" size={16} color={colors.muted} />
-            </Pressable>
-            <Text style={styles.sub}>
-              Sort and search cover this limited selection of nearby places.
-            </Text>
+
+            <Text style={styles.sub}>Search and sort cover a limited selection nearby.</Text>
             {error ? <ErrorState message={error} onRetry={() => setRetry((n) => n + 1)} /> : null}
             <View style={styles.feedIntro}>
               <Text style={styles.feedTitle} accessibilityRole="header">
@@ -656,7 +659,7 @@ function DiscoverFeed({ userId }: { userId: string }) {
 }
 
 const styles = StyleSheet.create({
-  feedHeader: { gap: space.md, marginBottom: space.md },
+  feedHeader: { gap: space.sm, marginBottom: space.md },
   heading: { gap: space.xs },
   location: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   categories: { flexDirection: 'row', gap: space.sm, paddingRight: space.xs },
@@ -704,8 +707,16 @@ const styles = StyleSheet.create({
   filterRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: space.sm,
+    alignItems: 'center',
+    columnGap: space.xs,
+    rowGap: space.xs,
+  },
+  toolbarControl: {
+    minWidth: MIN_TARGET,
+    gap: space.xs,
+    paddingHorizontal: space.xs,
+    maxWidth: '100%',
+    flexShrink: 1,
   },
   filterControl: {
     flexDirection: 'row',
@@ -718,7 +729,13 @@ const styles = StyleSheet.create({
   },
   filterSelected: { backgroundColor: colors.card },
   filterSelectedText: { color: colors.primary },
-  filterText: { fontSize: 14, lineHeight: 20, fontWeight: '500', color: colors.text },
+  filterText: {
+    flexShrink: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
+    color: colors.text,
+  },
   searchClear: {
     minWidth: MIN_TARGET,
     minHeight: MIN_TARGET,

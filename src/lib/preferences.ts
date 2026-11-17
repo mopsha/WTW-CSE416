@@ -5,6 +5,28 @@ import {
   type Preferences,
 } from '@shared/domain/preferences.ts';
 
+const METERS_PER_MILE = 1609;
+/** The new Pick location editor's slider maximum. */
+const MAX_PICK_MILES = 10;
+
+/**
+ * New Pick form starting values from my answers: my one category (if I picked exactly one),
+ * my budget and my distance. Anything unanswered keeps the form's own default (undefined).
+ */
+export function pickDefaults(p: Preferences): {
+  category?: 'food' | 'activities';
+  priceMax?: number;
+  miles?: number;
+} {
+  return {
+    category: p.categories.length === 1 ? p.categories[0] : undefined,
+    priceMax: p.priceMax ?? undefined,
+    miles: p.maxDistanceM
+      ? Math.min(MAX_PICK_MILES, Math.round(p.maxDistanceM / METERS_PER_MILE))
+      : undefined,
+  };
+}
+
 const labelOf = <T>(options: readonly { value: T; label: string }[], value: T) =>
   options.find((o) => o.value === value)?.label;
 

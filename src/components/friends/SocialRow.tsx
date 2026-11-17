@@ -147,7 +147,11 @@ export function RequestsEntry({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={`Requests, ${count} pending${loading ? ', loading group invitations' : ''}${error ? `, ${error}` : ''}`}
-      style={({ pressed }) => [s.requests, pressed && s.pressed]}
+      style={({ pressed }) => [
+        s.requests,
+        count === 0 && !loading && !error && s.requestsIdle,
+        pressed && s.pressed,
+      ]}
     >
       <Ionicons name="person-add-outline" size={21} color={colors.primary} />
       <View style={s.requestLabels}>
@@ -175,6 +179,7 @@ const s = StyleSheet.create({
     borderRadius: radius.md,
     backgroundColor: friendsTheme.surface,
   },
+  requestsIdle: { minHeight: MIN_TARGET, paddingVertical: space.xs },
   requestLabels: { flex: 1, gap: space.xs },
   requestTitle: { fontSize: 15, lineHeight: 22, fontWeight: '500', color: colors.text },
   requestBadge: {

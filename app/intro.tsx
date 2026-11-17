@@ -16,8 +16,6 @@ import {
   Button,
   colors,
   fonts,
-  Illustration,
-  type IllustrationBadge,
   MIN_TARGET,
   OnboardingCopy,
   PageDots,
@@ -25,37 +23,24 @@ import {
   space,
   type,
 } from '@/components';
+import { IntroScene, type IntroSceneName } from '@/components/IntroScenes';
 import type { AuthMode } from '@/lib/authTypes';
 import { markIntroSeen } from '@/lib/intro';
 import { openLegalPage, PRIVACY_URL, TERMS_URL } from '@/lib/legal';
 
-const SLIDES: {
-  key: string;
-  icon: IllustrationBadge['icon'];
-  badges?: IllustrationBadge[];
-  title: string;
-  body: string;
-}[] = [
+const SLIDES: { key: IntroSceneName; title: string; body: string }[] = [
   {
     key: 'swipe',
-    icon: 'albums',
-    badges: [
-      { icon: 'checkmark', color: colors.yes },
-      { icon: 'help', color: colors.maybe },
-      { icon: 'close', color: colors.no },
-    ],
     title: 'Swipe',
     body: 'Rate nearby spots Yes, Maybe or No. Only you see your swipes.',
   },
   {
     key: 'together',
-    icon: 'people',
     title: 'Decide together',
     body: "WTW ranks everyone's picks so the group lands on a favorite.",
   },
   {
     key: 'go',
-    icon: 'trophy',
     title: 'Go',
     body: 'Get one winner, then make the plan.',
   },
@@ -119,13 +104,13 @@ export default function IntroScreen() {
             onMomentumScrollEnd={onScroll}
             accessibilityLabel="WTW intro"
           >
-            {SLIDES.map((slide) => (
+            {SLIDES.map((slide, i) => (
               <View
                 key={slide.key}
                 style={[styles.slide, pageWidth ? { width: pageWidth } : styles.unmeasured]}
                 testID={`intro-slide-${slide.key}`}
               >
-                <Illustration icon={slide.icon} badges={slide.badges} size={artSize} />
+                <IntroScene name={slide.key} size={artSize} active={i === page} />
                 <OnboardingCopy title={slide.title} body={slide.body} />
               </View>
             ))}

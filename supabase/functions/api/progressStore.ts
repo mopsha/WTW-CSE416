@@ -1,3 +1,4 @@
+import { createAvailabilityStore } from './availabilityStore.ts';
 import type { ProgressSnapshot, ProgressStore } from '../_shared/api/progress.ts';
 import type { PickState } from '../_shared/domain/pickState.ts';
 import { createServiceClient } from './serviceClient.ts';
@@ -13,7 +14,7 @@ const MISSING_TABLE = new Set(['42P01', 'PGRST205']);
  */
 export function createProgressStore(): ProgressStore {
   return {
-    async loadProgress(pickId): Promise<ProgressSnapshot | null> {
+    async loadProgress(pickId, userId): Promise<ProgressSnapshot | null> {
       if (!UUID.test(pickId)) return null;
       const db = createServiceClient();
       const fail = (what: string) => {
@@ -66,7 +67,12 @@ export function createProgressStore(): ProgressStore {
         vote_deadline_at?: string | null;
       };
 
+      const availability =
+        pick.data.proposed_at && userId
+          ? await createAvailabilityStore().load(pickId, userId)
+          : null;
       return {
+        ...(availability ? { availability } : {}),
         state: row.state,
         hostId: row.host_id,
         deadlineAt: row.deadline_at,

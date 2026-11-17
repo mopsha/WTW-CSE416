@@ -25,7 +25,13 @@ jest.mock('@/lib/mock/groups', () => ({ resetMockGroups: jest.fn() }));
 jest.mock('@/lib/mock/store', () => ({ MOCK_INVITE_CODE: 'ABC123', resetMockData: jest.fn() }));
 jest.mock('@/components/NotificationBell', () => ({ NotificationBell: () => null }));
 jest.mock('@/components/JoinCodeCard', () => ({ JoinCodeCard: () => null }));
-jest.mock('@/components/HangCard', () => ({ HangCard: () => null }));
+jest.mock('@/components/TasteNudge', () => ({ TasteNudge: () => null }));
+jest.mock('@/components/HangCard', () => ({
+  HangCard: () =>
+    jest
+      .requireActual('react')
+      .createElement('test-hangs', null, 'Who’s down?', 'Make a hang plan'),
+}));
 jest.mock('@/components/ErrorBanner', () => ({
   ErrorBanner: (props: object) => jest.requireActual('react').createElement('test-error', props),
 }));
@@ -383,5 +389,49 @@ test('known authorization failures clear Home private sections without retaining
   expect(tree.root.findAllByProps({ accessibilityLabel: 'Loading Recent History' })).toHaveLength(
     0,
   );
+  await act(async () => tree.unmount());
+});
+
+test('compact empty Picks keep primary actions and place social planning ahead of group shortcuts', async () => {
+  jest.mocked(queries.listPicksHome).mockResolvedValue([]);
+  const tree = await mount();
+  await focus();
+  const text = JSON.stringify(tree.toJSON());
+  expect(text).toContain('No active picks');
+  expect(text).toContain('Start one above or join with a code.');
+  expect(text.indexOf('No active picks')).toBeLessThan(text.indexOf('Who’s down?'));
+  expect(text.indexOf('Make a hang plan')).toBeLessThan(text.indexOf('Your groups'));
+  expect(text.indexOf('Your groups')).toBeLessThan(text.indexOf('Recent History'));
+  expect(button(tree, 'Start a Pick')).toBeDefined();
+  expect(tree.root.findAllByProps({ accessibilityLabel: 'Join with code' }).length).toBeGreaterThan(
+    0,
+  );
+  expect(text).not.toContain('Start a Pick with a group to decide where to eat or what to do.');
+  await act(async () => tree.unmount());
+});
+
+test('decided History stays prominent while canceled rows use secondary styling without redundant type text', async () => {
+  jest.mocked(queries.listPicksHome).mockResolvedValue([
+    {
+      ...pick('decided', 'completed'),
+      winnerName: 'Noodle House',
+      decidedAt: '2026-11-15T12:00:00Z',
+    },
+    { ...pick('canceled', 'canceled'), createdAt: '2026-11-14T12:00:00Z' },
+  ]);
+  const tree = await mount();
+  await focus();
+  const { ListRow } = jest.requireActual('@/components/TabUi');
+  const rows = tree.root.findAllByType(ListRow);
+  expect(rows[0].props).toMatchObject({ title: 'Noodle House', muted: false });
+  expect(rows[0].props.subtitle).toContain('Decided · Food Pick');
+  expect(rows[1].props).toMatchObject({ title: 'Food Pick', muted: true });
+  expect(rows[1].props.subtitle).toContain('Canceled');
+  expect(rows[1].props.subtitle).not.toContain('Food Pick');
+  await act(async () => rows[1].props.onPress());
+  expect(router.push).toHaveBeenLastCalledWith({
+    pathname: '/pick/[id]',
+    params: { id: 'canceled' },
+  });
   await act(async () => tree.unmount());
 });

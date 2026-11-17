@@ -475,3 +475,37 @@ test('switching accounts during a pending favorite discards its queued inverse a
   expect(button(tree, 'Undo')).toBeUndefined();
   await act(async () => tree.unmount());
 });
+
+test('sort, Open Now and Filters share a wrapping toolbar with full labels and actual minimum targets', async () => {
+  const { StyleSheet } = jest.requireActual('react-native');
+  const { MIN_TARGET } = jest.requireActual('@/components/theme');
+  const tree = await mount();
+  const controls = ['Sort places', 'Open Now', 'Filters'].map(
+    (label) =>
+      tree.root.findAll(
+        (n: any) =>
+          n.props.accessibilityLabel === label &&
+          typeof n.props.onPress === 'function' &&
+          n.props.style,
+      )[0]!,
+  );
+  const row = controls[0].parent;
+  expect(controls.every((n: any) => n.parent === row)).toBe(true);
+  expect(StyleSheet.flatten(row.props.style).flexWrap).toBe('wrap');
+  for (const control of controls) {
+    const style = StyleSheet.flatten(control.props.style);
+    expect(style.minHeight).toBeGreaterThanOrEqual(MIN_TARGET);
+    expect(style.minWidth).toBeGreaterThanOrEqual(MIN_TARGET);
+    expect(style.maxWidth).toBe('100%');
+    expect(control.props.hitSlop).toBeUndefined();
+  }
+  expect(textOf(tree)).toContain('Activities');
+  expect(textOf(tree)).toContain('limited selection');
+  expect(textOf(tree)).toContain('nearby');
+  await act(async () => controls[1].props.onPress());
+  const open = tree.root.findAll(
+    (n: any) => n.props.accessibilityLabel === 'Open Now' && !!n.props.onPress,
+  )[0]!;
+  expect(open.props.accessibilityState.checked).toBe(true);
+  await act(async () => tree.unmount());
+});

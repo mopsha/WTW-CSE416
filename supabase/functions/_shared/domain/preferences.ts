@@ -9,7 +9,7 @@ export interface Preferences {
   categories: PreferenceCategory[];
   /** Place types I like (cuisines and activities). */
   types: string[];
-  /** Cuisines I'd rather skip. Never also in types. */
+  /** Cuisines and activities I'd rather skip. Never also in types. */
   dislikedTypes: string[];
   /** Highest price level I'm happy with, 1 ($) to 4 ($$$$); null = no limit. */
   priceMax: number | null;
@@ -121,10 +121,10 @@ export function validatePreferences(
   if (!categories) return { error: 'Pick food, activities, or both' };
   const types = stringList(raw.types, LIKABLE_TYPES);
   if (!types) return { error: 'Unknown place type' };
-  const dislikedTypes = stringList(raw.dislikedTypes, FOOD_TYPES);
-  if (!dislikedTypes) return { error: 'Unknown cuisine to skip' };
+  const dislikedTypes = stringList(raw.dislikedTypes, LIKABLE_TYPES);
+  if (!dislikedTypes) return { error: 'Unknown place type to skip' };
   if (dislikedTypes.some((t) => types.includes(t))) {
-    return { error: 'A cuisine can’t be liked and skipped' };
+    return { error: 'A place type can’t be liked and skipped' };
   }
   const priceMax = optionalNumber(raw.priceMax, (n) => Number.isInteger(n) && n >= 1 && n <= 4);
   if (priceMax === false) return { error: 'Budget must be $ to $$$$' };

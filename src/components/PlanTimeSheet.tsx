@@ -13,10 +13,12 @@ export function PlanTimeSheet({
   initial,
   onClose,
   onSave,
+  onDecideLater,
 }: {
   initial: string | null;
   onClose(): void;
   onSave(value: string): Promise<void>;
+  onDecideLater?: () => void;
 }) {
   const [draft, setDraft] = useState(() =>
     initial ? new Date(initial) : new Date(Date.now() + 3600_000),
@@ -97,6 +99,16 @@ export function PlanTimeSheet({
             loading={busy}
             onPress={() => void save()}
           />
+          {onDecideLater ? (
+            <Button
+              label="Decide later"
+              variant="secondary"
+              disabled={busy}
+              onPress={() => {
+                if (!pending.current) onDecideLater();
+              }}
+            />
+          ) : null}
           <Button label="Cancel" variant="link" disabled={busy} onPress={onClose} />
         </View>
       }

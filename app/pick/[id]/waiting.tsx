@@ -49,7 +49,10 @@ export default function WaitingScreen() {
   const { toast } = useProgressToasts(progress);
 
   // If my answers were cleared (the host refreshed the pool), I belong back on the deck.
-  usePickRoute(pickId, 'waiting', live.state, { allAnswered: me?.done ?? true });
+  usePickRoute(pickId, 'waiting', live.state, {
+    allAnswered: me?.done ?? true,
+    canVote: live.progress?.availability?.canVote,
+  });
   useEffect(() => {
     if (live.state === 'swiping' && me && !me.done) {
       router.replace({ pathname: '/pick/[id]/swipe', params: { id: pickId } });
@@ -100,6 +103,7 @@ export default function WaitingScreen() {
   return (
     <SafeAreaView style={pickStyles.screen} edges={['top', 'left', 'right', 'bottom']}>
       <PickTopBar
+        proposedAt={live.progress?.availability?.proposedAt}
         title="Waiting for the group"
         tabularCountdown
         subtitle={countdown.label}
@@ -134,9 +138,11 @@ export default function WaitingScreen() {
             </View>
           ) : null}
           <Text style={pickStyles.muted}>
-            {allDone
-              ? 'Ranking everyone’s swipes…'
-              : 'Your answers are locked in and private. Results drop as soon as the group is done.'}
+            {allDone && progress?.availability
+              ? 'Your swipes are in. The round stays open for responses until its closure rules are met.'
+              : allDone
+                ? 'Ranking everyone’s swipes…'
+                : 'Your answers are locked in and private. Results drop as soon as the group is done.'}
           </Text>
           {countdown.label ? (
             <Pill
@@ -170,6 +176,14 @@ export default function WaitingScreen() {
             </Animated.View>
           ))}
         </Animated.View>
+
+        {progress?.availability ? (
+          <Button
+            label={isHost ? 'Invite friends and view participation' : 'View participation'}
+            variant="secondary"
+            onPress={() => router.push({ pathname: '/pick/[id]/lobby', params: { id: pickId } })}
+          />
+        ) : null}
 
         {action.error ? <ErrorBanner message={action.error} onRetry={action.clearError} /> : null}
 

@@ -143,7 +143,10 @@ export async function hangPick(
       'HANG_PICK_HELPER_UNAVAILABLE',
       'Creating a Pick from responses is not available yet',
     );
-  const result = await store.createPickForDown(postId, userId, parseCreatePick(body));
+  const input = parseCreatePick(body);
+  if (input.proposedAt)
+    throw new ApiError(400, 'INVALID_INPUT', 'Hang Picks keep their existing participation flow.');
+  const result = await store.createPickForDown(postId, userId, input);
   // Existing notifier deduplicates inbox/push; retries can repair a lost notice.
   await store.notifier?.(result.participantIds, 'added_to_pick', result.pickId);
   return { pickId: result.pickId, isParticipant: result.participantIds.includes(userId) };

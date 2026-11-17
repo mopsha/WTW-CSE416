@@ -43,7 +43,7 @@ export default function VoteScreen() {
   const session = useSession();
   const live = usePickLive(pickId);
   const pull = usePullToRefresh(live.refresh);
-  usePickRoute(pickId, 'vote', live.state);
+  usePickRoute(pickId, 'vote', live.state, { canVote: live.progress?.availability?.canVote });
   const { reveal, retry } = useReveal(pickId, session.user.id, live.state);
   const action = useAction();
   const { toast } = useProgressToasts(live.progress);
@@ -108,6 +108,7 @@ export default function VoteScreen() {
   return (
     <SafeAreaView style={pickStyles.screen} edges={['top', 'left', 'right', 'bottom']}>
       <PickTopBar
+        proposedAt={live.progress?.availability?.proposedAt}
         title="Final vote"
         tabularCountdown
         subtitle={[progress ? voteLine(progress) : null, countdown.label]

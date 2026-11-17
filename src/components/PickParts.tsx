@@ -1,3 +1,4 @@
+import { formatPlanTime } from '@/lib/plans';
 import { useMotionPreference } from '@/hooks/useMotionPreference';
 // Building blocks shared by the Pick screens (lobby, swipe, waiting, results, vote, winner),
 // in the live-demo look: dark surfaces, flame gradient, Poppins.
@@ -31,12 +32,14 @@ export function goToPicks() {
 export function PickTopBar({
   title,
   subtitle,
+  proposedAt,
   tabularCountdown = false,
   right,
   onBack = goToPicks,
 }: {
   title: string;
   subtitle?: string | null;
+  proposedAt?: string;
   tabularCountdown?: boolean;
   right?: ReactNode;
   onBack?: () => void;
@@ -59,6 +62,14 @@ export function PickTopBar({
         {subtitle ? (
           <Text style={styles.topSub} numberOfLines={2}>
             {tabularCountdown ? <CountdownDigits text={subtitle} /> : subtitle}
+          </Text>
+        ) : null}
+        {proposedAt ? (
+          <Text
+            style={styles.topSub}
+            accessibilityLabel={`Original proposed time, ${formatPlanTime(proposedAt)}`}
+          >
+            Proposed: {formatPlanTime(proposedAt)}
           </Text>
         ) : null}
       </View>

@@ -1,14 +1,26 @@
-import Slider from '@react-native-community/slider';
+import { PlanTimeSheet } from '@/components/PlanTimeSheet';
+import { formatPlanTime } from '@/lib/plans';
+import { useAuth } from '@/hooks/useAuth';
+import { useProfile } from '@/hooks/useProfile';
+import { pickDefaults } from '@/lib/preferences';
+import {
+  CategoryCards,
+  ChoiceList,
+  SettingRow,
+  SettingSwitch,
+  SettingsGroup,
+} from '@/components/NewPickControls';
+import { NewPickLocationEditor } from '@/components/NewPickLocationEditor';
+import { Sheet } from '@/components/TabUi';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import {
   AccessibilityInfo,
+  AppState,
   Keyboard,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   View,
 } from 'react-native';
@@ -16,12 +28,10 @@ import {
 import {
   Button,
   IconButton,
-  radius,
   Chips,
   colors,
   ErrorState,
   fonts,
-  MIN_TARGET,
   Screen,
   space,
   type,
@@ -29,9 +39,7 @@ import {
 } from '@/components';
 import { CustomPlanEditor } from '@/components/CustomPlanEditor';
 import type { CustomOption } from '@shared/domain/customPlans.ts';
-import { LocationSearch } from '@/components/LocationSearch';
 import { PlaceFilterControls } from '@/components/PlaceFilterControls';
-import { MapPicker } from '@/components/MapPicker';
 import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
 import { haptic } from '@/lib/haptics';
@@ -45,13 +53,6 @@ import {
   type PickCategory,
 } from '@shared/domain/createPick.ts';
 import type { LatLng } from '@shared/domain/geo.ts';
-
-const CATEGORIES: readonly ChipOption<PickCategory>[] = [
-  { value: 'food', label: 'Food' },
-  { value: 'activities', label: 'Activities' },
-  { value: 'both', label: 'Food + Activities' },
-  { value: 'custom', label: 'Custom' },
-];
 
 const POOL_SIZES: readonly ChipOption<number>[] = [10, 15, 20, 25, 30].map((n) => ({
   value: n,
@@ -78,26 +79,53 @@ const THRESHOLDS: readonly ChipOption<number>[] = [
 // ScrollView.d.ts. getInnerViewNode() is a numeric handle and is not Fabric-safe.
 type FormScrollView = ScrollView & { getInnerViewRef(): View | null };
 
-const MIN_MILES = 0.5;
-const MAX_MILES = 10;
-
 export default function CreatePickScreen() {
-  // From a group (Start a Pick): everyone in it is added when the Pick is created.
-  const { groupId, groupName, hangId, hangActivity } = useLocalSearchParams<{
+  const { session } = useAuth();
+  const params = useLocalSearchParams<{
     groupId?: string;
     groupName?: string;
     hangId?: string;
     hangActivity?: string;
   }>();
-  const [category, setCategory] = useState<PickCategory>(hangId ? 'activities' : 'food');
+  // Each account/creation context owns its drafts and in-flight callbacks.
+  return (
+    <CreatePickForm
+      key={JSON.stringify([session?.user.id, params.groupId, params.hangId])}
+      {...params}
+      viewerId={session?.user.id}
+    />
+  );
+}
+function CreatePickForm({
+  viewerId,
+  groupId,
+  groupName,
+  hangId,
+  hangActivity,
+}: {
+  groupId?: string;
+  groupName?: string;
+  hangId?: string;
+  hangActivity?: string;
+  viewerId?: string;
+}) {
+  const [whenInitial, setWhenInitial] = useState<string | null>(null);
+  const [proposedAt, setProposedAt] = useState<string | null>(null);
+  // The root navigator waits for the profile. Snapshot defaults once per creation
+  // context so later preference refreshes cannot overwrite edits or open drafts.
+  const profile = useProfile();
+  const [defaults] = useState(() => pickDefaults(profile.preferences));
+  const [category, setCategory] = useState<PickCategory>(
+    hangId ? 'activities' : (defaults.category ?? 'food'),
+  );
   const [customOptions, setCustomOptions] = useState<CustomOption[]>([{ name: '' }, { name: '' }]);
   const [includeSaved, setIncludeSaved] = useState(false);
   const [includeGroupIdeas, setIncludeGroupIdeas] = useState(false);
   const [mix, setMix] = useState<'none' | 'food' | 'activities'>('none');
   const [center, setCenter] = useState<LatLng>(DEFAULT_CENTER);
   const [placeLabel, setPlaceLabel] = useState('SBU Academic Mall');
-  const [miles, setMiles] = useState(2);
-  const [priceMax, setPriceMax] = useState(-1);
+  const [miles, setMiles] = useState(defaults.miles ?? 2);
+  const [priceMax, setPriceMax] = useState(defaults.priceMax ?? -1);
   const [openNow, setOpenNow] = useState(false);
   const [poolSize, setPoolSize] = useState(DEFAULT_POOL_SIZE);
   const [deadlineMin, setDeadlineMin] = useState(60);
@@ -107,37 +135,102 @@ export default function CreatePickScreen() {
   const [createdForOthers, setCreatedForOthers] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  const [moreOptions, setMoreOptions] = useState(false);
-  const [expandedMap, setExpandedMap] = useState(false);
+  const [editor, setEditor] = useState<
+    'when' | 'location' | 'filters' | 'pool' | 'deadline' | 'threshold' | null
+  >(null);
+  const [filterDraft, setFilterDraft] = useState({ priceMax, openNow });
+  const [schedulingEnabled, setSchedulingEnabled] = useState(false);
+  const schedulingAllowed = useRef(false);
+  const capabilityGeneration = useRef(0);
+  const disableScheduling = useCallback(() => {
+    capabilityGeneration.current += 1;
+    schedulingAllowed.current = false;
+    setSchedulingEnabled(false);
+    setProposedAt(null);
+    setWhenInitial(null);
+    setEditor((current) => (current === 'when' ? null : current));
+    setProblems((current) => {
+      const next = { ...current };
+      delete next.proposedAt;
+      delete next.swipeDeadlineMinutes;
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    if (!viewerId || hangId) return;
+    let alive = true;
+    const refresh = async () => {
+      disableScheduling();
+      const request = capabilityGeneration.current;
+      try {
+        const capability = await api.getPickCapabilities(viewerId);
+        if (!alive || request !== capabilityGeneration.current) return;
+        const enabled = capability?.availabilityFirst === true;
+        schedulingAllowed.current = enabled;
+        setSchedulingEnabled(enabled);
+      } catch {
+        // Optional scheduling stays hidden; ordinary creation never waits for this read.
+      }
+    };
+    void refresh();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refresh();
+    });
+    return () => {
+      alive = false;
+      subscription.remove();
+    };
+  }, [viewerId, hangId, disableScheduling]);
+
+  const schedulingVersion = capabilityGeneration.current;
+  const active = useRef(true);
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+    };
+  }, []);
   const sending = useRef(false);
   const form = useRef<FormScrollView>(null);
   const attempt = useRef(0);
   const [reveal, setReveal] = useState<{ field: CreatePickField | 'submit'; id: number } | null>(
     null,
   );
-  const optionSummary = [
-    miles !== 2 ? `${miles.toFixed(1)} mi` : '',
-    includeSaved ? 'Saved places' : '',
-    includeGroupIdeas && groupId && !hangId ? 'Group Ideas' : '',
-    priceMax >= 0 ? (priceMax === 0 ? 'Free' : '$'.repeat(priceMax)) : '',
-    openNow ? 'Open now' : '',
-    category !== 'custom' && poolSize !== DEFAULT_POOL_SIZE ? `${poolSize} places` : '',
-    deadlineMin !== 60 ? DEADLINES.find((d) => d.value === deadlineMin)?.label : '',
-    closeThreshold !== 100 ? `${closeThreshold}% finished` : '',
-  ]
-    .filter(Boolean)
-    .join(' · ');
-
-  const moveCenter = (next: LatLng, label = 'Dropped pin') => {
-    setCenter(next);
-    setPlaceLabel(label);
-    setProblems((p) => ({ ...p, center: undefined }));
+  const publicPlaces = category !== 'custom' || mix !== 'none' || includeSaved;
+  const priceSummary = priceMax < 0 ? 'Any price' : priceMax === 0 ? 'Free' : '$'.repeat(priceMax);
+  const filterSummary = `${priceSummary}${openNow ? ' · Open now' : ''}`;
+  const participantSummary = hangId
+    ? 'The Pick is for the people who are down.'
+    : groupId
+      ? `Everyone in ${groupName ?? 'the group'} is added as soon as you create it.`
+      : 'Invite friends after creating your Pick.';
+  const openEditor = (next: NonNullable<typeof editor>) => {
+    if (sending.current || (next === 'when' && !schedulingAllowed.current)) return;
+    Keyboard.dismiss();
+    if (next === 'when')
+      setWhenInitial(proposedAt ?? new Date(Date.now() + 3 * 3600000).toISOString());
+    if (next === 'filters') setFilterDraft({ priceMax, openNow });
+    setEditor(next);
   };
+  const closeEditor = () => {
+    Keyboard.dismiss();
+    setEditor(null);
+  };
+  const errorFor = (field: CreatePickField, label: string) =>
+    problems[field] ? (
+      <Problem
+        message={problems[field]!}
+        label={label}
+        form={form}
+        revealId={reveal?.field === field ? reveal.id : undefined}
+      />
+    ) : null;
 
   const submit = async () => {
-    if (sending.current) return;
+    if (sending.current || !active.current) return;
     const id = ++attempt.current;
     setReveal(null);
+    const scheduledAt = schedulingAllowed.current && !hangId ? proposedAt : null;
     const input: CreatePickInput = {
       category,
       center,
@@ -158,14 +251,17 @@ export default function CreatePickScreen() {
         ? { customOptions, ...(mix !== 'none' ? { mixCategory: mix } : {}) }
         : {}),
       // Computed at tap time so "1 hr" means an hour from now, not from when the screen opened.
-      deadlineAt: deadlineMin ? new Date(Date.now() + deadlineMin * 60_000).toISOString() : null,
+      deadlineAt: scheduledAt
+        ? null
+        : deadlineMin
+          ? new Date(Date.now() + deadlineMin * 60_000).toISOString()
+          : null,
+      ...(scheduledAt ? { proposedAt: scheduledAt, swipeDeadlineMinutes: deadlineMin } : {}),
       closeThreshold,
     };
     const found = validateCreatePick(input);
     setProblems(Object.fromEntries(found.map((p) => [p.field, p.message])));
     if (found.length > 0) {
-      if (found.some((p) => !['category', 'center', 'customOptions'].includes(p.field)))
-        setMoreOptions(true);
       Keyboard.dismiss();
       setReveal({ field: found[0]!.field, id });
       haptic.tap();
@@ -177,8 +273,11 @@ export default function CreatePickScreen() {
     setSubmitting(true);
     setSubmitError(null);
     try {
+      if (input.proposedAt && !viewerId)
+        throw new Error('Sign in again before creating this availability Pick.');
       if (hangId) {
         const result = await api.hangPick(hangId, input);
+        if (!active.current) return;
         haptic.success();
         if (result.isParticipant)
           router.replace({ pathname: '/pick/[id]/lobby', params: { id: result.pickId } });
@@ -186,17 +285,38 @@ export default function CreatePickScreen() {
         return;
       }
       const { pickId } = groupId
-        ? await api.createGroupPick(input, groupId)
-        : await api.createPick(input);
+        ? input.proposedAt
+          ? await api.createGroupPick(input, groupId, viewerId)
+          : await api.createGroupPick(input, groupId)
+        : input.proposedAt
+          ? await api.createPick(input, viewerId)
+          : await api.createPick(input);
+      if (!active.current) return;
       haptic.success();
-      // Straight to the Lobby, replacing this form so Back goes to Picks.
-      router.replace({ pathname: '/pick/[id]/lobby', params: { id: pickId } });
+      // Scheduled creation is already active; replace the form so Back goes to Picks.
+      router.replace({
+        pathname: input.proposedAt ? '/pick/[id]/swipe' : '/pick/[id]/lobby',
+        params: { id: pickId },
+      });
     } catch (e) {
+      if (!active.current) return;
+      if (
+        input.proposedAt &&
+        e &&
+        typeof e === 'object' &&
+        'code' in e &&
+        (['availability_not_enabled', 'AVAILABILITY_NOT_ENABLED', 'network_error'].includes(
+          String(e.code),
+        ) ||
+          ('status' in e &&
+            (e.status === 404 || (typeof e.status === 'number' && e.status >= 500))))
+      )
+        disableScheduling();
       setSubmitError(messageOf(e));
       setReveal({ field: 'submit', id });
     } finally {
       sending.current = false;
-      setSubmitting(false);
+      if (active.current) setSubmitting(false);
     }
   };
 
@@ -244,223 +364,139 @@ export default function CreatePickScreen() {
           revealId={reveal?.field === 'category' ? reveal.id : undefined}
           form={form}
         >
-          <Chips
-            options={CATEGORIES}
-            value={category}
-            onChange={setCategory}
-            accessibilityLabel="Category"
-          />
+          <CategoryCards value={category} onChange={setCategory} disabled={submitting} />
         </Section>
-
         {category === 'custom' ? (
           <Section
             title="Your options"
+            hint="Add 2–20 ideas. Everyone swipes and votes as usual."
             error={problems.customOptions}
             revealId={reveal?.field === 'customOptions' ? reveal.id : undefined}
             form={form}
-            hint="Add 2–20 ideas. Everyone swipes and votes as usual."
           >
-            <CustomPlanEditor options={customOptions} onChange={setCustomOptions} />
-            <Chips
-              options={[
-                { value: 'none' as const, label: 'Only my ideas' },
-                { value: 'food' as const, label: 'Add nearby food' },
-                { value: 'activities' as const, label: 'Add nearby activities' },
-              ]}
-              value={mix}
-              onChange={setMix}
-              accessibilityLabel="Mix nearby places"
-            />
-          </Section>
-        ) : null}
-        <Section
-          title="Where"
-          error={problems.center}
-          revealId={reveal?.field === 'center' ? reveal.id : undefined}
-          form={form}
-        >
-          <LocationSearch label={placeLabel} onPick={moveCenter} />
-          <MapPicker
-            height={expandedMap ? 320 : Platform.OS === 'web' ? 240 : 144}
-            center={center}
-            radiusM={milesToMeters(miles)}
-            onChangeCenter={(c) => moveCenter(c)}
-          />
-          <Pressable
-            style={styles.textAction}
-            accessibilityRole="button"
-            accessibilityLabel={expandedMap ? 'Collapse map' : 'Expand map'}
-            accessibilityState={{ expanded: expandedMap }}
-            onPress={() => {
-              Keyboard.dismiss();
-              setExpandedMap((v) => !v);
-            }}
-          >
-            <Text style={styles.actionText}>{expandedMap ? 'Collapse map' : 'Expand map'}</Text>
-          </Pressable>
-        </Section>
-        <Section title="Who's joining?">
-          <Text style={styles.hint}>
-            {hangId
-              ? 'The Pick is for the people who are down.'
-              : groupId
-                ? `Everyone in ${groupName ?? 'the group'} is added as soon as you create it.`
-                : 'Invite friends after creating your Pick.'}
-          </Text>
-        </Section>
-        <Pressable
-          style={styles.disclosure}
-          accessibilityRole="button"
-          accessibilityLabel="More options"
-          accessibilityValue={optionSummary ? { text: optionSummary } : undefined}
-          accessibilityState={{ expanded: moreOptions }}
-          onPress={() => setMoreOptions((v) => !v)}
-        >
-          <View style={styles.identity}>
-            <Text style={styles.sectionTitle}>More options</Text>
-            <Text style={styles.hint}>
-              {optionSummary || 'Radius, saved places, filters and timing'}
-            </Text>
-          </View>
-          <Text style={styles.actionText}>{moreOptions ? '−' : '+'}</Text>
-        </Pressable>
-        {moreOptions ? (
-          <View style={styles.options}>
-            <View style={styles.section}>
-              <View style={styles.sectionHead}>
-                <Text style={styles.sectionTitle}>
-                  {hangId ? 'Include the host’s saved places' : 'Include my saved places'}
-                </Text>
-                <Switch
-                  style={{ minHeight: MIN_TARGET, minWidth: MIN_TARGET }}
-                  value={includeSaved}
-                  onValueChange={setIncludeSaved}
-                  accessibilityLabel={
-                    hangId
-                      ? 'Include the Pick host’s saved places inside the radius'
-                      : 'Include my saved places inside the radius'
-                  }
-                />
-              </View>
-            </View>
-            {groupId && !hangId ? (
-              <View style={styles.section}>
-                <View style={styles.sectionHead}>
-                  <Text style={styles.sectionTitle}>Include Group Ideas</Text>
-                  <Switch
-                    style={{ minHeight: MIN_TARGET, minWidth: MIN_TARGET }}
-                    disabled={submitting}
-                    value={includeGroupIdeas}
-                    onValueChange={setIncludeGroupIdeas}
-                    accessibilityLabel="Include Group Ideas"
-                  />
-                </View>
-                <Text style={styles.hint}>
-                  Mix your group’s matching ideas into this Pick. Distance, price and Open Now apply
-                  to public places only.
-                </Text>
-                {problems.includeGroupIdeas ? (
-                  <Problem
-                    message={problems.includeGroupIdeas}
-                    label="Include Group Ideas"
-                    form={form}
-                    revealId={reveal?.field === 'includeGroupIdeas' ? reveal.id : undefined}
-                  />
-                ) : null}
-              </View>
-            ) : null}
-
-            <Section
-              title="How far"
-              value={`${miles.toFixed(1)} mi`}
-              hint="Places within this distance of the pin."
-              error={problems.radiusM}
-              revealId={reveal?.field === 'radiusM' ? reveal.id : undefined}
-              form={form}
+            <View
+              style={{ gap: space.md }}
+              pointerEvents={submitting ? 'none' : 'auto'}
+              accessibilityElementsHidden={submitting}
             >
-              <Slider
-                minimumValue={MIN_MILES}
-                maximumValue={MAX_MILES}
-                step={0.5}
-                value={miles}
-                onValueChange={setMiles}
-                onSlidingComplete={() => haptic.tick()}
-                minimumTrackTintColor={colors.primary}
-                maximumTrackTintColor={colors.border}
-                thumbTintColor={colors.primary}
-                style={styles.slider}
-                accessibilityLabel="Search radius in miles"
-                accessibilityValue={{
-                  min: MIN_MILES,
-                  max: MAX_MILES,
-                  now: miles,
-                  text: `${miles} miles`,
+              <CustomPlanEditor
+                options={customOptions}
+                onChange={(options) => {
+                  if (!sending.current) setCustomOptions(options);
                 }}
               />
-            </Section>
-
-            <Section
-              title="Place filters"
-              hint="Unknown prices or hours are excluded when that filter is set."
-              error={problems.priceMax}
-              revealId={reveal?.field === 'priceMax' ? reveal.id : undefined}
-              form={form}
-            >
-              <PlaceFilterControls
-                priceMax={priceMax}
-                openNow={openNow}
-                onPrice={setPriceMax}
-                onOpen={setOpenNow}
-              />
-            </Section>
-            {category !== 'custom' ? (
-              <Section
-                title="How many places"
-                hint="Fewer is faster to swipe; more gives more options."
-                error={problems.poolSize}
-                revealId={reveal?.field === 'poolSize' ? reveal.id : undefined}
-                form={form}
-              >
-                <Chips
-                  options={POOL_SIZES}
-                  value={poolSize}
-                  onChange={setPoolSize}
-                  accessibilityLabel="Pool size"
-                />
-              </Section>
-            ) : null}
-
-            <Section
-              title="Deadline"
-              hint="Swiping closes then, even if not everyone is done."
-              error={problems.deadlineAt}
-              revealId={reveal?.field === 'deadlineAt' ? reveal.id : undefined}
-              form={form}
-            >
               <Chips
-                options={DEADLINES}
-                value={deadlineMin}
-                onChange={setDeadlineMin}
-                accessibilityLabel="Deadline"
+                options={[
+                  { value: 'none', label: 'Only my ideas' },
+                  { value: 'food', label: 'Add nearby food' },
+                  { value: 'activities', label: 'Add nearby activities' },
+                ]}
+                value={mix}
+                onChange={(value) => {
+                  if (!sending.current) setMix(value);
+                }}
+                accessibilityLabel="Mix nearby places"
               />
-            </Section>
-
-            <Section
-              title="Close early when"
-              hint="…this many people have finished swiping."
-              error={problems.closeThreshold}
-              revealId={reveal?.field === 'closeThreshold' ? reveal.id : undefined}
-              form={form}
-            >
-              <Chips
-                options={THRESHOLDS}
-                value={closeThreshold}
-                onChange={setCloseThreshold}
-                accessibilityLabel="Close threshold"
-              />
-            </Section>
-          </View>
+            </View>
+          </Section>
         ) : null}
+        <Section title="Plan Details">
+          <SettingsGroup>
+            {!hangId && schedulingEnabled ? (
+              <SettingRow
+                label="When"
+                value={proposedAt ? formatPlanTime(proposedAt) : 'Decide later'}
+                icon="calendar-outline"
+                disabled={submitting}
+                onPress={() => openEditor('when')}
+              />
+            ) : null}
+            {publicPlaces ? (
+              <SettingRow
+                label="Where"
+                value={`${placeLabel} · ${miles} mi`}
+                icon="location-outline"
+                disabled={submitting}
+                onPress={() => openEditor('location')}
+              />
+            ) : null}
+            <SettingRow label="Who's joining?" value={participantSummary} icon="people-outline" />
+          </SettingsGroup>
+          {schedulingEnabled && proposedAt ? (
+            <Text style={styles.hint}>
+              Friends can start swiping as soon as they confirm their availability.
+            </Text>
+          ) : null}
+          {errorFor('proposedAt', 'When')}
+          {errorFor('swipeDeadlineMinutes', 'Swipe deadline')}
+          {errorFor('center', 'Where')}
+          {errorFor('radiusM', 'How far')}
+        </Section>
+        <Section title="Pick Settings">
+          <SettingsGroup>
+            <SettingSwitch
+              label={hangId ? 'Include the host’s saved places' : 'Include my saved places'}
+              accessibilityLabel={
+                hangId
+                  ? 'Include the Pick host’s saved places inside the radius'
+                  : 'Include my saved places inside the radius'
+              }
+              value={includeSaved}
+              onChange={setIncludeSaved}
+              disabled={submitting}
+            />
+            {groupId && !hangId ? (
+              <SettingSwitch
+                label="Include Group Ideas"
+                value={includeGroupIdeas}
+                onChange={setIncludeGroupIdeas}
+                disabled={submitting}
+                hint="Mix in matching ideas from this group. Distance, price and Open Now apply to public places only."
+              />
+            ) : null}
+            {publicPlaces ? (
+              <SettingRow
+                label="Place filters"
+                value={filterSummary}
+                icon="options-outline"
+                disabled={submitting}
+                onPress={() => openEditor('filters')}
+              />
+            ) : null}
+            {category !== 'custom' ? (
+              <SettingRow
+                label="Number of places"
+                value={`${poolSize}`}
+                icon="layers-outline"
+                disabled={submitting}
+                onPress={() => openEditor('pool')}
+              />
+            ) : null}
+            <SettingRow
+              label="Swipe deadline"
+              value={DEADLINES.find((d) => d.value === deadlineMin)?.label ?? `${deadlineMin} min`}
+              icon="time-outline"
+              disabled={submitting}
+              onPress={() => openEditor('deadline')}
+            />
+            <SettingRow
+              label="Close early"
+              value={
+                closeThreshold === 100
+                  ? 'Everyone finishes swiping'
+                  : `${closeThreshold}% finish swiping`
+              }
+              icon="checkmark-done-outline"
+              disabled={submitting}
+              onPress={() => openEditor('threshold')}
+            />
+          </SettingsGroup>
+          {errorFor('includeGroupIdeas', 'Group Ideas')}
+          {errorFor('priceMax', 'Place filters')}
+          {errorFor('poolSize', 'How many places')}
+          {errorFor('deadlineAt', 'Swiping deadline')}
+          {errorFor('closeThreshold', 'Close early when')}
+        </Section>
         {submitError ? (
           <Problem
             message={submitError}
@@ -485,6 +521,124 @@ export default function CreatePickScreen() {
           accessibilityHint="Creates the Pick so you can invite friends"
         />
       </View>
+      {schedulingEnabled && editor === 'when' ? (
+        <PlanTimeSheet
+          initial={whenInitial}
+          onClose={closeEditor}
+          onDecideLater={() => {
+            setProposedAt(null);
+            closeEditor();
+          }}
+          onSave={async (value) => {
+            if (schedulingAllowed.current && schedulingVersion === capabilityGeneration.current)
+              setProposedAt(value);
+          }}
+        />
+      ) : null}
+      {editor === 'location' ? (
+        <NewPickLocationEditor
+          initial={{ center, label: placeLabel, miles }}
+          onCancel={closeEditor}
+          onApply={(next) => {
+            setCenter(next.center);
+            setPlaceLabel(next.label);
+            setMiles(next.miles);
+            setProblems((p) => ({ ...p, center: undefined, radiusM: undefined }));
+            closeEditor();
+          }}
+        />
+      ) : null}
+      {editor && editor !== 'location' && editor !== 'when' ? (
+        <Sheet
+          visible
+          title={
+            editor === 'filters'
+              ? 'Place filters'
+              : editor === 'pool'
+                ? 'Number of places'
+                : editor === 'deadline'
+                  ? 'Swipe deadline'
+                  : 'Close early'
+          }
+          onClose={closeEditor}
+          closeAccessibilityLabel="Cancel settings"
+          footer={
+            editor === 'filters' ? (
+              <Button
+                label="Apply filters"
+                onPress={() => {
+                  setPriceMax(filterDraft.priceMax);
+                  setOpenNow(filterDraft.openNow);
+                  closeEditor();
+                }}
+              />
+            ) : undefined
+          }
+        >
+          {editor === 'filters' ? (
+            <>
+              <Text style={styles.hint}>
+                Unknown prices or hours are excluded when that filter is on.
+              </Text>
+              <PlaceFilterControls
+                priceMax={filterDraft.priceMax}
+                openNow={filterDraft.openNow}
+                onPrice={(priceMax) => setFilterDraft((d) => ({ ...d, priceMax }))}
+                onOpen={(openNow) => setFilterDraft((d) => ({ ...d, openNow }))}
+              />
+            </>
+          ) : editor === 'pool' ? (
+            <>
+              <Text style={styles.hint}>
+                Fewer places make swiping faster; more give everyone extra options.
+              </Text>
+              <ChoiceList
+                options={POOL_SIZES}
+                value={poolSize}
+                accessibilityLabel="Pool size"
+                onChange={(value) => {
+                  setPoolSize(value);
+                  closeEditor();
+                }}
+              />
+            </>
+          ) : editor === 'deadline' ? (
+            <>
+              <Text style={styles.hint}>
+                When swiping closes, not when you’re going out.
+                {schedulingEnabled
+                  ? ' Scheduled Picks start this clock when creation finishes; other Picks start it at creation.'
+                  : ' This clock starts at creation.'}
+              </Text>
+              <ChoiceList
+                options={DEADLINES}
+                value={deadlineMin}
+                accessibilityLabel="Deadline"
+                onChange={(value) => {
+                  setDeadlineMin(value);
+                  closeEditor();
+                }}
+              />
+            </>
+          ) : (
+            <>
+              <Text style={styles.hint}>
+                The Pick can advance once this many people finish swiping. The server enforces
+                participant requirements.
+              </Text>
+              <ChoiceList
+                options={THRESHOLDS}
+                value={closeThreshold}
+                accessibilityLabel="Close threshold"
+                onChange={(value) => {
+                  setCloseThreshold(value);
+                  closeEditor();
+                }}
+              />
+            </>
+          )}
+        </Sheet>
+      ) : null}
     </Screen>
   );
 }
@@ -616,23 +770,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  disclosure: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    minHeight: MIN_TARGET,
-    paddingVertical: space.md,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-  },
-  options: {
-    backgroundColor: colors.card,
-    borderRadius: radius.lg,
-    padding: space.lg,
-    gap: space.xl,
-  },
-  textAction: { minHeight: MIN_TARGET, justifyContent: 'center', alignSelf: 'flex-start' },
-  actionText: { ...type.body, color: colors.primary },
   footer: {
     paddingHorizontal: space.lg,
     paddingVertical: space.sm,
@@ -644,6 +781,5 @@ const styles = StyleSheet.create({
   sectionTitle: { fontFamily: fonts.bold, fontSize: 17, color: colors.text, flexShrink: 1 },
   sectionValue: { fontFamily: fonts.bold, fontSize: 17, color: colors.primary },
   hint: { ...type.caption, color: colors.muted },
-  slider: { height: 44 },
   error: { ...type.caption, color: colors.danger },
 });

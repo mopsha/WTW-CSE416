@@ -1,5 +1,6 @@
+import { Ionicons } from '@expo/vector-icons';
 import { HistorySkeleton } from './LoadingStates';
-import { profileTheme } from './theme';
+import { fonts, profileTheme } from './theme';
 import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import type { PastMove, PastMovesResult } from '@shared/api/pastMoves.ts';
 import { router } from 'expo-router';
@@ -82,9 +83,21 @@ export function PastMoves({
       ) : !data.visible ? (
         <Text style={s.caption}>Past Moves are private.</Text>
       ) : !data.pastMoves.length ? (
-        <Text style={[s.caption, variant === 'profile' && s.empty]}>
-          No Past Moves to show yet. Attendance is confirmed with “Did you go?” on a past Pick.
-        </Text>
+        variant === 'profile' ? (
+          <View style={s.empty}>
+            <View style={s.emptyHeading}>
+              <Ionicons name="sparkles-outline" size={18} color={colors.muted} accessible={false} />
+              <Text style={s.emptyTitle}>Your memories start here.</Text>
+            </View>
+            <Text style={s.emptyBody}>
+              Confirmed outings appear here. Answer “Did you go?” on a past Pick.
+            </Text>
+          </View>
+        ) : (
+          <Text style={s.caption}>
+            No Past Moves to show yet. Attendance is confirmed with “Did you go?” on a past Pick.
+          </Text>
+        )
       ) : (
         <>
           {data.pastMoves.slice(0, expanded ? 50 : 5).map((move) => (
@@ -106,14 +119,14 @@ const s = StyleSheet.create({
   empty: {
     backgroundColor: profileTheme.surface,
     borderRadius: radius.md,
-    paddingHorizontal: space.xl,
-    paddingVertical: space.xxl,
-    minHeight: 136,
-    textAlign: 'center',
-    fontSize: 14,
-    lineHeight: 21,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    gap: space.xs,
   },
-  section: { paddingVertical: space.sm },
+  emptyHeading: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  emptyTitle: { ...type.body, fontFamily: fonts.semibold, color: colors.text, flex: 1 },
+  emptyBody: { ...type.caption, fontSize: 14, lineHeight: 21, color: colors.muted },
+  section: { paddingTop: space.xs },
   memory: {
     backgroundColor: profileTheme.memory,
     borderWidth: 0,

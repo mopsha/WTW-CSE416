@@ -77,6 +77,7 @@ interface PickRow {
   state: PickState;
   category: string;
   deadline_at: string | null;
+  proposed_at?: string | null;
   created_at?: string | null;
   decided_at?: string | null;
   winner_place_id?: string | null;
@@ -89,6 +90,7 @@ function summaryOf(p: PickRow): PickSummary {
     state: p.state,
     category: p.category,
     deadlineAt: p.deadline_at,
+    ...(p.proposed_at ? { proposedAt: p.proposed_at } : {}),
     createdAt: p.created_at ?? null,
     decidedAt: p.decided_at ?? null,
     winnerPlaceId: p.winner_place_id ?? null,
@@ -271,7 +273,7 @@ const supabaseQueries: Queries = {
     const picks = check(
       await getSupabase()
         .from('picks')
-        .select('id, state, category, deadline_at')
+        .select('id, state, category, deadline_at, proposed_at')
         .eq('group_id', groupId)
         .order('created_at', { ascending: false })
         .limit(10),
@@ -292,6 +294,7 @@ const supabaseQueries: Queries = {
         state: p.state,
         category: p.category,
         deadlineAt: p.deadline_at,
+        ...(p.proposed_at ? { proposedAt: p.proposed_at } : {}),
       })),
     };
   },

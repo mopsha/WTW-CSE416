@@ -34,7 +34,7 @@ export default function ResultsScreen() {
   const { id: pickId = '' } = useLocalSearchParams<{ id: string }>();
   const session = useSession();
   const live = usePickLive(pickId);
-  usePickRoute(pickId, 'results', live.state);
+  usePickRoute(pickId, 'results', live.state, { canVote: live.progress?.availability?.canVote });
   const { reveal, retry } = useReveal(pickId, session.user.id, live.state);
 
   const state = live.state ?? (reveal.status === 'ready' ? reveal.pick.state : null);

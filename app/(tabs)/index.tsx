@@ -9,8 +9,9 @@ import { GoogleCredit } from '@/components/GoogleCredit';
 import { api } from '@/lib/api';
 import { HangCard } from '@/components/HangCard';
 import { JoinCodeCard } from '@/components/JoinCodeCard';
+import { TasteNudge } from '@/components/TasteNudge';
 import { NotificationBell } from '@/components/NotificationBell';
-import { HeaderAction, ListRow, QuietEmpty, Sheet } from '@/components/TabUi';
+import { HeaderAction, ListRow, Sheet } from '@/components/TabUi';
 import { ErrorBanner } from '@/components/ErrorBanner';
 import { colors, fonts, MIN_TARGET, picksTheme, space, type } from '@/components/theme';
 import { useSession } from '@/hooks/useAuth';
@@ -25,12 +26,14 @@ import { queries } from '@/lib/queries';
 import type { Candidate, PickState, PickSummary } from '@/lib/types';
 const ACTIVE: readonly PickState[] = ['draft', 'swiping', 'ranking', 'final_vote'];
 function PickRow({ pick, place }: { pick: PickSummary; place?: Candidate }) {
+  const title = place?.name ?? historyTitle(pick);
   return (
     <View>
       <ListRow
-        title={place?.name ?? historyTitle(pick)}
+        title={title}
+        muted={pick.state === 'canceled'}
         titleNumberOfLines={2}
-        subtitle={historySubtitle(pick)}
+        subtitle={historySubtitle(pick, title)}
         leading={
           <Ionicons
             name={
@@ -199,6 +202,7 @@ function PicksHome({ userId }: { userId: string }) {
           <Ionicons name="chevron-forward" size={16} color={colors.muted} />
         </Pressable>
       </View>
+      <TasteNudge />
       {error ? <ErrorBanner message={error} onRetry={() => void load()} /> : null}
       {picks === null && !error ? <ActivePicksSkeleton /> : null}
       {active.length ? (
@@ -217,12 +221,15 @@ function PicksHome({ userId }: { userId: string }) {
           ))}
         </View>
       ) : picks ? (
-        <QuietEmpty
-          icon="calendar-outline"
-          title="No active picks"
-          body="Start a Pick with a group to decide where to eat or what to do."
-        />
+        <View style={s.emptyPicks}>
+          <Ionicons name="calendar-outline" size={20} color={colors.muted} accessible={false} />
+          <View style={s.emptyCopy}>
+            <Text style={s.emptyTitle}>No active picks</Text>
+            <Text style={s.caption}>Start one above or join with a code.</Text>
+          </View>
+        </View>
       ) : null}
+      <HangCard />
       <View style={s.section}>
         <View style={s.sectionHead}>
           <Text style={s.sectionTitle} accessibilityRole="header">
@@ -254,7 +261,6 @@ function PicksHome({ userId }: { userId: string }) {
           <Text style={s.caption}>Make a group for your regular crew.</Text>
         ) : null}
       </View>
-      <HangCard />
       {picks === null && !error ? <HistorySkeleton /> : null}
       {picks !== null ? (
         <View>
@@ -299,6 +305,14 @@ const s = StyleSheet.create({
     paddingVertical: space.sm,
   },
   joinText: { ...picksTheme.secondary, color: colors.muted, flexShrink: 1 },
+  emptyPicks: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    paddingVertical: space.sm,
+  },
+  emptyCopy: { flex: 1, gap: space.xs },
+  emptyTitle: { ...type.body, fontFamily: fonts.semibold, color: colors.text },
   section: { gap: space.md },
   sectionHead: {
     flexDirection: 'row',

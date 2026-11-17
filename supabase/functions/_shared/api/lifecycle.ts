@@ -1,3 +1,6 @@
+import type { Availability } from '../domain/availability.ts';
+import { validateCreatePick } from '../domain/createPick.ts';
+import type { AvailabilityStore } from './availability.ts';
 import {
   groupIdeaCandidates,
   groupIdeaCategory,
@@ -45,6 +48,8 @@ export const MAX_DEADLINE_LEAD_MS = 7 * 24 * 60 * 60_000;
 export const MIN_PARTICIPANTS_TO_START = 2;
 
 export interface CreatePickInput extends PlaceFilters, PlanOptions {
+  proposedAt?: string;
+  swipeDeadlineMinutes?: number;
   includeGroupIdeas?: boolean;
   groupId?: string | null;
   category: PickCategory;
@@ -62,6 +67,7 @@ export interface CandidateSnapshot {
 }
 
 export interface LifecyclePick extends PlaceFilters {
+  availability?: Availability;
   id: string;
   /** Null once the host deleted their account (0017); such a Pick is completed or canceled. */
   hostId: string | null;
@@ -90,6 +96,7 @@ export interface LifecyclePick extends PlaceFilters {
 
 /** Database adapter; mutations must recheck authorization/state atomically. */
 export interface LifecycleStore {
+  availability?: AvailabilityStore;
   createPick(hostId: string, input: CreatePickInput): Promise<{ id: string }>;
   load(pickId: string, userId: string): Promise<LifecyclePick | null>;
   start(pickId: string, userId: string, candidates: CandidateSnapshot[]): Promise<void>;
@@ -204,9 +211,19 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
     }
     deadlineAt = new Date(at).toISOString();
   }
+  if (b.proposedAt !== undefined || b.swipeDeadlineMinutes !== undefined) {
+    const problems = validateCreatePick({ ...b, poolSize, closeThreshold, deadlineAt }, now);
+    if (problems.length) throw new ApiError(400, 'INVALID_INPUT', problems[0]!.message);
+  }
   if (!validFilters(b as PlaceFilters))
     throw new ApiError(400, 'INVALID_INPUT', 'Invalid priceMax or openNow');
   return {
+    ...(b.proposedAt !== undefined
+      ? {
+          proposedAt: new Date(b.proposedAt as string).toISOString(),
+          swipeDeadlineMinutes: b.swipeDeadlineMinutes as number,
+        }
+      : {}),
     ...(b.includeGroupIdeas !== undefined
       ? { includeGroupIdeas: b.includeGroupIdeas as boolean }
       : {}),
@@ -261,7 +278,7 @@ function requireHost(pick: LifecyclePick, userId: string) {
   if (pick.hostId !== userId) throw new ApiError(403, 'FORBIDDEN', 'Only the host can do this');
 }
 
-async function buildCandidates(
+export async function buildCandidates(
   pool: PoolBuilder,
   pick: LifecyclePick,
   store: LifecycleStore,
@@ -337,9 +354,35 @@ export async function startPick(
   pickId: string,
   userId: string,
   beforeBuild?: () => Promise<void>,
+  supportsAvailability = false,
 ) {
   const pick = await loadAsParticipant(store, pickId, userId);
   requireHost(pick, userId);
+  if (pick.availability) {
+    if (!supportsAvailability)
+      throw new ApiError(409, 'UPDATE_REQUIRED', 'Update WTW to manage this availability Pick.');
+    if (!store.availability)
+      throw new ApiError(503, 'NOT_CONFIGURED', 'Availability is unavailable.');
+    const claim = await store.availability.claim(pickId, userId);
+    if (claim.started) return { state: 'swiping' as const, candidateCount: claim.candidateCount };
+    try {
+      await beforeBuild?.();
+      const candidates = await buildCandidates(pool, pick, store);
+      await store.availability.finish(pickId, userId, claim.token, candidates);
+      // The initialized round invites everyone; nobody needs a second host start.
+      return { state: 'swiping' as const, candidateCount: candidates.length };
+    } catch (error) {
+      const settled = await store.load(pickId, userId).catch(() => null);
+      if (
+        settled &&
+        !['draft', 'canceled'].includes(settled.state) &&
+        settled.candidates.length > 0
+      )
+        return { state: settled.state, candidateCount: settled.candidates.length };
+      await store.availability.abort(pickId, userId, claim.token).catch(() => {});
+      throw error;
+    }
+  }
   if (!canTransition(pick.state, 'swiping', 'host')) {
     throw new ApiError(409, 'INVALID_PICK_STATE', 'Pick must be draft to start');
   }
@@ -368,6 +411,12 @@ export async function refreshPick(
   const confirm = parseRefreshBody(body);
   const pick = await loadAsParticipant(store, pickId, userId);
   requireHost(pick, userId);
+  if (pick.availability)
+    throw new ApiError(
+      409,
+      'INVALID_PICK_STATE',
+      'Availability Picks keep their deck for this decision round.',
+    );
   if (pick.state !== 'draft' && pick.state !== 'swiping') {
     throw new ApiError(409, 'INVALID_PICK_STATE', 'Pick must be draft or swiping to refresh');
   }
@@ -443,8 +492,11 @@ export async function getPick(
   userId: string,
   refreshHours?: (candidates: CandidateSnapshot[]) => Promise<HoursMetadata[]>,
   pickPlaces?: PickPlaces,
+  supportsAvailability = true,
 ) {
   const pick = await loadAsParticipant(store, pickId, userId);
+  if (pick.availability && !supportsAvailability)
+    throw new ApiError(409, 'UPDATE_REQUIRED', 'Update WTW to open this availability Pick.');
   // Membership is checked before any provider access. Metadata never changes snapshots.
   let candidateHours: HoursMetadata[] = [];
   if (refreshHours && (pick.state === 'completed' || pick.state === 'final_vote')) {
@@ -464,7 +516,14 @@ export async function getPick(
   );
   const byId = new Map(pick.candidates.map((c) => [c.placeId, c.snapshot]));
   // A draft's places are replaced at start and nobody sees them, so they cost nothing to skip.
-  if (pickPlaces && pick.state !== 'draft' && pick.state !== 'canceled') {
+  if (
+    pickPlaces &&
+    pick.state !== 'draft' &&
+    pick.state !== 'canceled' &&
+    (!pick.availability ||
+      pick.availability.canVote ||
+      ['final_vote', 'completed'].includes(pick.state))
+  ) {
     const revealed = pick.state === 'final_vote' || pick.state === 'completed';
     const finalists = revealed ? ((await store.finalistIds?.(pickId)) ?? []) : [];
     const shown = await pickPlaces({
@@ -479,6 +538,7 @@ export async function getPick(
   }
   return {
     id: pick.id,
+    ...(pick.availability ? { availability: pick.availability } : {}),
     state: pick.state,
     category: pick.category,
     center: pick.center,
@@ -493,7 +553,12 @@ export async function getPick(
     isHost: pick.hostId === userId,
     hostDeleted: pick.hostId === null,
     participantCount: pick.participantIds.length,
-    candidates: order.map((placeId) => byId.get(placeId)),
+    candidates:
+      pick.availability &&
+      !pick.availability.canVote &&
+      !['completed', 'final_vote'].includes(pick.state)
+        ? []
+        : order.map((placeId) => byId.get(placeId)),
     ...(refreshHours ? { candidateHours } : {}),
     myAnswers: pick.myAnswers,
     winnerPlaceId: pick.winnerPlaceId,
