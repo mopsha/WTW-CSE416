@@ -60,10 +60,11 @@ vote's tie chain already follows rank order.
 
 **Badge.** Each candidate snapshot carries `tasteType`, our survey label stored next to
 `category`. The swipe card shows "Matches your taste" when that type is one I said I like. It
-uses only my own answers. _Review note for Josh: `tasteType` is a label derived from Google's
-types at the same level as `category`; confirm it fits the Places storage rules._
+uses only my own answers. `tasteType` is derived from Google's place types, so for Google
+candidates `purge_google_coordinates` removes it with the coordinates after 30 days. By then the
+Pick has closed (or been canceled), so learning no longer needs it.
 
-**Learning** (`learned_taste`, database triggers in 0044):
+**Learning** (`taste_signals`, read through the `learned_taste` view; database triggers in 0044):
 
 | Signal                 | Change                                                  |
 | ---------------------- | ------------------------------------------------------- |
@@ -71,10 +72,13 @@ types at the same level as `category`; confirm it fits the Places storage rules.
 | Final vote             | +1 (changing your vote moves it)                        |
 | Pick winner            | +2 for everyone in the Pick                             |
 
-- Scores halve every 30 days, and each new signal adds to the faded value. They are clamped
-  to −10..10.
+- Each signal is its own row, keyed by a hash of its swipe, ballot or winner, and halves every
+  30 days. A type's score is their sum, clamped to −10..10. Changing an answer replaces that
+  row, so it never takes back more or less than the original added, even after a reset or decay.
 - Only typed candidates teach; custom options and untyped places don't.
-- The learning runs in triggers, so every write path is covered and nothing else changes.
+- The learning runs in triggers, so every write path is covered and nothing else changes. It's
+  best effort: a lock wait or other failure skips the signal instead of failing the swipe,
+  vote, start or refresh.
 
 **Preferences screen** (Profile → Preferences, or Settings → Food & activity preferences):
 

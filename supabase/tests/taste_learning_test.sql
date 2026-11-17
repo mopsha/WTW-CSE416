@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(23);
+select plan(31);
 
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
 values
@@ -60,17 +60,18 @@ select ok(abs((select score from learned_taste
   where user_id = '71111111-1111-4111-8111-111111111111' and place_type = 'sushi_restaurant')
   - (-1)) < 0.001, 'changing Yes to No replaces the signal (1 - 2 = -1)');
 
--- Old scores fade: 30 days later a new Maybe lands on half the old score.
-update learned_taste set updated_at = now() - interval '30 days'
+-- Old signals fade: 30 days later a new Maybe lands on half the old one.
+update taste_signals set at = now() - interval '30 days'
   where user_id = '71111111-1111-4111-8111-111111111111' and place_type = 'pizza_restaurant';
 -- learn_taste is trigger-only (no service_role grant); call it as the owner here.
 reset role;
-select private.learn_taste('71111111-1111-4111-8111-111111111111', 'pizza_restaurant', 0.3);
+select private.learn_taste('71111111-1111-4111-8111-111111111111', gen_random_uuid(),
+  'pizza_restaurant', 0.3);
 select ok(abs((select score from learned_taste
   where user_id = '71111111-1111-4111-8111-111111111111' and place_type = 'pizza_restaurant')
-  - 0.45) < 0.001, 'scores halve after 30 days before adding');
+  - 0.45) < 0.001, 'signals halve after 30 days');
 
-select private.learn_taste('71111111-1111-4111-8111-111111111111', 'park', 50);
+select private.learn_taste('71111111-1111-4111-8111-111111111111', gen_random_uuid(), 'park', 50);
 set local role service_role;
 select is((select score from learned_taste
   where user_id = '71111111-1111-4111-8111-111111111111' and place_type = 'park'),
@@ -112,9 +113,80 @@ select pick_refresh((select id::text from tp2), '71111111-1111-4111-8111-1111111
   '[{"placeId":"r-2","snapshot":{"name":"R2","lat":0,"lng":0},"tasteScore":0.4}]'::jsonb);
 select is((select array_agg(place_id) from private.pick_candidate_taste where pick_id = (select id from tp2)),
   array['r-2'], 'refresh keeps only the new deck''s taste');
-select ok(abs((select score from learned_taste
-  where user_id = '71111111-1111-4111-8111-111111111111' and place_type = 'cafe')) < 0.001,
+select ok(abs(coalesce((select score from learned_taste
+  where user_id = '71111111-1111-4111-8111-111111111111' and place_type = 'cafe'), 0)) < 0.001,
   'refresh takes back the wiped deck''s swipes, so re-swiping can''t double count');
+
+-- Josh's review cases: undoing an answer takes back exactly what it added.
+create temporary table tp3 on commit drop as
+  select (pick_create(
+    '71111111-1111-4111-8111-111111111111', 'food', 40.9126, -73.1234, 1000, 20, null, 100
+  ) ->> 'id')::uuid as id;
+insert into pick_participants (pick_id, user_id) values
+  ((select id from tp3), '72222222-2222-4222-8222-222222222222');
+select pick_start((select id::text from tp3), '71111111-1111-4111-8111-111111111111',
+  '[{"placeId":"q-1","snapshot":{"name":"Q1","lat":0,"lng":0,"tasteType":"ramen_restaurant"}},
+    {"placeId":"q-2","snapshot":{"name":"Q2","lat":0,"lng":0,"tasteType":"bowling_alley"}},
+    {"placeId":"q-3","snapshot":{"name":"Q3","lat":0,"lng":0,"tasteType":"museum"}}]'::jsonb);
+create temporary table learned3 on commit drop as
+  select '71111111-1111-4111-8111-111111111111'::uuid as u;
+
+select heartbeat_upsert_swipe((select id::text from tp3), (select u from learned3), 'q-1', 2);
+delete from taste_signals where user_id = (select u from learned3);  -- Reset
+select heartbeat_upsert_swipe((select id::text from tp3), (select u from learned3), 'q-1', 0);
+select ok(abs((select score from learned_taste where user_id = (select u from learned3)
+  and place_type = 'ramen_restaurant') - (-1)) < 0.001, 'Yes, Reset, then No leaves -1');
+
+select heartbeat_upsert_swipe((select id::text from tp3), (select u from learned3), 'q-3', 2);
+update taste_signals set at = now() - interval '30 days'
+  where user_id = (select u from learned3) and place_type = 'museum';
+select heartbeat_upsert_swipe((select id::text from tp3), (select u from learned3), 'q-3', 0);
+select ok(abs((select score from learned_taste where user_id = (select u from learned3)
+  and place_type = 'museum') - (-1)) < 0.001, 'a 30-day-old Yes changed to No leaves -1');
+
+-- Learning is optional: if recording a signal fails, the swipe still saves.
+reset role;
+create function public.taste_test_fail() returns trigger language plpgsql as $$
+begin raise exception 'learning unavailable'; end $$;
+create trigger fail_taste before insert or update on public.taste_signals
+  for each row execute function public.taste_test_fail();
+set local role service_role;
+select lives_ok($$select heartbeat_upsert_swipe((select id::text from tp3),
+  '72222222-2222-4222-8222-222222222222', 'q-2', 2)$$, 'a failed signal does not fail the swipe');
+select is((select value::int from preferences where pick_id = (select id from tp3)
+  and user_id = '72222222-2222-4222-8222-222222222222' and place_id = 'q-2'), 2,
+  'the swipe is saved without its signal');
+reset role;
+drop trigger fail_taste on public.taste_signals;
+set local role service_role;
+
+select heartbeat_upsert_swipe((select id::text from tp3), (select u from learned3), 'q-2', 2);
+delete from taste_signals where user_id = (select u from learned3);  -- Reset
+select pick_refresh((select id::text from tp3), (select u from learned3),
+  '[{"placeId":"q-4","snapshot":{"name":"Q4","lat":0,"lng":0}}]'::jsonb);
+select is((select count(*)::int from learned_taste where user_id = (select u from learned3)),
+  0, 'Yes, Reset, then Refresh leaves nothing');
+
+-- Saving the deck's group scores is optional too: a failure still starts the Pick.
+create temporary table tp4 on commit drop as
+  select (pick_create(
+    '71111111-1111-4111-8111-111111111111', 'food', 40.9126, -73.1234, 1000, 20, null, 100
+  ) ->> 'id')::uuid as id;
+insert into pick_participants (pick_id, user_id) values
+  ((select id from tp4), '72222222-2222-4222-8222-222222222222');
+reset role;
+create trigger fail_taste before insert on private.pick_candidate_taste
+  for each row execute function public.taste_test_fail();
+set local role service_role;
+select lives_ok($$select pick_start((select id::text from tp4),
+  '71111111-1111-4111-8111-111111111111',
+  '[{"placeId":"f-1","snapshot":{"name":"F1","lat":0,"lng":0},"tasteScore":0.5}]'::jsonb)$$,
+  'a failed taste save does not fail the start');
+select is((select state::text from picks where id = (select id from tp4)), 'swiping',
+  'the Pick starts without group scores');
+reset role;
+drop trigger fail_taste on private.pick_candidate_taste;
+set local role service_role;
 
 -- Scheduled Picks start through pick_availability_finish, not pick_start; they store taste too.
 create temporary table sched on commit drop as
@@ -138,8 +210,10 @@ select throws_ok($$select * from learned_taste$$, '42501', null,
   'clients cannot read learned_taste directly');
 select throws_ok($$select * from private.pick_candidate_taste$$, '42501', null,
   'clients cannot read group taste scores');
-select throws_ok($$select private.learn_taste('72222222-2222-4222-8222-222222222222', 'zoo', 5)$$,
-  '42501', null, 'clients cannot add learning signals');
+select throws_ok($$select * from taste_signals$$, '42501', null,
+  'clients cannot read taste signals');
+select throws_ok($$select private.learn_taste('72222222-2222-4222-8222-222222222222',
+  gen_random_uuid(), 'zoo', 5)$$, '42501', null, 'clients cannot add learning signals');
 select throws_ok($$select pick_load_for_close((select id::text from tp2))$$, '42501', null,
   'clients cannot call the re-created close snapshot');
 

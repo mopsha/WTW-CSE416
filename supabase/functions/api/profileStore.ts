@@ -83,8 +83,9 @@ export function createProfileStore(): ProfileStore {
     },
 
     async resetLearnedTaste(userId) {
+      // learned_taste is a view over these signals (0044_taste_learning.sql).
       const { error } = await createServiceClient()
-        .from('learned_taste')
+        .from('taste_signals')
         .delete()
         .eq('user_id', userId);
       if (error) throw new Error('Database operation failed');
