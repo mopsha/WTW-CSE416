@@ -4,6 +4,7 @@ import fixtures from '../../seed/places.json' with { type: 'json' };
 import type { Candidate } from '../_shared/places/types.ts';
 import { ApiError, type ErrorStatus } from '../_shared/api/errors.ts';
 import type { LifecycleStore, LifecyclePick } from '../_shared/api/lifecycle.ts';
+import { memberTastesFrom } from '../_shared/domain/groupTaste.ts';
 import { createServiceClient } from './serviceClient.ts';
 
 function mapRpcError(error: { code: string; message: string }): never {
@@ -90,6 +91,21 @@ export function createLifecycleStore(): LifecycleStore {
         .lte('rank', 3);
       if (error) mapRpcError(error);
       return ((data ?? []) as { place_id: string }[]).map((r) => r.place_id);
+    },
+    // Best effort: taste only orders the deck and breaks ties, so a failed read means none.
+    async memberTastes(userIds) {
+      const client = createServiceClient();
+      const [profiles, learned] = await Promise.all([
+        client.from('profiles').select('id, discover_preferences').in('id', userIds),
+        client
+          .from('learned_taste')
+          .select('user_id, place_type, score, updated_at')
+          .in('user_id', userIds),
+      ]);
+      if (profiles.error) return [];
+      // Explicit answers still count if only the learned scores can't be read.
+      const rows = learned.error ? [] : (learned.data ?? []);
+      return memberTastesFrom(userIds, profiles.data ?? [], rows, new Date());
     },
     async start(pickId, userId, candidates) {
       await rpc('pick_start', { p_pick_id: pickId, p_user_id: userId, p_candidates: candidates });

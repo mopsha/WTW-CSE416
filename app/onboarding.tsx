@@ -155,6 +155,8 @@ export default function OnboardingScreen() {
   }
 
   function enter() {
+    // Taste-only (Home card, Profile/Settings "Swipe again"): back to where it was opened from.
+    if (mode === 'taste' && router.canGoBack()) return router.back();
     // Leave immediately; persisting the dismissal must not hold up entry when offline.
     router.replace('/');
     void markDone();

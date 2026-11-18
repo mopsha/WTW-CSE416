@@ -57,3 +57,23 @@ describe('preferencesFromSwipes', () => {
     });
   });
 });
+
+describe('candidate taste type from a Pick snapshot', () => {
+  // Imported here to keep this file about taste; the mapper lives with the other place helpers.
+  const { candidateFromApi } = jest.requireActual<typeof import('@/lib/places')>('@/lib/places');
+  it('keeps the survey type for the "Matches your taste" badge', () => {
+    expect(
+      candidateFromApi({
+        placeId: 'g1',
+        provider: 'google',
+        name: null,
+        lat: 0,
+        lng: 0,
+        tasteType: 'sushi_restaurant',
+      }).tasteType,
+    ).toBe('sushi_restaurant');
+    expect(candidateFromApi({ placeId: 'g2', name: 'x', tasteType: 7 })).not.toHaveProperty(
+      'tasteType',
+    );
+  });
+});

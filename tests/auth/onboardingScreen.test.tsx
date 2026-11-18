@@ -26,7 +26,7 @@ const { create, act } = jest.requireActual<{
 // when the system prompt (request*Async) is reached.
 let mockParams: { mode?: string } = {};
 jest.mock('expo-router', () => ({
-  router: { replace: jest.fn() },
+  router: { replace: jest.fn(), back: jest.fn(), canGoBack: jest.fn(() => false) },
   useLocalSearchParams: () => mockParams,
 }));
 jest.mock('@/lib/locationSearch', () => ({ currentLocation: jest.fn() }));
@@ -250,6 +250,17 @@ test('the Home nudge opens only the taste steps and never finishes setup', async
   expect(router.replace).toHaveBeenCalledWith('/');
   expect(finish).not.toHaveBeenCalled();
   expect(Location.requestForegroundPermissionsAsync).not.toHaveBeenCalled();
+});
+
+test('taste-only mode returns to the screen that opened it', async () => {
+  await act(async () => tree.unmount());
+  mockParams = { mode: 'taste' };
+  jest.mocked(router.canGoBack).mockReturnValue(true);
+  await render();
+  await press('Close');
+  expect(router.back).toHaveBeenCalledTimes(1);
+  expect(router.replace).not.toHaveBeenCalled();
+  jest.mocked(router.canGoBack).mockReturnValue(false);
 });
 
 test('step dots and every button are labelled for screen readers', async () => {

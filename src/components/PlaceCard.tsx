@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -109,7 +110,16 @@ export function Chips({ place, light = true }: { place: Candidate; light?: boole
 }
 
 /** Full-bleed photo card with the name and chips over a dark gradient. */
-export function PlaceCard({ place: base, onInfo }: { place: Candidate; onInfo?: () => void }) {
+export function PlaceCard({
+  place: base,
+  onInfo,
+  badge,
+}: {
+  place: Candidate;
+  onInfo?: () => void;
+  /** Shown above the name, e.g. "Matches your taste". */
+  badge?: ReactNode;
+}) {
   const place = useEnrichedPlace(base);
   return (
     <View style={styles.card}>
@@ -120,6 +130,7 @@ export function PlaceCard({ place: base, onInfo }: { place: Candidate; onInfo?: 
         style={StyleSheet.absoluteFill}
       />
       <View style={styles.info}>
+        {badge}
         <Pressable
           onPress={onInfo}
           disabled={!onInfo}

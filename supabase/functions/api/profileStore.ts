@@ -72,5 +72,23 @@ export function createProfileStore(): ProfileStore {
         throw new ApiError(400, 'BIRTHDAY_REQUIRED', 'Add your birthday to finish account setup');
       if (error) throw new Error('Database operation failed');
     },
+
+    async learnedTaste(userId) {
+      const { data, error } = await createServiceClient()
+        .from('learned_taste')
+        .select('place_type, score, updated_at')
+        .eq('user_id', userId);
+      if (error) throw new ApiError(503, 'DATABASE_NOT_READY', 'Taste learning is not available');
+      return data ?? [];
+    },
+
+    async resetLearnedTaste(userId) {
+      // learned_taste is a view over these signals (0047_taste_learning.sql).
+      const { error } = await createServiceClient()
+        .from('taste_signals')
+        .delete()
+        .eq('user_id', userId);
+      if (error) throw new Error('Database operation failed');
+    },
   };
 }

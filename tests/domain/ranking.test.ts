@@ -56,11 +56,13 @@ describe('scoreCandidate', () => {
 
   test('score always stays within 0-100', () => {
     const all: Answer[] = ['yes', 'maybe', 'no'];
-    for (const a of all) for (const b of all) for (const c of all) {
-      const { score } = scoreCandidate([a, b, c], 3);
-      expect(score).toBeGreaterThanOrEqual(0);
-      expect(score).toBeLessThanOrEqual(100);
-    }
+    for (const a of all)
+      for (const b of all)
+        for (const c of all) {
+          const { score } = scoreCandidate([a, b, c], 3);
+          expect(score).toBeGreaterThanOrEqual(0);
+          expect(score).toBeLessThanOrEqual(100);
+        }
   });
 
   test('rejects bad participant counts', () => {
@@ -189,14 +191,40 @@ describe('clearWinner', () => {
         { placeId: 'split', ...near },
         { placeId: 'loved', ...near },
       ],
-      [
-        ...answersFor('loved', times(4, 'yes')),
-        ...answersFor('split', [...times(3, 'yes'), 'no']),
-      ],
+      [...answersFor('loved', times(4, 'yes')), ...answersFor('split', [...times(3, 'yes'), 'no'])],
       4,
       CENTER,
     );
     const d = clearWinner(ranked);
     expect(d.kind === 'winner' && d.winner.placeId).toBe('loved');
+  });
+});
+
+describe('group taste tiebreak', () => {
+  const center = { lat: 0, lng: 0 };
+  test('equal scores go to the place the group likes more, before distance', () => {
+    const ranked = rankCandidates(
+      [
+        { placeId: 'near', lat: 0, lng: 0.001, tasteScore: 0 },
+        { placeId: 'liked', lat: 0, lng: 0.01, tasteScore: 0.8 },
+      ],
+      [],
+      2,
+      center,
+    );
+    expect(ranked.map((c) => c.placeId)).toEqual(['liked', 'near']);
+    expect(ranked[0]).not.toHaveProperty('taste');
+  });
+  test('taste never beats a better score, and missing taste counts as neutral', () => {
+    const ranked = rankCandidates(
+      [
+        { placeId: 'loved', lat: 0, lng: 0, tasteScore: 1 },
+        { placeId: 'yes', lat: 0, lng: 0 },
+      ],
+      [{ placeId: 'yes', answer: 'yes' }],
+      1,
+      center,
+    );
+    expect(ranked.map((c) => c.placeId)).toEqual(['yes', 'loved']);
   });
 });

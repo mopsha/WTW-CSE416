@@ -59,6 +59,8 @@ export function scoreCandidate(answers: readonly Answer[], n: number): ScoreBrea
 
 export interface RankCandidate extends LatLng {
   placeId: string;
+  /** The group's taste for this place, -1 to 1 (groupTaste.ts); only breaks score ties. */
+  tasteScore?: number;
 }
 
 export interface CandidateAnswer {
@@ -75,7 +77,7 @@ export interface RankedCandidate extends ScoreBreakdown {
 
 /**
  * Rank every candidate in a Pick.
- * Order: score desc → distance to the Pick center asc → placeId asc.
+ * Order: score desc → group taste desc → distance to the Pick center asc → placeId asc.
  * Answers for places not in `candidates` are ignored.
  */
 export function rankCandidates(
@@ -91,16 +93,18 @@ export function rankCandidates(
   const scored = candidates.map((c) => ({
     placeId: c.placeId,
     distanceM: distanceMeters(center, c),
+    taste: c.tasteScore ?? 0,
     ...scoreCandidate(byPlace.get(c.placeId) ?? [], n),
   }));
 
   scored.sort((a, b) => {
     if (Math.abs(a.score - b.score) > EPSILON) return b.score - a.score;
+    if (Math.abs(a.taste - b.taste) > EPSILON) return b.taste - a.taste;
     if (a.distanceM !== b.distanceM) return a.distanceM - b.distanceM;
     return a.placeId < b.placeId ? -1 : a.placeId > b.placeId ? 1 : 0;
   });
 
-  return scored.map((c, i) => ({ ...c, rank: i + 1 }));
+  return scored.map(({ taste: _taste, ...c }, i) => ({ ...c, rank: i + 1 }));
 }
 
 export type Decision =
@@ -122,18 +126,21 @@ export function clearWinner(ranked: readonly RankedCandidate[]): Decision {
   return { kind: 'vote', finalists };
 }
 
-/** The only fields voteWinner needs: a stored rank already encodes the score/distance/id tie order. */
+/** The only fields voteWinner needs: a stored rank already encodes the score/taste/distance/id tie order. */
 export type VoteFinalist = Pick<RankedCandidate, 'placeId' | 'rank'>;
 
 /**
- * Winner of the final vote. Spec tie-break: most votes → higher score → closer → place id.
+ * Winner of the final vote. Spec tie-break: most votes → higher score → group taste → closer → place id.
  * After the vote count that is exactly rankCandidates' order, so ties go to the better rank.
  * No ballots at all (deadline passed) means #1 wins.
  * @param finalists decision.finalists from clearWinner, or the equivalent {placeId, rank}
  *   rows read back from ranking_results once a Pick has already closed
  * @param votes     the placeId of every ballot cast
  */
-export function voteWinner<T extends VoteFinalist>(finalists: readonly T[], votes: readonly string[]): T {
+export function voteWinner<T extends VoteFinalist>(
+  finalists: readonly T[],
+  votes: readonly string[],
+): T {
   const tally = new Map(finalists.map((c) => [c.placeId, 0]));
   for (const placeId of votes) {
     const count = tally.get(placeId);
