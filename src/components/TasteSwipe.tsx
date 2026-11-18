@@ -2,11 +2,13 @@
 // when we know where the user is (two Discover calls), offline type cards otherwise. Photos load
 // one card ahead, like Discover, so skipping the deck doesn't pay for a dozen covers.
 import type { Candidate as ApiCandidate } from '@shared/places/types.ts';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { api } from '@/lib/api';
-import { loadPhoto } from '@/lib/photoCache';
+import { photoSource, photoState, releasePhotos, type PhotoSource } from '@/lib/photoCache';
+import { usePhotoRequests } from '@/hooks/usePhotoRequests';
+import { useAuth } from '@/hooks/useAuth';
 import { discoverPlace } from '@/lib/discoverFeed';
 import { buildTasteDeck, tasteLabel, type TasteCard } from '@/lib/tasteDeck';
 import type { Candidate, PreferenceValue } from '@/lib/types';
@@ -21,7 +23,7 @@ export type TasteAnswer = { card: TasteCard<unknown>; value: PreferenceValue };
 type Shown = TasteCard<unknown> & {
   view: Candidate;
   /** Google cover to load once the card is next up, with the photographers to credit. */
-  photo?: { name: string; credits: { provider: string; uri?: string }[] };
+  photo?: { source: PhotoSource; credits: { provider: string; uri?: string }[] };
 };
 
 function typeCard(card: TasteCard<unknown>): Candidate {
@@ -38,7 +40,7 @@ function typeCard(card: TasteCard<unknown>): Candidate {
   };
 }
 
-async function loadDeck(center: LatLng | null): Promise<Shown[]> {
+async function loadDeck(center: LatLng | null, owner: string): Promise<Shown[]> {
   let food: ApiCandidate[] = [];
   let activities: ApiCandidate[] = [];
   if (center) {
@@ -56,8 +58,12 @@ async function loadDeck(center: LatLng | null): Promise<Shown[]> {
     const { photoName, photoCredits, ...view } = discoverPlace(card.place, center);
     return {
       ...card,
+      // Answers keep preference identity, never provider photo metadata.
+      place: { ...card.place, photos: undefined },
       view: { ...view, cuisine: tasteLabel(card.type) },
-      ...(photoName ? { photo: { name: photoName, credits: photoCredits ?? [] } } : {}),
+      ...(photoName
+        ? { photo: { source: photoSource(photoName, owner), credits: photoCredits ?? [] } }
+        : {}),
     };
   });
 }
@@ -72,55 +78,81 @@ function withPhoto(card: Shown, url: string | null | undefined): Candidate {
   };
 }
 
-export function TasteSwipe({
-  center,
-  onDone,
-}: {
+type TasteSwipeProps = {
   /** undefined while the caller is still finding out where the user is. */
   center: LatLng | null | undefined;
   onDone: (answers: TasteAnswer[]) => void;
-}) {
+};
+export function TasteSwipe(props: TasteSwipeProps) {
+  const { session } = useAuth();
+  const owner = session?.user.id ?? '';
+  return <TasteSwipeDeck key={owner} {...props} owner={owner} />;
+}
+function TasteSwipeDeck({ center, onDone, owner }: TasteSwipeProps & { owner: string }) {
   const [deck, setDeck] = useState<Shown[] | null>(null);
+  const deckRef = useRef<Shown[] | null>(null);
+  useLayoutEffect(() => {
+    deckRef.current = deck;
+  }, [deck]);
   const [answers, setAnswers] = useState<TasteAnswer[]>([]);
   const card = useRef<SwipeCardHandle>(null);
   // Cards answered so far, synchronously: a screen-reader action can answer a card twice.
   const answered = useRef(0);
-  // Photo name -> cover URL, or null if it failed. Shared with Discover (photoCache.ts).
-  const [photos, setPhotos] = useState<Record<string, string | null>>({});
-  const requested = useRef(new Set<string>());
-
-  const mounted = useRef(true);
+  const [photoRefresh, setPhotoRefresh] = useState(0);
+  const activePhotos =
+    deck
+      ?.slice(answers.length, answers.length + 2)
+      .flatMap((next) => (next.photo ? [next.photo.source] : [])) ?? [];
+  const photoVersion = usePhotoRequests(owner, activePhotos, () =>
+    setPhotoRefresh((value) => value + 1),
+  );
   useEffect(
-    () => () => {
-      mounted.current = false;
-    },
-    [],
+    () => () =>
+      releasePhotos(deck?.flatMap((next) => (next.photo ? [next.photo.source] : [])) ?? []),
+    [deck],
   );
 
   useEffect(() => {
-    if (!deck) return;
-    // A photo requested for the next card must still land after this card is answered.
-    for (const next of deck.slice(answers.length, answers.length + 2)) {
-      const name = next.photo?.name;
-      if (!name || requested.current.has(name)) continue;
-      requested.current.add(name);
-      void loadPhoto(name).then(
-        (url) => mounted.current && setPhotos((current) => ({ ...current, [name]: url })),
-      );
-    }
-  }, [deck, answers.length]);
-
-  useEffect(() => {
-    if (center === undefined) return;
+    if (center === undefined || !owner) return;
     let active = true;
-    void loadDeck(center)
-      .catch(() => loadDeck(null))
-      .then((d) => active && setDeck(d));
+    void loadDeck(center, owner)
+      .catch(() => loadDeck(null, owner))
+      .then((d) => {
+        if (!active) {
+          releasePhotos(d.flatMap((next) => (next.photo ? [next.photo.source] : [])));
+          return;
+        }
+        const previous = deckRef.current;
+        const next = !previous
+          ? d
+          : previous.map((old, index) => {
+              if (index < answered.current) return { ...old, photo: undefined };
+              const fresh = d.find(
+                (item) => item.type === old.type && item.view.placeId === old.view.placeId,
+              );
+              return { ...old, photo: fresh ? fresh.photo : old.photo };
+            });
+        const used = new Set(next.flatMap((item) => (item.photo ? [item.photo.source] : [])));
+        releasePhotos(
+          d.flatMap((item) =>
+            item.photo && !used.has(item.photo.source) ? [item.photo.source] : [],
+          ),
+        );
+        setDeck(next);
+      });
     return () => {
       active = false;
     };
-  }, [center]);
+  }, [center, owner, photoRefresh]);
 
+  const current = deck?.[answers.length];
+  const shown = useMemo(
+    () =>
+      current ? withPhoto(current, current.photo && photoState(current.photo.source).url) : null,
+    // The external store revision invalidates the current image projection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [current, photoVersion],
+  );
   if (!deck)
     return (
       <View style={styles.loading}>
@@ -128,9 +160,9 @@ export function TasteSwipe({
       </View>
     );
 
-  const current = deck[answers.length];
   function answer(value: PreferenceValue) {
     if (!current || !deck || answered.current !== answers.length) return;
+    if (current.photo) releasePhotos([current.photo.source]);
     answered.current += 1;
     const next = [...answers, { card: current, value }];
     setAnswers(next);
@@ -141,13 +173,8 @@ export function TasteSwipe({
     <View style={styles.wrap}>
       <ProgressBar value={answers.length} total={deck.length} />
       <View style={styles.deck}>
-        {current ? (
-          <SwipeCard
-            key={current.type}
-            ref={card}
-            place={withPhoto(current, current.photo && photos[current.photo.name])}
-            onAnswer={answer}
-          />
+        {current && shown ? (
+          <SwipeCard key={current.type} ref={card} place={shown} onAnswer={answer} />
         ) : null}
       </View>
       {current ? (

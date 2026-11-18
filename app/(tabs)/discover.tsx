@@ -27,7 +27,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/lib/api';
-import { loadPhoto } from '@/lib/photoCache';
+import { photoSource, photoState, releasePhotos, type PhotoSource } from '@/lib/photoCache';
+import { usePhotoRequests } from '@/hooks/usePhotoRequests';
 import { discoverPlace } from '@/lib/discoverFeed';
 import { isAccessDenied, messageOf } from '@/lib/errors';
 import { DiscoverFilterSheet } from '@/components/DiscoverFilterSheet';
@@ -54,7 +55,7 @@ import { haptic } from '@/lib/haptics';
 import { CAMPUS, formatPriceLevel, formatRating } from '@/lib/places';
 import { directionsUrl } from '@/lib/pickUi';
 
-const EMPTY_PLACES: DiscoverPlace[] = [];
+const EMPTY_PLACES: PhotoPlace[] = [];
 
 const FILTERS = [
   { value: 'all' as const, label: 'For You' },
@@ -62,18 +63,18 @@ const FILTERS = [
   { value: 'activities' as const, label: 'Activities' },
 ];
 
-type LazyPlace = DiscoverPlace & { photoPending?: boolean };
+type PhotoPlace = DiscoverPlace & { photoSource?: PhotoSource; photoScope?: string };
+type LazyPlace = PhotoPlace & { photoPending?: boolean };
 
 /** Adds a lazily loaded cover and its photographer credit once it arrives. */
-function withLazyPhoto(place: DiscoverPlace, photos: Record<string, string | null>): LazyPlace {
-  if (!place.photoName) return place;
-  // By photo, not place: a refreshed place may bring a different photo and photographer.
-  const url = photos[place.photoName];
-  if (url === undefined) return { ...place, photoPending: true };
-  if (url === null) return place;
+function withLazyPhoto(place: PhotoPlace): LazyPlace {
+  if (!place.photoSource) return place;
+  const state = photoState(place.photoSource);
+  if (state.pending) return { ...place, photoUrl: null, photoPending: true };
+  if (!state.url) return place;
   return {
     ...place,
-    photoUrl: url,
+    photoUrl: state.url,
     providerCredits: [
       ...(place.providerCredits ?? []),
       ...(place.photoCredits ?? []).map((c) => c.provider),
@@ -282,7 +283,7 @@ function DiscoverFeed({ userId }: { userId: string }) {
   const [response, setResponse] = useState<{
     key: string;
     scope: string;
-    places: DiscoverPlace[];
+    places: PhotoPlace[];
     notice: string | null;
     error: string | null;
   } | null>(null);
@@ -293,26 +294,19 @@ function DiscoverFeed({ userId }: { userId: string }) {
   const { openNow } = applied;
   const [filter, setFilter] = useState<DiscoverFilter>('all');
   const [query, setQuery] = useState('');
-  const [open, setOpen] = useState<DiscoverPlace | null>(null);
-  // Covers load as cards come on screen: photo name -> URL, or null if it failed. The session
-  // cache (photoCache.ts) keeps them across filters, remounts and the onboarding deck.
-  const [photos, setPhotos] = useState<Record<string, string | null>>({});
-  const [lazyPhotos] = useState(() => {
-    const requested = new Set<string>();
-    const load = (place: DiscoverPlace) => {
-      const name = place.photoName;
-      if (!name || requested.has(name)) return;
-      requested.add(name);
-      void loadPhoto(name).then((url) => setPhotos((current) => ({ ...current, [name]: url })));
-    };
-    return {
-      load,
-      viewabilityConfig: { itemVisiblePercentThreshold: 20, minimumViewTime: 250 },
-      onViewableItemsChanged: ({ viewableItems }: { viewableItems: ViewToken<LazyPlace>[] }) => {
-        for (const token of viewableItems) if (token.isViewable && token.item) load(token.item);
-      },
-    };
-  });
+  const [open, setOpen] = useState<PhotoPlace | null>(null);
+  const [visibleItems, setVisibleItems] = useState<{ id: string; scope?: string }[]>([]);
+  const [lazyPhotos] = useState(() => ({
+    viewabilityConfig: { itemVisiblePercentThreshold: 20, minimumViewTime: 250 },
+    onViewableItemsChanged: ({ viewableItems }: { viewableItems: ViewToken<LazyPlace>[] }) => {
+      const ids = viewableItems
+        .filter((token) => token.isViewable && token.item)
+        .map((token) => ({ id: token.item.placeId, scope: token.item.photoScope }));
+      setVisibleItems((previous) =>
+        JSON.stringify(previous) === JSON.stringify(ids) ? previous : ids,
+      );
+    },
+  }));
   const [filtersOpen, setFiltersOpen] = useState(false);
   const { saved, revision: savedRevision } = useSavedChoices(userId);
   usePrivateRefresh(saved.reload, saved.clear, null);
@@ -352,10 +346,32 @@ function DiscoverFeed({ userId }: { userId: string }) {
   );
   const scope = JSON.stringify([params, userId]);
   const requestKey = JSON.stringify([scope, retry]);
+  const viewScope = JSON.stringify([scope, query]);
   const current = response?.key === requestKey ? response : null;
   // A same-query refresh may keep its places; never show old-account/filter results.
   const loaded = (current ?? (response?.scope === scope ? response : null))?.places ?? EMPTY_PLACES;
-  const feed = useMemo(() => loaded.map((p) => withLazyPhoto(p, photos)), [loaded, photos]);
+  const activePhotos = useMemo(
+    () =>
+      loaded
+        .filter(
+          (p) =>
+            visibleItems.some((item) => item.id === p.placeId && item.scope === viewScope) ||
+            p.placeId === open?.placeId,
+        )
+        .flatMap((p) => (p.photoSource ? [p.photoSource] : [])),
+    [loaded, visibleItems, viewScope, open?.placeId],
+  );
+  const photoVersion = usePhotoRequests(userId, activePhotos, () => setRetry((value) => value + 1));
+  const feed = useMemo(
+    () => loaded.map((place) => ({ ...withLazyPhoto(place), photoScope: viewScope })),
+    // The external photo store is mutable; its revision invalidates this projection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [loaded, photoVersion, viewScope],
+  );
+  useEffect(
+    () => () => releasePhotos(loaded.flatMap((p) => (p.photoSource ? [p.photoSource] : []))),
+    [loaded],
+  );
   const notice = current?.notice ?? null;
   const error = current?.error ?? null;
   const loading = !current;
@@ -371,7 +387,13 @@ function DiscoverFeed({ userId }: { userId: string }) {
           setResponse({
             key: requestKey,
             scope,
-            places: result.places.map((p) => discoverPlace(p, CAMPUS)),
+            places: result.places.map((p) => {
+              const { photoName, ...place } = discoverPlace(p, CAMPUS);
+              return {
+                ...place,
+                ...(photoName ? { photoSource: photoSource(photoName, userId) } : {}),
+              };
+            }),
             notice: result.notice,
             error: null,
           });
@@ -399,7 +421,7 @@ function DiscoverFeed({ userId }: { userId: string }) {
   const displayed = useMemo(() => {
     if (query.trim() || count || sort !== 'recommended') return places;
     const featured = filterDiscover(feed, { category: filter })
-      .filter((p) => p.photoUrl || p.photoName)
+      .filter((p) => p.photoUrl || p.photoSource)
       .slice(0, 6);
     const ids = new Set(featured.map((p) => p.placeId));
     return [...featured, ...places.filter((p) => !ids.has(p.placeId))];
@@ -410,9 +432,8 @@ function DiscoverFeed({ userId }: { userId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [displayed, saved, savedRevision],
   );
-  const show = (p: DiscoverPlace) => {
+  const show = (p: PhotoPlace) => {
     haptic.tap();
-    lazyPhotos.load(p);
     setOpen(p);
   };
 

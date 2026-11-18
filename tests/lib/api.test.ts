@@ -153,3 +153,26 @@ test('recent winner client authenticates and maps live attribution without persi
   });
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+test('Discover photos never borrow a replacement account token', async () => {
+  const fetch = jest.fn<ReturnType<FetchLike>, Parameters<FetchLike>>(async () =>
+    jsonResponse(200, { photoUrl: 'https://img/photo' }),
+  );
+  const api = createApiClient({
+    baseUrl: BASE,
+    getAccessToken: async () => 'unscoped-token',
+    getSession: async () => ({ user: { id: 'B', email: null }, accessToken: 'B-token' }),
+    fetch,
+  });
+  await expect(api.discoverPhoto('places/p/photos/1', 'A')).rejects.toMatchObject({
+    code: 'account_changed',
+  });
+  expect(fetch).not.toHaveBeenCalled();
+  await api.discoverPhoto('places/p/photos/1', 'B');
+  expect(fetch).toHaveBeenCalledWith(
+    `${BASE}/discover/photo?name=places%2Fp%2Fphotos%2F1`,
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: 'Bearer B-token' }),
+    }),
+  );
+});

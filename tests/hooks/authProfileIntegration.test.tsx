@@ -1,4 +1,6 @@
 import React from 'react';
+import { api } from '@/lib/api';
+import { photoSource, loadPhoto, photoState, clearPhotoCache } from '@/lib/photoCache';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { clearPendingProfile } from '@/lib/pendingProfile';
 import { auth, type AuthSession } from '@/lib/auth';
@@ -78,4 +80,49 @@ test('session refresh preserves pending intent, switching accounts and signing o
   await act(async () => listener(null));
   expect(clearPendingProfile).toHaveBeenCalledTimes(2);
   await act(async () => tree.unmount());
+});
+
+test('auth events invalidate photo generations before replacement-account results can be consumed', async () => {
+  let listener!: (s: AuthSession | null) => void;
+  let finish!: (value: { photoUrl: string }) => void;
+  jest.mocked(auth.getSession).mockResolvedValue(session);
+  jest.mocked(auth.onChange).mockImplementation((value) => {
+    listener = value;
+    return () => {};
+  });
+  const resolve = jest
+    .spyOn(api, 'discoverPhoto')
+    .mockReturnValueOnce(
+      new Promise((value) => {
+        finish = value;
+      }),
+    )
+    .mockResolvedValue({ photoUrl: 'https://img/B' });
+  let tree!: Tree;
+  try {
+    await act(async () => {
+      tree = create(
+        <AuthProvider>
+          <Consumer />
+        </AuthProvider>,
+      );
+    });
+    const a = photoSource('places/p/photos/1', 'user-a');
+    const pending = loadPhoto(a);
+    await act(async () =>
+      listener({ user: { id: 'user-b', email: null }, accessToken: 'other-token' }),
+    );
+    const b = photoSource('places/p/photos/1', 'user-b');
+    await loadPhoto(b);
+    expect(resolve).toHaveBeenLastCalledWith('places/p/photos/1', 'user-b');
+    finish({ photoUrl: 'https://img/old-A' });
+    expect(await pending).toBeNull();
+    expect(photoState(b).url).toBe('https://img/B');
+    await act(async () => listener(null));
+    expect(photoState(b).expired).toBe(true);
+  } finally {
+    if (tree) await act(async () => tree.unmount());
+    resolve.mockRestore();
+    clearPhotoCache();
+  }
 });

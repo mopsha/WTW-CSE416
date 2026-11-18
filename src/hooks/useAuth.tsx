@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 
+import { setPhotoSession } from '@/lib/photoCache';
 import { clearPendingProfile } from '@/lib/pendingProfile';
 import { auth, type AuthSession } from '@/lib/auth';
 
@@ -29,19 +30,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     Promise.race([auth.getSession(), timeout])
       .then((session) => {
         if (active && !authChanged) {
+          setPhotoSession(session?.user.id ?? null);
           previousAccount = session?.user.id ?? null;
           setState({ session, loading: false });
         }
       })
       // Misconfigured env (no Supabase URL): fall through to sign-in, which shows the error.
-      .catch(() => active && !authChanged && setState({ session: null, loading: false }))
+      .catch(() => {
+        if (active && !authChanged) {
+          setPhotoSession(null);
+          setState({ session: null, loading: false });
+        }
+      })
       .finally(() => clearTimeout(timer));
     try {
       unsubscribe = auth.onChange((session) => {
+        if (!active) return;
         if (previousAccount && previousAccount !== session?.user.id)
           void clearPendingProfile().catch(() => {
             /* In-memory consumers were invalidated synchronously. */
           });
+        setPhotoSession(session?.user.id ?? null);
         previousAccount = session?.user.id ?? null;
         authChanged = true;
         if (active) setState({ session, loading: false });
@@ -51,6 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     return () => {
       active = false;
+      setPhotoSession(null);
       clearTimeout(timer);
       unsubscribe();
     };

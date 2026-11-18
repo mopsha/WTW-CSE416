@@ -1,8 +1,21 @@
 import React from 'react';
+import { AppState } from 'react-native';
 import { TasteSwipe } from '@/components/TasteSwipe';
 import { api } from '@/lib/api';
 import { clearPhotoCache } from '@/lib/photoCache';
 import type { Candidate } from '@shared/places/types.ts';
+
+jest.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ session: { user: { id: 'me' } } }) }));
+jest.mock('expo-router', () => ({
+  useFocusEffect: (fn: () => void) => jest.requireActual('react').useEffect(fn, [fn]),
+}));
+const mountedTrees: { unmount: () => void }[] = [];
+afterEach(async () => {
+  await act(async () => {
+    mountedTrees.splice(0).forEach((tree) => tree.unmount());
+  });
+  clearPhotoCache();
+});
 
 const { create, act } = jest.requireActual('react-test-renderer');
 jest.mock('@/lib/api', () => ({ api: { discover: jest.fn(), discoverPhoto: jest.fn() } }));
@@ -38,6 +51,8 @@ const google = (id: string, type: string, category: 'food' | 'activities'): Cand
   }) as unknown as Candidate;
 
 beforeEach(() => {
+  jest.resetAllMocks();
+  jest.spyOn(AppState, 'addEventListener').mockReturnValue({ remove: jest.fn() });
   clearPhotoCache();
   jest.mocked(api.discover).mockImplementation(async ({ category }) => ({
     places:
@@ -57,6 +72,7 @@ async function render() {
   await act(async () => {
     tree = create(<TasteSwipe center={center} onDone={jest.fn()} />);
   });
+  mountedTrees.push(tree);
   return tree;
 }
 
@@ -77,7 +93,7 @@ test('loads photos only for the current and next card, with the photographer cre
 
   await act(async () => card.props.onAnswer(2));
   expect(api.discoverPhoto).toHaveBeenCalledTimes(3);
-  expect(api.discoverPhoto).toHaveBeenLastCalledWith('places/pizza/photos/p');
+  expect(api.discoverPhoto).toHaveBeenLastCalledWith('places/pizza/photos/p', 'me');
   expect(tree.root.findByType('test-card').props.place.photoUrl).toBe(
     'https://img/places/bowl/photos/p',
   );
@@ -91,4 +107,63 @@ test('a failed photo leaves the card without one', async () => {
   expect(place.attributions ?? []).not.toContainEqual(
     expect.objectContaining({ provider: 'By sushi' }),
   );
+});
+
+test('mounted onboarding retries with fresh Discover references and preserves card progress', async () => {
+  jest.useFakeTimers();
+  try {
+    jest.mocked(api.discover).mockImplementation(async ({ category }) => {
+      const fresh = jest.mocked(api.discover).mock.calls.length > 2;
+      const places =
+        category === 'food'
+          ? [google('sushi', 'sushi_restaurant', 'food')]
+          : [google('bowl', 'bowling_alley', 'activities')];
+      return {
+        places: places.map((p) => ({
+          ...p,
+          photos: p.photos?.map((photo) => ({
+            ...photo,
+            name: `${photo.name}${fresh ? 'new' : 'old'}`,
+          })),
+        })),
+        fallback: false,
+        notice: null,
+      };
+    });
+    jest.mocked(api.discoverPhoto).mockImplementation(async (name) => {
+      if (name.endsWith('old')) throw new Error('offline');
+      return { photoUrl: `https://img/${name}` };
+    });
+    const tree = await render();
+    expect(tree.root.findByType('test-card').props.place.photoUrl).toBeNull();
+    await act(async () => jest.advanceTimersByTime(6 * 60_000));
+    expect(api.discover).toHaveBeenCalledTimes(4);
+    expect(tree.root.findByType('test-card').props.place.name).toBe('sushi');
+    expect(tree.root.findByType('test-card').props.place.photoUrl).toBe(
+      'https://img/places/sushi/photos/pnew',
+    );
+    await act(async () => tree.root.findByType('test-card').props.onAnswer(2));
+    expect(tree.root.findByType('test-card').props.place.name).toBe('bowl');
+  } finally {
+    await act(async () => mountedTrees.splice(0).forEach((tree) => tree.unmount()));
+    clearPhotoCache();
+    jest.useRealTimers();
+  }
+});
+
+test('mounted onboarding expires URLs without resetting answers', async () => {
+  jest.useFakeTimers();
+  try {
+    const tree = await render();
+    await act(async () => tree.root.findByType('test-card').props.onAnswer(2));
+    const before = tree.root.findByType('test-card').props.place.name;
+    await act(async () => jest.advanceTimersByTime(51 * 60_000));
+    expect(api.discover).toHaveBeenCalledTimes(4);
+    expect(tree.root.findByType('test-card').props.place.name).toBe(before);
+    expect(api.discoverPhoto).toHaveBeenCalledTimes(5); // three original covers, two current/next refreshed
+  } finally {
+    await act(async () => mountedTrees.splice(0).forEach((tree) => tree.unmount()));
+    clearPhotoCache();
+    jest.useRealTimers();
+  }
 });

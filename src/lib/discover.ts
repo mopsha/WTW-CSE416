@@ -240,10 +240,10 @@ export const DISCOVER_PLACES: readonly DiscoverPlace[] = [...food, ...activities
 );
 
 /** Filter by category and a search over name, kind and address; keeps nearest-first order. */
-export function filterDiscover(
-  places: readonly DiscoverPlace[],
+export function filterDiscover<P extends DiscoverPlace>(
+  places: readonly P[],
   { category = 'all', query = '' }: { category?: DiscoverFilter; query?: string } = {},
-): DiscoverPlace[] {
+): P[] {
   const q = query.trim().toLowerCase();
   return places.filter(
     (p) =>
