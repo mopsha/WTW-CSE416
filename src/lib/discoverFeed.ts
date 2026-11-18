@@ -98,7 +98,10 @@ export function discoverPlace(
     ...(photo
       ? {
           photoName: photo.name,
-          photoCredits: photo.authorAttributions.map((author) => author.displayName),
+          photoCredits: photo.authorAttributions.map(({ displayName, uri }) => ({
+            provider: displayName,
+            ...(uri ? { uri } : {}),
+          })),
         }
       : {}),
   };

@@ -28,7 +28,12 @@ const google = (id: string, type: string, category: 'food' | 'activities'): Cand
     lat: 40.9,
     lng: -73.1,
     photoUrl: null,
-    photos: [{ name: `places/${id}/photos/p`, authorAttributions: [{ displayName: `By ${id}` }] }],
+    photos: [
+      {
+        name: `places/${id}/photos/p`,
+        authorAttributions: [{ displayName: `By ${id}`, uri: `https://maps.google.com/${id}` }],
+      },
+    ],
   }) as unknown as Candidate;
 
 beforeEach(() => {
@@ -62,7 +67,10 @@ test('loads photos only for the current and next card, with the photographer cre
   ]);
   const card = tree.root.findByType('test-card');
   expect(card.props.place.photoUrl).toBe('https://img/places/sushi/photos/p');
-  expect(card.props.place.attributions).toContainEqual({ provider: 'By sushi' });
+  expect(card.props.place.attributions).toContainEqual({
+    provider: 'By sushi',
+    uri: 'https://maps.google.com/sushi',
+  });
   expect(card.props.place.photoName).toBeUndefined();
 
   await act(async () => card.props.onAnswer(2));
@@ -78,5 +86,7 @@ test('a failed photo leaves the card without one', async () => {
   const tree = await render();
   const place = tree.root.findByType('test-card').props.place;
   expect(place.photoUrl).toBeNull();
-  expect(place.attributions ?? []).not.toContainEqual({ provider: 'By sushi' });
+  expect(place.attributions ?? []).not.toContainEqual(
+    expect.objectContaining({ provider: 'By sushi' }),
+  );
 });

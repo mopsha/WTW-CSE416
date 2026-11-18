@@ -23,7 +23,7 @@ export interface DiscoverPlace extends Candidate {
   miles: number;
   /** Google photo to load when the card is on screen, with the photographers to credit. */
   photoName?: string;
-  photoCredits?: string[];
+  photoCredits?: { provider: string; uri?: string }[];
 }
 
 // [id, name, kind, emoji, address, priceLevel 1-4 | null, lat, lng]

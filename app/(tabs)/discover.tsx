@@ -72,7 +72,10 @@ function withLazyPhoto(place: DiscoverPlace, photos: Record<string, string | nul
   return {
     ...place,
     photoUrl: url,
-    providerCredits: [...(place.providerCredits ?? []), ...(place.photoCredits ?? [])],
+    providerCredits: [
+      ...(place.providerCredits ?? []),
+      ...(place.photoCredits ?? []).map((c) => c.provider),
+    ],
   };
 }
 

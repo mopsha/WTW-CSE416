@@ -20,7 +20,7 @@ export type TasteAnswer = { card: TasteCard<unknown>; value: PreferenceValue };
 type Shown = TasteCard<unknown> & {
   view: Candidate;
   /** Google cover to load once the card is next up, with the photographers to credit. */
-  photo?: { name: string; credits: string[] };
+  photo?: { name: string; credits: { provider: string; uri?: string }[] };
 };
 
 function typeCard(card: TasteCard<unknown>): Candidate {
@@ -67,10 +67,7 @@ function withPhoto(card: Shown, url: string | null | undefined): Candidate {
   return {
     ...card.view,
     photoUrl: url,
-    attributions: [
-      ...(card.view.attributions ?? []),
-      ...card.photo.credits.map((provider) => ({ provider })),
-    ],
+    attributions: [...(card.view.attributions ?? []), ...card.photo.credits],
   };
 }
 
