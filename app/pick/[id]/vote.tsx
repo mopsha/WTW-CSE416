@@ -65,7 +65,7 @@ export default function VoteScreen() {
         await api.vote(
           pickId,
           placeId,
-          reveal.status === 'ready' ? reveal.places.get(placeId)?.tasteType : undefined,
+          reveal.status === 'ready' ? reveal.places.get(placeId) : undefined,
         );
         haptic.success();
       })

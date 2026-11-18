@@ -35,7 +35,7 @@ import { parseCreatePick } from '../_shared/api/lifecycle.ts';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { ApiError, errorResponse, parseSwipe } from '../_shared/api/errors.ts';
-import { bodyTasteType, recordGoogleTaste } from '../_shared/api/tasteSignals.ts';
+import { bodyTaste, recordGoogleTaste } from '../_shared/api/tasteSignals.ts';
 import { swipe, type HeartbeatStore } from '../_shared/api/heartbeat.ts';
 import { getProgress, type ProgressStore } from '../_shared/api/progress.ts';
 import {
@@ -329,7 +329,8 @@ export function createApp(
       pickId,
       parseSwipe(body).placeId,
       'swipe',
-      bodyTasteType(body),
+      bodyTaste(body).type,
+      bodyTaste(body).proof,
     );
     // The swipe is already saved, so a failed auto-close must not turn it into
     // an error; the next swipe, the host, or the deadline sweep closes it instead.
@@ -555,7 +556,8 @@ export function createApp(
       c.req.param('id'),
       parseVote(body),
       'vote',
-      bodyTasteType(body),
+      bodyTaste(body).type,
+      bodyTaste(body).proof,
     );
     return c.json(result);
   });

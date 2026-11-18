@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(13);
+select plan(17);
 
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
 values
@@ -36,6 +36,8 @@ select heartbeat_upsert_swipe((select id::text from gp), (select host from sig),
 select taste_record_google_signal((select host from sig), (select id::text from gp), 'g1', 'swipe', 'sushi_restaurant');
 select is((select score from learned_taste where user_id = (select host from sig)
   and place_type = 'sushi_restaurant'), 1::real, 'a Google Yes swipe teaches +1');
+select ok((select google from taste_signals where user_id = (select host from sig)),
+  'signals learned from Google places are marked, for the 30-day limit');
 
 select heartbeat_upsert_swipe((select id::text from gp), (select host from sig), 'g1', 0);
 select taste_record_google_signal((select host from sig), (select id::text from gp), 'g1', 'swipe', 'sushi_restaurant');
@@ -65,14 +67,24 @@ select lives_ok(
   $$select taste_record_google_signal('82222222-2222-4222-8222-222222222222', 'not-a-pick', 'g1', 'swipe', 'cafe')$$,
   'junk input never raises');
 
--- Winners: recorded on the next read, dated to the decision, and never after a later reset.
+-- Winners: recorded on the next read, dated to the decision, never past 30 days or a reset.
 update picks set state = 'completed', winner_place_id = 'g1', decided_at = now() - interval '40 days',
   decided_by = 'clear_winner' where id = (select id from gp);
 select taste_record_google_signal((select guest from sig), (select id::text from gp), 'g1', 'winner', 'sushi_restaurant');
+select is((select count(*)::int from taste_signals where user_id = (select guest from sig)),
+  0, 'a Google winner older than 30 days is not learned');
+update picks set decided_at = now() - interval '10 days' where id = (select id from gp);
+select taste_record_google_signal((select guest from sig), (select id::text from gp), 'g1', 'winner', 'sushi_restaurant');
 select is((select weight from taste_signals where user_id = (select guest from sig)),
   2::real, 'a Google winner teaches +2');
-select ok((select at < now() - interval '39 days' from taste_signals where user_id = (select guest from sig)),
+select ok((select at < now() - interval '9 days' from taste_signals where user_id = (select guest from sig)),
   'the winner signal is dated to the decision, so an old Pick adds a faded signal');
+
+-- Google-derived signals are hidden after 30 days and deleted by the sweep's purge.
+update taste_signals set at = now() - interval '31 days' where user_id = (select host from sig);
+select is((select count(*)::int from learned_taste where user_id = (select host from sig)),
+  0, 'an expired Google signal no longer counts');
+select is(purge_google_taste(now() - interval '27 days'), 1, 'the sweep purge deletes it');
 
 select taste_reset((select guest from sig));
 select taste_record_google_signal((select guest from sig), (select id::text from gp), 'g1', 'winner', 'sushi_restaurant');

@@ -57,8 +57,8 @@ export default function SwipeScreen() {
   const [attempt, setAttempt] = useState(0);
   const [details, setDetails] = useState<Candidate | null>(null);
   const card = useRef<SwipeCardHandle>(null);
-  // Each card's live survey type, sent with its swipe so Google places teach too (0051).
-  const tasteTypes = useRef<ReadonlyMap<string, string>>(new Map());
+  // Each Google card's live survey type and its proof, sent with its swipe so it teaches (0051).
+  const tastes = useRef<ReadonlyMap<string, Candidate>>(new Map());
   const likedTypes = useProfile().preferences.types;
   const reviewing = useRef(review === '1');
   // 0 → 1 as the top card is dragged away: the card behind grows and brightens (Tinder-style).
@@ -87,9 +87,7 @@ export default function SwipeScreen() {
         const ids = pick.candidates.map((c) => c.placeId);
         setAnswers(saved);
         setIndex(reviewing.current ? 0 : firstUnansweredIndex(ids, new Set(saved.keys())));
-        tasteTypes.current = new Map(
-          pick.candidates.flatMap((c) => (c.tasteType ? [[c.placeId, c.tasteType] as const] : [])),
-        );
+        tastes.current = new Map(pick.candidates.map((c) => [c.placeId, c] as const));
         setLoad({ status: 'ready', pick });
       },
       (e: unknown) => active && setLoad({ status: 'error', message: messageOf(e) }),
@@ -114,7 +112,7 @@ export default function SwipeScreen() {
         });
       setAnswers((prev) => new Map(prev).set(placeId, { value, status: 'saving' }));
       try {
-        await api.submitSwipe(pickId, placeId, value, tasteTypes.current.get(placeId));
+        await api.submitSwipe(pickId, placeId, value, tastes.current.get(placeId));
         settle({ value, status: 'saved' });
       } catch (e) {
         // The host refreshed the pool under us: my deck is stale, so load the new one.

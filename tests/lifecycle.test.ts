@@ -330,6 +330,28 @@ describe('getPick', () => {
         'sushi_restaurant',
       );
     });
+    test("each Google card's live type comes with a proof for this viewer only", async () => {
+      const custom = { placeId: 'c', snapshot: candidate('c') };
+      const store = {
+        ...fixture(pick({ state: 'swiping', candidates: [google, custom] })),
+        signTaste: jest.fn(async (message: string) => `signed:${message}`),
+      };
+      const shown = jest.fn(async () => [
+        { placeId: 'g', name: 'Live', provider: 'google', tasteType: 'sushi_restaurant' },
+        candidate('c'),
+      ]);
+      const result = await getPick(store, 'pick', 'guest', undefined, shown);
+      const byId = new Map(
+        (result.candidates as { placeId: string; tasteProof?: string }[]).map((c) => [
+          c.placeId,
+          c,
+        ]),
+      );
+      expect(byId.get('g')!.tasteProof).toBe(
+        'signed:' + JSON.stringify(['wtw-taste-v1', 'guest', 'pick', 'g', 'sushi_restaurant']),
+      );
+      expect(byId.get('c')).not.toHaveProperty('tasteProof');
+    });
     test('not before the Pick is decided, and a failure never breaks the read', async () => {
       const voting = {
         ...fixture(pick({ state: 'final_vote', candidates: [google], winnerPlaceId: null })),

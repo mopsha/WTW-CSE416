@@ -52,6 +52,7 @@ export function candidateFromSnapshot(placeId: string, snapshot: unknown): Candi
     openNow: typeof s.openNow === 'boolean' ? s.openNow : null,
     closesAt: str(s.closesAt),
     ...(str(s.tasteType) ? { tasteType: str(s.tasteType)! } : {}),
+    ...(str(s.tasteProof) ? { tasteProof: str(s.tasteProof)! } : {}),
   };
 }
 

@@ -78,16 +78,23 @@ live result (`pickPlaces.ts`). Live deck ordering still uses those types in memo
 - Only typed candidates teach; custom options and untyped places don't.
 - **Google places** (0051, `_shared/api/tasteSignals.ts`): their types are never stored with the
   place, so the triggers can't see them. Instead the API records the user's signal with the type
-  it has live (agreed with Josh). Only the per-user "leaned toward <type>" signal is stored, the
-  same as for every other place:
-  - Swipes and votes: the app sends the card's live `tasteType`; the API accepts only survey
-    types, and `taste_record_google_signal` checks the user is in the Pick, the place is a
-    Google candidate and the swipe or ballot exists. The weight comes from the saved swipe, so
-    a client can only label its own real action.
+  it has live (agreed with Josh). Only the per-user "leaned toward <type>" signal is stored,
+  marked `google`, and it's ignored after 30 days and deleted by the sweep (`purge_google_taste`),
+  the same window as Google coordinates.
+  - Swipes and votes: when the server shows a Google card (`getPick`) it adds `tasteProof`, an
+    HMAC over user, Pick, place and type with a key derived from a server-only secret. The app
+    sends both back; the API records only a type it signed for exactly that card and user.
   - Winners: recorded for the viewer when they next open the completed Pick, from the server's
-    own live read (no extra Google calls). Dated to `decided_at`, so old Picks add a faded
-    signal, and never recorded if the user reset after the decision (`private.taste_resets`).
-  - Older apps send no type; their Google swipes just don't teach.
+    own live read (no proof needed, no extra Google calls), dated to `decided_at`.
+  - `taste_record_google_signal` checks the user is in the Pick, the place is a Google
+    candidate and the swipe, ballot or winner exists, and takes the weight and time from it.
+  - Older apps send no type or proof; their Google swipes just don't teach.
+- **Ordering and resets** (0051, all paths including the triggers): one per-user lock
+  (`wtw-taste:<user>`) orders every learning write and every reset, and a recorder reads the
+  swipe or ballot only after taking it, so the latest decision always wins. `taste_epochs.since`
+  is when learning restarts: any action at or before it never teaches, however late its
+  request arrives. Users who existed before 0051 start at the migration, since earlier resets
+  left no record. Races are covered by `tests/db/google_taste_concurrency.py` (in CI).
 - The learning runs in triggers, so every write path is covered and nothing else changes. It's
   best effort: a lock wait or other failure skips the signal instead of failing the swipe,
   vote, start or refresh.
@@ -96,7 +103,7 @@ live result (`pickPlaces.ts`). Live deck ordering still uses those types in memo
 
 - "What WTW noticed" lists learned likes and passes that my answers don't already cover.
   `GET /me/learned-taste` returns the decayed scores and drops anything below 0.5.
-- "Reset what WTW learned" (`DELETE /me/learned-taste`) clears the learning only and records when (`taste_reset`), so Picks decided before it can't teach again.
+- "Reset what WTW learned" (`DELETE /me/learned-taste`) clears the learning only and moves the user's epoch (`taste_reset`), so nothing from before it can teach again.
 - "Swipe again" reopens the practice deck, then returns to where it was opened from.
 
 **Not yet**: "people like you also liked…" (collaborative filtering). That needs real usage

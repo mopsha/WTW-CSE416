@@ -5,6 +5,7 @@ import type { Candidate } from '../_shared/places/types.ts';
 import { ApiError, type ErrorStatus } from '../_shared/api/errors.ts';
 import type { LifecycleStore, LifecyclePick } from '../_shared/api/lifecycle.ts';
 import { memberTastesFrom } from '../_shared/domain/groupTaste.ts';
+import { createTasteSigner } from '../_shared/api/tasteSignals.ts';
 import { createServiceClient } from './serviceClient.ts';
 
 function mapRpcError(error: { code: string; message: string }): never {
@@ -35,6 +36,7 @@ function mapRpcError(error: { code: string; message: string }): never {
 
 /** Service-role adapter for the transactional RPCs in 0003_pick_lifecycle.sql. */
 export function createLifecycleStore(): LifecycleStore {
+  let signer: ((message: string) => Promise<string>) | undefined;
   async function rpc(name: string, args: Record<string, unknown>) {
     const { data, error } = await createServiceClient().rpc(name, args);
     if (error) mapRpcError(error);
@@ -106,6 +108,16 @@ export function createLifecycleStore(): LifecycleStore {
       // Explicit answers still count if only the learned scores can't be read.
       const rows = learned.error ? [] : (learned.data ?? []);
       return memberTastesFrom(userIds, profiles.data ?? [], rows, new Date());
+    },
+    // Proofs for live Google types (tasteSignals.ts), keyed from a server-only secret read on
+    // first use. Without one this throws, no proofs are issued, and Google swipes don't teach.
+    async signTaste(message) {
+      if (!signer) {
+        const secret = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+        if (!secret) throw new Error('No signing secret');
+        signer = createTasteSigner(secret);
+      }
+      return signer(message);
     },
     async recordGoogleTaste(userId, pickId, placeId, kind, type) {
       await rpc('taste_record_google_signal', {

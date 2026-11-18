@@ -34,6 +34,13 @@ import type {
 } from './types';
 
 /** Error codes the app itself produces; server codes pass through as-is. */
+
+/** A Google card's live taste type with its proof, only when both are present. */
+function tasteBody(taste?: { tasteType?: string; tasteProof?: string }) {
+  return taste?.tasteType && taste.tasteProof
+    ? { tasteType: taste.tasteType, tasteProof: taste.tasteProof }
+    : {};
+}
 export type ClientErrorCode = 'network_error' | 'not_signed_in' | `http_${number}`;
 
 export class ApiError extends Error {
@@ -594,10 +601,15 @@ export function createApiClient({
     /** 10 a day; 404 for anything I can't see. */
     report: (input: import('@shared/api/safety.ts').ReportInput) =>
       request<StatusResponse>('POST', '/reports', { body: input }),
-    /** `tasteType` (the card's live survey type) lets Google places teach my taste (0051). */
-    submitSwipe: (pickId: string, placeId: string, value: PreferenceValue, tasteType?: string) =>
+    /** The card's live taste type and its proof let Google places teach my taste (0051). */
+    submitSwipe: (
+      pickId: string,
+      placeId: string,
+      value: PreferenceValue,
+      taste?: { tasteType?: string; tasteProof?: string },
+    ) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/swipes`, {
-        body: { placeId, value, ...(tasteType ? { tasteType } : {}) },
+        body: { placeId, value, ...tasteBody(taste) },
       }),
     /** Host only: closes swiping and ranks. Others get 403 FORBIDDEN. */
     rankPick: (pickId: string) => request<RankResponse>('POST', `${pickPath(pickId)}/rank`),
@@ -653,9 +665,9 @@ export function createApiClient({
     /** Host only: close swiping now (rank -> clear winner or final vote). */
     closePick: (pickId: string) => request<CloseResponse>('POST', `${pickPath(pickId)}/close`),
     /** One changeable ballot among the finalists, while the Pick is in final_vote. */
-    vote: (pickId: string, placeId: string, tasteType?: string) =>
+    vote: (pickId: string, placeId: string, taste?: { tasteType?: string; tasteProof?: string }) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/vote`, {
-        body: { placeId, ...(tasteType ? { tasteType } : {}) },
+        body: { placeId, ...tasteBody(taste) },
       }),
     /** Host only: tally now, before everyone has voted. */
     closeVote: (pickId: string) =>

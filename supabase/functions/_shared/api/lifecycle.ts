@@ -15,7 +15,7 @@ import type { GroupIdea } from './groupIdeas.ts';
 // goes through canTransition.
 
 import { priorityCandidates } from '../domain/candidatePriority.ts';
-import { recordGoogleTaste, type TasteSignalStore } from './tasteSignals.ts';
+import { proveTaste, recordGoogleTaste, type TasteSignalStore } from './tasteSignals.ts';
 import {
   groupTasteScore,
   tasteOrder,
@@ -587,6 +587,16 @@ export async function getPick(
         'winner',
         (winner as { tasteType?: unknown }).tasteType,
       );
+    // Each Google card's live type comes with a proof for my later swipe or vote, so the app
+    // can't claim a type the place doesn't have (0051). Never stored.
+    await Promise.all(
+      pick.candidates.map(async ({ placeId }) => {
+        const s = byId.get(placeId) as { provider?: unknown; tasteType?: unknown };
+        if (s?.provider !== 'google' || typeof s.tasteType !== 'string') return;
+        const tasteProof = await proveTaste(store, userId, pickId, placeId, s.tasteType);
+        if (tasteProof) byId.set(placeId, { ...s, tasteProof });
+      }),
+    );
   }
   return {
     id: pick.id,
