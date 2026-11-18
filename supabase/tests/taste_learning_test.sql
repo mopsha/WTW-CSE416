@@ -214,13 +214,14 @@ select ok(abs((select score from learned_taste where user_id = '72222222-2222-42
   and place_type = 'zoo') - 20) < 0.01, 'the view does not cap before the final fade');
 
 -- Group scores from an older deck are ignored, and the sweep removes ones for finished Picks.
-update private.pick_candidate_taste set candidate_created_at = candidate_created_at - interval '1 hour'
+update private.pick_candidate_taste set candidate_generation = gen_random_uuid()
   where pick_id = (select id from sched) and place_id = 's-sushi';
 select is((select e ->> 'tasteScore' from jsonb_array_elements(
   pick_load_for_close((select id::text from sched)) -> 'candidates') e
   where e ->> 'placeId' = 's-sushi'), '0', 'a score for an older deck''s candidate is ignored');
-update private.pick_candidate_taste set candidate_created_at = now()
-  where pick_id = (select id from sched);
+update private.pick_candidate_taste t set candidate_generation=c.taste_generation
+  from public.pick_candidates c where t.pick_id=c.pick_id and t.place_id=c.place_id
+  and t.pick_id=(select id from sched);
 reset role;
 alter table public.picks disable trigger forget_candidate_taste;
 update picks set state = 'canceled' where id = (select id from sched);

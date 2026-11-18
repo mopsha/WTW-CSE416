@@ -52,7 +52,7 @@ category (if I picked exactly one), my budget and my distance. A Hang still star
 rest keep the normal varied interleave. Nothing is removed. With no taste data the deck is
 unchanged.
 
-**Tiebreak.** At start/refresh the API sends each candidate's `tasteScore` (only when non-zero).
+**Tiebreak.** At start/refresh the API sends a non-Google candidate's `tasteScore` (only when non-zero). Google classifications may reorder the current live deck but never produce persisted tiebreak scores.
 `0047_taste_learning.sql` stores it in `private.pick_candidate_taste`, which the app can't read:
 a group score could reveal someone's preferences in a two-person Pick. `pick_load_for_close`
 adds it back for the API, and ranking becomes score → **taste** → distance → placeId. The final
@@ -62,8 +62,7 @@ vote's tie chain already follows rank order.
 `category`. The swipe card shows "Matches your taste" when that type is one I said I like. It
 uses only my own answers. For Google places `tasteType` would be Google's place types, which
 the Places terms don't let us store, so it's never saved: the API adds it to each read from the
-live result (`pickPlaces.ts`). The deck order and tiebreak still use those types, but only as
-the group's score, computed when the deck is built.
+live result (`pickPlaces.ts`). Live deck ordering still uses those types in memory. Migration 0049 and the API both exclude Google-derived numeric scores from persistence, so Google places have no learned group-taste ranking tiebreak. Their normal swipe/vote score, distance and ID tie rules remain.
 
 **Learning** (`taste_signals`, read through the `learned_taste` view; database triggers in 0047):
 
@@ -93,3 +92,8 @@ the group's score, computed when the deck is built.
 
 **Not yet**: "people like you also liked…" (collaborative filtering). That needs real usage
 data first.
+
+
+## Forward hardening (0049)
+
+[The fix report](taste-learning-fixes.md) describes UUID candidate generations, bounded optional cache work, active-Pick orphan cleanup, legacy provider-data cleanup and rollout sequencing. Migration 0047 is preserved; 0048 remains reserved by the photo PR. Deploy 0048 before 0049 or review migration ordering explicitly. Preview environments that already applied an older 0047 use the forward migration rather than rerunning edited migration text.
