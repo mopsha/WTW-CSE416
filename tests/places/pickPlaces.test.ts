@@ -145,6 +145,20 @@ test('provider failures leave places unnamed and never fail the Pick', async () 
   expect(shown[0]!.name).toBeNull();
 });
 
+test("a place's taste type comes from this read only, for the badge", async () => {
+  const pickPlaces = createPickPlaces(
+    source([live('a', { types: ['sushi_restaurant', 'restaurant'] }), live('b')]),
+  );
+  const [a, b] = (await pickPlaces({
+    center,
+    radiusM: 1000,
+    candidates: [stored('a'), stored('b')],
+    photoIds: new Set(),
+  })) as { tasteType?: string }[];
+  expect(a!.tasteType).toBe('sushi_restaurant');
+  expect(b).not.toHaveProperty('tasteType');
+});
+
 test('other providers are returned as stored, without calling Google', async () => {
   const s = source();
   const custom = { placeId: 'custom:1', snapshot: { name: 'Mine', provider: 'custom' } };

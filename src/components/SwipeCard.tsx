@@ -1,5 +1,6 @@
 import { useEffect, useImperativeHandle, type Ref } from 'react';
-import { StyleSheet, Text, useWindowDimensions } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
@@ -38,6 +39,8 @@ interface Props {
   drag?: SharedValue<number>;
   /** Opens the details sheet (Tinder-style "more info"). */
   onInfo?: () => void;
+  /** Shows "Matches your taste": the place's type is one I said I like. */
+  matchesTaste?: boolean;
   ref?: Ref<SwipeCardHandle>;
 }
 
@@ -46,7 +49,7 @@ interface Props {
  * screen-reader users get the three answers as accessibility actions on the card.
  * Mount with `key={place.placeId}` so every card starts centered.
  */
-export function SwipeCard({ place, onAnswer, drag, onInfo, ref }: Props) {
+export function SwipeCard({ place, onAnswer, drag, onInfo, matchesTaste, ref }: Props) {
   const { width, height } = useWindowDimensions();
   const tx = useSharedValue(0);
   const ty = useSharedValue(0);
@@ -179,7 +182,7 @@ export function SwipeCard({ place, onAnswer, drag, onInfo, ref }: Props) {
       <Animated.View
         style={[styles.wrap, cardStyle]}
         accessible
-        accessibilityLabel={describePlace(place)}
+        accessibilityLabel={`${describePlace(place)}${matchesTaste ? ', matches your taste' : ''}`}
         accessibilityHint="Swipe right for Yes, left for No, up for Maybe. Or use the buttons below."
         accessibilityActions={[
           { name: 'yes', label: 'Yes' },
@@ -191,7 +194,18 @@ export function SwipeCard({ place, onAnswer, drag, onInfo, ref }: Props) {
           if (v !== undefined) onAnswer(v as PreferenceValue);
         }}
       >
-        <PlaceCard place={place} onInfo={onInfo} />
+        <PlaceCard
+          place={place}
+          onInfo={onInfo}
+          badge={
+            matchesTaste ? (
+              <View style={styles.match} pointerEvents="none">
+                <Ionicons name="sparkles" size={14} color={colors.text} />
+                <Text style={styles.matchText}>Matches your taste</Text>
+              </View>
+            ) : undefined
+          }
+        />
         <Animated.View style={[styles.stamp, styles.stampYes, yesStyle]} pointerEvents="none">
           <Text style={[styles.stampText, { color: colors.yes }]}>YES</Text>
         </Animated.View>
@@ -228,4 +242,16 @@ const styles = StyleSheet.create({
   stampNo: { right: 26, borderColor: colors.no },
   stampMaybe: { alignSelf: 'center', top: 120, borderColor: colors.maybe },
   stampText: { fontFamily: fonts.black, fontSize: 38, letterSpacing: 3 },
+  // In the card's info block above the name, clear of Google's photo credits at the top.
+  match: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: colors.primary,
+  },
+  matchText: { fontFamily: fonts.bold, fontSize: 12, color: colors.text },
 });

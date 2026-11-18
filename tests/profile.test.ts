@@ -1,8 +1,10 @@
 import { errorResponse } from '@shared/api/errors.ts';
 import {
   DISPLAY_NAME_MAX,
+  getLearnedTaste,
   getMe,
   parseProfileUpdate,
+  resetLearnedTaste,
   updateMe,
   updatePreferences,
   validateDisplayName,
@@ -133,4 +135,32 @@ describe('updatePreferences', () => {
       expect(setPreferences).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('learned taste', () => {
+  const now = new Date('2026-12-01T00:00:00Z');
+  test('returns decayed survey types, strongest first, without faint or unknown ones', async () => {
+    const store = storeWith({
+      learnedTaste: jest.fn(async () => [
+        { place_type: 'park', score: -3, updated_at: '2026-12-01T00:00:00Z' },
+        { place_type: 'thai_restaurant', score: 4, updated_at: '2026-11-01T00:00:00Z' },
+        { place_type: 'cafe', score: 0.4, updated_at: '2026-12-01T00:00:00Z' },
+        { place_type: 'casino', score: 9, updated_at: '2026-12-01T00:00:00Z' },
+      ]),
+      resetLearnedTaste: jest.fn(async () => {}),
+    });
+    const { learned } = await getLearnedTaste(store, 'me', now);
+    expect(learned.map((l) => l.type)).toEqual(['thai_restaurant', 'park']);
+    expect(learned[0]!.score).toBeCloseTo(2);
+    expect(store.learnedTaste).toHaveBeenCalledWith('me');
+  });
+  test('reset clears only my learning', async () => {
+    const reset = jest.fn(async () => {});
+    const store = storeWith({ learnedTaste: jest.fn(async () => []), resetLearnedTaste: reset });
+    await expect(resetLearnedTaste(store, 'me')).resolves.toEqual({ status: 'ok' });
+    expect(reset).toHaveBeenCalledWith('me');
+  });
+  test('a store without learning reports 503', async () => {
+    await expect(getLearnedTaste(storeWith({}), 'me')).rejects.toMatchObject({ status: 503 });
+  });
 });

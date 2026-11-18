@@ -63,7 +63,14 @@ import {
   unregisterPushToken,
   type NotifyStore,
 } from '../_shared/api/notify.ts';
-import { getMe, updateMe, updatePreferences, type ProfileStore } from '../_shared/api/profile.ts';
+import {
+  getLearnedTaste,
+  getMe,
+  resetLearnedTaste,
+  updateMe,
+  updatePreferences,
+  type ProfileStore,
+} from '../_shared/api/profile.ts';
 import {
   addGroupMembers,
   createGroup,
@@ -750,6 +757,18 @@ export function createApp(
     const body = await readJsonBody(c);
     if (!deps.profileStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Profiles are not available');
     return c.json(await updatePreferences(deps.profileStore, user.id, body));
+  });
+  // What WTW learned from my swipes, votes and winners (0047); private to me.
+  app.get('/me/learned-taste', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.profileStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Profiles are not available');
+    return c.json(await getLearnedTaste(deps.profileStore, user.id));
+  });
+  app.delete('/me/learned-taste', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.profileStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Profiles are not available');
+    return c.json(await resetLearnedTaste(deps.profileStore, user.id));
   });
   // Groups (0012_groups.sql). Authenticate first, then check the store, like /picks/join.
   const groups = async (c: { req: { raw: Request } }) => {

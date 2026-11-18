@@ -2,6 +2,7 @@
 // days, but not names, addresses or photos. So a Pick stores only those (candidateSnapshot) and
 // every read fetches the rest. See docs/google-picks.md.
 import type { LatLng } from '../domain/geo.ts';
+import { tasteTypeOf } from '../domain/groupTaste.ts';
 import { withPhotos, type ResolvePhoto } from '../api/discover.ts';
 import type { Candidate, Category } from './types.ts';
 
@@ -69,6 +70,8 @@ export function createPickPlaces(source: PickPlaceSource): PickPlaces {
       const place = isGoogle(snapshot) ? found.get(placeId) : undefined;
       if (!place) return snapshot;
       const hasPhoto = photoIds.has(placeId) && !!place.photoUrl;
+      // From this read only, never stored: the "Matches your taste" badge.
+      const tasteType = tasteTypeOf(place.types);
       return {
         ...snapshot,
         name: place.name,
@@ -79,6 +82,7 @@ export function createPickPlaces(source: PickPlaceSource): PickPlaces {
         photoGoogleMapsUri: hasPhoto ? place.photos?.[0]?.googleMapsUri : undefined,
         googleMapsUri: place.googleMapsUri,
         attributions: place.attributions ?? [],
+        ...(tasteType ? { tasteType } : {}),
       };
     });
   };

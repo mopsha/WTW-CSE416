@@ -27,6 +27,7 @@ import { colors, flame, fonts } from '@/components/theme';
 import { useCountdown } from '@/hooks/useCountdown';
 import { usePickLive } from '@/hooks/usePickLive';
 import { usePickRoute } from '@/hooks/usePickRoute';
+import { useProfile } from '@/hooks/useProfile';
 import { useProgressToasts } from '@/hooks/useProgressToasts';
 import { api, ApiError } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
@@ -56,6 +57,7 @@ export default function SwipeScreen() {
   const [attempt, setAttempt] = useState(0);
   const [details, setDetails] = useState<Candidate | null>(null);
   const card = useRef<SwipeCardHandle>(null);
+  const likedTypes = useProfile().preferences.types;
   const reviewing = useRef(review === '1');
   // 0 → 1 as the top card is dragged away: the card behind grows and brightens (Tinder-style).
   const drag = useSharedValue(0);
@@ -288,6 +290,7 @@ export default function SwipeScreen() {
                 onAnswer={answer}
                 drag={drag}
                 onInfo={() => setDetails(current)}
+                matchesTaste={!!current.tasteType && likedTypes.includes(current.tasteType)}
               />
             </View>
             <ActionBar

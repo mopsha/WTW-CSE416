@@ -519,6 +519,14 @@ export function createApiClient({
       request<{ preferences: Preferences; onboarded: true }>('POST', '/me/preferences', {
         body: { preferences },
       }),
+    /** What WTW learned from my swipes, votes and winners; strongest first. */
+    getLearnedTaste: () =>
+      request<{ learned: import('@shared/api/profile.ts').LearnedTaste[] }>(
+        'GET',
+        '/me/learned-taste',
+      ),
+    /** "Reset what WTW learned": clears learning only, never my saved answers. */
+    resetLearnedTaste: () => request<StatusResponse>('DELETE', '/me/learned-taste'),
     /** Alan's POST /push-tokens: this device's Expo push token, so Pick events reach it. */
     registerPushToken: (token: string, platform: 'ios' | 'android') =>
       request<StatusResponse>('POST', '/push-tokens', { body: { token, platform } }),

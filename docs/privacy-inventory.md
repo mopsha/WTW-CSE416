@@ -22,6 +22,8 @@ tracking. Nothing is sent to analytics; there is no analytics SDK.
 | Being in a Pick | `pick_participants` (joined, finished time) | Who's in, live progress | Participants of that Pick | With the Pick | Yes |
 | Your swipes | `preferences` (Yes/Maybe/No per place) | Ranking | **Only you** (RLS); the server uses them to score; reasons use counts only | With the Pick | Yes |
 | Your final vote | `final_votes` | The tie-break vote | **Only you** | With the Pick | Yes (via `pick_participants`) |
+| What WTW learned about your taste | `taste_signals`, read as `learned_taste` (a score per place type, e.g. Thai, Bowling), one row per swipe, final vote or Pick you won; rows hold a hash of the source, not the place | Ordering Pick decks and breaking ties toward what the group likes | **Only you**, through `GET /me/learned-taste`; no client grant. Others never see it; it only shapes the group's deck order | Each signal fades by half every 30 days; reset any time in Preferences ("Reset what WTW learned") | Yes |
+| Group taste per candidate | `private.pick_candidate_taste` (one non-Google score per current candidate generation) | Ranking tiebreak only | Server only (private schema), never sent to the app, because in a small group it could reveal someone's preferences | Until its generation is replaced or the Pick ends; locked rows are retried by the sweep | Deferred sweep removes rows after Pick deletion |
 | Ranking | `ranking_results` (rank, finalist, score) | Showing results | Participants see rank + finalist; scores are never sent to the app | With the Pick | With the Pick |
 | Join codes | `pick_join_codes` | Joining by code/QR | Participants | 7 days, then useless | With the Pick |
 | Notifications | `notifications` (type, Pick, small payload such as a cancel reason) | In-app inbox | **Only you** | Indefinitely (no cleanup job yet) | Yes |
@@ -254,3 +256,7 @@ numbering still needs confirmation. No shared database was changed.
 | Suggested outing time, proposer, status and creation time | `pick_time_suggestions` | Participant proposals and host review after a scheduled Pick completes | Currently authorized participants; proposer must remain authorized, with blocking enforced. API returns display name, not private profile fields | With the Pick; withdrawal marks a row withdrawn rather than erasing history | Yes, proposer rows cascade from profiles; deleting a Pick cascades its suggestions |
 
 Schedule revisions and group-provenance markers on `picks` support stale-write prevention and authorization. Suggestion notifications contain event/suggestion IDs and a reconfirmation marker, without proposed times or names. Existing notification retention and recipient isolation apply. See [implementation and rollout](post-result-time-suggestions.md).
+
+## Taste privacy hardening (0049)
+
+Google classifications and numeric scores derived from them are excluded from persisted taste data by both API generation and database enforcement. Live badge/type enrichment remains request-only. The migration clears legacy candidate-score caches and reconstructs existing legacy learning signals only from current non-Google source actions. Unverifiable signals are conservatively reset; explicit preferences, canonical swipes, votes and results remain unchanged. See [migration details and tradeoffs](taste-learning-fixes.md).
