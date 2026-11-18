@@ -1,7 +1,8 @@
 import React from 'react';
-import { AppState, Text, Switch } from 'react-native';
+import { AppState, FlatList, Text, Switch } from 'react-native';
 import DiscoverScreen from '../../app/(tabs)/discover';
 import { api } from '@/lib/api';
+import { clearPhotoCache } from '@/lib/photoCache';
 import { CAMPUS } from '@/lib/places';
 import type { Candidate } from '@shared/places/types.ts';
 
@@ -14,7 +15,13 @@ jest.mock('expo-router', () => ({
 }));
 jest.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ session: { user: { id: mockUser } } }) }));
 jest.mock('@/lib/api', () => ({
-  api: { discover: jest.fn(), getSaved: jest.fn(), savePlace: jest.fn(), removeSaved: jest.fn() },
+  api: {
+    discover: jest.fn(),
+    discoverPhoto: jest.fn(),
+    getSaved: jest.fn(),
+    savePlace: jest.fn(),
+    removeSaved: jest.fn(),
+  },
 }));
 jest.mock('@/lib/haptics', () => ({ haptic: { tap: jest.fn() } }));
 jest.mock('@/components/PlaceCard', () => ({
@@ -76,6 +83,7 @@ const places: Candidate[] = [
 ];
 beforeEach(() => {
   jest.resetAllMocks();
+  clearPhotoCache();
   AppState.currentState = 'active';
   jest.spyOn(AppState, 'addEventListener').mockReturnValue({ remove: jest.fn() });
   mockUser = 'me';
@@ -186,6 +194,103 @@ test('save/unsave, supplied imagery and photo-provider credits remain available'
   await act(async () => press(tree, 'Campus Cafe'));
   expect(textOf(tree)).toContain('Ana Photographer');
   expect(textOf(tree)).toContain('Google Maps');
+  await act(async () => tree.unmount());
+});
+test('lazy covers load once when a card is viewed, then add the photographer credit', async () => {
+  const lazy: Candidate = {
+    ...places[1]!,
+    photos: [{ name: 'places/m/photos/1', authorAttributions: [{ displayName: 'Bo Lens' }] }],
+  };
+  jest.mocked(api.discover).mockResolvedValue({ places: [lazy], fallback: false, notice: null });
+  let resolve!: (value: { photoUrl: string }) => void;
+  jest.mocked(api.discoverPhoto).mockReturnValue(new Promise((r) => (resolve = r)));
+  const tree = await mount();
+  // Pending: a placeholder, not the plain icon cover, and nothing fetched until viewed.
+  expect(tree.root.findByType('test-photo').props.uri).toBeNull();
+  expect(api.discoverPhoto).not.toHaveBeenCalled();
+  const list = tree.root.findByType(FlatList);
+  const item = list.props.data[0];
+  await act(async () => {
+    for (let i = 0; i < 2; i++)
+      list.props.onViewableItemsChanged({ viewableItems: [{ item, isViewable: true }] });
+  });
+  expect(api.discoverPhoto).toHaveBeenCalledTimes(1);
+  expect(api.discoverPhoto).toHaveBeenCalledWith('places/m/photos/1', 'me');
+  await act(async () => resolve({ photoUrl: 'https://example.test/museum.jpg' }));
+  expect(tree.root.findByType('test-photo').props.uri).toBe('https://example.test/museum.jpg');
+  await act(async () => press(tree, 'Local Museum'));
+  expect(textOf(tree)).toContain('Bo Lens');
+  expect(api.discoverPhoto).toHaveBeenCalledTimes(1);
+  await act(async () => tree.unmount());
+});
+test('a failed lazy cover falls back to the icon cover without retrying', async () => {
+  const lazy: Candidate = {
+    ...places[1]!,
+    photos: [{ name: 'places/m/photos/1', authorAttributions: [] }],
+  };
+  jest.mocked(api.discover).mockResolvedValue({ places: [lazy], fallback: false, notice: null });
+  jest.mocked(api.discoverPhoto).mockRejectedValue(new Error('rate limited'));
+  const tree = await mount();
+  await act(async () => press(tree, 'Local Museum'));
+  expect(tree.root.findAllByType('test-photo')).toHaveLength(0);
+  await act(async () => press(tree, 'Close'));
+  await act(async () => press(tree, 'Local Museum'));
+  expect(api.discoverPhoto).toHaveBeenCalledTimes(1);
+  await act(async () => tree.unmount());
+});
+test('a refreshed place with a new photo shows that photo, not the old one with the new credit', async () => {
+  const withPhoto = (name: string, by: string): Candidate => ({
+    ...places[1]!,
+    photos: [{ name, authorAttributions: [{ displayName: by }] }],
+  });
+  jest
+    .mocked(api.discover)
+    .mockResolvedValueOnce({
+      places: [withPhoto('places/m/photos/1', 'Bo Lens')],
+      fallback: false,
+      notice: null,
+    })
+    .mockResolvedValue({
+      places: [withPhoto('places/m/photos/2', 'Cy Shutter')],
+      fallback: false,
+      notice: null,
+    });
+  let finishNext!: (value: { photoUrl: string }) => void;
+  jest
+    .mocked(api.discoverPhoto)
+    .mockResolvedValueOnce({ photoUrl: 'https://example.test/places/m/photos/1' })
+    .mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishNext = resolve;
+      }),
+    );
+  const tree = await mount();
+  const view = async () => {
+    const list = tree.root.findByType(FlatList);
+    await act(async () =>
+      list.props.onViewableItemsChanged({
+        viewableItems: [{ item: list.props.data[0], isViewable: true }],
+      }),
+    );
+  };
+  await view();
+  expect(tree.root.findByType('test-photo').props.uri).toBe(
+    'https://example.test/places/m/photos/1',
+  );
+  // Another filter fetches the feed again, and the same place comes back with another photo.
+  await act(async () => press(tree, 'Activities'));
+  // The new photo hasn't loaded yet: a placeholder, never the old image.
+  expect(tree.root.findByType('test-photo').props.uri).toBeNull();
+  // Old-query visibility must not start work for the new filtered feed.
+  expect(api.discoverPhoto).toHaveBeenCalledTimes(1);
+  await view();
+  await act(async () => finishNext({ photoUrl: 'https://example.test/places/m/photos/2' }));
+  expect(tree.root.findByType('test-photo').props.uri).toBe(
+    'https://example.test/places/m/photos/2',
+  );
+  await act(async () => press(tree, 'Local Museum'));
+  expect(textOf(tree)).toContain('Cy Shutter');
+  expect(textOf(tree)).not.toContain('Bo Lens');
   await act(async () => tree.unmount());
 });
 test('failed feed keeps retry and the server notice is rendered without alteration', async () => {
@@ -460,4 +565,209 @@ test('sort, Open Now and Filters share a wrapping toolbar with full labels and a
   )[0]!;
   expect(open.props.accessibilityState.checked).toBe(true);
   await act(async () => tree.unmount());
+});
+
+async function viewFirstPhoto(tree: ReturnType<typeof create>) {
+  const list = tree.root.findByType(FlatList);
+  await act(async () =>
+    list.props.onViewableItemsChanged({
+      viewableItems: [{ item: list.props.data[0], isViewable: true }],
+    }),
+  );
+}
+function photoFeed(name: string) {
+  return {
+    places: [
+      {
+        ...places[1]!,
+        photos: [
+          {
+            name,
+            authorAttributions: [
+              { displayName: name, uri: 'https://maps.google.com/photographer' },
+            ],
+          },
+        ],
+      },
+    ],
+    fallback: false,
+    notice: null,
+  };
+}
+
+test('account B requests its own photo while A is pending; late A cannot change B', async () => {
+  jest.mocked(api.discover).mockResolvedValue(photoFeed('places/p/photos/1'));
+  let finishA!: (value: { photoUrl: string }) => void;
+  jest
+    .mocked(api.discoverPhoto)
+    .mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishA = resolve;
+      }),
+    )
+    .mockResolvedValue({ photoUrl: 'https://img/B' });
+  const tree = await mount();
+  await viewFirstPhoto(tree);
+  mockUser = 'B';
+  await act(async () => tree.update(<DiscoverScreen />));
+  await viewFirstPhoto(tree);
+  expect(api.discoverPhoto).toHaveBeenCalledTimes(2);
+  expect(api.discoverPhoto).toHaveBeenLastCalledWith('places/p/photos/1', 'B');
+  await act(async () => finishA({ photoUrl: 'https://img/old-A' }));
+  expect(tree.root.findByType('test-photo').props.uri).toBe('https://img/B');
+  await act(async () => tree.unmount());
+});
+
+test('mounted visible feed retries failures using fresh metadata after five minutes', async () => {
+  jest.useFakeTimers();
+  let tree: ReturnType<typeof create> | undefined;
+  try {
+    jest
+      .mocked(api.discover)
+      .mockResolvedValueOnce(photoFeed('places/p/photos/old'))
+      .mockResolvedValue(photoFeed('places/p/photos/new'));
+    jest
+      .mocked(api.discoverPhoto)
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({ photoUrl: 'https://img/new' });
+    tree = await mount();
+    await viewFirstPhoto(tree);
+    expect(api.discoverPhoto).toHaveBeenCalledTimes(1);
+    await act(async () => jest.advanceTimersByTime(6 * 60_000));
+    expect(api.discover).toHaveBeenCalledTimes(2);
+    expect(api.discoverPhoto).toHaveBeenCalledTimes(2);
+    expect(api.discoverPhoto).toHaveBeenLastCalledWith('places/p/photos/new', 'me');
+    expect(tree.root.findByType('test-photo').props.uri).toBe('https://img/new');
+  } finally {
+    if (tree) await act(async () => tree!.unmount());
+    clearPhotoCache();
+    jest.useRealTimers();
+  }
+});
+
+test('mounted visible feed expires old URLs and shows a placeholder while fresh metadata loads', async () => {
+  jest.useFakeTimers();
+  let tree: ReturnType<typeof create> | undefined;
+  try {
+    let finish!: (value: ReturnType<typeof photoFeed>) => void;
+    jest
+      .mocked(api.discover)
+      .mockResolvedValueOnce(photoFeed('places/p/photos/old'))
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+      );
+    jest
+      .mocked(api.discoverPhoto)
+      .mockImplementation(async (name) => ({ photoUrl: `https://img/${name}` }));
+    tree = await mount();
+    await viewFirstPhoto(tree);
+    await act(async () => jest.advanceTimersByTime(51 * 60_000));
+    expect(tree.root.findByType('test-photo').props.uri).toBeNull();
+    expect(api.discoverPhoto).toHaveBeenCalledTimes(1);
+    await act(async () => finish(photoFeed('places/p/photos/new')));
+    expect(tree.root.findByType('test-photo').props.uri).toBe('https://img/places/p/photos/new');
+  } finally {
+    if (tree) await act(async () => tree!.unmount());
+    clearPhotoCache();
+    jest.useRealTimers();
+  }
+});
+
+test('offscreen and background expiry does not request photos; foreground visible return revalidates', async () => {
+  jest.useFakeTimers();
+  let tree: ReturnType<typeof create> | undefined;
+  try {
+    jest.mocked(api.discover).mockResolvedValue(photoFeed('places/p/photos/current'));
+    jest.mocked(api.discoverPhoto).mockResolvedValue({ photoUrl: 'https://img/current' });
+    tree = await mount();
+    await viewFirstPhoto(tree);
+    const listeners = jest
+      .mocked(AppState.addEventListener)
+      .mock.calls.filter(([event]) => event === 'change')
+      .map(([, listener]) => listener);
+    await act(async () => listeners.forEach((listener) => listener('background')));
+    await act(async () => jest.advanceTimersByTime(51 * 60_000));
+    expect(api.discoverPhoto).toHaveBeenCalledTimes(1);
+    await act(async () => listeners.forEach((listener) => listener('active')));
+    expect(api.discoverPhoto).toHaveBeenCalledTimes(2);
+    const list = tree.root.findByType(FlatList);
+    await act(async () => list.props.onViewableItemsChanged({ viewableItems: [] }));
+    await act(async () => jest.advanceTimersByTime(51 * 60_000));
+    expect(api.discoverPhoto).toHaveBeenCalledTimes(2);
+  } finally {
+    if (tree) await act(async () => tree!.unmount());
+    clearPhotoCache();
+    jest.useRealTimers();
+  }
+});
+
+test('foreground clock revalidation hides expired URLs even when background timers never ran', async () => {
+  jest.useFakeTimers();
+  let tree: ReturnType<typeof create> | undefined;
+  try {
+    let finish!: (value: ReturnType<typeof photoFeed>) => void;
+    jest
+      .mocked(api.discover)
+      .mockResolvedValueOnce(photoFeed('places/p/photos/old'))
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+      );
+    jest
+      .mocked(api.discoverPhoto)
+      .mockImplementation(async (name) => ({ photoUrl: `https://img/${name}` }));
+    tree = await mount();
+    await viewFirstPhoto(tree);
+    const listeners = jest
+      .mocked(AppState.addEventListener)
+      .mock.calls.filter(([event]) => event === 'change')
+      .map(([, listener]) => listener);
+    await act(async () => listeners.forEach((listener) => listener('background')));
+    jest.setSystemTime(Date.now() + 51 * 60_000); // intentionally do not run timers
+    await act(async () => listeners.forEach((listener) => listener('active')));
+    expect(tree.root.findByType('test-photo').props.uri).toBeNull();
+    expect(api.discoverPhoto).toHaveBeenCalledTimes(1);
+    await act(async () => finish(photoFeed('places/p/photos/new')));
+    expect(tree.root.findByType('test-photo').props.uri).toBe('https://img/places/p/photos/new');
+  } finally {
+    if (tree) await act(async () => tree!.unmount());
+    clearPhotoCache();
+    jest.useRealTimers();
+  }
+});
+
+test('failed metadata refresh backs off while rapid visibility changes do not amplify requests', async () => {
+  jest.useFakeTimers();
+  let tree: ReturnType<typeof create> | undefined;
+  try {
+    jest
+      .mocked(api.discover)
+      .mockResolvedValueOnce(photoFeed('places/p/photos/old'))
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(photoFeed('places/p/photos/new'));
+    jest
+      .mocked(api.discoverPhoto)
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({ photoUrl: 'https://img/new' });
+    tree = await mount();
+    await viewFirstPhoto(tree);
+    await act(async () => jest.advanceTimersByTime(6 * 60_000));
+    expect(api.discover).toHaveBeenCalledTimes(2);
+    for (let i = 0; i < 3; i++) {
+      const list = tree.root.findByType(FlatList);
+      await act(async () => list.props.onViewableItemsChanged({ viewableItems: [] }));
+      await viewFirstPhoto(tree);
+    }
+    expect(api.discover).toHaveBeenCalledTimes(2);
+    await act(async () => jest.advanceTimersByTime(5 * 60_000));
+    expect(api.discover).toHaveBeenCalledTimes(3);
+    expect(tree.root.findByType('test-photo').props.uri).toBe('https://img/new');
+  } finally {
+    if (tree) await act(async () => tree!.unmount());
+    clearPhotoCache();
+    jest.useRealTimers();
+  }
 });

@@ -56,3 +56,21 @@ test('ratings format to one decimal, and unrated places show none', () => {
   expect(formatRating(null)).toBeNull();
   expect(formatRating(0)).toBeNull();
 });
+
+test('a Google place without a cover keeps its first photo name and photographer for later', () => {
+  const photos = [
+    {
+      name: 'places/g/photos/1',
+      authorAttributions: [{ displayName: 'Ana', uri: 'https://maps.google.com/ana' }],
+    },
+    { name: 'places/g/photos/2', authorAttributions: [{ displayName: 'Ben' }] },
+  ];
+  expect(discoverPlace(google({ photos }), CAMPUS)).toMatchObject({
+    photoName: 'places/g/photos/1',
+    photoCredits: [{ provider: 'Ana', uri: 'https://maps.google.com/ana' }],
+  });
+  const resolved = discoverPlace(google({ photos, photoUrl: 'https://img.example/1' }), CAMPUS);
+  expect(resolved.photoName).toBeUndefined();
+  const mock = discoverPlace(google({ photos, provider: 'mock' }), CAMPUS);
+  expect(mock.photoName).toBeUndefined();
+});

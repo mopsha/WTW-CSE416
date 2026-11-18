@@ -21,6 +21,9 @@ export interface DiscoverPlace extends Candidate {
   lng: number;
   /** Miles from the SBU Academic Mall, for sorting and the card. */
   miles: number;
+  /** Google photo to load when the card is on screen, with the photographers to credit. */
+  photoName?: string;
+  photoCredits?: { provider: string; uri?: string }[];
 }
 
 // [id, name, kind, emoji, address, priceLevel 1-4 | null, lat, lng]
@@ -237,10 +240,10 @@ export const DISCOVER_PLACES: readonly DiscoverPlace[] = [...food, ...activities
 );
 
 /** Filter by category and a search over name, kind and address; keeps nearest-first order. */
-export function filterDiscover(
-  places: readonly DiscoverPlace[],
+export function filterDiscover<P extends DiscoverPlace>(
+  places: readonly P[],
   { category = 'all', query = '' }: { category?: DiscoverFilter; query?: string } = {},
-): DiscoverPlace[] {
+): P[] {
   const q = query.trim().toLowerCase();
   return places.filter(
     (p) =>

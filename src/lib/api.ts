@@ -464,8 +464,13 @@ export function createApiClient({
         places: import('@shared/places/types.ts').Candidate[];
         fallback: boolean;
         notice: string | null;
-      }>('GET', `/discover?${query}`);
+      }>('GET', `/discover?${query}&photos=lazy`);
     },
+    /** One Discover cover, fetched only once its card is on screen. */
+    discoverPhoto: (name: string, viewer?: string) =>
+      request<{ photoUrl: string }>('GET', `/discover/photo?${new URLSearchParams({ name })}`, {
+        viewer,
+      }),
     getSaved: (viewer?: string) =>
       request<{ places: { placeId: string; createdAt: string }[] }>('GET', '/saved', { viewer }),
     savePlace: (placeId: string, viewer?: string) =>
