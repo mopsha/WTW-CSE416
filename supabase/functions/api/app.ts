@@ -34,7 +34,8 @@ import type { DiscoverPreferences } from '../_shared/domain/discoverScore.ts';
 import { parseCreatePick } from '../_shared/api/lifecycle.ts';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { ApiError, errorResponse } from '../_shared/api/errors.ts';
+import { ApiError, errorResponse, parseSwipe } from '../_shared/api/errors.ts';
+import { bodyTasteType, recordGoogleTaste } from '../_shared/api/tasteSignals.ts';
 import { swipe, type HeartbeatStore } from '../_shared/api/heartbeat.ts';
 import { getProgress, type ProgressStore } from '../_shared/api/progress.ts';
 import {
@@ -45,7 +46,7 @@ import {
   type LifecycleStore,
 } from '../_shared/api/lifecycle.ts';
 import { closePick, type ClosingStore } from '../_shared/api/closing.ts';
-import { castVote, closeVote, type VotingStore } from '../_shared/api/voting.ts';
+import { castVote, closeVote, parseVote, type VotingStore } from '../_shared/api/voting.ts';
 import type { PoolBuilder } from '../_shared/places/pool.ts';
 import type { PickPlaces } from '../_shared/places/pickPlaces.ts';
 import { joinPick, type JoinStore } from '../_shared/api/join.ts';
@@ -321,6 +322,15 @@ export function createApp(
     const body = await readJsonBody(c);
     const pickId = c.req.param('id');
     const result = await swipe(deps.store, pickId, user.id, body);
+    // Google places teach with the type the app has live (0051); never fails the swipe.
+    await recordGoogleTaste(
+      deps.lifecycleStore,
+      user.id,
+      pickId,
+      parseSwipe(body).placeId,
+      'swipe',
+      bodyTasteType(body),
+    );
     // The swipe is already saved, so a failed auto-close must not turn it into
     // an error; the next swipe, the host, or the deadline sweep closes it instead.
     try {
@@ -538,7 +548,16 @@ export function createApp(
   app.post('/picks/:id/vote', async (c) => {
     const user = await deps.getUser(c.req.raw);
     const body = await readJsonBody(c);
-    return c.json(await castVote(deps.closingStore, c.req.param('id'), user.id, body));
+    const result = await castVote(deps.closingStore, c.req.param('id'), user.id, body);
+    await recordGoogleTaste(
+      deps.lifecycleStore,
+      user.id,
+      c.req.param('id'),
+      parseVote(body),
+      'vote',
+      bodyTasteType(body),
+    );
+    return c.json(result);
   });
   app.post('/picks/:id/close-vote', async (c) => {
     const user = await deps.getUser(c.req.raw);

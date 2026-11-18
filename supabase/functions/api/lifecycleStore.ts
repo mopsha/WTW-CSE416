@@ -107,6 +107,15 @@ export function createLifecycleStore(): LifecycleStore {
       const rows = learned.error ? [] : (learned.data ?? []);
       return memberTastesFrom(userIds, profiles.data ?? [], rows, new Date());
     },
+    async recordGoogleTaste(userId, pickId, placeId, kind, type) {
+      await rpc('taste_record_google_signal', {
+        p_user_id: userId,
+        p_pick_id: pickId,
+        p_place_id: placeId,
+        p_kind: kind,
+        p_type: type,
+      });
+    },
     async start(pickId, userId, candidates) {
       await rpc('pick_start', { p_pick_id: pickId, p_user_id: userId, p_candidates: candidates });
     },

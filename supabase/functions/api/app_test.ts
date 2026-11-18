@@ -397,6 +397,48 @@ Deno.test('a swipe triggers the auto-close check without failing the swipe', asy
   equal(closeChecks, ['checked']);
 });
 
+Deno.test('a swipe passes the live taste type on so Google places teach (0051)', async () => {
+  const recorded: unknown[][] = [];
+  const app = createApp({
+    poolBuilder,
+    lifecycleStore: {
+      ...lifecycleStore,
+      recordGoogleTaste: async (...args: unknown[]) => {
+        recorded.push(args);
+        throw new Error('learning is optional'); // must not fail the swipe
+      },
+    },
+    getUser: async () => ({ id: 'host' }),
+    store: {
+      loadPick: async () => ({
+        id: 'pick',
+        hostId: 'host',
+        state: 'swiping',
+        center: { lat: 0, lng: 0 },
+        participantIds: ['host'],
+        candidates: [{ placeId: 'a', lat: 0, lng: 0 }],
+        preferences: [],
+        version: '1',
+      }),
+      upsertSwipe: async () => {},
+      saveRanking: async () => {},
+    },
+    closingStore: { ...closingStore, loadForClose: async () => null },
+  });
+  const send = (body: unknown) =>
+    app.request('/picks/pick/swipes', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    });
+  equal((await send({ placeId: 'a', value: 2, tasteType: 'sushi_restaurant' })).status, 200);
+  equal(recorded, [['host', 'pick', 'a', 'swipe', 'sushi_restaurant']]);
+  // Older apps send no type, and anything that isn't a survey type is dropped.
+  equal((await send({ placeId: 'a', value: 1 })).status, 200);
+  equal((await send({ placeId: 'a', value: 1, tasteType: 'casino' })).status, 200);
+  equal(recorded.length, 1);
+});
+
 Deno.test('GET /picks/:id/progress: counts only, participants only', async () => {
   const progressStore = {
     loadProgress: async () => ({

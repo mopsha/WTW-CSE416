@@ -594,8 +594,11 @@ export function createApiClient({
     /** 10 a day; 404 for anything I can't see. */
     report: (input: import('@shared/api/safety.ts').ReportInput) =>
       request<StatusResponse>('POST', '/reports', { body: input }),
-    submitSwipe: (pickId: string, placeId: string, value: PreferenceValue) =>
-      request<StatusResponse>('POST', `${pickPath(pickId)}/swipes`, { body: { placeId, value } }),
+    /** `tasteType` (the card's live survey type) lets Google places teach my taste (0051). */
+    submitSwipe: (pickId: string, placeId: string, value: PreferenceValue, tasteType?: string) =>
+      request<StatusResponse>('POST', `${pickPath(pickId)}/swipes`, {
+        body: { placeId, value, ...(tasteType ? { tasteType } : {}) },
+      }),
     /** Host only: closes swiping and ranks. Others get 403 FORBIDDEN. */
     rankPick: (pickId: string) => request<RankResponse>('POST', `${pickPath(pickId)}/rank`),
 
@@ -650,8 +653,10 @@ export function createApiClient({
     /** Host only: close swiping now (rank -> clear winner or final vote). */
     closePick: (pickId: string) => request<CloseResponse>('POST', `${pickPath(pickId)}/close`),
     /** One changeable ballot among the finalists, while the Pick is in final_vote. */
-    vote: (pickId: string, placeId: string) =>
-      request<StatusResponse>('POST', `${pickPath(pickId)}/vote`, { body: { placeId } }),
+    vote: (pickId: string, placeId: string, tasteType?: string) =>
+      request<StatusResponse>('POST', `${pickPath(pickId)}/vote`, {
+        body: { placeId, ...(tasteType ? { tasteType } : {}) },
+      }),
     /** Host only: tally now, before everyone has voted. */
     closeVote: (pickId: string) =>
       request<StatusResponse>('POST', `${pickPath(pickId)}/close-vote`),

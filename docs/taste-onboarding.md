@@ -75,10 +75,19 @@ live result (`pickPlaces.ts`). Live deck ordering still uses those types in memo
 - Each signal is its own row, keyed by a hash of its swipe, ballot or winner, and halves every
   30 days. A type's score is their faded sum, capped at −10..10 after fading. Changing an answer replaces that
   row, so it never takes back more or less than the original added, even after a reset or decay.
-- Only typed candidates teach; custom options and untyped places don't. Google places are
-  untyped in storage (see Badge), so for now learning only comes from non-Google places. Making
-  Google places teach would need the API to record signals from live types, or a check that
-  storing the survey label is allowed.
+- Only typed candidates teach; custom options and untyped places don't.
+- **Google places** (0051, `_shared/api/tasteSignals.ts`): their types are never stored with the
+  place, so the triggers can't see them. Instead the API records the user's signal with the type
+  it has live (agreed with Josh). Only the per-user "leaned toward <type>" signal is stored, the
+  same as for every other place:
+  - Swipes and votes: the app sends the card's live `tasteType`; the API accepts only survey
+    types, and `taste_record_google_signal` checks the user is in the Pick, the place is a
+    Google candidate and the swipe or ballot exists. The weight comes from the saved swipe, so
+    a client can only label its own real action.
+  - Winners: recorded for the viewer when they next open the completed Pick, from the server's
+    own live read (no extra Google calls). Dated to `decided_at`, so old Picks add a faded
+    signal, and never recorded if the user reset after the decision (`private.taste_resets`).
+  - Older apps send no type; their Google swipes just don't teach.
 - The learning runs in triggers, so every write path is covered and nothing else changes. It's
   best effort: a lock wait or other failure skips the signal instead of failing the swipe,
   vote, start or refresh.
@@ -87,7 +96,7 @@ live result (`pickPlaces.ts`). Live deck ordering still uses those types in memo
 
 - "What WTW noticed" lists learned likes and passes that my answers don't already cover.
   `GET /me/learned-taste` returns the decayed scores and drops anything below 0.5.
-- "Reset what WTW learned" (`DELETE /me/learned-taste`) clears the learning only.
+- "Reset what WTW learned" (`DELETE /me/learned-taste`) clears the learning only and records when (`taste_reset`), so Picks decided before it can't teach again.
 - "Swipe again" reopens the practice deck, then returns to where it was opened from.
 
 **Not yet**: "people like you also liked…" (collaborative filtering). That needs real usage

@@ -15,6 +15,7 @@ import type { GroupIdea } from './groupIdeas.ts';
 // goes through canTransition.
 
 import { priorityCandidates } from '../domain/candidatePriority.ts';
+import { recordGoogleTaste, type TasteSignalStore } from './tasteSignals.ts';
 import {
   groupTasteScore,
   tasteOrder,
@@ -106,7 +107,7 @@ export interface LifecyclePick extends PlaceFilters {
 }
 
 /** Database adapter; mutations must recheck authorization/state atomically. */
-export interface LifecycleStore {
+export interface LifecycleStore extends TasteSignalStore {
   availability?: AvailabilityStore;
   createPick(hostId: string, input: CreatePickInput): Promise<{ id: string }>;
   load(pickId: string, userId: string): Promise<LifecyclePick | null>;
@@ -574,6 +575,18 @@ export async function getPick(
       ),
     });
     pick.candidates.forEach((c, i) => byId.set(c.placeId, shown[i]!));
+    // A Google winner can't teach through 0047's trigger (its type isn't stored); this live
+    // read has the type, so record my +2 now. Idempotent, best effort (0051).
+    const winner = pick.winnerPlaceId ? byId.get(pick.winnerPlaceId) : undefined;
+    if (pick.state === 'completed' && (winner as { provider?: unknown })?.provider === 'google')
+      await recordGoogleTaste(
+        store,
+        userId,
+        pickId,
+        pick.winnerPlaceId,
+        'winner',
+        (winner as { tasteType?: unknown }).tasteType,
+      );
   }
   return {
     id: pick.id,
