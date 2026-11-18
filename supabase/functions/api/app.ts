@@ -367,12 +367,17 @@ export function createApp(
       await deps.discoverStore.preferences(user.id),
     );
     // photos=lazy clients load each cover from /discover/photo when its card is on screen.
-    // Older clients still get every photo up front.
+    // Older clients still get photos up front, each one counted against the same daily photo
+    // limit; past it their places just show without a cover.
+    const resolvePhoto = deps.discoverPhoto;
     return c.json({
       ...result,
       places:
-        deps.discoverPhoto && c.req.query('photos') !== 'lazy'
-          ? await withPhotos(result.places, deps.discoverPhoto)
+        resolvePhoto && c.req.query('photos') !== 'lazy'
+          ? await withPhotos(result.places, async (name) => {
+              await deps.checkLimit?.('discover_photo', user.id);
+              return resolvePhoto(name);
+            })
           : result.places,
       notice: result.fallback
         ? 'Showing fixture places. Live places may be unavailable or the daily provider limit reached.'

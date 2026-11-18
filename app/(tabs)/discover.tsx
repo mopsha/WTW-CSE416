@@ -27,6 +27,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/lib/api';
+import { loadPhoto } from '@/lib/photoCache';
 import { discoverPlace } from '@/lib/discoverFeed';
 import { isAccessDenied, messageOf } from '@/lib/errors';
 import { DiscoverFilterSheet } from '@/components/DiscoverFilterSheet';
@@ -66,7 +67,8 @@ type LazyPlace = DiscoverPlace & { photoPending?: boolean };
 /** Adds a lazily loaded cover and its photographer credit once it arrives. */
 function withLazyPhoto(place: DiscoverPlace, photos: Record<string, string | null>): LazyPlace {
   if (!place.photoName) return place;
-  const url = photos[place.placeId];
+  // By photo, not place: a refreshed place may bring a different photo and photographer.
+  const url = photos[place.photoName];
   if (url === undefined) return { ...place, photoPending: true };
   if (url === null) return place;
   return {
@@ -292,21 +294,16 @@ function DiscoverFeed({ userId }: { userId: string }) {
   const [filter, setFilter] = useState<DiscoverFilter>('all');
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState<DiscoverPlace | null>(null);
-  // Covers load one at a time as cards come on screen: placeId -> URL, or null if it failed.
-  // Kept for the screen's life, so changing filters doesn't pay for the same photo again.
+  // Covers load as cards come on screen: photo name -> URL, or null if it failed. The session
+  // cache (photoCache.ts) keeps them across filters, remounts and the onboarding deck.
   const [photos, setPhotos] = useState<Record<string, string | null>>({});
   const [lazyPhotos] = useState(() => {
     const requested = new Set<string>();
     const load = (place: DiscoverPlace) => {
-      if (!place.photoName || requested.has(place.placeId)) return;
-      requested.add(place.placeId);
-      api
-        .discoverPhoto(place.photoName)
-        .then(
-          ({ photoUrl }) => photoUrl,
-          () => null,
-        )
-        .then((url) => setPhotos((current) => ({ ...current, [place.placeId]: url })));
+      const name = place.photoName;
+      if (!name || requested.has(name)) return;
+      requested.add(name);
+      void loadPhoto(name).then((url) => setPhotos((current) => ({ ...current, [name]: url })));
     };
     return {
       load,

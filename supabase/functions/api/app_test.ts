@@ -2036,6 +2036,11 @@ Deno.test(
     equal(lazy.places[0].photos[0].name, 'places/p1/photos/a1');
     const eager = await (await app.request('/discover?lat=40&lng=-73', { headers })).json();
     equal(eager.places[0].photoUrl, 'https://img.example/1');
+    // Older clients' up-front photos count against the same daily photo limit.
+    equal(
+      limited.filter((l) => l.startsWith('discover_photo:')),
+      eager.places.map(() => `discover_photo:${ANN}`),
+    );
     resolved.length = 0;
     limited.length = 0;
 
@@ -2075,6 +2080,50 @@ Deno.test('Discover photo limit is checked before the provider is called', async
     },
   });
   equal((await app.request('/discover/photo?name=places/p1/photos/a1')).status, 429);
+});
+
+Deno.test('Past the photo limit, eager Discover still answers, without covers', async () => {
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async () => ({ id: ANN }),
+    checkLimit: async (scope) => {
+      if (scope === 'discover_photo')
+        throw new ApiError(429, 'RATE_LIMITED', 'Request limit reached');
+    },
+    discoverPhoto: async () => {
+      throw new Error('Must not call Google');
+    },
+    discoverStore: {
+      preferences: async () => ({}),
+      saved: async () => [],
+      save: async () => {},
+      remove: async () => {},
+    },
+    discoverPool: {
+      buildPool: async (request) => [
+        {
+          placeId: `${request.category}-1`,
+          name: 'Place',
+          category: request.category,
+          lat: 40,
+          lng: -73,
+          provider: 'google' as const,
+          photos: [{ name: 'places/p1/photos/a1', authorAttributions: [] }],
+        },
+      ],
+    },
+  });
+  const res = await app.request('/discover?lat=40&lng=-73');
+  equal(res.status, 200);
+  const body = await res.json();
+  equal(body.places.length > 0, true);
+  equal(
+    body.places.map((p: { photoUrl?: string }) => p.photoUrl ?? null),
+    body.places.map(() => null),
+  );
 });
 
 Deno.test('Discover rate limit is checked before profile or provider access', async () => {

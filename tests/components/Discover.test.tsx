@@ -2,6 +2,7 @@ import React from 'react';
 import { AppState, FlatList, Text, Switch } from 'react-native';
 import DiscoverScreen from '../../app/(tabs)/discover';
 import { api } from '@/lib/api';
+import { clearPhotoCache } from '@/lib/photoCache';
 import { CAMPUS } from '@/lib/places';
 import type { Candidate } from '@shared/places/types.ts';
 
@@ -82,6 +83,7 @@ const places: Candidate[] = [
 ];
 beforeEach(() => {
   jest.resetAllMocks();
+  clearPhotoCache();
   AppState.currentState = 'active';
   jest.spyOn(AppState, 'addEventListener').mockReturnValue({ remove: jest.fn() });
   mockUser = 'me';
@@ -234,6 +236,52 @@ test('a failed lazy cover falls back to the icon cover without retrying', async 
   await act(async () => press(tree, 'Close'));
   await act(async () => press(tree, 'Local Museum'));
   expect(api.discoverPhoto).toHaveBeenCalledTimes(1);
+  await act(async () => tree.unmount());
+});
+test('a refreshed place with a new photo shows that photo, not the old one with the new credit', async () => {
+  const withPhoto = (name: string, by: string): Candidate => ({
+    ...places[1]!,
+    photos: [{ name, authorAttributions: [{ displayName: by }] }],
+  });
+  jest
+    .mocked(api.discover)
+    .mockResolvedValueOnce({
+      places: [withPhoto('places/m/photos/1', 'Bo Lens')],
+      fallback: false,
+      notice: null,
+    })
+    .mockResolvedValue({
+      places: [withPhoto('places/m/photos/2', 'Cy Shutter')],
+      fallback: false,
+      notice: null,
+    });
+  jest
+    .mocked(api.discoverPhoto)
+    .mockImplementation(async (name: string) => ({ photoUrl: `https://example.test/${name}` }));
+  const tree = await mount();
+  const view = async () => {
+    const list = tree.root.findByType(FlatList);
+    await act(async () =>
+      list.props.onViewableItemsChanged({
+        viewableItems: [{ item: list.props.data[0], isViewable: true }],
+      }),
+    );
+  };
+  await view();
+  expect(tree.root.findByType('test-photo').props.uri).toBe(
+    'https://example.test/places/m/photos/1',
+  );
+  // Another filter fetches the feed again, and the same place comes back with another photo.
+  await act(async () => press(tree, 'Activities'));
+  // The new photo hasn't loaded yet: a placeholder, never the old image.
+  expect(tree.root.findByType('test-photo').props.uri).toBeNull();
+  await view();
+  expect(tree.root.findByType('test-photo').props.uri).toBe(
+    'https://example.test/places/m/photos/2',
+  );
+  await act(async () => press(tree, 'Local Museum'));
+  expect(textOf(tree)).toContain('Cy Shutter');
+  expect(textOf(tree)).not.toContain('Bo Lens');
   await act(async () => tree.unmount());
 });
 test('failed feed keeps retry and the server notice is rendered without alteration', async () => {

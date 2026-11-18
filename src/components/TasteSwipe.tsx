@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { api } from '@/lib/api';
+import { loadPhoto } from '@/lib/photoCache';
 import { discoverPlace } from '@/lib/discoverFeed';
 import { buildTasteDeck, tasteLabel, type TasteCard } from '@/lib/tasteDeck';
 import type { Candidate, PreferenceValue } from '@/lib/types';
@@ -84,7 +85,7 @@ export function TasteSwipe({
   const card = useRef<SwipeCardHandle>(null);
   // Cards answered so far, synchronously: a screen-reader action can answer a card twice.
   const answered = useRef(0);
-  // placeId -> cover URL, or null if it failed. Each photo is requested once.
+  // Photo name -> cover URL, or null if it failed. Shared with Discover (photoCache.ts).
   const [photos, setPhotos] = useState<Record<string, string | null>>({});
   const requested = useRef(new Set<string>());
 
@@ -100,16 +101,12 @@ export function TasteSwipe({
     if (!deck) return;
     // A photo requested for the next card must still land after this card is answered.
     for (const next of deck.slice(answers.length, answers.length + 2)) {
-      const id = next.view.placeId;
-      if (!next.photo || requested.current.has(id)) continue;
-      requested.current.add(id);
-      api
-        .discoverPhoto(next.photo.name)
-        .then(
-          ({ photoUrl }) => photoUrl,
-          () => null,
-        )
-        .then((url) => mounted.current && setPhotos((current) => ({ ...current, [id]: url })));
+      const name = next.photo?.name;
+      if (!name || requested.current.has(name)) continue;
+      requested.current.add(name);
+      void loadPhoto(name).then(
+        (url) => mounted.current && setPhotos((current) => ({ ...current, [name]: url })),
+      );
     }
   }, [deck, answers.length]);
 
@@ -148,7 +145,7 @@ export function TasteSwipe({
           <SwipeCard
             key={current.type}
             ref={card}
-            place={withPhoto(current, photos[current.view.placeId])}
+            place={withPhoto(current, current.photo && photos[current.photo.name])}
             onAnswer={answer}
           />
         ) : null}

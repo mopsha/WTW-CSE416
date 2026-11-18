@@ -1,6 +1,7 @@
 import React from 'react';
 import { TasteSwipe } from '@/components/TasteSwipe';
 import { api } from '@/lib/api';
+import { clearPhotoCache } from '@/lib/photoCache';
 import type { Candidate } from '@shared/places/types.ts';
 
 const { create, act } = jest.requireActual('react-test-renderer');
@@ -37,6 +38,7 @@ const google = (id: string, type: string, category: 'food' | 'activities'): Cand
   }) as unknown as Candidate;
 
 beforeEach(() => {
+  clearPhotoCache();
   jest.mocked(api.discover).mockImplementation(async ({ category }) => ({
     places:
       category === 'food'
