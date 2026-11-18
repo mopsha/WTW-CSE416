@@ -376,7 +376,8 @@ export async function buildCandidates(
     // learning (0047_taste_learning.sql). Google's types can't be stored, so Google places get
     // theirs on each read instead (pickPlaces.ts), and their swipes don't teach.
     const tasteType = c.provider === 'google' ? null : tasteTypeOf(c.types);
-    const tasteScore = taste(c);
+    // Google classifications may order this live result, but no derived score is persisted.
+    const tasteScore = c.provider === 'google' ? 0 : taste(c);
     return {
       placeId: c.placeId,
       snapshot: { ...candidateSnapshot(c), ...(tasteType ? { tasteType } : {}) },

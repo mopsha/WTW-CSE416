@@ -157,22 +157,33 @@ describe('startPick', () => {
     expect(sent[0]!.snapshot.tasteType).toBe('sushi_restaurant');
     expect(sent[2]!.snapshot).not.toHaveProperty('tasteType');
   });
-  test("never stores a Google place's type, but still scores it for the deck", async () => {
+  test("never persists a Google place's type or derived group score", async () => {
     const store = {
       ...fixture(pick({ poolSize: 1 })),
-      memberTastes: jest.fn().mockResolvedValue([
-        { liked: ['sushi_restaurant'], disliked: [], learned: {} },
-      ]),
+      memberTastes: jest
+        .fn()
+        .mockResolvedValue([{ liked: ['sushi_restaurant'], disliked: [], learned: {} }]),
     };
     const google: Candidate = {
       ...candidate('g'),
       provider: 'google',
       types: ['sushi_restaurant'],
     };
-    await startPick(store, poolOf([google]), 'pick', 'host');
-    const [sent] = store.start.mock.calls[0]![2] as { snapshot: object; tasteScore?: number }[];
+    // Taste still selects the live Google match ahead of an earlier untyped result.
+    await startPick(
+      store,
+      poolOf([{ ...candidate('plain'), provider: 'google' }, google]),
+      'pick',
+      'host',
+    );
+    const [sent] = store.start.mock.calls[0]![2] as {
+      placeId: string;
+      snapshot: object;
+      tasteScore?: number;
+    }[];
+    expect(sent!.placeId).toBe('g');
     expect(sent!.snapshot).not.toHaveProperty('tasteType');
-    expect(sent!.tasteScore).toBe(1);
+    expect(sent).not.toHaveProperty('tasteScore');
   });
   test('rejects a non-host', async () => {
     const store = fixture();

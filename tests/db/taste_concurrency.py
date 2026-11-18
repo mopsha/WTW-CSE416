@@ -1,4 +1,4 @@
-"""Optional taste rows held locked by another connection never block core Pick writes (0047).
+"""Optional taste rows held locked by another connection never block core Pick writes (0047 + 0049).
 Disposable local migrated database only."""
 import argparse
 import subprocess
@@ -43,9 +43,27 @@ cases = {
     'changed swipe vs locked signal': (
         "select 1 from public.taste_signals where user_id='%s' for update" % user(2),
         "select public.heartbeat_upsert_swipe('{p}','%s','taste-a',0)" % user(2)),
+    'close vs table-locked group scores': (
+        'lock table private.pick_candidate_taste in share mode',
+        "select public.pick_close_apply('{p}','host','%s',(select version::text from public.picks where id='{p}'),%s)" % (user(1), ranking)),
+    'refresh vs table-locked group scores': (
+        'lock table private.pick_candidate_taste in share mode',
+        "select public.pick_refresh('{p}','%s','%s')" % (user(1), deck)),
+    'replacement refresh vs locked group scores': (
+        "select 1 from private.pick_candidate_taste where pick_id='{p}' for update",
+        "select public.pick_refresh('{p}','%s','%s')" % (user(1), '[{"placeId":"taste-new","snapshot":{"name":"New","lat":40,"lng":-73,"tasteType":"cafe"},"tasteScore":0.4}]')),
     'refresh vs locked signal': (
         "select 1 from public.taste_signals where user_id='%s' for update" % user(2),
         "select public.pick_refresh('{p}','%s','%s')" % (user(1), deck)),
+    'purge vs table-locked group scores': (
+        'lock table private.pick_candidate_taste in share mode',
+        "select public.purge_google_coordinates(now()-interval '30 days')"),
+    'delete Pick vs locked group scores': (
+        "select 1 from private.pick_candidate_taste where pick_id='{p}' for update",
+        "delete from public.picks where id='{p}'"),
+    'account deletion vs locked group scores': (
+        "select 1 from private.pick_candidate_taste where pick_id='{p}' for update",
+        "delete from auth.users where id='%s'" % user(1)),
 }
 for name, (lock, write) in cases.items():
     pick = setup()
@@ -65,6 +83,12 @@ for name, (lock, write) in cases.items():
             raise AssertionError('%s: %s' % (name, result.stderr))
         if name.startswith('close'):
             assert query("select state from public.picks where id='%s'" % pick) == 'final_vote', name
+        if name.startswith('close'):
+            assert query("select count(*) from public.ranking_results where pick_id='%s'" % pick) == '2', name
+            assert query("select winner_place_id is null from public.picks where id='%s'" % pick) == 't', name
+        if 'refresh' in name:
+            assert query("select state from public.picks where id='%s'" % pick) == 'swiping', name
+            assert query("select count(*) from public.preferences where pick_id='%s'" % pick) == '0', name
         if name == 'changed swipe vs locked signal':
             assert query("select value from public.preferences where pick_id='%s' and user_id='%s' and place_id='taste-a'" % (pick, user(2))) == '0', name
     finally:
@@ -73,3 +97,25 @@ for name, (lock, write) in cases.items():
             holder.stdin.flush()
             holder.wait(timeout=10)
     print('ok -', name)
+
+    if name == 'replacement refresh vs locked group scores':
+        assert query("select count(*) from private.pick_candidate_taste where pick_id='%s'" % pick) == '3'
+        query("select public.purge_google_coordinates(now()-interval '30 days')")
+        assert query("select count(*) from private.pick_candidate_taste where pick_id='%s'" % pick) == '1'
+        assert query("select taste_score from private.pick_candidate_taste where pick_id='%s' and place_id='taste-new'" % pick) == '0.4'
+        query("select public.purge_google_coordinates(now()-interval '30 days')")
+        assert query("select count(*) from private.pick_candidate_taste where pick_id='%s'" % pick) == '1'
+        query("select public.heartbeat_upsert_swipe('%s','%s','taste-new',2)" % (pick,user(2)))
+        assert query("select deadline_at is null from public.picks where id='%s'" % pick) == 't'
+        print('ok - active No-deadline orphan purge preserves current scores and usability')
+
+    if name == 'delete Pick vs locked group scores':
+        assert query("select count(*) from public.picks where id='%s'" % pick) == '0'
+        query("select public.purge_google_coordinates(now()-interval '30 days')")
+        assert query("select count(*) from private.pick_candidate_taste where pick_id='%s'" % pick) == '0'
+        print('ok - deleted Pick cache is eventually purged')
+    if name == 'account deletion vs locked group scores':
+        assert query("select host_id is null and state='canceled' from public.picks where id='%s'" % pick) == 't'
+        query("select public.purge_google_coordinates(now()-interval '30 days')")
+        assert query("select count(*) from private.pick_candidate_taste where pick_id='%s'" % pick) == '0'
+        print('ok - account deletion preserves guest history and deferred cache cleanup')
