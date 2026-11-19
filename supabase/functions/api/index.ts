@@ -6,6 +6,7 @@ import { createAvatarStore } from './avatarStore.ts';
 import { createDirectChatStore } from './directChatStore.ts';
 import { createGroupChatStore } from './groupChatStore.ts';
 import { createUserProfilesStore } from './userProfilesStore.ts';
+import { createSignInStore } from './signInStore.ts';
 import { createGroupInvitationsStore } from './groupInvitationsStore.ts';
 import { createGroupIdeasStore } from './groupIdeasStore.ts';
 import { createHangStore } from './hangStore.ts';
@@ -70,6 +71,7 @@ const app = createApp(
     friendsStore: createFriendsStore(),
     profileStore: createProfileStore(),
     userProfilesStore: createUserProfilesStore(),
+    signInStore: createSignInStore(),
     groupsStore: createGroupsStore(),
     groupInvitationsStore: createGroupInvitationsStore(),
     groupIdeasStore: createGroupIdeasStore(),

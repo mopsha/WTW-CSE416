@@ -1,10 +1,12 @@
 import { proposedTimeProblem } from '@shared/domain/availability.ts';
+import { usernameAvailability } from '@shared/api/signIn.ts';
 import { mockPeopleRoute } from './people';
 import { handleMockPastMoves } from './pastMoves';
 import { handleMockDirectChat, mockDirectNotices, resetMockDirectChat } from './directChat';
 import { handleMockGroupChat, mockGroupMessages, mockGroupChatNotices } from './groupChat';
 import {
   getMockUserProfile,
+  mockUserProfiles,
   handleMockUserProfiles,
   resetOwnMockUserProfile,
   handleMockAvatarRequest,
@@ -833,6 +835,22 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   if (method === 'POST' && path === '/me/optional-setup') {
     mockProfile.optionalSetupPending = false;
     return json(200, { optionalSetupPending: false });
+  }
+  if (method === 'GET' && path.startsWith('/usernames/available?')) {
+    // Same rules as the API (shared usernameAvailability), against the demo users.
+    const wanted = new URLSearchParams(path.split('?')[1]).get('username');
+    const owner = async (u: string) =>
+      [...mockUserProfiles].find(([, p]) => p.username === u)?.[0] ?? null;
+    return usernameAvailability(
+      {
+        usernameOwner: owner,
+        emailForUsername: async () => null,
+        consumeLoginAttempt: async () => true,
+        passwordSignIn: async () => null,
+      },
+      MOCK_USER_ID,
+      wanted,
+    ).then((result) => json(200, result));
   }
   if (method === 'GET' && path === '/me') {
     const { displayName, preferences, onboarded } = mockProfile;
