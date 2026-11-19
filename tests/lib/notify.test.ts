@@ -14,3 +14,8 @@ test.each([null, undefined, 'x', {}, { url: 'https://evil.example' }, { pickId: 
     expect(routeForNotification(data)).toBeNull();
   },
 );
+
+test('Hang push opens its specific card and legacy payloads fall back to the feed', () => {
+  expect(routeForNotification({ type: 'hang_invite', hangId: 'hang/21' })).toBe('/hang/hang%2F21');
+  expect(routeForNotification({ type: 'hang_invite' })).toBe('/');
+});

@@ -8,29 +8,40 @@ function clean(activity: string): string {
   return activity;
 }
 
+export const HANG_RSVP_WINDOW_MS = 4 * 3600000;
 export type HangStatus = 'down' | 'maybe' | 'cant';
 export interface HangInput {
   startsAt: string;
   expiresAt: string;
   activity: string;
-  audience: 'all_friends' | 'group';
+  audience: 'all_friends' | 'group' | 'selected';
+  groupIds?: string[];
+  friendIds?: string[];
+  requestId?: string;
+  startNow?: boolean;
   groupId: string | null;
 }
-export interface HangPost extends HangInput {
+export interface HangPost extends Pick<
+  HangInput,
+  'startsAt' | 'expiresAt' | 'activity' | 'audience' | 'groupId'
+> {
   id: string;
   authorId: string;
   authorName?: string | null;
   myStatus?: HangStatus | null;
   downCount?: number;
+  maybeCount?: number;
+  cantCount?: number;
   pickId?: string | null;
 }
 export interface HangAccess {
   blocked: boolean;
   acceptedFriends: boolean;
   groupMember: boolean;
+  selectedRecipient?: boolean | null;
 }
 export interface HangStore {
-  create(authorId: string, input: HangInput): Promise<HangPost>;
+  create(authorId: string, input: HangInput): Promise<HangPost & { recipientIds?: string[] }>;
   listOwn(userId: string, now: string): Promise<HangPost[]>;
   load(id: string, userId?: string): Promise<HangPost | null>;
   /** Razin's relationship helper must account for blocks in BOTH directions. */
@@ -50,28 +61,56 @@ export interface HangStore {
   notifier?: Notifier;
 }
 
-export function parseHang(body: unknown, now = new Date()): HangInput {
+export function parseHang(body: unknown, now = new Date(), allowMockIds = false): HangInput {
   if (!body || typeof body !== 'object' || Array.isArray(body))
     throw new ApiError(400, 'INVALID_INPUT', 'Expected a hang post');
   const b = body as Record<string, unknown>;
-  const starts = typeof b.startsAt === 'string' ? Date.parse(b.startsAt) : NaN;
-  const expires = typeof b.expiresAt === 'string' ? Date.parse(b.expiresAt) : NaN;
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const validRecipientId = (id: string) =>
+    uuid.test(id) || (allowMockIds && /^mock-[a-z0-9-]+$/i.test(id));
+  const requestId = b.requestId;
+  const startNow = b.startNow === true;
+  const selected = b.audience === 'selected';
+  const ids = (value: unknown): string[] | null =>
+    Array.isArray(value) &&
+    value.length <= 100 &&
+    value.every((id) => typeof id === 'string' && validRecipientId(id))
+      ? [...new Set(value.map((id) => (id as string).toLowerCase()))].sort()
+      : null;
+  const groupIds = selected ? ids(b.groupIds) : [];
+  const friendIds = selected ? ids(b.friendIds) : [];
+  if (
+    (requestId !== undefined && (typeof requestId !== 'string' || !uuid.test(requestId))) ||
+    (b.startNow !== undefined && typeof b.startNow !== 'boolean') ||
+    ((startNow || selected) && !requestId) ||
+    !groupIds ||
+    !friendIds ||
+    (selected && (b.groupId != null || groupIds.length + friendIds.length === 0)) ||
+    (!selected && (b.groupIds !== undefined || b.friendIds !== undefined))
+  )
+    throw new ApiError(400, 'INVALID_INPUT', 'Choose a valid audience and time.');
+  const starts = startNow
+    ? now.getTime()
+    : typeof b.startsAt === 'string'
+      ? Date.parse(b.startsAt)
+      : NaN;
+  const expires = startNow
+    ? starts + HANG_RSVP_WINDOW_MS
+    : typeof b.expiresAt === 'string'
+      ? Date.parse(b.expiresAt)
+      : NaN;
   if (
     typeof b.activity !== 'string' ||
     !b.activity.trim() ||
     b.activity.trim().length > 60 ||
     !Number.isFinite(starts) ||
-    starts < now.getTime() ||
+    (!requestId && starts < now.getTime()) ||
     starts > now.getTime() + 7 * 86400000 ||
     !Number.isFinite(expires) ||
     expires <= starts ||
     expires - starts > 86400000 ||
-    !['all_friends', 'group'].includes(b.audience as string) ||
-    (b.audience === 'group' &&
-      (typeof b.groupId !== 'string' ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-          b.groupId,
-        ))) ||
+    !['all_friends', 'group', 'selected'].includes(b.audience as string) ||
+    (b.audience === 'group' && (typeof b.groupId !== 'string' || !validRecipientId(b.groupId))) ||
     (b.audience === 'all_friends' && b.groupId != null)
   )
     throw new ApiError(400, 'INVALID_INPUT', 'Invalid activity, time or audience');
@@ -81,6 +120,9 @@ export function parseHang(body: unknown, now = new Date()): HangInput {
     activity: clean(b.activity.trim()),
     audience: b.audience as HangInput['audience'],
     groupId: b.audience === 'group' ? (b.groupId as string) : null,
+    ...(selected ? { groupIds, friendIds } : {}),
+    ...(typeof requestId === 'string' ? { requestId: requestId.toLowerCase() } : {}),
+    ...(startNow ? { startNow } : {}),
   };
 }
 export function canSeeHang(
@@ -96,6 +138,8 @@ export function canSeeHang(
   )
     return false;
   if (post.authorId === userId) return true;
+  if (access.selectedRecipient != null || post.audience === 'selected')
+    return access.selectedRecipient === true;
   return post.audience === 'all_friends' ? access.acceptedFriends : access.groupMember;
 }
 export function downUserIds(responses: { userId: string; status: HangStatus }[]): string[] {

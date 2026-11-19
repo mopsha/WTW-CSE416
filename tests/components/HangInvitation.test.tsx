@@ -32,7 +32,7 @@ test('RSVP controls reflect actual state, forward unchanged values, and preserve
       .findAllByProps({ accessibilityLabel: `${label}, Study session` })
       .find((n: { props: { onPress?: unknown } }) => typeof n.props.onPress === 'function');
   expect(response('Maybe').props.accessibilityState.selected).toBe(true);
-  await act(async () => response('Down').props.onPress());
+  await act(async () => response("I'm in").props.onPress());
   expect(onRespond).toHaveBeenCalledWith('down');
   expect(tree.root.findByType('test-button').props.disabled).toBe(true);
   await act(async () => tree.update(render({ ...post, downCount: 2 })));
@@ -40,7 +40,7 @@ test('RSVP controls reflect actual state, forward unchanged values, and preserve
   await act(async () => tree.root.findByType('test-button').props.onPress());
   expect(onStart).toHaveBeenCalledTimes(1);
   await act(async () => tree.update(render(post, 'hang-down')));
-  expect(response('Down').props.accessibilityState).toMatchObject({ disabled: true, busy: true });
+  expect(response("I'm in").props.accessibilityState).toMatchObject({ disabled: true, busy: true });
   await act(async () => tree.update(render({ ...post, authorId: 'friend', authorName: 'Mike' })));
   expect(tree.root.findAllByType('test-button')).toHaveLength(0);
   expect(JSON.stringify(tree.toJSON())).toContain('Mike');

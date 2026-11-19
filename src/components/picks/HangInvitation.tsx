@@ -39,7 +39,10 @@ export function HangInvitation({
             })}
           </Text>
         </View>
-        <Text style={s.count}>{post.downCount ?? 0} down</Text>
+        <Text style={s.count}>
+          {post.downCount ?? 0} in{post.maybeCount ? ` · ${post.maybeCount} maybe` : ''}
+          {post.cantCount ? ` · ${post.cantCount} can’t` : ''}
+        </Text>
         {userId && post.authorId !== userId ? (
           <MemberMenu userId={post.authorId} name={author} />
         ) : null}
@@ -47,7 +50,7 @@ export function HangInvitation({
       <Text style={s.activity}>{post.activity}</Text>
       <View style={s.responses}>
         {(['down', 'maybe', 'cant'] as const).map((status) => {
-          const label = status === 'down' ? 'Down' : status === 'maybe' ? 'Maybe' : 'Can’t';
+          const label = status === 'down' ? "I'm in" : status === 'maybe' ? 'Maybe' : 'Can’t';
           const selected = post.myStatus === status;
           const pending = busy === `${post.id}-${status}`;
           return (
@@ -79,7 +82,7 @@ export function HangInvitation({
       {post.authorId === userId ? (
         <View style={s.host}>
           <Text style={s.caption}>
-            Only people who answer Down join. If you’re not down, one of them hosts.
+            Only people who say “I’m in” join the Pick. If you skip, one of them hosts.
           </Text>
           <Button
             label="Let’s Pick"

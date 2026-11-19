@@ -133,6 +133,7 @@ async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<un
 export function createApp(
   deps: {
     getUser(req: Request): Promise<{ id: string }>;
+    runInBackground?(work: Promise<void>): void;
     store: HeartbeatStore;
     progressStore?: ProgressStore;
     availabilityEnabled?: boolean;
@@ -302,11 +303,31 @@ export function createApp(
       notice: '',
     });
   });
+  app.get('/hang/:id', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.hangStore) throw new ApiError(503, 'HANG_UNAVAILABLE', 'Hang posts unavailable');
+    c.header('Cache-Control', 'private, no-store');
+    const post = await deps.hangStore.load(c.req.param('id'), user.id);
+    if (!post) throw new ApiError(404, 'HANG_NOT_FOUND', 'Hang post not found');
+    return c.json(post);
+  });
   app.post('/hang', async (c) => {
     const user = await deps.getUser(c.req.raw);
     const input = parseHang(await readJsonBody(c));
     if (!deps.hangStore) throw new ApiError(503, 'HANG_UNAVAILABLE', 'Hang posts unavailable');
-    return c.json(await deps.hangStore.create(user.id, input), 201);
+    const { recipientIds, ...post } = await deps.hangStore.create(user.id, input);
+    if (recipientIds?.length && deps.hangStore.notifier) {
+      const delivery = deps.hangStore.notifier(
+        recipientIds,
+        'hang_invite',
+        null,
+        { hangId: post.id },
+        { inboxRecorded: true },
+      );
+      if (deps.runInBackground) deps.runInBackground(delivery);
+      else await delivery;
+    }
+    return c.json(post, 201);
   });
   app.post('/hang/:id/respond', async (c) => {
     const user = await deps.getUser(c.req.raw);

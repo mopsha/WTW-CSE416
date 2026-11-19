@@ -96,3 +96,9 @@ test('group invitations open request cards and keep private names out of generic
     body: 'Someone invited you to a group. Open WTW to respond.',
   });
 });
+
+test('Hang inbox rows route to the same card as the push', () => {
+  expect(inboxRoute(row({ type: 'hang_invite', pickId: null, payload: { hangId: 'h21' } }))).toBe(
+    '/hang/h21',
+  );
+});
