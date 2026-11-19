@@ -606,7 +606,7 @@ export function createApiClient({
     /** 10 a day; 404 for anything I can't see. */
     report: (input: import('@shared/api/safety.ts').ReportInput) =>
       request<StatusResponse>('POST', '/reports', { body: input }),
-    /** The card's live taste type and its proof let Google places teach my taste (0051). */
+    /** The card's live taste type and its proof let Google places teach my taste (0056). */
     submitSwipe: (
       pickId: string,
       placeId: string,

@@ -1,4 +1,4 @@
--- Learning from Google places (0051_google_taste_signals.sql, Alan).
+-- Learning from Google places (0056_google_taste_signals.sql, Alan).
 -- Run: supabase test db (after supabase db reset).
 begin;
 create extension if not exists pgtap with schema extensions;

@@ -328,7 +328,7 @@ export function createApp(
     const body = await readJsonBody(c);
     const pickId = c.req.param('id');
     const result = await swipe(deps.store, pickId, user.id, body);
-    // Google places teach with the type the app has live (0051); never fails the swipe.
+    // Google places teach with the type the app has live (0056); never fails the swipe.
     await recordGoogleTaste(
       deps.lifecycleStore,
       user.id,

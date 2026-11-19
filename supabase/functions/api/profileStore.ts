@@ -84,7 +84,7 @@ export function createProfileStore(): ProfileStore {
 
     async resetLearnedTaste(userId) {
       // Clears the signals behind learned_taste (0047) and records when, so a Pick decided
-      // before the reset can't teach again when it's next opened (0051).
+      // before the reset can't teach again when it's next opened (0056).
       const { error } = await createServiceClient().rpc('taste_reset', { p_user_id: userId });
       if (error) throw new Error('Database operation failed');
     },

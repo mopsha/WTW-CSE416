@@ -59,7 +59,7 @@ export function createCacheCleanupStore(): CacheCleanupStore {
         p_cutoff: new Date(Date.parse(`${day}T00:00:00Z`) - 27 * 86_400_000).toISOString(),
       });
       if (purgeError) throw new Error('Google coordinate cleanup failed');
-      // Signals learned from Google places' types are kept 30 days at most (0051).
+      // Signals learned from Google places' types are kept 30 days at most (0056).
       const { error: tasteError } = await createServiceClient().rpc('purge_google_taste', {
         p_cutoff: new Date(Date.parse(`${day}T00:00:00Z`) - 27 * 86_400_000).toISOString(),
       });

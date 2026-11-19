@@ -5,7 +5,7 @@
 // - Swipes and votes: the type comes back from the app, but only with a proof the server
 //   issued when it showed that card (getPick): an HMAC over pick, place, user and type, with
 //   a key that never leaves the server. So the app can't claim a type the place doesn't have.
-// 0051_google_taste_signals.sql then checks the action really happened and takes its weight
+// 0056_google_taste_signals.sql then checks the action really happened and takes its weight
 // and time from the saved swipe, ballot or winner. Pure TypeScript: Web Crypto only.
 
 import { TASTE_TYPES } from '../domain/groupTaste.ts';

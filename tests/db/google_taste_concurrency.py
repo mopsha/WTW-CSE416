@@ -1,4 +1,4 @@
-"""Races in Google taste learning (0051): reset vs a pending signal, and a changed swipe vs a
+"""Races in Google taste learning (0056): reset vs a pending signal, and a changed swipe vs a
 stale learning request. Each case holds one transaction open while a second connection runs,
 the interleavings that #78's first version got wrong. Disposable local migrated database only.
 

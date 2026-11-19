@@ -10,10 +10,10 @@
 --   change has committed.
 -- * A per-user epoch (taste_epochs.since): no signal for an action older than the user's last
 --   reset, however late the request arrives. Existing users start at this migration, so a
---   reset made before 0051 (which left no record) can't be undone by old Picks either.
+--   reset made before 0056 (which left no record) can't be undone by old Picks either.
 -- * The weight and action time come from the saved swipe, ballot or winner, never the caller;
 --   the API proves the type with a server signature (tasteSignals.ts) before calling this.
--- 0050 is the Discover photo-limit migration (#71).
+-- Numbered 0056: 0052 (on main) and 0053–0055 (pick-flow and Hang PRs) come first.
 
 create table private.taste_epochs (
   user_id uuid primary key references public.profiles (id) on delete cascade,

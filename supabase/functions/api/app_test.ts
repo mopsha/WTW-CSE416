@@ -399,7 +399,7 @@ Deno.test('a swipe triggers the auto-close check without failing the swipe', asy
 });
 
 Deno.test(
-  'a swipe teaches a Google type only with the proof issued for that card (0051)',
+  'a swipe teaches a Google type only with the proof issued for that card (0056)',
   async () => {
     const recorded: unknown[][] = [];
     const signTaste = createTasteSigner('test-secret');

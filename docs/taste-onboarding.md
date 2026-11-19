@@ -76,7 +76,7 @@ live result (`pickPlaces.ts`). Live deck ordering still uses those types in memo
   30 days. A type's score is their faded sum, capped at −10..10 after fading. Changing an answer replaces that
   row, so it never takes back more or less than the original added, even after a reset or decay.
 - Only typed candidates teach; custom options and untyped places don't.
-- **Google places** (0051, `_shared/api/tasteSignals.ts`): their types are never stored with the
+- **Google places** (0056, `_shared/api/tasteSignals.ts`): their types are never stored with the
   place, so the triggers can't see them. Instead the API records the user's signal with the type
   it has live (agreed with Josh). Only the per-user "leaned toward <type>" signal is stored,
   marked `google`, and it's ignored after 30 days and deleted by the sweep (`purge_google_taste`),
@@ -89,11 +89,11 @@ live result (`pickPlaces.ts`). Live deck ordering still uses those types in memo
   - `taste_record_google_signal` checks the user is in the Pick, the place is a Google
     candidate and the swipe, ballot or winner exists, and takes the weight and time from it.
   - Older apps send no type or proof; their Google swipes just don't teach.
-- **Ordering and resets** (0051, all paths including the triggers): one per-user lock
+- **Ordering and resets** (0056, all paths including the triggers): one per-user lock
   (`wtw-taste:<user>`) orders every learning write and every reset, and a recorder reads the
   swipe or ballot only after taking it, so the latest decision always wins. `taste_epochs.since`
   is when learning restarts: any action at or before it never teaches, however late its
-  request arrives. Users who existed before 0051 start at the migration, since earlier resets
+  request arrives. Users who existed before 0056 start at the migration, since earlier resets
   left no record. Races are covered by `tests/db/google_taste_concurrency.py` (in CI).
 - The learning runs in triggers, so every write path is covered and nothing else changes. It's
   best effort: a lock wait or other failure skips the signal instead of failing the swipe,

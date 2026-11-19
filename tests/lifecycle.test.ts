@@ -373,7 +373,7 @@ describe('getPick', () => {
     const store = fixture(null);
     await expect(getPick(store, 'pick', 'host')).rejects.toMatchObject({ status: 404 });
   });
-  describe('a Google winner teaches the viewer from the live read (0051)', () => {
+  describe('a Google winner teaches the viewer from the live read (0056)', () => {
     const google = { placeId: 'g', snapshot: { placeId: 'g', name: null, provider: 'google' } };
     const live = jest.fn(async () => [
       { placeId: 'g', name: 'Live', provider: 'google', tasteType: 'sushi_restaurant' },
