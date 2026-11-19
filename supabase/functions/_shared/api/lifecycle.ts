@@ -231,14 +231,8 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
     if (Number.isNaN(at)) {
       throw new ApiError(400, 'INVALID_INPUT', 'deadlineAt must be a date, or null');
     }
-    if (at - now < MIN_DEADLINE_LEAD_MS) {
-      throw new ApiError(400, 'INVALID_INPUT', 'deadlineAt must give people at least 5 minutes');
-    }
-    if (at - now > MAX_DEADLINE_LEAD_MS) {
-      throw new ApiError(400, 'INVALID_INPUT', 'deadlineAt must be within a week');
-    }
-    deadlineAt = new Date(at).toISOString();
     swipeMinutes = legacySwipeMinutes(at - now);
+    deadlineAt = new Date(now + swipeMinutes * 60_000).toISOString();
   }
   if (
     b.proposedAt !== undefined ||
@@ -284,13 +278,21 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
 export const SWIPE_MINUTE_CHOICES = [30, 60, 180, 1440] as const;
 
 /**
- * Builds before swipeMinutes only sent deadlineAt, so their length arrives shortened by the
- * request latency and the phone's clock skew. Snap it to the picker choice it came from.
+ * Legacy timestamps cannot distinguish a shortened picker choice from a custom value
+ * in the same window. Accept up to five minutes of lost lead for picker choices and
+ * one minute for the historical five-minute API minimum. Allow up to 30 seconds
+ * of positive clock skew for either. Reject all other leads.
+ * Keep the same windows in 0052 for already-persisted drafts.
  */
 export function legacySwipeMinutes(leadMs: number): number {
   const minutes = leadMs / 60_000;
-  const choice = SWIPE_MINUTE_CHOICES.find((c) => Math.abs(c - minutes) <= 5);
-  return choice ?? Math.max(5, Math.round(minutes / 5) * 5);
+  const positiveSkewMinutes = 0.5;
+  const choice = SWIPE_MINUTE_CHOICES.find(
+    (c) => minutes >= c - 5 && minutes <= c + positiveSkewMinutes,
+  );
+  if (choice !== undefined) return choice;
+  if (minutes >= 4 && minutes <= 5 + positiveSkewMinutes) return 5;
+  throw new ApiError(400, 'INVALID_INPUT', 'Choose a supported swipe deadline or no deadline.');
 }
 
 export function parseRefreshBody(body: unknown): boolean {

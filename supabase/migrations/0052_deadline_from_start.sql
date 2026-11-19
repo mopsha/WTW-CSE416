@@ -27,17 +27,31 @@ end $$;
 alter function public.pick_start(text, uuid, jsonb) rename to pick_start_before_deadline;
 alter function public.pick_start_before_deadline(text, uuid, jsonb) set schema private;
 create function public.pick_start(p_pick_id text, p_user_id uuid, p_candidates jsonb) returns void
-language plpgsql set search_path = '' as $$ begin
+language plpgsql set search_path = '' as $$
+declare
+  v_minutes integer;
+  v_legacy_minutes numeric;
+begin
   perform private.pick_start_before_deadline(p_pick_id, p_user_id, p_candidates);
-  -- Picks made before swipe_minutes existed: snap the stored gap to the picker choice it came
-  -- from (legacySwipeMinutes in lifecycle.ts), which absorbs request latency and clock skew.
-  update public.picks p
-     set deadline_at = clock_timestamp() + make_interval(mins => coalesce(p.swipe_minutes, (
-           select coalesce(
-             (select c from unnest(array[30, 60, 180, 1440]) c where abs(c - g.mins) <= 5 limit 1),
-             greatest(5, (round(g.mins / 5) * 5)::integer))
-             from (select extract(epoch from p.deadline_at - p.created_at) / 60 as mins) g)))
-   where p.id = private.try_uuid(p_pick_id) and p.proposed_at is null and p.deadline_at is not null;
+  select swipe_minutes, extract(epoch from deadline_at - created_at) / 60
+    into v_minutes, v_legacy_minutes
+    from public.picks
+   where id = private.try_uuid(p_pick_id) and proposed_at is null and deadline_at is not null;
+  if not found then return; end if;
+
+  -- Match legacySwipeMinutes: recognize bounded shortfalls and 30 seconds of positive skew.
+  if v_minutes is null then
+    select choice into v_minutes
+      from (values (5, 1), (30, 5), (60, 5), (180, 5), (1440, 5)) as choices(choice, grace)
+     where v_legacy_minutes between choice - grace and choice + 0.5;
+    if v_minutes is null then
+      raise exception using errcode = 'PT400', hint = 'unsupported_swipe_deadline',
+        message = 'This Pick has an unsupported swipe deadline. Cancel it and create a new Pick.';
+    end if;
+  end if;
+  update public.picks
+     set deadline_at = clock_timestamp() + make_interval(mins => v_minutes)
+   where id = private.try_uuid(p_pick_id);
 end $$;
 
 revoke all on function private.pick_create_before_swipe_length(uuid, jsonb),

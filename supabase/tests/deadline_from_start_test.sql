@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(7);
+select plan(33);
 
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
 values
@@ -62,6 +62,36 @@ select lives_ok(
   'host starts an untimed Pick');
 select is((select deadline_at from picks where id = (select id from untimed)), null,
   'a Pick with no deadline still has none');
+
+-- Drafts created before swipe_minutes use the same compatibility windows as the API.
+create temporary table legacy_cases on commit drop as
+select lead, expected, (pick_create('52111111-1111-4111-8111-111111111111', 'food',
+  40.9, -73.1, 1000, 20, now() + lead * interval '1 second', 100) ->> 'id')::uuid as id
+from (values (240,5),(300,5),(1500,30),(1560,30),(1800,30),(3300,60),
+  (600,null),(720,null),(2040,null),
+  (1801,30),(1829.999,30),(1830,30),(1830.001,null)) as cases(lead,expected);
+insert into pick_participants (pick_id, user_id)
+  select id, '52222222-2222-4222-8222-222222222222'::uuid from legacy_cases;
+
+select lives_ok(format(
+  'select pick_start(%L, %L, %L::jsonb)', id, '52111111-1111-4111-8111-111111111111',
+  '[{"placeId":"dl-legacy","snapshot":{"name":"Legacy Cafe","lat":1,"lng":2}}]'),
+  format('legacy %s-second lead starts', lead))
+from legacy_cases where expected is not null;
+select is(round(extract(epoch from picks.deadline_at - clock_timestamp()) / 60)::integer,
+  expected, format('legacy %s-second lead keeps the supported %s-minute timer', lead, expected))
+from legacy_cases join picks using (id) where expected is not null;
+
+select throws_ok(format(
+  'select pick_start(%L, %L, %L::jsonb)', id, '52111111-1111-4111-8111-111111111111',
+  '[{"placeId":"dl-invalid","snapshot":{"name":"Invalid Cafe","lat":1,"lng":2}}]'),
+  'PT400', 'This Pick has an unsupported swipe deadline. Cancel it and create a new Pick.',
+  format('legacy %s-second lead is rejected', lead))
+from legacy_cases where expected is null;
+select ok(picks.state = 'draft' and picks.deadline_at = now() + lead * interval '1 second'
+    and not exists (select 1 from pick_candidates where pick_id = picks.id),
+  format('rejected %s-second lead leaves the draft and deck unchanged', lead))
+from legacy_cases join picks using (id) where expected is null;
 
 reset role;
 select * from finish();

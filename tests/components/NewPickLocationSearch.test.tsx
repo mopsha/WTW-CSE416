@@ -152,3 +152,21 @@ test.each(['resolve', 'reject'])(
     expect(onPick).not.toHaveBeenCalled();
   },
 );
+
+test('choosing an unnamed result commits the coordinates once', async () => {
+  found.mockResolvedValueOnce([
+    {
+      id: 'pending',
+      label: 'Typed query',
+      detail: '41.00000, -72.00000 · Finding the area…',
+      chosen: '41.00000, -72.00000',
+      center: { lat: 41, lng: -72 },
+    },
+  ]);
+  await typeQuery('Typed query');
+  await tick();
+  await press('Typed query, 41.00000, -72.00000 · Finding the area…');
+  expect(onPick).toHaveBeenCalledTimes(1);
+  expect(onPick).toHaveBeenCalledWith({ lat: 41, lng: -72 }, '41.00000, -72.00000');
+  expect(jest.mocked(searchLocations).mock.lastCall?.[1]?.isCurrent?.()).toBe(false);
+});

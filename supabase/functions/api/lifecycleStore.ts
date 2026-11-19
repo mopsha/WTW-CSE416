@@ -7,12 +7,19 @@ import type { LifecycleStore, LifecyclePick } from '../_shared/api/lifecycle.ts'
 import { memberTastesFrom } from '../_shared/domain/groupTaste.ts';
 import { createServiceClient } from './serviceClient.ts';
 
-function mapRpcError(error: { code: string; message: string }): never {
+function mapRpcError(error: { code: string; message: string; hint?: string }): never {
   if (error.code === 'PGRST202') {
     throw new ApiError(
       503,
       'DATABASE_NOT_READY',
       'Pick lifecycle database integration is not installed',
+    );
+  }
+  if (error.code === 'PT400' && error.hint === 'unsupported_swipe_deadline') {
+    throw new ApiError(
+      400,
+      'INVALID_INPUT',
+      'This Pick has an unsupported swipe deadline. Cancel it and create a new Pick.',
     );
   }
   const statuses: Record<string, ErrorStatus> = { PT400: 400, PT403: 403, PT404: 404, PT409: 409 };
