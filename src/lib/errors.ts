@@ -10,6 +10,7 @@ const FRIENDLY: Record<string, string> = {
   SERVER_NOT_CONFIGURED: 'That isn’t available right now. Try again later.',
   DATABASE_NOT_READY: 'That isn’t available right now. Try again later.',
   INTERNAL_ERROR: 'WTW hit a snag. Try again in a moment.',
+  PLACES_UNAVAILABLE: 'Couldn’t load places right now. Try again in a minute.',
 };
 
 /** A message that is safe and useful to show the user for any thrown value. */

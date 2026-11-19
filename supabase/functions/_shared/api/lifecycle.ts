@@ -27,7 +27,12 @@ import type { Notifier } from './notify.ts';
 import { canTransition, type PickState } from '../domain/pickState.ts';
 import { shuffleForUser } from '../domain/shuffle.ts';
 import type { LatLng } from '../domain/geo.ts';
-import { candidateSnapshot, NoCandidatesError, type PoolBuilder } from '../places/pool.ts';
+import {
+  candidateSnapshot,
+  NoCandidatesError,
+  PlacesUnavailableError,
+  type PoolBuilder,
+} from '../places/pool.ts';
 import type { PickPlaces } from '../places/pickPlaces.ts';
 import { validFilters, type PlaceFilters } from '../domain/placeFilters.ts';
 import type { HoursMetadata } from '../places/refreshOpenHours.ts';
@@ -116,8 +121,13 @@ export interface LifecycleStore {
   cancel(pickId: string, userId: string, reason: string | null): Promise<void>;
   /** A guest leaves a Pick that hasn't finished (0053). */
   leave?(pickId: string, userId: string): Promise<void>;
-  /** Saves a wider area for a draft Pick before it starts (0053). */
-  setRadius?(pickId: string, userId: string, radiusM: number): Promise<void>;
+  /** start, saving the wider area it found places in, in the same transaction (0053). */
+  startWider?(
+    pickId: string,
+    userId: string,
+    candidates: CandidateSnapshot[],
+    radiusM: number,
+  ): Promise<void>;
   savedCandidates?(hostId: string): Promise<Candidate[]>;
   groupIdeas?(groupId: string, hostId: string): Promise<GroupIdea[]>;
   candidateUuid?(): string;
@@ -377,6 +387,7 @@ export async function buildCandidates(
     (t) => t.liked.length || t.disliked.length || Object.keys(t.learned).length,
   );
   const foundByCategory: Candidate[][] = [];
+  let unavailable = false;
   for (const category of providerCategories(pick.category, pick.mixCategory)) {
     if (candidates.length >= pick.poolSize && !pick.includeGroupIdeas) break;
     try {
@@ -394,6 +405,7 @@ export async function buildCandidates(
       );
     } catch (error) {
       if (!(error instanceof NoCandidatesError)) throw error;
+      unavailable ||= error instanceof PlacesUnavailableError;
     }
   }
   const taste = (c: Candidate) => groupTasteScore(tastes, tasteTypeOf(c.types));
@@ -409,6 +421,13 @@ export async function buildCandidates(
       ideas,
       pick.poolSize,
       pick.customOptions?.length ?? 0,
+    );
+  // An outage isn't an empty area: say so, so start doesn't widen or tell the host to cancel.
+  if (!candidates.length && unavailable)
+    throw new ApiError(
+      503,
+      'PLACES_UNAVAILABLE',
+      'Couldn’t load places right now. Try again in a minute.',
     );
   if (!candidates.length) throw new ApiError(409, 'NO_CANDIDATES', 'No places found for this Pick');
   return candidates.map((c) => {
@@ -473,10 +492,24 @@ export async function startPick(
     );
   }
   await beforeBuild?.();
-  const { candidates, radiusM } = await buildWidening(pool, pick, store);
-  if (radiusM !== pick.radiusM) await store.setRadius!(pickId, userId, radiusM);
-  await store.start(pickId, userId, candidates);
-  await store.notifier?.(othersThan(pick, userId), 'pick_started', pickId);
+  let { candidates, radiusM } = await buildWidening(pool, pick, store);
+  // The deck is ordered by the group's taste. If someone left or joined while it was built,
+  // build it once more for the group that's actually there.
+  const fresh = await store.load(pickId, userId);
+  if (fresh && fresh.participantIds.join() !== pick.participantIds.join()) {
+    if (fresh.participantIds.length < MIN_PARTICIPANTS_TO_START)
+      throw new ApiError(
+        409,
+        'NOT_ENOUGH_PARTICIPANTS',
+        `A Pick needs at least ${MIN_PARTICIPANTS_TO_START} participants to start`,
+      );
+    ({ candidates, radiusM } = await buildWidening(pool, fresh, store));
+  }
+  if (radiusM === pick.radiusM) await store.start(pickId, userId, candidates);
+  else await store.startWider!(pickId, userId, candidates, radiusM);
+  // Notify whoever is in the Pick now, not who was there when start began.
+  const started = (await store.load(pickId, userId).catch(() => null)) ?? fresh ?? pick;
+  await store.notifier?.(othersThan(started, userId), 'pick_started', pickId);
   return { state: 'swiping' as const, candidateCount: candidates.length };
 }
 
@@ -496,7 +529,7 @@ async function buildWidening(pool: PoolBuilder, pick: LifecyclePick, store: Life
       const next = Math.min(radiusM * 2, MAX_RADIUS_M);
       const empty = error instanceof ApiError && error.code === 'NO_CANDIDATES';
       if (!empty) throw error;
-      if (!store.setRadius || widened >= MAX_WIDENINGS || next === radiusM) {
+      if (!store.startWider || widened >= MAX_WIDENINGS || next === radiusM) {
         const miles = Math.round(radiusM / 1609.34);
         throw new ApiError(
           409,

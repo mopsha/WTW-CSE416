@@ -15,7 +15,10 @@ describe('tallyVotes', () => {
   ];
   const ballots = (...ids: string[]) => ids.map((placeId) => ({ placeId }));
   test('a clear majority is decided by the vote', () => {
-    expect(tallyVotes(finalists, ballots('c', 'c', 'a'))).toEqual({ winnerPlaceId: 'c', decidedBy: 'vote' });
+    expect(tallyVotes(finalists, ballots('c', 'c', 'a'))).toEqual({
+      winnerPlaceId: 'c',
+      decidedBy: 'vote',
+    });
   });
   test('a tied top count goes to the better rank and is recorded as a tie-break', () => {
     expect(tallyVotes(finalists, ballots('c', 'b', 'b', 'c'))).toEqual({
@@ -24,7 +27,10 @@ describe('tallyVotes', () => {
     });
   });
   test('a tie below the top does not count as a tie-break', () => {
-    expect(tallyVotes(finalists, ballots('a', 'a', 'b', 'c'))).toEqual({ winnerPlaceId: 'a', decidedBy: 'vote' });
+    expect(tallyVotes(finalists, ballots('a', 'a', 'b', 'c'))).toEqual({
+      winnerPlaceId: 'a',
+      decidedBy: 'vote',
+    });
   });
 });
 
@@ -77,7 +83,12 @@ describe('castVote', () => {
     const store = fixture();
     store.loadForVote
       .mockResolvedValueOnce(
-        snapshot({ ballots: [{ userId: 'host', placeId: 'a' }, { userId: 'guest', placeId: 'b' }] }),
+        snapshot({
+          ballots: [
+            { userId: 'host', placeId: 'a' },
+            { userId: 'guest', placeId: 'b' },
+          ],
+        }),
       )
       .mockResolvedValueOnce(
         snapshot({
@@ -90,7 +101,7 @@ describe('castVote', () => {
       );
     await castVote(store, 'pick', 'third', { placeId: 'b' });
     expect(store.castVote).toHaveBeenCalledWith('pick', 'third', 'b');
-    expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'b', 'vote');
+    expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'b', 'vote', expect.any(Array));
   });
   test('does not settle while ballots are still outstanding', async () => {
     const store = fixture();
@@ -111,13 +122,13 @@ describe('closeVote', () => {
   test('tallies whatever ballots exist, most votes winning', async () => {
     const store = fixture(snapshot({ ballots: [{ userId: 'host', placeId: 'b' }] }));
     await closeVote(store, 'pick', 'host');
-    expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'b', 'vote');
+    expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'b', 'vote', expect.any(Array));
   });
   test('no ballots at all: the top-ranked finalist wins', async () => {
     const store = fixture(snapshot({ ballots: [] }));
     await closeVote(store, 'pick', 'host');
     // Every finalist tied at zero votes: rank order decided it.
-    expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'a', 'tie_break');
+    expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'a', 'tie_break', expect.any(Array));
   });
   test('is idempotent once already completed', async () => {
     const store = fixture(snapshot({ state: 'completed' }));
@@ -130,7 +141,7 @@ describe('closeVoteByDeadline', () => {
   test('settles a Pick in final_vote once its vote deadline has passed', async () => {
     const store = fixture(snapshot({ ballots: [{ userId: 'host', placeId: 'c' }] }));
     await closeVoteByDeadline(store, 'pick', afterDeadline);
-    expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'c', 'vote');
+    expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'c', 'vote', expect.any(Array));
   });
   test('is a no-op before the vote deadline, even if the swipe deadline is long gone', async () => {
     const store = fixture(snapshot({ ballots: [{ userId: 'host', placeId: 'c' }] }));
@@ -150,5 +161,29 @@ describe('closeVoteByDeadline', () => {
     const settled = fixture(snapshot({ state: 'completed' }));
     await closeVoteByDeadline(settled, 'pick', afterDeadline);
     expect(settled.applyVoteClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('a ballot changing while the vote is tallied', () => {
+  test('recounts without a guest who left mid-tally', async () => {
+    const counted = snapshot({
+      participantIds: ['host', 'guest'],
+      ballots: [{ userId: 'guest', placeId: 'b' }],
+    });
+    const afterLeave = snapshot({ participantIds: ['host'], ballots: [] });
+    const store = fixture(counted);
+    store.loadForVote.mockResolvedValueOnce(counted).mockResolvedValueOnce(afterLeave);
+    store.applyVoteClose.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    await closeVote(store, 'pick', 'host');
+    expect(store.applyVoteClose.mock.calls.map((c) => c.slice(1))).toEqual([
+      ['b', 'vote', [{ userId: 'guest', placeId: 'b' }]],
+      ['a', 'tie_break', []],
+    ]);
+  });
+  test('gives up with a try-again error if the ballots keep changing', async () => {
+    const store = fixture();
+    store.applyVoteClose.mockResolvedValue(false);
+    await expect(closeVote(store, 'pick', 'host')).rejects.toMatchObject({ code: 'PICK_CONFLICT' });
+    expect(store.applyVoteClose).toHaveBeenCalledTimes(3);
   });
 });

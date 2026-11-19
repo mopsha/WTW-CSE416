@@ -41,6 +41,8 @@ export class NoCandidatesError extends Error {
     super('No usable nearby places are available from the configured providers');
   }
 }
+/** The provider failed (not an empty answer), so a wider search won't help; try again later. */
+export class PlacesUnavailableError extends NoCandidatesError {}
 
 function filterPool(found: Candidate[], request: PoolRequest): Candidate[] {
   const valid = found.filter(
@@ -113,7 +115,8 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
         log('cache_failed');
       }
       let found: Candidate[] = [],
-        source = mode;
+        source = mode,
+        failed = false;
       try {
         found = filterPool(
           await withTimeout((signal) => provider.search(request, { signal })),
@@ -121,6 +124,7 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
         );
         if (!found.length) log('provider_empty');
       } catch (error) {
+        failed = true;
         log(error instanceof ProviderTimeoutError ? 'provider_timeout' : 'provider_failed');
       }
       if (!found.length && options.fallback) {
@@ -134,7 +138,10 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
           log('fallback_failed');
         }
       }
-      if (!found.length) throw new NoCandidatesError(!!options.fallback);
+      if (!found.length)
+        throw failed
+          ? new PlacesUnavailableError(!!options.fallback)
+          : new NoCandidatesError(!!options.fallback);
       const fetchedAt = now().toISOString();
       const candidates = found.map((p) => ({
         ...p,

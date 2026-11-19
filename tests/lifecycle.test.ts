@@ -9,7 +9,7 @@ import {
   type LifecycleStore,
   type LifecyclePick,
 } from '@shared/api/lifecycle.ts';
-import type { PoolBuilder } from '@shared/places/pool.ts';
+import { PlacesUnavailableError, type PoolBuilder } from '@shared/places/pool.ts';
 import type { Candidate } from '@shared/places/types.ts';
 
 const pick = (overrides: Partial<LifecyclePick> = {}): LifecyclePick => ({
@@ -544,8 +544,8 @@ test('pure custom start avoids external providers; mixed options keep custom bef
 });
 
 describe('an area with no places', () => {
-  test('start widens it (2x, then 4x) and saves the radius it used', async () => {
-    const store = { ...fixture(), setRadius: jest.fn().mockResolvedValue(undefined) };
+  test('start widens it (2x, then 4x) and saves the radius with the deck', async () => {
+    const store = { ...fixture(), startWider: jest.fn().mockResolvedValue(undefined) };
     const buildPool = jest
       .fn()
       .mockResolvedValueOnce([])
@@ -553,27 +553,76 @@ describe('an area with no places', () => {
       .mockResolvedValue([candidate('far')]);
     await startPick(store, { buildPool }, 'pick', 'host');
     expect(buildPool.mock.calls.map(([q]) => q.radiusM)).toEqual([1000, 2000, 4000]);
-    expect(store.setRadius).toHaveBeenCalledWith('pick', 'host', 4000);
-    expect(store.start).toHaveBeenCalledWith('pick', 'host', [
-      expect.objectContaining({ placeId: 'far' }),
-    ]);
+    expect(store.startWider).toHaveBeenCalledWith(
+      'pick',
+      'host',
+      [expect.objectContaining({ placeId: 'far' })],
+      4000,
+    );
+    expect(store.start).not.toHaveBeenCalled();
   });
 
   test('gives up with a plain message after two widenings', async () => {
-    const store = { ...fixture(), setRadius: jest.fn().mockResolvedValue(undefined) };
+    const store = { ...fixture(), startWider: jest.fn().mockResolvedValue(undefined) };
     await expect(startPick(store, poolOf([]), 'pick', 'host')).rejects.toMatchObject({
       status: 409,
       code: 'NO_CANDIDATES',
       message: 'No places found within 2 mi. Cancel this Pick and try another area.',
     });
-    expect(store.setRadius).not.toHaveBeenCalled();
+    expect(store.startWider).not.toHaveBeenCalled();
     expect(store.start).not.toHaveBeenCalled();
   });
 
   test('a found area keeps its radius', async () => {
-    const store = { ...fixture(), setRadius: jest.fn() };
+    const store = { ...fixture(), startWider: jest.fn() };
     await startPick(store, poolOf([candidate('a')]), 'pick', 'host');
-    expect(store.setRadius).not.toHaveBeenCalled();
+    expect(store.startWider).not.toHaveBeenCalled();
+    expect(store.start).toHaveBeenCalled();
+  });
+
+  test('a places outage is a try-again error, not an empty area to widen', async () => {
+    const store = { ...fixture(), startWider: jest.fn() };
+    const buildPool = jest.fn().mockRejectedValue(new PlacesUnavailableError());
+    await expect(startPick(store, { buildPool }, 'pick', 'host')).rejects.toMatchObject({
+      status: 503,
+      code: 'PLACES_UNAVAILABLE',
+    });
+    expect(buildPool).toHaveBeenCalledTimes(1);
+    expect(store.start).not.toHaveBeenCalled();
+  });
+});
+
+describe('membership changing during start', () => {
+  test('rebuilds for the current group and notifies only who is still there', async () => {
+    const before = pick({ participantIds: ['host', 'guest', 'gone'] });
+    const after = pick({ participantIds: ['host', 'guest'] });
+    const notifier = jest.fn();
+    const store = {
+      ...fixture(),
+      load: jest.fn().mockResolvedValueOnce(before).mockResolvedValue(after),
+      memberTastes: jest.fn().mockResolvedValue([]),
+      notifier,
+    };
+    await startPick(store, poolOf([candidate('a')]), 'pick', 'host');
+    expect(store.memberTastes.mock.calls.map(([ids]) => ids)).toEqual([
+      ['host', 'guest', 'gone'],
+      ['host', 'guest'],
+    ]);
+    expect(notifier).toHaveBeenCalledWith(['guest'], 'pick_started', 'pick');
+  });
+
+  test('stops if everyone else left', async () => {
+    const store = {
+      ...fixture(),
+      load: jest
+        .fn()
+        .mockResolvedValueOnce(pick())
+        .mockResolvedValue(pick({ participantIds: ['host'] })),
+    };
+    await expect(startPick(store, poolOf([candidate('a')]), 'pick', 'host')).rejects.toMatchObject({
+      code: 'NOT_ENOUGH_PARTICIPANTS',
+    });
+    expect(store.start).not.toHaveBeenCalled();
   });
 });
 

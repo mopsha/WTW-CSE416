@@ -21,8 +21,16 @@ export interface VoteSnapshot {
 export interface VotingStore {
   loadForVote(pickId: string): Promise<VoteSnapshot | null>;
   castVote(pickId: string, userId: string, placeId: string): Promise<void>;
-  /** Silently a no-op if the vote already settled (host/everyone-voted/deadline raced). */
-  applyVoteClose(pickId: string, winnerPlaceId: string, decidedBy: VoteDecidedBy): Promise<void>;
+  /**
+   * Silently a no-op if the vote already settled (host/everyone-voted/deadline raced).
+   * Returns false, settling nothing, if the ballots changed since they were counted (0053).
+   */
+  applyVoteClose(
+    pickId: string,
+    winnerPlaceId: string,
+    decidedBy: VoteDecidedBy,
+    ballots: VoteSnapshot['ballots'],
+  ): Promise<boolean | void>;
   /** Announces the winner; racing settles are deduplicated by the database. */
   notifier?: Notifier;
 }
@@ -54,10 +62,29 @@ export function parseVote(body: unknown): string {
   return placeId;
 }
 
-async function settleVote(store: VotingStore, pickId: string, snapshot: VoteSnapshot) {
-  const { winnerPlaceId, decidedBy } = tallyVotes(snapshot.finalists, snapshot.ballots);
-  await store.applyVoteClose(pickId, winnerPlaceId, decidedBy);
-  await store.notifier?.(snapshot.participantIds, 'winner_decided', pickId);
+/** How many times a tally recounts when a vote or a leave lands while it counts. */
+const SETTLE_ATTEMPTS = 3;
+
+async function settleVote(store: VotingStore, pickId: string, first: VoteSnapshot) {
+  let snapshot: VoteSnapshot | null = first;
+  for (let attempt = 0; attempt < SETTLE_ATTEMPTS; attempt++) {
+    if (!snapshot || snapshot.state !== 'final_vote') return;
+    const { winnerPlaceId, decidedBy } = tallyVotes(snapshot.finalists, snapshot.ballots);
+    const applied = await store.applyVoteClose(pickId, winnerPlaceId, decidedBy, snapshot.ballots);
+    if (applied !== false) {
+      await store.notifier?.(snapshot.participantIds, 'winner_decided', pickId);
+      return;
+    }
+    snapshot = await store.loadForVote(pickId);
+  }
+  throw new ApiError(409, 'PICK_CONFLICT', 'Votes are still coming in. Try again in a moment.');
+}
+
+/** Settles the vote once everyone still in the Pick has voted (after a vote, or a leave). */
+export async function settleIfEveryoneVoted(store: VotingStore, pickId: string) {
+  const pick = await store.loadForVote(pickId);
+  if (pick && pick.state === 'final_vote' && pick.ballots.length >= pick.participantIds.length)
+    await settleVote(store, pickId, pick);
 }
 
 export async function castVote(store: VotingStore, pickId: string, userId: string, body: unknown) {
@@ -75,15 +102,7 @@ export async function castVote(store: VotingStore, pickId: string, userId: strin
   }
 
   await store.castVote(pickId, userId, placeId);
-
-  const after = await store.loadForVote(pickId);
-  if (
-    after &&
-    after.state === 'final_vote' &&
-    after.ballots.length >= after.participantIds.length
-  ) {
-    await settleVote(store, pickId, after);
-  }
+  await settleIfEveryoneVoted(store, pickId);
   return { status: 'ok' as const };
 }
 

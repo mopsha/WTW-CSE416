@@ -52,7 +52,12 @@ import {
   type LifecycleStore,
 } from '../_shared/api/lifecycle.ts';
 import { closePick, type ClosingStore } from '../_shared/api/closing.ts';
-import { castVote, closeVote, type VotingStore } from '../_shared/api/voting.ts';
+import {
+  castVote,
+  closeVote,
+  settleIfEveryoneVoted,
+  type VotingStore,
+} from '../_shared/api/voting.ts';
 import type { PoolBuilder } from '../_shared/places/pool.ts';
 import type { PickPlaces } from '../_shared/places/pickPlaces.ts';
 import { joinPick, type JoinStore } from '../_shared/api/join.ts';
@@ -569,6 +574,7 @@ export function createApp(
     // With them gone, everyone left may already be done; never fails the leave.
     try {
       await closePick(deps.closingStore, pickId, 'system', null);
+      await settleIfEveryoneVoted(deps.closingStore, pickId);
     } catch (error) {
       console.error(
         'auto-close after leave failed',
