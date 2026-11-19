@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { AppState, StyleSheet, View } from 'react-native';
 
 import {
+  AppLogo,
   Button,
-  colors,
   ErrorState,
   Illustration,
   OnboardingCopy,
@@ -249,15 +249,7 @@ export default function OnboardingScreen() {
     return (
       <OnboardingFrame
         top={top}
-        art={
-          <Illustration
-            icon="thumbs-up"
-            badges={[
-              { icon: 'checkmark', color: colors.yes },
-              { icon: 'star', color: colors.maybe },
-            ]}
-          />
-        }
+        art={<AppLogo size={140} />}
         title="You’re all set"
         body="Start a Pick, invite friends and let WTW find the winner."
         actions={<Button label="Start picking" onPress={enter} />}
