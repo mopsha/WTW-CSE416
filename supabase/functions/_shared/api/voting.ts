@@ -23,13 +23,15 @@ export interface VotingStore {
   castVote(pickId: string, userId: string, placeId: string): Promise<void>;
   /**
    * Silently a no-op if the vote already settled (host/everyone-voted/deadline raced).
-   * Returns false, settling nothing, if the ballots changed since they were counted (0053).
+   * Returns false, settling nothing, if the ballots or the voters changed since they were
+   * counted, or no one is left to vote (0053).
    */
   applyVoteClose(
     pickId: string,
     winnerPlaceId: string,
     decidedBy: VoteDecidedBy,
     ballots: VoteSnapshot['ballots'],
+    participantIds: string[],
   ): Promise<boolean | void>;
   /** Announces the winner; racing settles are deduplicated by the database. */
   notifier?: Notifier;
@@ -62,15 +64,24 @@ export function parseVote(body: unknown): string {
   return placeId;
 }
 
-/** How many times a tally recounts when a vote or a leave lands while it counts. */
+/** How many times a tally recounts when a vote or a leave lands while it counts. The voters it
+ * counted are the ones the winner notice goes to. */
 const SETTLE_ATTEMPTS = 3;
 
 async function settleVote(store: VotingStore, pickId: string, first: VoteSnapshot) {
   let snapshot: VoteSnapshot | null = first;
   for (let attempt = 0; attempt < SETTLE_ATTEMPTS; attempt++) {
-    if (!snapshot || snapshot.state !== 'final_vote') return;
+    // With no one left to vote there is no winner to declare; the database cancels the
+    // round (0053), and 0 ballots of 0 voters must not count as everyone voting.
+    if (!snapshot || snapshot.state !== 'final_vote' || !snapshot.participantIds.length) return;
     const { winnerPlaceId, decidedBy } = tallyVotes(snapshot.finalists, snapshot.ballots);
-    const applied = await store.applyVoteClose(pickId, winnerPlaceId, decidedBy, snapshot.ballots);
+    const applied = await store.applyVoteClose(
+      pickId,
+      winnerPlaceId,
+      decidedBy,
+      snapshot.ballots,
+      snapshot.participantIds,
+    );
     if (applied !== false) {
       await store.notifier?.(snapshot.participantIds, 'winner_decided', pickId);
       return;

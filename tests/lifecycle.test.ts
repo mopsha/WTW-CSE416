@@ -545,7 +545,7 @@ test('pure custom start avoids external providers; mixed options keep custom bef
 
 describe('an area with no places', () => {
   test('start widens it (2x, then 4x) and saves the radius with the deck', async () => {
-    const store = { ...fixture(), startWider: jest.fn().mockResolvedValue(undefined) };
+    const store = { ...fixture(), startChecked: jest.fn().mockResolvedValue(true) };
     const buildPool = jest
       .fn()
       .mockResolvedValueOnce([])
@@ -553,76 +553,93 @@ describe('an area with no places', () => {
       .mockResolvedValue([candidate('far')]);
     await startPick(store, { buildPool }, 'pick', 'host');
     expect(buildPool.mock.calls.map(([q]) => q.radiusM)).toEqual([1000, 2000, 4000]);
-    expect(store.startWider).toHaveBeenCalledWith(
+    expect(store.startChecked).toHaveBeenCalledWith(
       'pick',
       'host',
       [expect.objectContaining({ placeId: 'far' })],
       4000,
+      ['host', 'guest'],
     );
     expect(store.start).not.toHaveBeenCalled();
   });
 
   test('gives up with a plain message after two widenings', async () => {
-    const store = { ...fixture(), startWider: jest.fn().mockResolvedValue(undefined) };
+    const store = { ...fixture(), startChecked: jest.fn().mockResolvedValue(true) };
     await expect(startPick(store, poolOf([]), 'pick', 'host')).rejects.toMatchObject({
       status: 409,
       code: 'NO_CANDIDATES',
       message: 'No places found within 2 mi. Cancel this Pick and try another area.',
     });
-    expect(store.startWider).not.toHaveBeenCalled();
+    expect(store.startChecked).not.toHaveBeenCalled();
     expect(store.start).not.toHaveBeenCalled();
   });
 
   test('a found area keeps its radius', async () => {
-    const store = { ...fixture(), startWider: jest.fn() };
+    const store = { ...fixture(), startChecked: jest.fn().mockResolvedValue(true) };
     await startPick(store, poolOf([candidate('a')]), 'pick', 'host');
-    expect(store.startWider).not.toHaveBeenCalled();
-    expect(store.start).toHaveBeenCalled();
+    expect(store.startChecked.mock.calls[0]![3]).toBe(1000);
   });
 
   test('a places outage is a try-again error, not an empty area to widen', async () => {
-    const store = { ...fixture(), startWider: jest.fn() };
+    const store = { ...fixture(), startChecked: jest.fn() };
     const buildPool = jest.fn().mockRejectedValue(new PlacesUnavailableError());
     await expect(startPick(store, { buildPool }, 'pick', 'host')).rejects.toMatchObject({
       status: 503,
       code: 'PLACES_UNAVAILABLE',
     });
     expect(buildPool).toHaveBeenCalledTimes(1);
-    expect(store.start).not.toHaveBeenCalled();
+    expect(store.startChecked).not.toHaveBeenCalled();
   });
 });
 
 describe('membership changing during start', () => {
-  test('rebuilds for the current group and notifies only who is still there', async () => {
-    const before = pick({ participantIds: ['host', 'guest', 'gone'] });
-    const after = pick({ participantIds: ['host', 'guest'] });
+  test('rebuilds until the deck matches who is there, and notifies only them', async () => {
     const notifier = jest.fn();
     const store = {
-      ...fixture(),
-      load: jest.fn().mockResolvedValueOnce(before).mockResolvedValue(after),
+      ...fixture(pick({ participantIds: ['host', 'guest', 'gone'] })),
       memberTastes: jest.fn().mockResolvedValue([]),
+      // The roster moved twice: someone left, then someone joined during the rebuild.
+      startChecked: jest
+        .fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValue(true),
       notifier,
     };
+    store.load
+      .mockResolvedValueOnce(pick({ participantIds: ['host', 'guest', 'gone'] }))
+      .mockResolvedValueOnce(pick({ participantIds: ['host', 'guest'] }))
+      .mockResolvedValueOnce(pick({ participantIds: ['host', 'guest', 'new'] }));
     await startPick(store, poolOf([candidate('a')]), 'pick', 'host');
     expect(store.memberTastes.mock.calls.map(([ids]) => ids)).toEqual([
       ['host', 'guest', 'gone'],
       ['host', 'guest'],
+      ['host', 'guest', 'new'],
     ]);
-    expect(notifier).toHaveBeenCalledWith(['guest'], 'pick_started', 'pick');
+    expect(store.startChecked.mock.calls.at(-1)![4]).toEqual(['host', 'guest', 'new']);
+    expect(notifier).toHaveBeenCalledTimes(1);
+    expect(notifier).toHaveBeenCalledWith(['guest', 'new'], 'pick_started', 'pick');
   });
 
   test('stops if everyone else left', async () => {
-    const store = {
-      ...fixture(),
-      load: jest
-        .fn()
-        .mockResolvedValueOnce(pick())
-        .mockResolvedValue(pick({ participantIds: ['host'] })),
-    };
+    const store = { ...fixture(), startChecked: jest.fn().mockResolvedValueOnce(false) };
+    store.load
+      .mockResolvedValueOnce(pick())
+      .mockResolvedValueOnce(pick({ participantIds: ['host'] }));
     await expect(startPick(store, poolOf([candidate('a')]), 'pick', 'host')).rejects.toMatchObject({
       code: 'NOT_ENOUGH_PARTICIPANTS',
     });
-    expect(store.start).not.toHaveBeenCalled();
+    expect(store.startChecked).toHaveBeenCalledTimes(1);
+  });
+
+  test('gives up with a try-again error if the group keeps changing', async () => {
+    const notifier = jest.fn();
+    const store = { ...fixture(), startChecked: jest.fn().mockResolvedValue(false), notifier };
+    await expect(startPick(store, poolOf([candidate('a')]), 'pick', 'host')).rejects.toMatchObject({
+      code: 'PICK_CONFLICT',
+    });
+    expect(store.startChecked).toHaveBeenCalledTimes(3);
+    expect(notifier).not.toHaveBeenCalled();
   });
 });
 

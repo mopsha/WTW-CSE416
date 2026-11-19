@@ -121,13 +121,17 @@ export interface LifecycleStore {
   cancel(pickId: string, userId: string, reason: string | null): Promise<void>;
   /** A guest leaves a Pick that hasn't finished (0053). */
   leave?(pickId: string, userId: string): Promise<void>;
-  /** start, saving the wider area it found places in, in the same transaction (0053). */
-  startWider?(
+  /**
+   * start, only if the Pick still has exactly these participants, saving the (possibly wider)
+   * area in the same transaction (0053). False, changing nothing, if the roster moved.
+   */
+  startChecked?(
     pickId: string,
     userId: string,
     candidates: CandidateSnapshot[],
     radiusM: number,
-  ): Promise<void>;
+    participantIds: string[],
+  ): Promise<boolean>;
   savedCandidates?(hostId: string): Promise<Candidate[]>;
   groupIdeas?(groupId: string, hostId: string): Promise<GroupIdea[]>;
   candidateUuid?(): string;
@@ -492,26 +496,38 @@ export async function startPick(
     );
   }
   await beforeBuild?.();
-  let { candidates, radiusM } = await buildWidening(pool, pick, store);
-  // The deck is ordered by the group's taste. If someone left or joined while it was built,
-  // build it once more for the group that's actually there.
-  const fresh = await store.load(pickId, userId);
-  if (fresh && fresh.participantIds.join() !== pick.participantIds.join()) {
-    if (fresh.participantIds.length < MIN_PARTICIPANTS_TO_START)
+  if (!store.startChecked) {
+    const { candidates } = await buildWidening(pool, pick, store);
+    await store.start(pickId, userId, candidates);
+    await store.notifier?.(othersThan(pick, userId), 'pick_started', pickId);
+    return { state: 'swiping' as const, candidateCount: candidates.length };
+  }
+  // The deck is ordered by the group's taste, and the start notice goes to the group. If
+  // someone joins or leaves while the deck is built, build it again for who is there now.
+  let current = pick;
+  for (let attempt = 0; attempt < START_ATTEMPTS; attempt++) {
+    if (current.participantIds.length < MIN_PARTICIPANTS_TO_START)
       throw new ApiError(
         409,
         'NOT_ENOUGH_PARTICIPANTS',
         `A Pick needs at least ${MIN_PARTICIPANTS_TO_START} participants to start`,
       );
-    ({ candidates, radiusM } = await buildWidening(pool, fresh, store));
+    const { candidates, radiusM } = await buildWidening(pool, current, store);
+    if (await store.startChecked(pickId, userId, candidates, radiusM, current.participantIds)) {
+      await store.notifier?.(othersThan(current, userId), 'pick_started', pickId);
+      return { state: 'swiping' as const, candidateCount: candidates.length };
+    }
+    const fresh = await store.load(pickId, userId);
+    if (!fresh) throw new ApiError(404, 'PICK_NOT_FOUND', 'Pick not found');
+    if (fresh.state !== 'draft')
+      throw new ApiError(409, 'INVALID_PICK_STATE', 'Pick must be draft to start');
+    current = fresh;
   }
-  if (radiusM === pick.radiusM) await store.start(pickId, userId, candidates);
-  else await store.startWider!(pickId, userId, candidates, radiusM);
-  // Notify whoever is in the Pick now, not who was there when start began.
-  const started = (await store.load(pickId, userId).catch(() => null)) ?? fresh ?? pick;
-  await store.notifier?.(othersThan(started, userId), 'pick_started', pickId);
-  return { state: 'swiping' as const, candidateCount: candidates.length };
+  throw new ApiError(409, 'PICK_CONFLICT', 'People are still joining. Try starting again.');
 }
+
+/** How many times start rebuilds the deck for a group that changed while it was built. */
+const START_ATTEMPTS = 3;
 
 /** How many times start doubles an area that has no places before giving up. */
 const MAX_WIDENINGS = 2;
@@ -529,7 +545,7 @@ async function buildWidening(pool: PoolBuilder, pick: LifecyclePick, store: Life
       const next = Math.min(radiusM * 2, MAX_RADIUS_M);
       const empty = error instanceof ApiError && error.code === 'NO_CANDIDATES';
       if (!empty) throw error;
-      if (!store.startWider || widened >= MAX_WIDENINGS || next === radiusM) {
+      if (!store.startChecked || widened >= MAX_WIDENINGS || next === radiusM) {
         const miles = Math.round(radiusM / 1609.34);
         throw new ApiError(
           409,

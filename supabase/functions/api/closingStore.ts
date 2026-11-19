@@ -55,12 +55,13 @@ export function createClosingStore(): ClosingStore & VotingStore {
     async castVote(pickId, userId, placeId) {
       await rpc('pick_cast_vote', { p_pick_id: pickId, p_user_id: userId, p_place_id: placeId });
     },
-    async applyVoteClose(pickId, winnerPlaceId, decidedBy, ballots) {
+    async applyVoteClose(pickId, winnerPlaceId, decidedBy, ballots, participantIds) {
       return (await rpc('pick_close_vote_apply', {
         p_pick_id: pickId,
         p_winner_place_id: winnerPlaceId,
         p_decided_by: decidedBy,
         p_ballots: ballots,
+        p_participant_ids: participantIds,
       })) as boolean;
     },
   };

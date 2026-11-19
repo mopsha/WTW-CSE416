@@ -133,7 +133,14 @@ test('continues across pages and phases after a Pick fails without exposing its 
     null,
     expect.any(Object),
   );
-  expect(closers.applyVoteClose).toHaveBeenNthCalledWith(1, 'c', 'a', 'vote', []);
+  expect(closers.applyVoteClose).toHaveBeenNthCalledWith(
+    1,
+    'c',
+    'a',
+    'vote',
+    [],
+    expect.any(Array),
+  );
   await sweepDeadlines(store, closers);
   expect(closers.applyClose).toHaveBeenNthCalledWith(
     2,

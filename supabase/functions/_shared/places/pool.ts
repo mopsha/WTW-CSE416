@@ -164,7 +164,8 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
         .filter((p) => matchesFilters(p, request, now()) && matchesDiscovery(p, request.discovery))
         .slice(0, request.poolSize);
       // Preserve the fallback notice even when strict filters remove every fixture.
-      if (!filtered.length && source !== mode) throw new NoCandidatesError(true);
+      if (!filtered.length && source !== mode)
+        throw failed ? new PlacesUnavailableError(true) : new NoCandidatesError(true);
       return structuredClone(filtered);
     },
   };

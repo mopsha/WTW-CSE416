@@ -130,13 +130,14 @@ export function createLifecycleStore(): LifecycleStore {
     async leave(pickId, userId) {
       await rpc('pick_leave', { p_pick_id: pickId, p_user_id: userId });
     },
-    async startWider(pickId, userId, candidates, radiusM) {
-      await rpc('pick_start_at_radius', {
+    async startChecked(pickId, userId, candidates, radiusM, participantIds) {
+      return (await rpc('pick_start_checked', {
         p_pick_id: pickId,
         p_user_id: userId,
         p_candidates: candidates,
         p_radius_m: radiusM,
-      });
+        p_participant_ids: participantIds,
+      })) as boolean;
     },
   };
 }

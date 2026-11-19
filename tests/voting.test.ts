@@ -2,6 +2,7 @@ import {
   castVote,
   closeVote,
   closeVoteByDeadline,
+  settleIfEveryoneVoted,
   tallyVotes,
   type VoteSnapshot,
   type VotingStore,
@@ -101,7 +102,13 @@ describe('castVote', () => {
       );
     await castVote(store, 'pick', 'third', { placeId: 'b' });
     expect(store.castVote).toHaveBeenCalledWith('pick', 'third', 'b');
-    expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'b', 'vote', expect.any(Array));
+    expect(store.applyVoteClose).toHaveBeenCalledWith(
+      'pick',
+      'b',
+      'vote',
+      expect.any(Array),
+      expect.any(Array),
+    );
   });
   test('does not settle while ballots are still outstanding', async () => {
     const store = fixture();
@@ -122,13 +129,25 @@ describe('closeVote', () => {
   test('tallies whatever ballots exist, most votes winning', async () => {
     const store = fixture(snapshot({ ballots: [{ userId: 'host', placeId: 'b' }] }));
     await closeVote(store, 'pick', 'host');
-    expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'b', 'vote', expect.any(Array));
+    expect(store.applyVoteClose).toHaveBeenCalledWith(
+      'pick',
+      'b',
+      'vote',
+      expect.any(Array),
+      expect.any(Array),
+    );
   });
   test('no ballots at all: the top-ranked finalist wins', async () => {
     const store = fixture(snapshot({ ballots: [] }));
     await closeVote(store, 'pick', 'host');
     // Every finalist tied at zero votes: rank order decided it.
-    expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'a', 'tie_break', expect.any(Array));
+    expect(store.applyVoteClose).toHaveBeenCalledWith(
+      'pick',
+      'a',
+      'tie_break',
+      expect.any(Array),
+      expect.any(Array),
+    );
   });
   test('is idempotent once already completed', async () => {
     const store = fixture(snapshot({ state: 'completed' }));
@@ -141,7 +160,13 @@ describe('closeVoteByDeadline', () => {
   test('settles a Pick in final_vote once its vote deadline has passed', async () => {
     const store = fixture(snapshot({ ballots: [{ userId: 'host', placeId: 'c' }] }));
     await closeVoteByDeadline(store, 'pick', afterDeadline);
-    expect(store.applyVoteClose).toHaveBeenCalledWith('pick', 'c', 'vote', expect.any(Array));
+    expect(store.applyVoteClose).toHaveBeenCalledWith(
+      'pick',
+      'c',
+      'vote',
+      expect.any(Array),
+      expect.any(Array),
+    );
   });
   test('is a no-op before the vote deadline, even if the swipe deadline is long gone', async () => {
     const store = fixture(snapshot({ ballots: [{ userId: 'host', placeId: 'c' }] }));
@@ -176,9 +201,26 @@ describe('a ballot changing while the vote is tallied', () => {
     store.applyVoteClose.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     await closeVote(store, 'pick', 'host');
     expect(store.applyVoteClose.mock.calls.map((c) => c.slice(1))).toEqual([
-      ['b', 'vote', [{ userId: 'guest', placeId: 'b' }]],
-      ['a', 'tie_break', []],
+      ['b', 'vote', [{ userId: 'guest', placeId: 'b' }], ['host', 'guest']],
+      ['a', 'tie_break', [], ['host']],
     ]);
+  });
+  test('a guest who leaves without voting does not get the winner notice', async () => {
+    const counted = snapshot({ participantIds: ['host', 'guest'], ballots: [] });
+    const afterLeave = snapshot({ participantIds: ['host'], ballots: [] });
+    const notifier = jest.fn();
+    const store = { ...fixture(counted), notifier };
+    store.loadForVote.mockResolvedValueOnce(counted).mockResolvedValueOnce(afterLeave);
+    store.applyVoteClose.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    await closeVote(store, 'pick', 'host');
+    expect(notifier).toHaveBeenCalledTimes(1);
+    expect(notifier).toHaveBeenCalledWith(['host'], 'winner_decided', 'pick');
+  });
+  test('no winner when no one is left to vote', async () => {
+    const store = fixture(snapshot({ participantIds: [], ballots: [] }));
+    await settleIfEveryoneVoted(store, 'pick');
+    await closeVoteByDeadline(store, 'pick', afterDeadline);
+    expect(store.applyVoteClose).not.toHaveBeenCalled();
   });
   test('gives up with a try-again error if the ballots keep changing', async () => {
     const store = fixture();
