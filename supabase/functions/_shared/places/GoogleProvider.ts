@@ -1,8 +1,5 @@
 import {
-  ACTIVITY_TYPES,
-  CUISINES,
   DISCOVER_PRICES,
-  FOOD_TYPES,
   discoverSearchTypes,
   narrowsSearch,
   validDiscovery,
@@ -218,21 +215,22 @@ export function validateSearch(query: PlaceSearch): void {
   }
 }
 
-/** Words for a categorical Text Search query, from the same options as the type list. */
-function textQuery(category: Category, filters: DiscoverConstraints): string {
-  const labels = (
-    catalog: readonly { value: string; label: string }[],
-    values?: readonly string[],
-  ) => catalog.filter((o) => values?.includes(o.value)).map((o) => o.label);
-  const or = (words: string[]) => words.join(' or ');
-  if (category === 'food') {
-    const cuisines = labels(CUISINES, filters.cuisines);
-    if (cuisines.length) return `${or(cuisines)} restaurants`;
-    const foodTypes = labels(FOOD_TYPES, filters.foodTypes);
-    return foodTypes.length ? or(foodTypes) : 'restaurants';
-  }
-  const activities = labels(ACTIVITY_TYPES, filters.activityTypes);
-  return activities.length ? or(activities) : 'things to do';
+/**
+ * A categorical Text Search query that doesn't steer results: "restaurants" or "things to do"
+ * when no type is selected, else the selected Google types in words ("bowling alley"), never
+ * UI labels like "Sports". Activities never get a food word, since types come per category.
+ */
+export function textQuery(
+  category: Category,
+  filters: DiscoverConstraints,
+  types: string[],
+): string {
+  const selected =
+    category === 'food'
+      ? filters.cuisines?.length || filters.foodTypes?.length
+      : filters.activityTypes?.length;
+  if (!selected || !types.length) return category === 'food' ? 'restaurants' : 'things to do';
+  return types.map((t) => t.replace(/_/g, ' ')).join(' or ');
 }
 
 /**
@@ -245,7 +243,7 @@ export function textSearchBody(query: PlaceSearch & { category: Category }, type
   const box = boundingBox(query.center, query.radiusM);
   const point = (p: { lat: number; lng: number }) => ({ latitude: p.lat, longitude: p.lng });
   return {
-    textQuery: textQuery(query.category, filters),
+    textQuery: textQuery(query.category, filters, types),
     ...(types.length === 1 ? { includedType: types[0], strictTypeFiltering: true } : {}),
     pageSize: 20,
     rankPreference: filters.sort === 'nearest' ? 'DISTANCE' : 'RELEVANCE',

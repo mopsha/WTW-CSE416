@@ -15,6 +15,7 @@ import {
   GoogleProvider,
   DISCOVER_FIELD_MASK,
   PICK_SEARCH_MASK,
+  textQuery,
   textSearchBody,
 } from '@shared/places/GoogleProvider.ts';
 import { MemoryPlaceCache, cacheKey, queryIdentity } from '@shared/places/cache.ts';
@@ -386,7 +387,7 @@ test('narrowing filters use Text Search with exact priceLevels around the user; 
   expect(url).toBe('https://places.googleapis.com/v1/places:searchText');
   const body = JSON.parse(init.body as string);
   expect(body).toMatchObject({
-    textQuery: 'Italian restaurants',
+    textQuery: 'italian restaurant',
     includedType: 'italian_restaurant',
     strictTypeFiltering: true,
     priceLevels: ['PRICE_LEVEL_INEXPENSIVE', 'PRICE_LEVEL_MODERATE'],
@@ -415,7 +416,10 @@ test('Text Search bodies: several types become one query, open now and nearest p
     },
     discoverSearchTypes('food', { foodTypes: ['burgers', 'pizza'] }),
   );
-  expect(body).toMatchObject({ textQuery: 'Pizza or Burgers', openNow: true });
+  expect(body).toMatchObject({
+    textQuery: 'pizza restaurant or hamburger restaurant',
+    openNow: true,
+  });
   expect(body).toMatchObject({ rankPreference: 'DISTANCE' });
   expect(body).not.toHaveProperty('includedType');
   expect(body).not.toHaveProperty('priceLevels');
@@ -459,4 +463,30 @@ test('Text Search counts against the shared daily cap, and results are new match
   const capped = await discover(pool, parse('&category=food&prices=2'), {});
   expect(raw).toHaveBeenCalledTimes(1);
   expect(capped.fallback).toBe(true);
+});
+
+test('Text Search queries are generic per category, and Activities never get a food query', () => {
+  const body = (query: string) => {
+    const r = parse(query).find((x) => narrowsSearch(x.discovery))!;
+    return textSearchBody(r as never, discoverSearchTypes(r.category, r.discovery!));
+  };
+  expect(body('&category=food&prices=2').textQuery).toBe('restaurants');
+  expect(body('&prices=2').textQuery).toBe('restaurants');
+  // For You + price: the activities search has no narrowing filter, so it stays on Nearby.
+  expect(parse('&prices=2').map((r) => narrowsSearch(r.discovery))).toEqual([true, false]);
+  expect(body('&category=activities&openNow=true').textQuery).toBe('things to do');
+  expect(body('&category=activities&minRating=4').textQuery).toBe('things to do');
+  expect(body('&category=activities&activityTypes=bowling&openNow=true')).toMatchObject({
+    textQuery: 'bowling alley',
+    includedType: 'bowling_alley',
+  });
+  expect(body('&category=activities&activityTypes=sports&minRating=4').textQuery).toBe(
+    'sports complex or athletic field or stadium',
+  );
+  const food = /\b(restaurants?|food|cafes?|bakery|dining|eat)\b/i;
+  for (const option of ACTIVITY_TYPES) {
+    const q = textQuery('activities', { activityTypes: [option.value] }, [...option.types]);
+    expect(q).not.toMatch(food);
+  }
+  expect(textQuery('activities', {}, [])).not.toMatch(food);
 });
