@@ -3,7 +3,7 @@ import { ApiError } from '../_shared/api/errors.ts';
 import type { SignInStore } from '../_shared/api/signIn.ts';
 import { createServiceClient } from './serviceClient.ts';
 
-/** Service-role adapter for _shared/api/signIn.ts (0052_password_login_limit.sql). */
+/** Service-role adapter for _shared/api/signIn.ts (0055_password_login_limit.sql). */
 export function createSignInStore(): SignInStore {
   async function owner(username: string): Promise<string | null> {
     // Usernames are stored lowercase (0036's trigger), so equality is exact.

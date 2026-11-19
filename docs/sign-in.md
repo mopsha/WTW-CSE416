@@ -33,7 +33,7 @@ user a real-looking username.
 - Every failure says "Wrong username or password", whether the username is unknown or the
   password is wrong.
 - These sign-ins all come from the server's address, so Supabase's per-IP limits can't tell users
-  apart. `consume_login_limit` (migration 0052) allows **10 attempts per 15 minutes per account**.
+  apart. `consume_login_limit` (migration 0055) allows **10 attempts per 15 minutes per account**.
   Unknown usernames count too, and the account is stored as an md5 hash, not an email.
 
 Code: `_shared/api/signIn.ts` (logic, tested in `tests/signIn.test.ts`), `api/signInStore.ts`,
@@ -78,7 +78,7 @@ set, so builds stay exactly as before until then.
 
 ### Deploy order
 
-- Migration **0052** must land after #78's **0051**, because CI rejects out-of-order migrations.
+- Migration **0055** must land after 0051 (#78) and 0052–0054 (the pick-flow and Hang PRs), because CI rejects out-of-order migrations.
 - The backend (`/auth/password-login`, `/usernames/available`) deploys on merge to `main`, before
   the app update.
 - Older apps keep working as before. They just don't show the new options.

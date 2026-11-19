@@ -2,7 +2,7 @@
 -- POST /auth/password-login signs in from the API's server, so Supabase's per-IP limits can't
 -- tell users apart. This adds a per-account limit: 10 attempts per 15 minutes for each account
 -- named (by email, or by username when it matches nobody). The subject is stored hashed, so
--- no email address lands in rate_limit_counters. 0051 is #78's Google taste learning.
+-- no email address lands in rate_limit_counters. 0051–0054 belong to #78 and the pick-flow/Hang PRs.
 
 alter table public.rate_limit_counters drop constraint rate_limit_counters_scope_check;
 alter table public.rate_limit_counters add constraint rate_limit_counters_scope_check

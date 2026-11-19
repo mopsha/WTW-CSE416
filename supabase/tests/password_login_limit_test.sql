@@ -1,4 +1,4 @@
--- Per-account password login limit (0052_password_login_limit.sql, Alan).
+-- Per-account password login limit (0055_password_login_limit.sql, Alan).
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
