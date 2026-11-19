@@ -56,7 +56,7 @@ function fixture(pick: VoteSnapshot | null = snapshot()) {
   return {
     loadForVote: jest.fn().mockResolvedValue(pick),
     castVote: jest.fn().mockResolvedValue(undefined),
-    applyVoteClose: jest.fn().mockResolvedValue(undefined),
+    applyVoteClose: jest.fn().mockResolvedValue('committed'),
   } satisfies VotingStore;
 }
 
@@ -198,7 +198,7 @@ describe('a ballot changing while the vote is tallied', () => {
     const afterLeave = snapshot({ participantIds: ['host'], ballots: [] });
     const store = fixture(counted);
     store.loadForVote.mockResolvedValueOnce(counted).mockResolvedValueOnce(afterLeave);
-    store.applyVoteClose.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    store.applyVoteClose.mockResolvedValueOnce('stale').mockResolvedValueOnce('committed');
     await closeVote(store, 'pick', 'host');
     expect(store.applyVoteClose.mock.calls.map((c) => c.slice(1))).toEqual([
       ['b', 'vote', [{ userId: 'guest', placeId: 'b' }], ['host', 'guest']],
@@ -211,10 +211,33 @@ describe('a ballot changing while the vote is tallied', () => {
     const notifier = jest.fn();
     const store = { ...fixture(counted), notifier };
     store.loadForVote.mockResolvedValueOnce(counted).mockResolvedValueOnce(afterLeave);
-    store.applyVoteClose.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    store.applyVoteClose.mockResolvedValueOnce('stale').mockResolvedValueOnce('committed');
     await closeVote(store, 'pick', 'host');
     expect(notifier).toHaveBeenCalledTimes(1);
     expect(notifier).toHaveBeenCalledWith(['host'], 'winner_decided', 'pick');
+  });
+  test('a last-voter leave that cancels the round suppresses the stale tally notice', async () => {
+    const counted = snapshot({
+      participantIds: ['guest'],
+      ballots: [{ userId: 'guest', placeId: 'b' }],
+    });
+    const store = { ...fixture(counted), notifier: jest.fn() };
+    store.applyVoteClose.mockResolvedValue('closed');
+
+    await closeVote(store, 'pick', 'host');
+
+    expect(store.applyVoteClose).toHaveBeenCalledTimes(1);
+    expect(store.loadForVote).toHaveBeenCalledTimes(1);
+    expect(store.notifier).not.toHaveBeenCalled();
+  });
+  test('two settlement attempts on the same snapshot notify only for the commit', async () => {
+    const store = { ...fixture(), notifier: jest.fn() };
+    store.applyVoteClose.mockResolvedValueOnce('committed').mockResolvedValueOnce('closed');
+
+    await Promise.all([closeVote(store, 'pick', 'host'), closeVote(store, 'pick', 'host')]);
+
+    expect(store.applyVoteClose).toHaveBeenCalledTimes(2);
+    expect(store.notifier).toHaveBeenCalledTimes(1);
   });
   test('no winner when no one is left to vote', async () => {
     const store = fixture(snapshot({ participantIds: [], ballots: [] }));
@@ -224,7 +247,7 @@ describe('a ballot changing while the vote is tallied', () => {
   });
   test('gives up with a try-again error if the ballots keep changing', async () => {
     const store = fixture();
-    store.applyVoteClose.mockResolvedValue(false);
+    store.applyVoteClose.mockResolvedValue('stale');
     await expect(closeVote(store, 'pick', 'host')).rejects.toMatchObject({ code: 'PICK_CONFLICT' });
     expect(store.applyVoteClose).toHaveBeenCalledTimes(3);
   });

@@ -9,7 +9,8 @@ import {
   type LifecycleStore,
   type LifecyclePick,
 } from '@shared/api/lifecycle.ts';
-import { PlacesUnavailableError, type PoolBuilder } from '@shared/places/pool.ts';
+import { createPoolBuilder, type PoolBuilder } from '@shared/places/pool.ts';
+import { ProviderTimeoutError } from '@shared/places/timeout.ts';
 import type { Candidate } from '@shared/places/types.ts';
 
 const pick = (overrides: Partial<LifecyclePick> = {}): LifecyclePick => ({
@@ -580,15 +581,68 @@ describe('an area with no places', () => {
     expect(store.startChecked.mock.calls[0]![3]).toBe(1000);
   });
 
-  test('a places outage is a try-again error, not an empty area to widen', async () => {
-    const store = { ...fixture(), startChecked: jest.fn() };
-    const buildPool = jest.fn().mockRejectedValue(new PlacesUnavailableError());
-    await expect(startPick(store, { buildPool }, 'pick', 'host')).rejects.toMatchObject({
-      status: 503,
-      code: 'PLACES_UNAVAILABLE',
-    });
-    expect(buildPool).toHaveBeenCalledTimes(1);
+  test.each<[string, Candidate[] | Error, Candidate[] | Error]>([
+    ['empty primary, failed fallback', [], new Error('offline')],
+    [
+      'timed-out primary, filtered fallback',
+      new ProviderTimeoutError(),
+      [{ ...candidate('too-expensive'), priceLevel: 4 }],
+    ],
+  ])('%s returns a 503 without widening', async (_label, primaryResult, fallbackResult) => {
+    const primary = {
+      search: jest.fn(async () => {
+        if (primaryResult instanceof Error) throw primaryResult;
+        return primaryResult;
+      }),
+    };
+    const fallback = {
+      search: jest.fn(async () => {
+        if (fallbackResult instanceof Error) throw fallbackResult;
+        return fallbackResult;
+      }),
+    };
+    const store = { ...fixture(pick({ priceMax: 1 })), startChecked: jest.fn() };
+
+    await expect(
+      startPick(store, createPoolBuilder(primary, { fallback }), 'pick', 'host'),
+    ).rejects.toMatchObject({ status: 503, code: 'PLACES_UNAVAILABLE' });
+    expect(primary.search).toHaveBeenCalledTimes(1);
+    expect(fallback.search).toHaveBeenCalledTimes(1);
     expect(store.startChecked).not.toHaveBeenCalled();
+  });
+
+  test('two genuinely empty providers widen to the radius limit', async () => {
+    const primary = { search: jest.fn().mockResolvedValue([]) };
+    const fallback = { search: jest.fn().mockResolvedValue([]) };
+    const store = { ...fixture(), startChecked: jest.fn() };
+
+    await expect(
+      startPick(store, createPoolBuilder(primary, { fallback }), 'pick', 'host'),
+    ).rejects.toMatchObject({ status: 409, code: 'NO_CANDIDATES' });
+    for (const provider of [primary, fallback]) {
+      expect(provider.search.mock.calls.map(([request]) => request.radiusM)).toEqual([
+        1000, 2000, 4000,
+      ]);
+    }
+    expect(store.startChecked).not.toHaveBeenCalled();
+  });
+
+  test('usable fallback candidates let Start proceed at the requested radius', async () => {
+    const primary = { search: jest.fn().mockRejectedValue(new Error('offline')) };
+    const fallback = { search: jest.fn().mockResolvedValue([candidate('fallback')]) };
+    const store = { ...fixture(), startChecked: jest.fn().mockResolvedValue(true) };
+
+    await startPick(store, createPoolBuilder(primary, { fallback }), 'pick', 'host');
+
+    expect(primary.search).toHaveBeenCalledTimes(1);
+    expect(fallback.search).toHaveBeenCalledTimes(1);
+    expect(store.startChecked).toHaveBeenCalledWith(
+      'pick',
+      'host',
+      [expect.objectContaining({ placeId: 'fallback' })],
+      1000,
+      ['host', 'guest'],
+    );
   });
 });
 

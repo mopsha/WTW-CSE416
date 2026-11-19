@@ -127,7 +127,7 @@ test('empty/unusable primary falls back; both unusable produces meaningful error
         },
       },
     }).buildPool(request),
-  ).rejects.toThrow('No usable nearby places');
+  ).rejects.toBeInstanceOf(PlacesUnavailableError);
   await expect(
     createPoolBuilder(empty, { fallback: { search: async () => [candidate('yes')] } }).buildPool(
       request,

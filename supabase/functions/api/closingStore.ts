@@ -1,6 +1,6 @@
 import { ApiError, type ErrorStatus } from '../_shared/api/errors.ts';
 import type { ClosingSnapshot, ClosingStore, RankingWrite } from '../_shared/api/closing.ts';
-import type { VoteSnapshot, VotingStore } from '../_shared/api/voting.ts';
+import type { VoteSettlement, VoteSnapshot, VotingStore } from '../_shared/api/voting.ts';
 import { createServiceClient } from './serviceClient.ts';
 
 function mapRpcError(error: { code: string; message: string }): never {
@@ -62,7 +62,7 @@ export function createClosingStore(): ClosingStore & VotingStore {
         p_decided_by: decidedBy,
         p_ballots: ballots,
         p_participant_ids: participantIds,
-      })) as boolean;
+      })) as VoteSettlement;
     },
   };
 }
