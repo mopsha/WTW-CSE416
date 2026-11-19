@@ -4,6 +4,7 @@ import { candidateFromApi, openLabel } from '@/lib/places';
 import {
   directionsUrl,
   nameList,
+  pickIcon,
   pickTitle,
   progressLine,
   shareMessage,
@@ -39,7 +40,7 @@ test('nameList', () => {
 
 test('progress and vote lines are counts only', () => {
   expect(progressLine({ doneCount: 3, total: 5 })).toBe('3 of 5 finished swiping');
-  expect(progressLine({ doneCount: 5, total: 5 })).toBe('Everyone’s done 🔥');
+  expect(progressLine({ doneCount: 5, total: 5 })).toBe('Everyone’s done');
   expect(voteLine({ votedCount: 1, total: 4 })).toBe('1 of 4 voted');
   expect(voteLine({ votedCount: 4, total: 4 })).toBe('Everyone voted');
 });
@@ -125,4 +126,12 @@ describe('pickDetailFromApi', () => {
   test('works without hours (before the hours route is deployed)', () => {
     expect(pickDetailFromApi(raw).candidates.map((c) => c.placeId)).toEqual(['a', 'b']);
   });
+});
+
+test('pickIcon maps every category to an outline Ionicon, never an emoji', () => {
+  expect(pickIcon('food')).toBe('restaurant-outline');
+  expect(pickIcon('activities')).toBe('compass-outline');
+  expect(pickIcon('both')).toBe('shuffle-outline');
+  expect(pickIcon('custom')).toBe('create-outline');
+  expect(pickIcon(null)).toBe('restaurant-outline');
 });

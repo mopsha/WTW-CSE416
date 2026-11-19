@@ -46,7 +46,11 @@ function WinnerContent({ pickId, userId }: { pickId: string; userId: string }) {
   if (reveal.status === 'error') {
     return (
       <Screen back scroll={false}>
-        <CenterMessage emoji="📡" title="Couldn’t load the winner" body={reveal.message}>
+        <CenterMessage
+          icon="cloud-offline-outline"
+          title="Couldn’t load the winner"
+          body={reveal.message}
+        >
           <Button label="Try again" onPress={retry} />
           <Button label="Back to your Picks" variant="link" onPress={goToPicks} />
         </CenterMessage>
@@ -66,7 +70,7 @@ function WinnerContent({ pickId, userId }: { pickId: string; userId: string }) {
   if (!winner) {
     return (
       <Screen back scroll={false}>
-        <CenterMessage emoji="🤔" title="No winner yet" body="Give it a moment.">
+        <CenterMessage icon="hourglass-outline" title="No winner yet" body="Give it a moment.">
           <Button label="Check again" onPress={retry} />
           <Button label="Back to your Picks" variant="link" onPress={goToPicks} />
         </CenterMessage>

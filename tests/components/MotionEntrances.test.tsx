@@ -73,7 +73,7 @@ test.each([false, true])(
     let tree: any;
     try {
       await act(async () => {
-        tree = create(<ActivityToast toast={{ id: 1, emoji: '✓', text: 'Ready' }} />);
+        tree = create(<ActivityToast toast={{ id: 1, icon: 'checkmark', text: 'Ready' }} />);
       });
       if (reduced) {
         expect(withSpring).not.toHaveBeenCalled();

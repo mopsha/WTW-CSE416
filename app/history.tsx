@@ -82,7 +82,7 @@ export default function HistoryScreen() {
         <ErrorState message={load.message} onRetry={refresh} />
       ) : load.status === 'ready' && picks.length === 0 ? (
         <EmptyState
-          emoji="🗂️"
+          icon="time-outline"
           title="No finished Picks yet"
           body="When a Pick lands on a winner, it shows up here."
         />
@@ -102,7 +102,7 @@ export default function HistoryScreen() {
                   Past Move · {formatPlanTime(memory.occurredAt)} · You confirmed attendance
                 </Text>
               ) : null}
-              <Text style={styles.winner}>👑 {item.winner?.name ?? 'Winner'}</Text>
+              <Text style={styles.winner}>{item.winner?.name ?? 'Winner'}</Text>
               {item.finalists
                 .filter((f) => f.placeId !== item.winner?.placeId && f.name)
                 .map((f) => (

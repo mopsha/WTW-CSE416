@@ -24,7 +24,7 @@ interface Props {
   keyboardBehavior?: 'padding' | 'height' | 'position';
   /** Large title at the top of the screen. */
   title?: string;
-  /** Small line above the title (e.g. "Hey Mike 👋"). */
+  /** Small line above the title (e.g. "Hey Mike"). */
   subtitle?: string;
   /** Shows a back chevron; falls back to Picks when a cold-start route has no history. */
   back?: boolean;

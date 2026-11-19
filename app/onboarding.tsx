@@ -251,7 +251,7 @@ export default function OnboardingScreen() {
         top={top}
         art={
           <Illustration
-            icon="flame"
+            icon="thumbs-up"
             badges={[
               { icon: 'checkmark', color: colors.yes },
               { icon: 'star', color: colors.maybe },

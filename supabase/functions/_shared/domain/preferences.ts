@@ -31,8 +31,8 @@ export interface PreferenceOption<T> {
 }
 
 export const CATEGORY_OPTIONS: readonly PreferenceOption<PreferenceCategory>[] = [
-  { value: 'food', label: '🍜 Food' },
-  { value: 'activities', label: '🎳 Activities' },
+  { value: 'food', label: 'Food' },
+  { value: 'activities', label: 'Activities' },
 ];
 
 export const FOOD_TYPE_OPTIONS: readonly PreferenceOption<string>[] = [

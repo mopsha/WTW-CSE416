@@ -1,6 +1,7 @@
 // The WTW component kit. Import from '@/components' in new screens:
 //   import { Button, Card, Screen } from '@/components';
 // See AGENTS.md ("Component kit") for when to use which.
+export { AppLogo, PulsingLogo, type IconName } from './AppLogo';
 export { Avatar, AvatarStack } from './Avatar';
 export { Button, type ButtonProps } from './Button';
 export { Card } from './Card';

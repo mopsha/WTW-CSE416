@@ -515,7 +515,6 @@ function CreatePickForm({
       <View style={styles.footer}>
         <Button
           label="Create Pick"
-          icon="flame"
           loading={submitting}
           onPress={() => void submit()}
           accessibilityHint="Creates the Pick so you can invite friends"
