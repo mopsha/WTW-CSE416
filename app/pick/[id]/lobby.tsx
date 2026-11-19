@@ -97,6 +97,16 @@ function LobbyContent() {
       await live.refresh();
     });
 
+  const leave = async () => {
+    const ok = await confirmAction({
+      title: 'Leave this Pick?',
+      message: 'Your answers are removed and the group carries on without you.',
+      confirmLabel: 'Leave',
+      destructive: true,
+    });
+    if (ok && (await action.run('leave', () => api.leavePick(pickId)))) goToPicks();
+  };
+
   const cancel = async () => {
     const ok = await confirmAction({
       title: 'Cancel this Pick?',
@@ -119,7 +129,7 @@ function LobbyContent() {
     void action.run('link', async () => {
       haptic.tap();
       const link = await api.createInvite({ kind: 'pick', targetId: pickId });
-      await Share.share({ message: `Join my Pick on WTW: ${link.url}` }).catch(() => {});
+      await Share.share({ message: shareMessage(code?.code ?? null, link.url) }).catch(() => {});
     });
 
   const toggleLock = () =>
@@ -260,11 +270,25 @@ function LobbyContent() {
               ) : null}
             </>
           ) : (
-            <Text style={pickStyles.muted}>
-              {code === undefined
-                ? 'Getting your code…'
-                : 'Join codes are on their way. Add friends from the Friends tab for now.'}
-            </Text>
+            <>
+              <Text style={pickStyles.muted}>
+                {code === undefined
+                  ? 'Getting your code…'
+                  : isHost
+                    ? 'Couldn’t load a join code. Share a link instead.'
+                    : 'Ask the host for an invite link.'}
+              </Text>
+              {code === null && isHost ? (
+                <Button
+                  label="Share invite link"
+                  variant="secondary"
+                  icon="link-outline"
+                  loading={action.busy === 'link'}
+                  disabled={!!action.busy}
+                  onPress={shareLink}
+                />
+              ) : null}
+            </>
           )}
         </Animated.View>
 
@@ -334,6 +358,13 @@ function LobbyContent() {
               later: you won&apos;t miss anything.
             </Text>
             <Button label="Back to your Picks" variant="link" onPress={goToPicks} />
+            <Button
+              label="Leave Pick"
+              variant="link"
+              loading={action.busy === 'leave'}
+              disabled={!!action.busy}
+              onPress={() => void leave()}
+            />
           </View>
         )}
       </ScrollView>

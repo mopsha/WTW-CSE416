@@ -114,6 +114,10 @@ export interface LifecycleStore {
   start(pickId: string, userId: string, candidates: CandidateSnapshot[]): Promise<void>;
   refresh(pickId: string, userId: string, candidates: CandidateSnapshot[]): Promise<void>;
   cancel(pickId: string, userId: string, reason: string | null): Promise<void>;
+  /** A guest leaves a Pick that hasn't finished (0053). */
+  leave?(pickId: string, userId: string): Promise<void>;
+  /** Saves a wider area for a draft Pick before it starts (0053). */
+  setRadius?(pickId: string, userId: string, radiusM: number): Promise<void>;
   savedCandidates?(hostId: string): Promise<Candidate[]>;
   groupIdeas?(groupId: string, hostId: string): Promise<GroupIdea[]>;
   candidateUuid?(): string;
@@ -469,10 +473,50 @@ export async function startPick(
     );
   }
   await beforeBuild?.();
-  const candidates = await buildCandidates(pool, pick, store);
+  const { candidates, radiusM } = await buildWidening(pool, pick, store);
+  if (radiusM !== pick.radiusM) await store.setRadius!(pickId, userId, radiusM);
   await store.start(pickId, userId, candidates);
   await store.notifier?.(othersThan(pick, userId), 'pick_started', pickId);
   return { state: 'swiping' as const, candidateCount: candidates.length };
+}
+
+/** How many times start doubles an area that has no places before giving up. */
+const MAX_WIDENINGS = 2;
+
+/**
+ * Builds the deck, widening an area with no places (2x, then 4x, up to 50 km) instead of
+ * stranding the lobby. Only stores that can save the new radius widen.
+ */
+async function buildWidening(pool: PoolBuilder, pick: LifecyclePick, store: LifecycleStore) {
+  let radiusM = pick.radiusM;
+  for (let widened = 0; ; widened++) {
+    try {
+      return { candidates: await buildCandidates(pool, { ...pick, radiusM }, store), radiusM };
+    } catch (error) {
+      const next = Math.min(radiusM * 2, MAX_RADIUS_M);
+      const empty = error instanceof ApiError && error.code === 'NO_CANDIDATES';
+      if (!empty) throw error;
+      if (!store.setRadius || widened >= MAX_WIDENINGS || next === radiusM) {
+        const miles = Math.round(radiusM / 1609.34);
+        throw new ApiError(
+          409,
+          'NO_CANDIDATES',
+          `No places found within ${miles} mi. Cancel this Pick and try another area.`,
+        );
+      }
+      radiusM = next;
+    }
+  }
+}
+
+/** A guest leaves; the host cancels instead. Their answers stop counting right away. */
+export async function leavePick(store: LifecycleStore, pickId: string, userId: string) {
+  const pick = await loadAsParticipant(store, pickId, userId);
+  if (pick.hostId === userId)
+    throw new ApiError(409, 'HOST_CANNOT_LEAVE', 'The host cancels the Pick instead');
+  if (!store.leave) throw new ApiError(503, 'NOT_CONFIGURED', 'Leaving is unavailable.');
+  await store.leave(pickId, userId);
+  return { state: 'left' as const };
 }
 
 export async function refreshPick(

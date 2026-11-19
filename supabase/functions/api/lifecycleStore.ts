@@ -26,10 +26,10 @@ function mapRpcError(error: { code: string; message: string; hint?: string }): n
   const status = statuses[error.code];
   if (status) {
     const messages = {
-      400: 'Invalid request',
-      403: 'Pick access denied',
-      404: 'Pick not found',
-      409: 'Pick changed; reload before trying again',
+      400: 'Something about that didn’t look right. Try again.',
+      403: 'You can’t do that in this Pick.',
+      404: 'This Pick isn’t available anymore.',
+      409: 'This Pick just changed. Go back and open it again.',
     };
     throw new ApiError(
       status,
@@ -126,6 +126,12 @@ export function createLifecycleStore(): LifecycleStore {
     },
     async cancel(pickId, userId, reason) {
       await rpc('pick_cancel', { p_pick_id: pickId, p_user_id: userId, p_reason: reason });
+    },
+    async leave(pickId, userId) {
+      await rpc('pick_leave', { p_pick_id: pickId, p_user_id: userId });
+    },
+    async setRadius(pickId, userId, radiusM) {
+      await rpc('pick_set_radius', { p_pick_id: pickId, p_user_id: userId, p_radius_m: radiusM });
     },
   };
 }

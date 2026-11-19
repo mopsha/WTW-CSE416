@@ -65,7 +65,10 @@ jest.mock('@/lib/api', () => ({
     hangPick: jest.fn(),
   },
 }));
-jest.mock('@/lib/locationSearch', () => ({ DEFAULT_CENTER: { lat: 40.915, lng: -73.123 } }));
+jest.mock('@/lib/locationSearch', () => ({
+  DEFAULT_CENTER: { lat: 40.915, lng: -73.123 },
+  knownLocation: jest.fn().mockResolvedValue(null),
+}));
 jest.mock('@/components/MapPicker', () => ({ MapPicker: () => null }));
 jest.mock('@/components/LocationSearch', () => ({ LocationSearch: () => null }));
 jest.mock('@/components/CustomPlanEditor', () => ({ CustomPlanEditor: () => null }));
@@ -815,6 +818,28 @@ test('foreground capability loss invalidates an open time editor, keeps other fi
     expect(input).not.toHaveProperty('proposedAt');
     expect(input).not.toHaveProperty('swipeDeadlineMinutes');
     expect(input.deadlineAt).not.toBeNull();
+  } finally {
+    subscription.mockRestore();
+  }
+});
+test('coming back to the app keeps the chosen time while scheduling stays on', async () => {
+  let onActive: ((state: 'active') => void) | undefined;
+  const subscription = jest
+    .spyOn(AppState, 'addEventListener')
+    .mockImplementation((_event, listener) => {
+      onActive = listener;
+      return { remove: jest.fn() };
+    });
+  try {
+    await render();
+    await press('When');
+    const when = new Date(Date.now() + 2 * 86400000).toISOString();
+    await act(async () => tree.root.findByType(PlanTimeSheet).props.onSave(when));
+    await act(async () => tree.root.findByType(PlanTimeSheet).props.onClose());
+    jest.mocked(api.getPickCapabilities).mockResolvedValueOnce({ availabilityFirst: true });
+    await act(async () => onActive?.('active'));
+    await act(async () => button('Create Pick').props.onPress());
+    expect(jest.mocked(api.createPick).mock.calls[0]![0]).toHaveProperty('proposedAt', when);
   } finally {
     subscription.mockRestore();
   }

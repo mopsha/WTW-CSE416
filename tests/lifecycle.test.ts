@@ -2,6 +2,7 @@ import {
   cancelPick,
   createPick,
   getPick,
+  leavePick,
   parseCreatePick,
   refreshPick,
   startPick,
@@ -540,4 +541,55 @@ test('pure custom start avoids external providers; mixed options keep custom bef
     second.placeId,
     'nearby',
   ]);
+});
+
+describe('an area with no places', () => {
+  test('start widens it (2x, then 4x) and saves the radius it used', async () => {
+    const store = { ...fixture(), setRadius: jest.fn().mockResolvedValue(undefined) };
+    const buildPool = jest
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([candidate('far')]);
+    await startPick(store, { buildPool }, 'pick', 'host');
+    expect(buildPool.mock.calls.map(([q]) => q.radiusM)).toEqual([1000, 2000, 4000]);
+    expect(store.setRadius).toHaveBeenCalledWith('pick', 'host', 4000);
+    expect(store.start).toHaveBeenCalledWith('pick', 'host', [
+      expect.objectContaining({ placeId: 'far' }),
+    ]);
+  });
+
+  test('gives up with a plain message after two widenings', async () => {
+    const store = { ...fixture(), setRadius: jest.fn().mockResolvedValue(undefined) };
+    await expect(startPick(store, poolOf([]), 'pick', 'host')).rejects.toMatchObject({
+      status: 409,
+      code: 'NO_CANDIDATES',
+      message: 'No places found within 2 mi. Cancel this Pick and try another area.',
+    });
+    expect(store.setRadius).not.toHaveBeenCalled();
+    expect(store.start).not.toHaveBeenCalled();
+  });
+
+  test('a found area keeps its radius', async () => {
+    const store = { ...fixture(), setRadius: jest.fn() };
+    await startPick(store, poolOf([candidate('a')]), 'pick', 'host');
+    expect(store.setRadius).not.toHaveBeenCalled();
+  });
+});
+
+describe('leavePick', () => {
+  test('a guest leaves', async () => {
+    const store = { ...fixture(pick({ state: 'swiping' })), leave: jest.fn() };
+    await expect(leavePick(store, 'pick', 'guest')).resolves.toEqual({ state: 'left' });
+    expect(store.leave).toHaveBeenCalledWith('pick', 'guest');
+  });
+
+  test('the host cancels instead, and outsiders get nothing', async () => {
+    const store = { ...fixture(), leave: jest.fn() };
+    await expect(leavePick(store, 'pick', 'host')).rejects.toMatchObject({
+      code: 'HOST_CANNOT_LEAVE',
+    });
+    await expect(leavePick(store, 'pick', 'stranger')).rejects.toMatchObject({ status: 403 });
+    expect(store.leave).not.toHaveBeenCalled();
+  });
 });

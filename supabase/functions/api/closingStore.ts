@@ -15,10 +15,10 @@ function mapRpcError(error: { code: string; message: string }): never {
   const status = statuses[error.code];
   if (status) {
     const messages = {
-      400: 'Invalid request',
-      403: 'Pick access denied',
-      404: 'Pick not found',
-      409: 'Pick changed; reload before trying again',
+      400: 'Something about that didn’t look right. Try again.',
+      403: 'You can’t do that in this Pick.',
+      404: 'This Pick isn’t available anymore.',
+      409: 'This Pick just changed. Go back and open it again.',
     };
     throw new ApiError(
       status,
