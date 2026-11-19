@@ -116,6 +116,7 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
       }
       let found: Candidate[] = [],
         source = mode,
+        usedFallback = false,
         failed = false;
       try {
         found = filterPool(
@@ -128,6 +129,7 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
         log(error instanceof ProviderTimeoutError ? 'provider_timeout' : 'provider_failed');
       }
       if (!found.length && options.fallback) {
+        usedFallback = true;
         source = 'mock';
         try {
           found = filterPool(
@@ -135,6 +137,7 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
             request,
           );
         } catch {
+          failed = true;
           log('fallback_failed');
         }
       }
@@ -155,7 +158,7 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
       }));
       try {
         // Never cache fallback under the Google key, so recovery is attempted next request.
-        if (source === mode)
+        if (!usedFallback)
           await options.cache?.set(cacheEntry(key, query, candidates, source, fetchedAt));
       } catch {
         log('cache_failed');
@@ -164,7 +167,7 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
         .filter((p) => matchesFilters(p, request, now()) && matchesDiscovery(p, request.discovery))
         .slice(0, request.poolSize);
       // Preserve the fallback notice even when strict filters remove every fixture.
-      if (!filtered.length && source !== mode)
+      if (!filtered.length && usedFallback)
         throw failed ? new PlacesUnavailableError(true) : new NoCandidatesError(true);
       return structuredClone(filtered);
     },

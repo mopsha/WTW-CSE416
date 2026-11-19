@@ -21,24 +21,22 @@ export interface VoteSnapshot {
 export interface VotingStore {
   loadForVote(pickId: string): Promise<VoteSnapshot | null>;
   castVote(pickId: string, userId: string, placeId: string): Promise<void>;
-  /**
-   * Silently a no-op if the vote already settled (host/everyone-voted/deadline raced).
-   * Returns false, settling nothing, if the ballots or the voters changed since they were
-   * counted, or no one is left to vote (0053).
-   */
+  /** Reports whether the winner was written, the snapshot changed, or the round closed. */
   applyVoteClose(
     pickId: string,
     winnerPlaceId: string,
     decidedBy: VoteDecidedBy,
     ballots: VoteSnapshot['ballots'],
     participantIds: string[],
-  ): Promise<boolean | void>;
-  /** Announces the winner; racing settles are deduplicated by the database. */
+  ): Promise<VoteSettlement>;
+  /** Announces the winner after the database confirms settlement. */
   notifier?: Notifier;
 }
 
 /** 'tie_break' when the top vote count was shared and rank order picked the winner. */
 export type VoteDecidedBy = 'vote' | 'tie_break';
+
+export type VoteSettlement = 'committed' | 'stale' | 'closed';
 
 /** Pure tally: the winner (voteWinner's tie chain) and whether a tie decided it. */
 export function tallyVotes(
@@ -75,19 +73,22 @@ async function settleVote(store: VotingStore, pickId: string, first: VoteSnapsho
     // round (0053), and 0 ballots of 0 voters must not count as everyone voting.
     if (!snapshot || snapshot.state !== 'final_vote' || !snapshot.participantIds.length) return;
     const { winnerPlaceId, decidedBy } = tallyVotes(snapshot.finalists, snapshot.ballots);
-    const applied = await store.applyVoteClose(
+    const outcome = await store.applyVoteClose(
       pickId,
       winnerPlaceId,
       decidedBy,
       snapshot.ballots,
       snapshot.participantIds,
     );
-    if (applied !== false) {
-      await store.notifier?.(snapshot.participantIds, 'winner_decided', pickId);
+    if (outcome !== 'stale') {
+      if (outcome === 'committed') {
+        await store.notifier?.(snapshot.participantIds, 'winner_decided', pickId);
+      }
       return;
     }
     snapshot = await store.loadForVote(pickId);
   }
+  if (!snapshot || snapshot.state !== 'final_vote' || !snapshot.participantIds.length) return;
   throw new ApiError(409, 'PICK_CONFLICT', 'Votes are still coming in. Try again in a moment.');
 }
 

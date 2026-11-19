@@ -57,6 +57,7 @@ function fixture(picks: Pick[]) {
     castVote: jest.fn(),
     applyVoteClose: jest.fn(async (id, winnerPlaceId) => {
       Object.assign(byId(id)!, { state: 'completed', winnerPlaceId });
+      return 'committed' as const;
     }),
   } satisfies closing.ClosingStore & voting.VotingStore;
   return { store, closers };

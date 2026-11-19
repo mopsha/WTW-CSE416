@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(20);
+select plan(23);
 
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
 values
@@ -96,18 +96,18 @@ select pick_leave((select id::text from v), '53333333-3333-4333-8333-33333333333
 select is(
   pick_close_vote_apply((select id::text from v), 'vt-b', 'vote', (select ballots from counted),
     (select voters from counted)),
-  false, 'a tally that counted a departed guest does not settle');
+  'stale', 'a tally that counted a departed guest does not settle');
 select is((select state::text from picks where id = (select id from v)), 'final_vote',
   'the vote stays open for a recount');
 select is(
   pick_close_vote_apply((select id::text from v), 'vt-a', 'tie_break', '[]'::jsonb,
     '["53111111-1111-4111-8111-111111111111"]'::jsonb),
-  true, 'the recount settles');
+  'committed', 'the recount settles');
 select ok((select state = 'completed' and winner_place_id = 'vt-a' from picks
   where id = (select id from v)), 'the departed guest''s vote did not pick the winner');
 select is(
   pick_close_vote_apply((select id::text from v), 'vt-b', 'vote', '[]'::jsonb, '[]'::jsonb),
-  true, 'a late tally is a no-op');
+  'closed', 'a late tally is a no-op');
 
 -- A scheduled Pick where the host declined: when the last eligible voter leaves the final
 -- vote, the round is canceled instead of declaring a winner with no voters.
@@ -121,14 +121,27 @@ insert into pick_participants (pick_id, user_id)
 reset role;
 update picks set state = 'final_vote', availability_locked_at = now()
  where id = (select id from sv);
+set local role service_role;
+select is(
+  pick_close_vote_apply((select id::text from sv), 'vt-a', 'vote', '[]'::jsonb, '[]'::jsonb),
+  'closed', 'a matching tally with zero eligible voters cannot settle');
+reset role;
 insert into pick_voting_cohort (pick_id, user_id, revision)
   select id, '53222222-2222-4222-8222-222222222222'::uuid, 1 from sv;
 set local role service_role;
 select is(jsonb_array_length(pick_load_for_vote((select id::text from sv)) -> 'participantIds'), 1,
   'only the guest is eligible to vote');
+select is(
+  pick_close_vote_apply((select id::text from sv), 'vt-a', 'vote', '[]'::jsonb, '[]'::jsonb),
+  'stale', 'an empty tally cannot settle when an eligible guest remains');
 select pick_leave((select id::text from sv), '53222222-2222-4222-8222-222222222222');
 select ok((select state = 'canceled' and winner_place_id is null from picks
   where id = (select id from sv)), 'the round is canceled with no winner');
+
+select is(
+  pick_close_vote_apply((select id::text from sv), 'vt-a', 'vote', '[]'::jsonb,
+    '["53222222-2222-4222-8222-222222222222"]'::jsonb),
+  'closed', 'the stale settlement cannot report a committed winner after cancellation');
 
 reset role;
 select * from finish();

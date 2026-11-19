@@ -67,7 +67,7 @@ $$;
 create function public.pick_close_vote_apply(
   p_pick_id text, p_winner_place_id text, p_decided_by text, p_ballots jsonb,
   p_participant_ids jsonb
-) returns boolean
+) returns text
 language plpgsql set search_path = '' as $$
 declare
   v_state public.pick_state;
@@ -75,16 +75,20 @@ declare
 begin
   -- pick_cast_vote and pick_leave take this lock too, so the vote can't change under it.
   select state into v_state from public.picks where id = private.try_uuid(p_pick_id) for update;
-  if not found or v_state <> 'final_vote' then return true; end if;
+  if not found or v_state <> 'final_vote' then return 'closed'; end if;
   -- The same snapshot the tally read (scheduled Picks count only the eligible cohort).
   v_now := public.pick_load_for_vote(p_pick_id);
+  if jsonb_array_length(v_now->'participantIds') = 0 then return 'closed'; end if;
   if private.jsonb_sorted(v_now->'ballots') <> private.jsonb_sorted(p_ballots)
-     or private.jsonb_sorted(v_now->'participantIds') <> private.jsonb_sorted(p_participant_ids)
-     or jsonb_array_length(v_now->'participantIds') = 0 then
-    return false;
+     or private.jsonb_sorted(v_now->'participantIds') <> private.jsonb_sorted(p_participant_ids) then
+    return 'stale';
   end if;
   perform public.pick_close_vote_apply(p_pick_id, p_winner_place_id, p_decided_by);
-  return true;
+  if exists (select 1 from public.picks where id = private.try_uuid(p_pick_id)
+    and state = 'completed' and winner_place_id = p_winner_place_id) then
+    return 'committed';
+  end if;
+  return 'closed';
 end $$;
 
 create or replace function private.cancel_empty_scheduled_round() returns trigger

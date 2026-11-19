@@ -59,13 +59,10 @@ test('uses the SQL argument names for every voting operation', async () => {
     p_place_id: 'a',
   });
 
-  await store.applyVoteClose(
-    'pick',
-    'a',
-    'tie_break',
-    [{ userId: 'host', placeId: 'a' }],
-    ['host'],
-  );
+  mockRpc.mockResolvedValueOnce({ data: 'committed', error: null });
+  await expect(
+    store.applyVoteClose('pick', 'a', 'tie_break', [{ userId: 'host', placeId: 'a' }], ['host']),
+  ).resolves.toBe('committed');
   expect(mockRpc).toHaveBeenLastCalledWith('pick_close_vote_apply', {
     p_pick_id: 'pick',
     p_winner_place_id: 'a',
