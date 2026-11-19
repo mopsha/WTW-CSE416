@@ -8,8 +8,16 @@ jest.mock('@/lib/haptics', () => ({ haptic: { tap: jest.fn() } }));
 jest.mock('@/lib/locationSearch', () => ({
   chosenLabel: jest.requireActual('@/lib/locationSearch').chosenLabel,
   currentLocation: jest.fn(),
-  searchLocations: jest.fn(),
+  found: jest.fn(),
+  // Like the real search, results reach the screen through onUpdate, never the return value.
+  searchLocations: jest.fn((query, options) =>
+    Promise.resolve(jest.requireMock('@/lib/locationSearch').found(query, options)).then((hits) => {
+      if (options.isCurrent()) options.onUpdate(hits);
+      return hits;
+    }),
+  ),
 }));
+const { found } = jest.requireMock('@/lib/locationSearch');
 let tree: any;
 const onPick = jest.fn();
 const deferred = <T,>() => {
@@ -34,7 +42,7 @@ const tick = async () => act(async () => jest.advanceTimersByTime(300));
 beforeEach(async () => {
   jest.useFakeTimers();
   jest.clearAllMocks();
-  jest.mocked(searchLocations).mockResolvedValue([]);
+  found.mockResolvedValue([]);
   await act(async () => {
     tree = create(<LocationSearch key={0} label="SBU" onPick={onPick} />);
   });
@@ -73,16 +81,21 @@ test('permission denial and location failures remain recoverable via retry and s
 test('newer queries suppress stale search results and errors', async () => {
   const first = deferred<any[]>();
   const second = deferred<any[]>();
-  jest
-    .mocked(searchLocations)
-    .mockReturnValueOnce(first.promise)
-    .mockReturnValueOnce(second.promise);
+  found.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
   await typeQuery('Old');
   await tick();
   await typeQuery('New');
   await tick();
   await act(async () =>
-    second.resolve([{ id: 'new', label: 'New town', detail: 'NY', center: { lat: 41, lng: -72 } }]),
+    second.resolve([
+      {
+        id: 'new',
+        label: 'New town',
+        detail: 'NY',
+        chosen: 'New town, NY',
+        center: { lat: 41, lng: -72 },
+      },
+    ]),
   );
   await act(async () => first.reject(new Error('Old failure')));
   expect(JSON.stringify(tree.toJSON())).toContain('New town');
@@ -94,7 +107,7 @@ test('map selection invalidates pending search and device location without anoth
   const location = deferred<any>();
   const search = deferred<any[]>();
   jest.mocked(currentLocation).mockReturnValue(location.promise);
-  jest.mocked(searchLocations).mockReturnValue(search.promise);
+  found.mockReturnValue(search.promise);
   await typeQuery('Town');
   await tick();
   await press('Use my location');
@@ -125,7 +138,7 @@ test.each(['resolve', 'reject'])(
     const location = deferred<any>();
     const search = deferred<any[]>();
     jest.mocked(currentLocation).mockReturnValue(location.promise);
-    jest.mocked(searchLocations).mockReturnValue(search.promise);
+    found.mockReturnValue(search.promise);
     await typeQuery('Town');
     await tick();
     await press('Use my location');

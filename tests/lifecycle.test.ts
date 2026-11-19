@@ -93,14 +93,29 @@ describe('parseCreatePick', () => {
       deadlineAt: null,
     });
   });
-  test("keeps the chosen swipe length, or rounds an older build's deadline to it", () => {
+  test('the chosen swipe length sets the deadline from the server clock', () => {
     const base = { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000 };
-    const late = new Date(now + 28 * 60_000).toISOString();
-    expect(parseCreatePick({ ...base, deadlineAt: late, swipeMinutes: 30 }, now).swipeMinutes).toBe(
-      30,
-    );
-    expect(parseCreatePick({ ...base, deadlineAt: late }, now).swipeMinutes).toBe(30);
-    expect(() => parseCreatePick({ ...base, deadlineAt: late, swipeMinutes: 2 }, now)).toThrow();
+    const at = (min: number) => new Date(now + min * 60_000).toISOString();
+    // A 5-minute Pick whose request arrived late, and one with no timestamp at all.
+    expect(parseCreatePick({ ...base, deadlineAt: at(4.5), swipeMinutes: 5 }, now)).toMatchObject({
+      swipeMinutes: 5,
+      deadlineAt: at(5),
+    });
+    expect(parseCreatePick({ ...base, swipeMinutes: 30 }, now)).toMatchObject({
+      swipeMinutes: 30,
+      deadlineAt: at(30),
+    });
+    expect(() => parseCreatePick({ ...base, swipeMinutes: 2 }, now)).toThrow();
+  });
+  test.each([
+    [28, 30],
+    [26, 30],
+    [57, 60],
+    [12, 10],
+  ])("an older build's %i-minute lead becomes %i minutes", (lead, minutes) => {
+    const base = { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000 };
+    const deadlineAt = new Date(now + lead * 60_000).toISOString();
+    expect(parseCreatePick({ ...base, deadlineAt }, now).swipeMinutes).toBe(minutes);
   });
 });
 

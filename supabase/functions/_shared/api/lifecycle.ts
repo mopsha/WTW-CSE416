@@ -211,8 +211,22 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
       `closeThreshold must be between ${MIN_CLOSE_THRESHOLD} and ${MAX_CLOSE_THRESHOLD}`,
     );
   }
+  // The chosen length wins: the server sets the deadline from it, so a slow request or a wrong
+  // phone clock can't shorten it or push it under the 5-minute minimum.
+  const sentMinutes = b.proposedAt === undefined ? b.swipeMinutes : undefined;
   let deadlineAt: string | null = null;
-  if (b.deadlineAt !== undefined && b.deadlineAt !== null) {
+  let swipeMinutes: number | undefined;
+  if (sentMinutes !== undefined && sentMinutes !== null) {
+    if (
+      typeof sentMinutes !== 'number' ||
+      !Number.isInteger(sentMinutes) ||
+      sentMinutes * 60_000 < MIN_DEADLINE_LEAD_MS ||
+      sentMinutes * 60_000 > MAX_DEADLINE_LEAD_MS
+    )
+      throw new ApiError(400, 'INVALID_INPUT', 'Choose a supported swipe deadline.');
+    swipeMinutes = sentMinutes;
+    deadlineAt = new Date(now + sentMinutes * 60_000).toISOString();
+  } else if (b.deadlineAt !== undefined && b.deadlineAt !== null) {
     const at = typeof b.deadlineAt === 'string' ? Date.parse(b.deadlineAt) : NaN;
     if (Number.isNaN(at)) {
       throw new ApiError(400, 'INVALID_INPUT', 'deadlineAt must be a date, or null');
@@ -224,6 +238,7 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
       throw new ApiError(400, 'INVALID_INPUT', 'deadlineAt must be within a week');
     }
     deadlineAt = new Date(at).toISOString();
+    swipeMinutes = legacySwipeMinutes(at - now);
   }
   if (
     b.proposedAt !== undefined ||
@@ -233,12 +248,6 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
     const problems = validateCreatePick({ ...b, poolSize, closeThreshold, deadlineAt }, now);
     if (problems.length) throw new ApiError(400, 'INVALID_INPUT', problems[0]!.message);
   }
-  // Builds before swipeMinutes only sent deadlineAt: round its lead to the 5-minute choices,
-  // which absorbs the request latency and the phone's clock skew.
-  const swipeMinutes = deadlineAt
-    ? ((b.swipeMinutes as number | undefined) ??
-      Math.max(5, Math.round((Date.parse(deadlineAt) - now) / 300_000) * 5))
-    : undefined;
   if (!validFilters(b as PlaceFilters))
     throw new ApiError(400, 'INVALID_INPUT', 'Invalid priceMax or openNow');
   return {
@@ -269,6 +278,19 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
     deadlineAt,
     ...(swipeMinutes ? { swipeMinutes } : {}),
   };
+}
+
+/** The swipe lengths the Create Pick screen offers (app/pick/new.tsx). */
+export const SWIPE_MINUTE_CHOICES = [30, 60, 180, 1440] as const;
+
+/**
+ * Builds before swipeMinutes only sent deadlineAt, so their length arrives shortened by the
+ * request latency and the phone's clock skew. Snap it to the picker choice it came from.
+ */
+export function legacySwipeMinutes(leadMs: number): number {
+  const minutes = leadMs / 60_000;
+  const choice = SWIPE_MINUTE_CHOICES.find((c) => Math.abs(c - minutes) <= 5);
+  return choice ?? Math.max(5, Math.round(minutes / 5) * 5);
 }
 
 export function parseRefreshBody(body: unknown): boolean {

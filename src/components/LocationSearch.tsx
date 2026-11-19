@@ -42,10 +42,10 @@ export function LocationSearch({ label, onPick }: Props) {
       }
       setSearching(true);
       const isCurrent = () => id === latest.current;
+      // Results arrive through onUpdate only, so a late resolve can't put back unnamed hits.
       searchLocations(query, { isCurrent, onUpdate: setResults })
         .then((hits) => {
           if (id !== latest.current) return;
-          setResults(hits);
           setNote(hits.length === 0 ? 'No matches. Try another name or drop the pin.' : null);
         })
         .catch(() => {
