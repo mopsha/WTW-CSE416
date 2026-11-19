@@ -26,8 +26,8 @@ update picks set created_at = created_at - interval '25 minutes',
   deadline_at = deadline_at - interval '25 minutes' where id = (select id from timed);
 set local role service_role;
 insert into pick_participants (pick_id, user_id)
-  select id, '52222222-2222-4222-8222-222222222222' from timed
-  union all select id, '52222222-2222-4222-8222-222222222222' from untimed;
+  select id, '52222222-2222-4222-8222-222222222222'::uuid from timed
+  union all select id, '52222222-2222-4222-8222-222222222222'::uuid from untimed;
 
 select lives_ok(
   $$select pick_start((select id::text from timed), '52111111-1111-4111-8111-111111111111',
