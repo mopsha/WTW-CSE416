@@ -83,3 +83,14 @@ test.each([
     expect(JSON.stringify(response)).not.toContain('secret DB details');
   }
 });
+
+test('tells the host how to recover when a pre-migration deadline is unsupported', async () => {
+  mockRpc.mockResolvedValue({
+    data: null,
+    error: { code: 'PT400', message: 'internal details', hint: 'unsupported_swipe_deadline' },
+  });
+  await expect(createLifecycleStore().start('pick', 'host', [])).rejects.toMatchObject({
+    status: 400,
+    message: 'This Pick has an unsupported swipe deadline. Cancel it and create a new Pick.',
+  });
+});

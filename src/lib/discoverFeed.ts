@@ -80,6 +80,7 @@ export function discoverPlace(
       ? DISCOVER_PLACES.find((p) => p.placeId === place.placeId)
       : undefined;
   const { kind, emoji } = local ?? googleKind(place.types, place.category);
+  const photo = place.provider === 'google' && !place.photoUrl ? place.photos?.[0] : undefined;
   return {
     ...candidateFromApi(place),
     cuisine: kind,
@@ -94,5 +95,14 @@ export function discoverPlace(
     lat: place.lat,
     lng: place.lng,
     miles: milesBetween(center, place),
+    ...(photo
+      ? {
+          photoName: photo.name,
+          photoCredits: photo.authorAttributions.map(({ displayName, uri }) => ({
+            provider: displayName,
+            ...(uri ? { uri } : {}),
+          })),
+        }
+      : {}),
   };
 }

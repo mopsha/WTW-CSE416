@@ -93,6 +93,68 @@ describe('parseCreatePick', () => {
       deadlineAt: null,
     });
   });
+  test('the chosen swipe length sets the deadline from the server clock', () => {
+    const base = { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000 };
+    const at = (min: number) => new Date(now + min * 60_000).toISOString();
+    // A 5-minute Pick whose request arrived late, and one with no timestamp at all.
+    expect(parseCreatePick({ ...base, deadlineAt: at(4.5), swipeMinutes: 5 }, now)).toMatchObject({
+      swipeMinutes: 5,
+      deadlineAt: at(5),
+    });
+    expect(parseCreatePick({ ...base, swipeMinutes: 30 }, now)).toMatchObject({
+      swipeMinutes: 30,
+      deadlineAt: at(30),
+    });
+    expect(() => parseCreatePick({ ...base, swipeMinutes: 2 }, now)).toThrow();
+  });
+  test.each([
+    [28, 30],
+    [26, 30],
+    [57, 60],
+    [4, 5],
+    [4.5, 5],
+    [5, 5],
+    [25, 30],
+    [30, 30],
+    [55, 60],
+    [175, 180],
+    [1435, 1440],
+  ])("an older build's %i-minute lead becomes %i minutes", (lead, minutes) => {
+    const base = { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000 };
+    const deadlineAt = new Date(now + lead * 60_000).toISOString();
+    expect(parseCreatePick({ ...base, deadlineAt }, now)).toMatchObject({
+      swipeMinutes: minutes,
+      deadlineAt: new Date(now + minutes * 60_000).toISOString(),
+    });
+  });
+  test.each([5, 30, 60, 180, 1440])(
+    'accepts up to 30 seconds of positive skew for the %i-minute choice',
+    (minutes) => {
+      const base = { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000 };
+      const nominal = now + minutes * 60_000;
+      for (const skew of [1_000, 29_999, 30_000]) {
+        const deadlineAt = new Date(nominal + skew).toISOString();
+        expect(parseCreatePick({ ...base, deadlineAt }, now)).toMatchObject({
+          swipeMinutes: minutes,
+          deadlineAt: new Date(nominal).toISOString(),
+        });
+      }
+      const deadlineAt = new Date(nominal + 30_001).toISOString();
+      expect(() => parseCreatePick({ ...base, deadlineAt }, now)).toThrow(
+        'Choose a supported swipe deadline or no deadline.',
+      );
+    },
+  );
+  test.each([3.99, 5.51, 10, 12, 24.99, 34, 61, 1446])(
+    'rejects an ambiguous or unsupported %s-minute legacy lead',
+    (lead) => {
+      const base = { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000 };
+      const deadlineAt = new Date(now + lead * 60_000).toISOString();
+      expect(() => parseCreatePick({ ...base, deadlineAt }, now)).toThrow(
+        'Choose a supported swipe deadline or no deadline.',
+      );
+    },
+  );
 });
 
 test('createPick passes the parsed input straight through and returns pickId', async () => {

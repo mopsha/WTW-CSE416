@@ -65,6 +65,7 @@ export interface CreatePickInput extends PlaceFilters, PlanOptions {
   poolSize: number;
   closeThreshold: number;
   deadlineAt: string | null;
+  swipeMinutes?: number;
 }
 
 export interface CandidateSnapshot {
@@ -211,21 +212,34 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
       `closeThreshold must be between ${MIN_CLOSE_THRESHOLD} and ${MAX_CLOSE_THRESHOLD}`,
     );
   }
+  // The chosen length wins: the server sets the deadline from it, so a slow request or a wrong
+  // phone clock can't shorten it or push it under the 5-minute minimum.
+  const sentMinutes = b.proposedAt === undefined ? b.swipeMinutes : undefined;
   let deadlineAt: string | null = null;
-  if (b.deadlineAt !== undefined && b.deadlineAt !== null) {
+  let swipeMinutes: number | undefined;
+  if (sentMinutes !== undefined && sentMinutes !== null) {
+    if (
+      typeof sentMinutes !== 'number' ||
+      !Number.isInteger(sentMinutes) ||
+      sentMinutes * 60_000 < MIN_DEADLINE_LEAD_MS ||
+      sentMinutes * 60_000 > MAX_DEADLINE_LEAD_MS
+    )
+      throw new ApiError(400, 'INVALID_INPUT', 'Choose a supported swipe deadline.');
+    swipeMinutes = sentMinutes;
+    deadlineAt = new Date(now + sentMinutes * 60_000).toISOString();
+  } else if (b.deadlineAt !== undefined && b.deadlineAt !== null) {
     const at = typeof b.deadlineAt === 'string' ? Date.parse(b.deadlineAt) : NaN;
     if (Number.isNaN(at)) {
       throw new ApiError(400, 'INVALID_INPUT', 'deadlineAt must be a date, or null');
     }
-    if (at - now < MIN_DEADLINE_LEAD_MS) {
-      throw new ApiError(400, 'INVALID_INPUT', 'deadlineAt must give people at least 5 minutes');
-    }
-    if (at - now > MAX_DEADLINE_LEAD_MS) {
-      throw new ApiError(400, 'INVALID_INPUT', 'deadlineAt must be within a week');
-    }
-    deadlineAt = new Date(at).toISOString();
+    swipeMinutes = legacySwipeMinutes(at - now);
+    deadlineAt = new Date(now + swipeMinutes * 60_000).toISOString();
   }
-  if (b.proposedAt !== undefined || b.swipeDeadlineMinutes !== undefined) {
+  if (
+    b.proposedAt !== undefined ||
+    b.swipeDeadlineMinutes !== undefined ||
+    b.swipeMinutes !== undefined
+  ) {
     const problems = validateCreatePick({ ...b, poolSize, closeThreshold, deadlineAt }, now);
     if (problems.length) throw new ApiError(400, 'INVALID_INPUT', problems[0]!.message);
   }
@@ -257,7 +271,29 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
     poolSize,
     closeThreshold,
     deadlineAt,
+    ...(swipeMinutes ? { swipeMinutes } : {}),
   };
+}
+
+/** The swipe lengths the Create Pick screen offers (app/pick/new.tsx). */
+export const SWIPE_MINUTE_CHOICES = [30, 60, 180, 1440] as const;
+
+/**
+ * Legacy timestamps cannot distinguish a shortened picker choice from a custom value
+ * in the same window. Accept up to five minutes of lost lead for picker choices and
+ * one minute for the historical five-minute API minimum. Allow up to 30 seconds
+ * of positive clock skew for either. Reject all other leads.
+ * Keep the same windows in 0052 for already-persisted drafts.
+ */
+export function legacySwipeMinutes(leadMs: number): number {
+  const minutes = leadMs / 60_000;
+  const positiveSkewMinutes = 0.5;
+  const choice = SWIPE_MINUTE_CHOICES.find(
+    (c) => minutes >= c - 5 && minutes <= c + positiveSkewMinutes,
+  );
+  if (choice !== undefined) return choice;
+  if (minutes >= 4 && minutes <= 5 + positiveSkewMinutes) return 5;
+  throw new ApiError(400, 'INVALID_INPUT', 'Choose a supported swipe deadline or no deadline.');
 }
 
 export function parseRefreshBody(body: unknown): boolean {

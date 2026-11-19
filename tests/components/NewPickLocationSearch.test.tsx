@@ -6,9 +6,18 @@ const { create, act } = jest.requireActual('react-test-renderer');
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('@/lib/haptics', () => ({ haptic: { tap: jest.fn() } }));
 jest.mock('@/lib/locationSearch', () => ({
+  chosenLabel: jest.requireActual('@/lib/locationSearch').chosenLabel,
   currentLocation: jest.fn(),
-  searchLocations: jest.fn(),
+  found: jest.fn(),
+  // Like the real search, results reach the screen through onUpdate, never the return value.
+  searchLocations: jest.fn((query, options) =>
+    Promise.resolve(jest.requireMock('@/lib/locationSearch').found(query, options)).then((hits) => {
+      if (options.isCurrent()) options.onUpdate(hits);
+      return hits;
+    }),
+  ),
 }));
+const { found } = jest.requireMock('@/lib/locationSearch');
 let tree: any;
 const onPick = jest.fn();
 const deferred = <T,>() => {
@@ -33,7 +42,7 @@ const tick = async () => act(async () => jest.advanceTimersByTime(300));
 beforeEach(async () => {
   jest.useFakeTimers();
   jest.clearAllMocks();
-  jest.mocked(searchLocations).mockResolvedValue([]);
+  found.mockResolvedValue([]);
   await act(async () => {
     tree = create(<LocationSearch key={0} label="SBU" onPick={onPick} />);
   });
@@ -50,7 +59,7 @@ test('mounting does not request permission or geocode; queries retain debounce',
   await typeQuery('Port');
   await tick();
   expect(searchLocations).toHaveBeenCalledTimes(1);
-  expect(searchLocations).toHaveBeenCalledWith('Port');
+  expect(searchLocations).toHaveBeenCalledWith('Port', expect.any(Object));
 });
 test('permission denial and location failures remain recoverable via retry and search', async () => {
   jest
@@ -72,28 +81,33 @@ test('permission denial and location failures remain recoverable via retry and s
 test('newer queries suppress stale search results and errors', async () => {
   const first = deferred<any[]>();
   const second = deferred<any[]>();
-  jest
-    .mocked(searchLocations)
-    .mockReturnValueOnce(first.promise)
-    .mockReturnValueOnce(second.promise);
+  found.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
   await typeQuery('Old');
   await tick();
   await typeQuery('New');
   await tick();
   await act(async () =>
-    second.resolve([{ id: 'new', label: 'New town', detail: 'NY', center: { lat: 41, lng: -72 } }]),
+    second.resolve([
+      {
+        id: 'new',
+        label: 'New town',
+        detail: 'NY',
+        chosen: 'New town, NY',
+        center: { lat: 41, lng: -72 },
+      },
+    ]),
   );
   await act(async () => first.reject(new Error('Old failure')));
   expect(JSON.stringify(tree.toJSON())).toContain('New town');
   expect(JSON.stringify(tree.toJSON())).not.toContain('Search isn’t available');
   await press('New town, NY');
-  expect(onPick).toHaveBeenCalledWith({ lat: 41, lng: -72 }, 'New town');
+  expect(onPick).toHaveBeenCalledWith({ lat: 41, lng: -72 }, 'New town, NY');
 });
 test('map selection invalidates pending search and device location without another request', async () => {
   const location = deferred<any>();
   const search = deferred<any[]>();
   jest.mocked(currentLocation).mockReturnValue(location.promise);
-  jest.mocked(searchLocations).mockReturnValue(search.promise);
+  found.mockReturnValue(search.promise);
   await typeQuery('Town');
   await tick();
   await press('Use my location');
@@ -124,7 +138,7 @@ test.each(['resolve', 'reject'])(
     const location = deferred<any>();
     const search = deferred<any[]>();
     jest.mocked(currentLocation).mockReturnValue(location.promise);
-    jest.mocked(searchLocations).mockReturnValue(search.promise);
+    found.mockReturnValue(search.promise);
     await typeQuery('Town');
     await tick();
     await press('Use my location');
@@ -138,3 +152,21 @@ test.each(['resolve', 'reject'])(
     expect(onPick).not.toHaveBeenCalled();
   },
 );
+
+test('choosing an unnamed result commits the coordinates once', async () => {
+  found.mockResolvedValueOnce([
+    {
+      id: 'pending',
+      label: 'Typed query',
+      detail: '41.00000, -72.00000 · Finding the area…',
+      chosen: '41.00000, -72.00000',
+      center: { lat: 41, lng: -72 },
+    },
+  ]);
+  await typeQuery('Typed query');
+  await tick();
+  await press('Typed query, 41.00000, -72.00000 · Finding the area…');
+  expect(onPick).toHaveBeenCalledTimes(1);
+  expect(onPick).toHaveBeenCalledWith({ lat: 41, lng: -72 }, '41.00000, -72.00000');
+  expect(jest.mocked(searchLocations).mock.lastCall?.[1]?.isCurrent?.()).toBe(false);
+});

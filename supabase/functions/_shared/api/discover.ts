@@ -9,6 +9,9 @@ import type { Candidate } from '../places/types.ts';
 
 export type ResolvePhoto = (name: string) => Promise<string>;
 
+/** A Google photo resource name. Stricter than the provider so nothing extra reaches the URL. */
+export const DISCOVER_PHOTO_NAME = /^places\/[A-Za-z0-9_-]+\/photos\/[A-Za-z0-9_-]+$/;
+
 /** Adds each Google place's first photo and its required credit; a failed photo stays emoji. */
 export function withPhotos(places: Candidate[], resolve: ResolvePhoto): Promise<Candidate[]> {
   return Promise.all(

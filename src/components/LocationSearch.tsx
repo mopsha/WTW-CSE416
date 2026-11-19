@@ -3,7 +3,12 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { haptic } from '@/lib/haptics';
-import { currentLocation, searchLocations, type LocationResult } from '@/lib/locationSearch';
+import {
+  chosenLabel,
+  currentLocation,
+  searchLocations,
+  type LocationResult,
+} from '@/lib/locationSearch';
 import type { LatLng } from '@shared/domain/geo.ts';
 
 import { colors, fonts, MIN_TARGET, radius, space, type } from './theme';
@@ -36,10 +41,11 @@ export function LocationSearch({ label, onPick }: Props) {
         return;
       }
       setSearching(true);
-      searchLocations(query)
+      const isCurrent = () => id === latest.current;
+      // Results arrive through onUpdate only, so a late resolve can't put back unnamed hits.
+      searchLocations(query, { isCurrent, onUpdate: setResults })
         .then((hits) => {
           if (id !== latest.current) return;
-          setResults(hits);
           setNote(hits.length === 0 ? 'No matches. Try another name or drop the pin.' : null);
         })
         .catch(() => {
@@ -60,7 +66,7 @@ export function LocationSearch({ label, onPick }: Props) {
     ++latest.current;
     setLocating(false);
     setSearching(false);
-    onPick(r.center, r.label);
+    onPick(r.center, chosenLabel(r));
     setQuery('');
     setResults([]);
     setNote(null);

@@ -153,6 +153,7 @@ test.each(scenarios)('before/after API equivalence: %s', async (scenario) => {
     includeSaved: false,
     closeThreshold: 100,
     deadlineAt: new Date(now + 60 * 60_000).toISOString(),
+    swipeMinutes: 60,
   };
   if (scenario === 'Activities' || scenario === 'Food + Activities') {
     expected.category = scenario === 'Activities' ? 'activities' : 'both';
@@ -203,6 +204,8 @@ test.each(scenarios)('before/after API equivalence: %s', async (scenario) => {
     const value = scenario === 'No deadline' ? 0 : 180;
     await choose('Deadline', 'Swipe deadline', value);
     expected.deadlineAt = value ? new Date(now + value * 60_000).toISOString() : null;
+    if (value) expected.swipeMinutes = value;
+    else delete expected.swipeMinutes;
   }
   if (scenario === 'Early close') {
     await choose('Close threshold', 'Close early', 75);
