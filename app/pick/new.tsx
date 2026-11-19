@@ -605,10 +605,7 @@ function CreatePickForm({
           ) : editor === 'deadline' ? (
             <>
               <Text style={styles.hint}>
-                When swiping closes, not when you’re going out.
-                {schedulingEnabled
-                  ? ' Scheduled Picks start this clock when creation finishes; other Picks start it at creation.'
-                  : ' This clock starts at creation.'}
+                How long everyone gets to swipe. The timer starts when you start the Pick.
               </Text>
               <ChoiceList
                 options={DEADLINES}
@@ -622,10 +619,7 @@ function CreatePickForm({
             </>
           ) : (
             <>
-              <Text style={styles.hint}>
-                The Pick can advance once this many people finish swiping. The server enforces
-                participant requirements.
-              </Text>
+              <Text style={styles.hint}>Swiping closes once this many people are done.</Text>
               <ChoiceList
                 options={THRESHOLDS}
                 value={closeThreshold}

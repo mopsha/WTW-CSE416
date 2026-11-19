@@ -47,13 +47,42 @@ export async function searchLocations(query: string): Promise<LocationResult[]> 
     ).slice(0, 5);
   }
 
-  const hits = await Location.geocodeAsync(q);
-  return hits.slice(0, 5).map((h, i) => ({
-    id: `geo-${i}-${h.latitude.toFixed(5)},${h.longitude.toFixed(5)}`,
-    label: q,
-    detail: `${h.latitude.toFixed(4)}, ${h.longitude.toFixed(4)}`,
-    center: { lat: h.latitude, lng: h.longitude },
-  }));
+  // The geocoder only returns coordinates, so name each hit ("Springfield" / "Illinois, US")
+  // or five Springfields look the same and the form shows whatever was typed.
+  const hits = (await Location.geocodeAsync(q)).slice(0, 5);
+  const named = await Promise.all(
+    hits.map(async (h) => {
+      const center = { lat: h.latitude, lng: h.longitude };
+      const place = await Location.reverseGeocodeAsync({
+        latitude: h.latitude,
+        longitude: h.longitude,
+      })
+        .then((r) => r[0])
+        .catch(() => undefined);
+      return { center, ...placeLabel(place, q) };
+    }),
+  );
+  const seen = new Set<string>();
+  return named
+    .filter(({ label, detail }) => {
+      const key = `${label}|${detail}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((r) => ({ ...r, id: `geo-${r.center.lat.toFixed(5)},${r.center.lng.toFixed(5)}` }));
+}
+
+/** "Springfield" / "Illinois, United States" from a reverse-geocoded address. */
+export function placeLabel(
+  place: Partial<Location.LocationGeocodedAddress> | undefined,
+  query: string,
+): { label: string; detail: string } {
+  const label = place?.city || place?.district || place?.name || place?.subregion || query;
+  const detail = [place?.region, place?.country]
+    .filter((part): part is string => !!part && part !== label)
+    .join(', ');
+  return { label, detail: detail || 'Nearby area' };
 }
 
 /**

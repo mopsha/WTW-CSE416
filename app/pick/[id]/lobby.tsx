@@ -135,7 +135,12 @@ function LobbyContent() {
         { icon: 'albums' as const, text: `${pick.poolSize} places` },
         {
           icon: 'timer' as const,
-          text: pick.deadlineAt ? (countdown.label ?? '') : 'No deadline',
+          // The swipe clock restarts when the host starts (0052), so don't count down here.
+          text: !pick.deadlineAt
+            ? 'No deadline'
+            : pick.state === 'draft'
+              ? 'Timer starts with the Pick'
+              : (countdown.label ?? ''),
         },
         {
           icon: 'people' as const,
@@ -270,7 +275,9 @@ function LobbyContent() {
               icon={s.icon}
               text={s.text}
               tabularCountdown={s.icon === 'timer'}
-              tone={s.icon === 'timer' && countdown.passed ? 'warn' : 'muted'}
+              tone={
+                s.icon === 'timer' && countdown.passed && pick?.state !== 'draft' ? 'warn' : 'muted'
+              }
             />
           ))}
         </View>
