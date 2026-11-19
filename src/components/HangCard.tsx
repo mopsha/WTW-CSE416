@@ -166,19 +166,25 @@ const styles = StyleSheet.create({
   muted: { ...type.caption, color: colors.muted },
 });
 
-export function HangResponse({
-  post,
-  stamp,
-  userId,
-  onStart,
-  singlePost = false,
-}: {
+export function HangResponse(props: HangResponseProps) {
+  return <HangResponseContent key={JSON.stringify([props.userId, props.post.id])} {...props} />;
+}
+
+interface HangResponseProps {
   post: HangPost;
   stamp: number;
   userId: string | undefined;
   onStart: () => void;
   singlePost?: boolean;
-}) {
+}
+
+function HangResponseContent({
+  post,
+  stamp,
+  userId,
+  onStart,
+  singlePost = false,
+}: HangResponseProps) {
   const read = async () =>
     (!singlePost
       ? (await api.getHang(userId)).posts.find((item) => item.id === post.id)

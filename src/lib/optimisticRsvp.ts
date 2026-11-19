@@ -13,8 +13,12 @@ export const canRsvpPlan = (plan: PlanSummary) => ['completed', 'decided'].inclu
 export function projectHangRsvp(post: HangPost, desired: HangStatus): HangPost {
   const count = (status: HangStatus, current = 0) =>
     Math.max(0, current - Number(post.myStatus === status) + Number(desired === status));
+  const attendees = post.attendees?.filter((person) => person.userId !== post.viewer?.userId);
+  if (attendees && post.viewer && desired !== 'cant')
+    attendees.unshift({ ...post.viewer, status: desired });
   return {
     ...post,
+    ...(attendees ? { attendees } : {}),
     myStatus: desired,
     downCount: count('down', post.downCount),
     ...(post.maybeCount !== undefined ? { maybeCount: count('maybe', post.maybeCount) } : {}),

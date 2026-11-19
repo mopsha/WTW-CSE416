@@ -1,8 +1,14 @@
+import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
+import { useRef, useState } from 'react';
 import { MemberMenu } from '../MemberMenu';
+import { MenuItem, menuStyles } from '../HostMenu';
+import { Sheet } from '../TabUi';
+import { HangAttendees } from './HangAttendees';
 import type { HangPost, HangStatus } from '@shared/api/hang.ts';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { haptic } from '@/lib/haptics';
-import { Avatar, Button } from '@/components';
+import { Avatar } from '@/components';
 import { colors, MIN_TARGET, picksTheme, radius, space } from '@/components/theme';
 
 /** Presentation only: HangCard retains fetching, expiry, eligibility and mutations. */
@@ -23,29 +29,53 @@ export function HangInvitation({
   onRespond(status: HangStatus): void;
   onStart(): void;
 }) {
-  const author = post.authorId === userId ? 'You' : (post.authorName ?? 'A friend');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const startAfterDismiss = useRef(false);
+  const isHost = post.authorId === userId;
+  const author = post.authorName ?? (isHost ? 'You' : 'A friend');
+  const canStart =
+    isHost &&
+    post.canStartPick === true &&
+    !!post.downCount &&
+    !disabled &&
+    !mutationPending &&
+    busy === null;
+
   return (
     <View style={s.invitation}>
       <View style={s.authorRow}>
-        <Avatar name={author} userId={post.authorId} neutral size={36} />
-        <View style={s.authorDetails}>
-          <Text style={s.author}>{author}</Text>
-          <Text style={s.caption}>
-            {new Date(post.startsAt).toLocaleString(undefined, {
-              month: 'short',
-              day: 'numeric',
-              hour: 'numeric',
-              minute: '2-digit',
-            })}
-          </Text>
-        </View>
-        <Text style={s.count}>
-          {post.downCount ?? 0} in{post.maybeCount ? ` · ${post.maybeCount} maybe` : ''}
-          {post.cantCount ? ` · ${post.cantCount} can’t` : ''}
-        </Text>
-        {userId && post.authorId !== userId ? (
-          <MemberMenu userId={post.authorId} name={author} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Open ${author}’s profile`}
+          onPress={() =>
+            router.push({ pathname: '/users/[id]', params: { id: post.authorId, hangId: post.id } })
+          }
+          style={s.authorIdentity}
+        >
+          <Avatar name={author} userId={post.authorId} size={40} />
+          <View style={s.authorDetails}>
+            <Text style={s.author}>{author}</Text>
+            <Text style={s.caption}>
+              {new Date(post.startsAt).toLocaleString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+              })}
+            </Text>
+          </View>
+        </Pressable>
+        {canStart ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Hang options"
+            onPress={() => setMenuOpen(true)}
+            style={menuStyles.trigger}
+          >
+            <Ionicons name="ellipsis-horizontal" color={colors.muted} size={20} />
+          </Pressable>
         ) : null}
+        {userId && !isHost ? <MemberMenu userId={post.authorId} name={author} /> : null}
       </View>
       <Text style={s.activity}>{post.activity}</Text>
       <View style={s.responses}>
@@ -79,20 +109,30 @@ export function HangInvitation({
           );
         })}
       </View>
-      {post.authorId === userId ? (
-        <View style={s.host}>
-          <Text style={s.caption}>
-            Only people who say “I’m in” join the Pick. If you skip, one of them hosts.
-          </Text>
-          <Button
-            label="Let’s Pick"
-            variant="secondary"
-            style={s.hostAction}
-            disabled={!post.downCount || busy !== null || mutationPending || disabled}
-            onPress={onStart}
+      <HangAttendees post={post} />
+      <Sheet
+        visible={menuOpen && canStart}
+        title="Hang options"
+        onClose={() => setMenuOpen(false)}
+        onDismiss={() => {
+          const requested = startAfterDismiss.current;
+          startAfterDismiss.current = false;
+          setMenuOpen(false);
+          if (requested && canStart && Date.parse(post.expiresAt) > Date.now()) onStart();
+        }}
+      >
+        {menuOpen && canStart ? (
+          <MenuItem
+            icon="flame-outline"
+            label="Start a Pick"
+            hint="Choose what to do with people who are down"
+            onPress={() => {
+              setMenuOpen(false);
+              startAfterDismiss.current = true;
+            }}
           />
-        </View>
-      ) : null}
+        ) : null}
+      </Sheet>
     </View>
   );
 }
@@ -103,11 +143,17 @@ const s = StyleSheet.create({
     padding: space.lg,
     gap: space.md,
   },
-  authorRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' },
-  authorDetails: { flex: 1, minWidth: 100 },
+  authorRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  authorIdentity: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    minHeight: MIN_TARGET,
+  },
+  authorDetails: { flex: 1, minWidth: 0 },
   author: { ...picksTheme.secondary, fontWeight: '600', color: colors.text },
   caption: { ...picksTheme.secondary, color: colors.muted },
-  count: { ...picksTheme.secondary, color: colors.muted },
   activity: {
     ...picksTheme.ui,
     fontSize: 22,
@@ -136,10 +182,4 @@ const s = StyleSheet.create({
   selected: { backgroundColor: colors.primary },
   selectedText: { color: colors.bg, fontWeight: '600' },
   pressed: { opacity: 0.75 },
-  host: { gap: space.md },
-  hostAction: {
-    backgroundColor: picksTheme.colors.invitationControl,
-    borderWidth: 0,
-    borderRadius: radius.md,
-  },
 });
