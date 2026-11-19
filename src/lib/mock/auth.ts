@@ -96,6 +96,7 @@ export const mockAuth: AuthService = {
       throw new AuthError('invalid_code', 'Wrong username or password.');
     return enter(email);
   },
+  async requestPasswordCode() {},
   async setPassword(password) {
     if (!session?.user.email) throw new AuthError('unknown', 'Sign in first.');
     if (password.length < 8)

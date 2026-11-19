@@ -12,7 +12,12 @@ import {
 } from '../_shared/api/recentWinners.ts';
 import type { Candidate, Category } from '../_shared/places/types.ts';
 import { normalizeUsername } from '../_shared/api/usernames.ts';
-import { passwordLogin, usernameAvailability, type SignInStore } from '../_shared/api/signIn.ts';
+import {
+  clientAddress,
+  passwordLogin,
+  usernameAvailability,
+  type SignInStore,
+} from '../_shared/api/signIn.ts';
 import { parseFriendId } from '../_shared/api/friends.ts';
 import type { PastMovesStore } from '../_shared/api/pastMoves.ts';
 import { sendDirectMessage, type DirectChatStore } from '../_shared/api/directChat.ts';
@@ -990,7 +995,13 @@ export function createApp(
   app.post('/auth/password-login', async (c) => {
     c.header('Cache-Control', 'no-store');
     if (!deps.signInStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Sign-in is unavailable');
-    return c.json(await passwordLogin(deps.signInStore, await readJsonBody(c)));
+    return c.json(
+      await passwordLogin(
+        deps.signInStore,
+        await readJsonBody(c),
+        clientAddress(c.req.raw.headers),
+      ),
+    );
   });
   app.get('/users/:id/profile', async (c) => {
     c.header('Cache-Control', 'private, no-store');

@@ -105,7 +105,15 @@ const supabaseAuth: AuthService = {
     }
     if (res.status === 429)
       throw new AuthError('rate_limited', 'Too many tries. Wait a few minutes and try again.');
-    if (!res.ok) throw new AuthError('invalid_code', 'Wrong username or password.');
+    if (res.status === 401) throw new AuthError('invalid_code', 'Wrong username or password.');
+    if (!res.ok) {
+      // Outages and unconfirmed emails say so, instead of blaming the password.
+      const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+      throw new AuthError(
+        'unknown',
+        body?.error?.message ?? 'Sign-in is busy right now. Try again in a minute.',
+      );
+    }
     const tokens = (await res.json()) as { accessToken: string; refreshToken: string };
     const { data, error } = await getSupabase().auth.setSession({
       access_token: tokens.accessToken,
@@ -116,10 +124,23 @@ const supabaseAuth: AuthService = {
     if (!session) throw new AuthError('unknown', 'Sign-in did not return a session.');
     return session;
   },
-  async setPassword(password) {
-    const { error } = await getSupabase().auth.updateUser({ password });
+  async setPassword(password, code) {
+    const { error } = await getSupabase().auth.updateUser({
+      password,
+      ...(code ? { nonce: code } : {}),
+    });
+    if (error?.code === 'reauthentication_needed')
+      throw new AuthError('reauth_needed', 'We emailed you a code to confirm this change.');
+    if (error?.code === 'reauthentication_not_valid')
+      throw new AuthError('invalid_code', 'That code is wrong or has expired.');
+    if (error?.code === 'same_password')
+      throw new AuthError('unknown', 'That’s already your password.');
     if (error?.code === 'weak_password')
       throw new AuthError('unknown', 'Pick a stronger password (at least 8 characters).');
+    if (error) throw toAuthError(error);
+  },
+  async requestPasswordCode() {
+    const { error } = await getSupabase().auth.reauthenticate();
     if (error) throw toAuthError(error);
   },
   async signInWithApple() {

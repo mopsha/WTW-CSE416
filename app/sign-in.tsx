@@ -324,7 +324,7 @@ export default function SignInScreen() {
                     />
                     <Text style={styles.fine}>
                       {mode === 'login'
-                        ? 'We email you a 6-digit code.'
+                        ? 'We email you a 6-digit code. Once you’re in, set a new password in Settings → Password.'
                         : 'We’ll email a 6-digit code to confirm it’s you. Then pick a username and password.'}
                     </Text>
                     {mode === 'login' ? (

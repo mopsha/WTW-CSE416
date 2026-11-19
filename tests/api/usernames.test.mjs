@@ -162,6 +162,10 @@ test(
         400,
         'self request rejected',
       );
+      // The quota is 30 per UTC minute. Start in a fresh minute, so the 31 calls below (and the
+      // cross-route check after them) can't straddle two buckets and flake.
+      const second = new Date().getUTCSeconds();
+      if (second > 40) await new Promise((resolve) => setTimeout(resolve, (61 - second) * 1000));
       let exhausted = false;
       for (let i = 0; i <= 30; i++) {
         const response = await api('/people/' + b.id, a.token);

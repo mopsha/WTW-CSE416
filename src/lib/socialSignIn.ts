@@ -22,10 +22,13 @@ export async function appleSignInAvailable(): Promise<boolean> {
   }
 }
 
-/** Whether to show "Continue with Google". */
+/**
+ * Whether to show "Continue with Google". On iOS only alongside Sign in with Apple: App Store
+ * guideline 4.8 requires offering Apple whenever another third-party sign-in is offered.
+ */
 export function googleSignInAvailable(): boolean {
   if (USE_MOCK || !GOOGLE_WEB) return false;
-  return Platform.OS === 'android' || (Platform.OS === 'ios' && !!GOOGLE_IOS);
+  return Platform.OS === 'android' || (Platform.OS === 'ios' && !!GOOGLE_IOS && APPLE_ON);
 }
 
 /** Apple's identity token (and, on first sign-in only, the user's name); null if canceled. */

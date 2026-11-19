@@ -12,7 +12,13 @@ export interface AuthSession {
   accessToken: string;
 }
 
-export type AuthErrorCode = 'invalid_code' | 'rate_limited' | 'invalid_email' | 'unknown';
+export type AuthErrorCode =
+  | 'invalid_code'
+  | 'rate_limited'
+  | 'invalid_email'
+  /** Changing the password needs a code emailed to me first (requestPasswordCode). */
+  | 'reauth_needed'
+  | 'unknown';
 
 export class AuthError extends Error {
   override readonly name = 'AuthError';
@@ -35,8 +41,13 @@ export interface AuthService {
   verifyCode(email: string, code: string): Promise<AuthSession>;
   /** Log in with a username or an email, plus password (docs/sign-in.md). */
   signInWithPassword(identifier: string, password: string): Promise<AuthSession>;
-  /** Sets my password (the welcome screen, after signing up with an emailed code). */
-  setPassword(password: string): Promise<void>;
+  /**
+   * Sets my password (welcome screen, Settings → Password). Throws 'reauth_needed' when the
+   * project requires a recent proof: send requestPasswordCode(), then retry with that code.
+   */
+  setPassword(password: string, code?: string): Promise<void>;
+  /** Emails me a code that confirms a password change. */
+  requestPasswordCode(): Promise<void>;
   /** Native Sign in with Apple / Google. Null when the user cancels. */
   signInWithApple(): Promise<AuthSession | null>;
   signInWithGoogle(): Promise<AuthSession | null>;

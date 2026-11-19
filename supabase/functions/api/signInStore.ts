@@ -3,7 +3,7 @@ import { ApiError } from '../_shared/api/errors.ts';
 import type { SignInStore } from '../_shared/api/signIn.ts';
 import { createServiceClient } from './serviceClient.ts';
 
-/** Service-role adapter for _shared/api/signIn.ts (0055_password_login_limit.sql). */
+/** Service-role adapter for _shared/api/signIn.ts (0057_password_login_limit.sql). */
 export function createSignInStore(): SignInStore {
   async function owner(username: string): Promise<string | null> {
     // Usernames are stored lowercase (0036's trigger), so equality is exact.
@@ -24,12 +24,24 @@ export function createSignInStore(): SignInStore {
       if (error) return null;
       return data.user?.email ?? null;
     },
-    async consumeLoginAttempt(subject) {
+    async consumeLoginAttempt(subjects) {
       const { data, error } = await createServiceClient().rpc('consume_login_limit', {
-        p_subject: subject,
+        p_subjects: subjects.map((s) => s.key),
+        p_limits: subjects.map((s) => s.limit),
       });
       if (error) throw new ApiError(503, 'DATABASE_NOT_READY', 'Sign-in is unavailable');
       return data === true;
+    },
+    async refundLoginAttempt(keys) {
+      await createServiceClient().rpc('refund_login_limit', { p_subjects: keys });
+    },
+    async consumeUsernameLookup(userId) {
+      const { error } = await createServiceClient().rpc('consume_username_lookup', {
+        p_user_id: userId,
+      });
+      if (error?.code === 'PT429')
+        throw new ApiError(429, 'RATE_LIMITED', 'Too many username checks. Try again shortly.');
+      if (error) throw new ApiError(503, 'DATABASE_NOT_READY', 'Usernames are unavailable');
     },
     async passwordSignIn(email, password) {
       const url = Deno.env.get('SUPABASE_URL');
@@ -41,7 +53,20 @@ export function createSignInStore(): SignInStore {
         auth: { persistSession: false, autoRefreshToken: false },
       });
       const { data, error } = await client.auth.signInWithPassword({ email, password });
-      if (error || !data.session) return null;
+      // Only a real wrong-credentials answer counts as a wrong password.
+      if (error?.code === 'invalid_credentials') return null;
+      if (error?.code === 'email_not_confirmed')
+        throw new ApiError(
+          403,
+          'EMAIL_NOT_CONFIRMED',
+          'Confirm your email first, or log in with an emailed code.',
+        );
+      if (error || !data.session)
+        throw new ApiError(
+          503,
+          'SIGN_IN_UNAVAILABLE',
+          'Sign-in is busy right now. Try again in a minute, or log in with an emailed code.',
+        );
       return {
         accessToken: data.session.access_token,
         refreshToken: data.session.refresh_token,
