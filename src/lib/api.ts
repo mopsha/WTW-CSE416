@@ -452,7 +452,8 @@ export function createApiClient({
       lng: number;
       radiusM?: number;
       category?: string;
-      priceMax?: number;
+      /** Exact price levels, food only; sent as "1,2". */
+      prices?: readonly number[];
       openNow?: boolean;
     }) => {
       const query = new URLSearchParams(
@@ -464,6 +465,10 @@ export function createApiClient({
         places: import('@shared/places/types.ts').Candidate[];
         fallback: boolean;
         notice: string | null;
+        /** Which filters removed every place. Missing from older servers. */
+        emptyBecause?: import('@shared/domain/discoverFilters.ts').DiscoverFilterKey[];
+        hoursUnknown?: number;
+        hoursUnverified?: boolean;
       }>('GET', `/discover?${query}&photos=lazy`);
     },
     /** One Discover cover, fetched only once its card is on screen. */

@@ -252,7 +252,8 @@ export function filterDiscover<P extends DiscoverPlace>(
   );
 }
 
-/** "0.6 mi" / "on campus". */
-export function milesLabel(miles: number): string {
-  return miles < 0.3 ? 'on campus' : `${miles.toFixed(1)} mi`;
+/** "0.6 mi" / "on campus"; "nearby" when measured from the device instead of campus. */
+export function milesLabel(miles: number, fromCampus = true): string {
+  if (miles < 0.3) return fromCampus ? 'on campus' : 'nearby';
+  return `${miles.toFixed(1)} mi`;
 }
