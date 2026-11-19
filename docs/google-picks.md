@@ -25,7 +25,30 @@ Google bills a Nearby Search by the most expensive field requested, so `pickSear
   Those filters can't work without price and hours, so that one search uses the full set and bills at
   the Enterprise rate of about $0.035, after 1,000 free a month.
 - **Showing a Pick:** always the basic fields.
-- **Discover:** always the full set, as before.
+- **Discover:** always the full set, as before. See "Discover filters" below for which search it uses.
+
+## Discover filters
+
+Discover searches around the device when location permission is already granted (it never asks;
+onboarding and Create Pick do). Otherwise it uses Stony Brook. Coordinates are rounded to about
+110 m before they're sent.
+
+- **No price, rating or Open Now filter:** Nearby Search with the selected types, as before.
+- **Any of those set:** Text Search (New) with `priceLevels`, `minRating` and `openNow`, so Google
+  returns new places that match instead of us trimming the same popular 20. Text Search takes one
+  `includedType` (used when exactly one type is selected) and only a rectangular
+  `locationRestriction`, so the pool still trims results to the search circle.
+- **Price is exact and food-only:** `prices=1,2` means $ or $$. Activities never send it, and For
+  You applies it only to the food search. Older app builds that send `priceMax` keep the old
+  "up to" meaning, for food only.
+- **Open Now** is applied after the search. If no place is known to be open but some don't list
+  hours, those are shown and the screen says their hours are unknown, rather than showing nothing.
+- The response's `emptyBecause` names the filters that removed every place, for the empty state.
+
+Each search is one call through the same `GOOGLE_DAILY_CALL_CAP` budget, with the same Discover
+field mask, and it stores the same thing: place IDs only, under a cache key that includes every
+filter. Text Search requests the same Enterprise-tier fields as the Discover Nearby Search, so
+check its rate against real billing.
 
 ## How places are shown
 

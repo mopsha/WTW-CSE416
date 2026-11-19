@@ -1,4 +1,14 @@
-import { discoverSearchTypes, validDiscovery } from '../domain/discoverFilters.ts';
+import {
+  ACTIVITY_TYPES,
+  CUISINES,
+  DISCOVER_PRICES,
+  FOOD_TYPES,
+  discoverSearchTypes,
+  narrowsSearch,
+  validDiscovery,
+  type DiscoverConstraints,
+} from '../domain/discoverFilters.ts';
+import { boundingBox } from '../domain/geo.ts';
 import type { OpeningHours, HoursPoint } from '../domain/openingHours.ts';
 import { categoryMap, matchesCategory } from './categoryMap.ts';
 import type { Candidate, Category, PlaceProvider, PlaceSearch } from './types.ts';
@@ -208,6 +218,50 @@ export function validateSearch(query: PlaceSearch): void {
   }
 }
 
+/** Words for a categorical Text Search query, from the same options as the type list. */
+function textQuery(category: Category, filters: DiscoverConstraints): string {
+  const labels = (
+    catalog: readonly { value: string; label: string }[],
+    values?: readonly string[],
+  ) => catalog.filter((o) => values?.includes(o.value)).map((o) => o.label);
+  const or = (words: string[]) => words.join(' or ');
+  if (category === 'food') {
+    const cuisines = labels(CUISINES, filters.cuisines);
+    if (cuisines.length) return `${or(cuisines)} restaurants`;
+    const foodTypes = labels(FOOD_TYPES, filters.foodTypes);
+    return foodTypes.length ? or(foodTypes) : 'restaurants';
+  }
+  const activities = labels(ACTIVITY_TYPES, filters.activityTypes);
+  return activities.length ? or(activities) : 'things to do';
+}
+
+/**
+ * Text Search (New) body for filters Nearby Search can't apply (price, rating, open now), so
+ * Google returns new matching places instead of us trimming the same popular ones. Text Search
+ * takes one includedType and only a rectangular restriction; pool.ts trims to the circle.
+ */
+export function textSearchBody(query: PlaceSearch & { category: Category }, types: string[]) {
+  const filters = query.discovery ?? {};
+  const box = boundingBox(query.center, query.radiusM);
+  const point = (p: { lat: number; lng: number }) => ({ latitude: p.lat, longitude: p.lng });
+  return {
+    textQuery: textQuery(query.category, filters),
+    ...(types.length === 1 ? { includedType: types[0], strictTypeFiltering: true } : {}),
+    pageSize: 20,
+    rankPreference: filters.sort === 'nearest' ? 'DISTANCE' : 'RELEVANCE',
+    locationRestriction: { rectangle: { low: point(box.low), high: point(box.high) } },
+    ...(filters.prices?.length && query.category === 'food'
+      ? {
+          priceLevels: DISCOVER_PRICES.filter((o) => filters.prices!.includes(o.value)).map(
+            (o) => o.google,
+          ),
+        }
+      : {}),
+    ...(filters.minRating ? { minRating: filters.minRating } : {}),
+    ...(filters.openNow ? { openNow: true } : {}),
+  };
+}
+
 /** Request-scoped Google content. Credentials and provider response errors never leave this adapter. */
 export class GoogleProvider implements PlaceProvider {
   constructor(
@@ -258,23 +312,29 @@ export class GoogleProvider implements PlaceProvider {
         : query.category
           ? categoryMap[query.category]
           : [...categoryMap.food, ...categoryMap.activities];
+    // Discover only; Picks never send discovery, so they keep Nearby Search.
+    const text = !!query.category && narrowsSearch(query.discovery);
     const result = record(
       await this.request(
-        'places:searchNearby',
+        text ? 'places:searchText' : 'places:searchNearby',
         options?.mask ?? (query.discovery ? DISCOVER_FIELD_MASK : NEARBY_FIELD_MASK),
         {
           method: 'POST',
-          body: JSON.stringify({
-            includedTypes: types,
-            maxResultCount: 20,
-            rankPreference: query.discovery?.sort === 'nearest' ? 'DISTANCE' : 'POPULARITY',
-            locationRestriction: {
-              circle: {
-                center: { latitude: query.center.lat, longitude: query.center.lng },
-                radius: query.radiusM,
-              },
-            },
-          }),
+          body: JSON.stringify(
+            text
+              ? textSearchBody({ ...query, category: query.category! }, [...types])
+              : {
+                  includedTypes: types,
+                  maxResultCount: 20,
+                  rankPreference: query.discovery?.sort === 'nearest' ? 'DISTANCE' : 'POPULARITY',
+                  locationRestriction: {
+                    circle: {
+                      center: { latitude: query.center.lat, longitude: query.center.lng },
+                      radius: query.radiusM,
+                    },
+                  },
+                },
+          ),
         },
         options?.signal,
       ),
