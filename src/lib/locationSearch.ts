@@ -5,7 +5,7 @@
 // Google key never ships in the app.
 import * as Location from 'expo-location';
 
-import type { LatLng } from '@shared/domain/geo.ts';
+import { distanceMeters, type LatLng } from '@shared/domain/geo.ts';
 
 import { USE_MOCK } from './config';
 
@@ -35,7 +35,22 @@ const MOCK_LOCATIONS: readonly LocationResult[] = [
 /** Where the map starts before we know anything (SBU Academic Mall). */
 export const DEFAULT_CENTER: LatLng = MOCK_LOCATIONS[0]!.center;
 
-export async function searchLocations(query: string): Promise<LocationResult[]> {
+// Hits closer than this are the same place; the geocoder often returns near-duplicates.
+const SAME_PLACE_M = 150;
+// Reverse lookups are rate limited on iOS, so remember answers and name one hit at a time.
+const named = new Map<string, Promise<Partial<Location.LocationGeocodedAddress> | undefined>>();
+
+interface SearchOptions {
+  /** Called as each hit gets its name. Without it, the search waits for every name. */
+  onUpdate?: (results: LocationResult[]) => void;
+  /** False once the user has typed past this search; naming stops there. */
+  isCurrent?: () => boolean;
+}
+
+export async function searchLocations(
+  query: string,
+  { onUpdate, isCurrent = () => true }: SearchOptions = {},
+): Promise<LocationResult[]> {
   const q = query.trim();
   if (q.length < 2) return [];
 
@@ -47,42 +62,85 @@ export async function searchLocations(query: string): Promise<LocationResult[]> 
     ).slice(0, 5);
   }
 
-  // The geocoder only returns coordinates, so name each hit ("Springfield" / "Illinois, US")
-  // or five Springfields look the same and the form shows whatever was typed.
-  const hits = (await Location.geocodeAsync(q)).slice(0, 5);
-  const named = await Promise.all(
-    hits.map(async (h) => {
-      const center = { lat: h.latitude, lng: h.longitude };
-      const place = await Location.reverseGeocodeAsync({
-        latitude: h.latitude,
-        longitude: h.longitude,
-      })
-        .then((r) => r[0])
-        .catch(() => undefined);
-      return { center, ...placeLabel(place, q) };
-    }),
-  );
-  const seen = new Set<string>();
-  return named
-    .filter(({ label, detail }) => {
-      const key = `${label}|${detail}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .map((r) => ({ ...r, id: `geo-${r.center.lat.toFixed(5)},${r.center.lng.toFixed(5)}` }));
+  const centers: LatLng[] = [];
+  for (const h of await Location.geocodeAsync(q)) {
+    const center = { lat: h.latitude, lng: h.longitude };
+    if (centers.every((c) => distanceMeters(c, center) > SAME_PLACE_M)) centers.push(center);
+    if (centers.length === 5) break;
+  }
+  // The geocoder only returns coordinates. Show the hits now and fill in each name
+  // ("Springfield" / "Illinois, United States") as it arrives.
+  let results: LocationResult[] = centers.map((center) => ({
+    id: `geo-${center.lat.toFixed(5)},${center.lng.toFixed(5)}`,
+    center,
+    label: q,
+    detail: 'Finding the area…',
+  }));
+  const naming = (async () => {
+    for (const [i, r] of results.entries()) {
+      if (!isCurrent()) return;
+      const place = await reverseGeocode(r.center);
+      results = results.map((old, j) => (j === i ? { ...old, ...placeLabel(place, q) } : old));
+      if (isCurrent()) onUpdate?.(results);
+    }
+  })();
+  if (!onUpdate) await naming;
+  return results;
 }
+
+function reverseGeocode(center: LatLng) {
+  const key = `${center.lat.toFixed(4)},${center.lng.toFixed(4)}`;
+  let place = named.get(key);
+  if (!place) {
+    place = Location.reverseGeocodeAsync({ latitude: center.lat, longitude: center.lng })
+      .then((r) => r[0])
+      .catch(() => {
+        named.delete(key);
+        return undefined;
+      });
+    if (named.size >= 100) named.delete(named.keys().next().value!);
+    named.set(key, place);
+  }
+  return place;
+}
+
+// Most to least specific. The label is the most specific part the user typed (a street, a
+// neighborhood, a city), and the detail is the next two broader parts.
+const PARTS = ['name', 'district', 'city', 'subregion', 'region', 'country'] as const;
 
 /** "Springfield" / "Illinois, United States" from a reverse-geocoded address. */
 export function placeLabel(
   place: Partial<Location.LocationGeocodedAddress> | undefined,
   query: string,
 ): { label: string; detail: string } {
-  const label = place?.city || place?.district || place?.name || place?.subregion || query;
-  const detail = [place?.region, place?.country]
-    .filter((part): part is string => !!part && part !== label)
+  const words = query
+    .toLowerCase()
+    .split(/[\s,]+/)
+    .filter((w) => w.length >= 2);
+  const parts = PARTS.map((key) => place?.[key] ?? null);
+  const typed = parts.findIndex(
+    (part) => !!part && words.some((w) => part.toLowerCase().includes(w)),
+  );
+  const at = typed >= 0 ? typed : ([2, 1, 0, 3].find((i) => !!parts[i]) ?? -1);
+  const label = at >= 0 ? parts[at]! : query;
+  const detail = [
+    ...new Set(
+      parts
+        .slice(at + 1)
+        .filter((part, i): part is string => !!part && part !== label && at + 1 + i !== 3),
+    ),
+  ]
+    .slice(0, 2)
     .join(', ');
   return { label, detail: detail || 'Nearby area' };
+}
+
+/** What the form shows once a result is chosen: "Springfield, Illinois". */
+export function chosenLabel(result: LocationResult): string {
+  const broader = result.detail.split(', ')[0];
+  return broader && result.detail !== 'Nearby area' && result.detail !== 'Finding the area…'
+    ? `${result.label}, ${broader}`
+    : result.label;
 }
 
 /**

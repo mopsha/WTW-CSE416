@@ -6,6 +6,7 @@ const { create, act } = jest.requireActual('react-test-renderer');
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('@/lib/haptics', () => ({ haptic: { tap: jest.fn() } }));
 jest.mock('@/lib/locationSearch', () => ({
+  chosenLabel: jest.requireActual('@/lib/locationSearch').chosenLabel,
   currentLocation: jest.fn(),
   searchLocations: jest.fn(),
 }));
@@ -50,7 +51,7 @@ test('mounting does not request permission or geocode; queries retain debounce',
   await typeQuery('Port');
   await tick();
   expect(searchLocations).toHaveBeenCalledTimes(1);
-  expect(searchLocations).toHaveBeenCalledWith('Port');
+  expect(searchLocations).toHaveBeenCalledWith('Port', expect.any(Object));
 });
 test('permission denial and location failures remain recoverable via retry and search', async () => {
   jest
@@ -87,7 +88,7 @@ test('newer queries suppress stale search results and errors', async () => {
   expect(JSON.stringify(tree.toJSON())).toContain('New town');
   expect(JSON.stringify(tree.toJSON())).not.toContain('Search isn’t available');
   await press('New town, NY');
-  expect(onPick).toHaveBeenCalledWith({ lat: 41, lng: -72 }, 'New town');
+  expect(onPick).toHaveBeenCalledWith({ lat: 41, lng: -72 }, 'New town, NY');
 });
 test('map selection invalidates pending search and device location without another request', async () => {
   const location = deferred<any>();

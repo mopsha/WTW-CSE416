@@ -64,6 +64,7 @@ export interface CreatePickInput extends PlaceFilters, PlanOptions {
   poolSize: number;
   closeThreshold: number;
   deadlineAt: string | null;
+  swipeMinutes?: number;
 }
 
 export interface CandidateSnapshot {
@@ -224,10 +225,20 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
     }
     deadlineAt = new Date(at).toISOString();
   }
-  if (b.proposedAt !== undefined || b.swipeDeadlineMinutes !== undefined) {
+  if (
+    b.proposedAt !== undefined ||
+    b.swipeDeadlineMinutes !== undefined ||
+    b.swipeMinutes !== undefined
+  ) {
     const problems = validateCreatePick({ ...b, poolSize, closeThreshold, deadlineAt }, now);
     if (problems.length) throw new ApiError(400, 'INVALID_INPUT', problems[0]!.message);
   }
+  // Builds before swipeMinutes only sent deadlineAt: round its lead to the 5-minute choices,
+  // which absorbs the request latency and the phone's clock skew.
+  const swipeMinutes = deadlineAt
+    ? ((b.swipeMinutes as number | undefined) ??
+      Math.max(5, Math.round((Date.parse(deadlineAt) - now) / 300_000) * 5))
+    : undefined;
   if (!validFilters(b as PlaceFilters))
     throw new ApiError(400, 'INVALID_INPUT', 'Invalid priceMax or openNow');
   return {
@@ -256,6 +267,7 @@ export function parseCreatePick(body: unknown, now: number = Date.now()): Create
     poolSize,
     closeThreshold,
     deadlineAt,
+    ...(swipeMinutes ? { swipeMinutes } : {}),
   };
 }
 

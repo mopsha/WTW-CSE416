@@ -93,6 +93,15 @@ describe('parseCreatePick', () => {
       deadlineAt: null,
     });
   });
+  test("keeps the chosen swipe length, or rounds an older build's deadline to it", () => {
+    const base = { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000 };
+    const late = new Date(now + 28 * 60_000).toISOString();
+    expect(parseCreatePick({ ...base, deadlineAt: late, swipeMinutes: 30 }, now).swipeMinutes).toBe(
+      30,
+    );
+    expect(parseCreatePick({ ...base, deadlineAt: late }, now).swipeMinutes).toBe(30);
+    expect(() => parseCreatePick({ ...base, deadlineAt: late, swipeMinutes: 2 }, now)).toThrow();
+  });
 });
 
 test('createPick passes the parsed input straight through and returns pickId', async () => {

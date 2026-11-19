@@ -256,7 +256,11 @@ function CreatePickForm({
         : deadlineMin
           ? new Date(Date.now() + deadlineMin * 60_000).toISOString()
           : null,
-      ...(scheduledAt ? { proposedAt: scheduledAt, swipeDeadlineMinutes: deadlineMin } : {}),
+      ...(scheduledAt
+        ? { proposedAt: scheduledAt, swipeDeadlineMinutes: deadlineMin }
+        : deadlineMin
+          ? { swipeMinutes: deadlineMin }
+          : {}),
       closeThreshold,
     };
     const found = validateCreatePick(input);

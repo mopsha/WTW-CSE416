@@ -29,19 +29,54 @@ test('names each geocoder hit instead of echoing the query with coordinates', as
   expect(results[0]!.center).toEqual({ lat: 39.8, lng: -89.6 });
 });
 
-test('drops duplicate places and falls back to the query when naming fails', async () => {
-  jest.mocked(Location.geocodeAsync).mockResolvedValue([hit(1, 1), hit(1.001, 1.001), hit(5, 5)]);
-  const same = [{ city: 'Boston', region: 'Massachusetts', country: 'United States' }] as never;
+test('drops hits at the same spot, keeps different places with the same name', async () => {
+  jest
+    .mocked(Location.geocodeAsync)
+    .mockResolvedValue([hit(1, 1), hit(1.0001, 1.0001), hit(1.2, 1.2), hit(5, 5)]);
+  const boston = [{ city: 'Boston', region: 'Massachusetts', country: 'United States' }] as never;
   jest
     .mocked(Location.reverseGeocodeAsync)
-    .mockResolvedValueOnce(same)
-    .mockResolvedValueOnce(same)
+    .mockResolvedValueOnce(boston)
+    .mockResolvedValueOnce(boston)
     .mockRejectedValueOnce(new Error('offline'));
   const results = await searchLocations('Boston');
   expect(results.map((r) => [r.label, r.detail])).toEqual([
     ['Boston', 'Massachusetts, United States'],
+    ['Boston', 'Massachusetts, United States'],
     ['Boston', 'Nearby area'],
   ]);
+});
+
+test('shows hits before their names arrive, and stops naming a stale search', async () => {
+  jest.mocked(Location.geocodeAsync).mockResolvedValue([hit(10, 10), hit(20, 20)]);
+  jest.mocked(Location.reverseGeocodeAsync).mockClear();
+  let lookedUp!: () => void;
+  jest.mocked(Location.reverseGeocodeAsync).mockReturnValueOnce(
+    new Promise((resolve) => {
+      lookedUp = () => resolve([{ city: 'Albany', region: 'New York' }] as never);
+    }),
+  );
+  let current = true;
+  const onUpdate = jest.fn();
+  const first = await searchLocations('Alb', { onUpdate, isCurrent: () => current });
+  expect(first.map((r) => r.detail)).toEqual(['Finding the area…', 'Finding the area…']);
+  current = false;
+  lookedUp();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(onUpdate).not.toHaveBeenCalled();
+  expect(Location.reverseGeocodeAsync).toHaveBeenCalledTimes(1);
+});
+
+test('labels the part the user typed: a street or neighborhood, not just the city', () => {
+  expect(
+    placeLabel(
+      { name: '1 Main St', district: 'Back Bay', city: 'Boston', region: 'Massachusetts' },
+      'back bay',
+    ),
+  ).toEqual({ label: 'Back Bay', detail: 'Boston, Massachusetts' });
+  expect(
+    placeLabel({ name: '12 Main St', city: 'Boston', region: 'Massachusetts' }, '12 main st'),
+  ).toEqual({ label: '12 Main St', detail: 'Boston, Massachusetts' });
 });
 
 test('placeLabel never repeats the name in the detail', () => {
