@@ -45,13 +45,19 @@ import { swipe, type HeartbeatStore } from '../_shared/api/heartbeat.ts';
 import { getProgress, type ProgressStore } from '../_shared/api/progress.ts';
 import {
   cancelPick,
+  leavePick,
   getPick,
   refreshPick,
   startPick,
   type LifecycleStore,
 } from '../_shared/api/lifecycle.ts';
 import { closePick, type ClosingStore } from '../_shared/api/closing.ts';
-import { castVote, closeVote, type VotingStore } from '../_shared/api/voting.ts';
+import {
+  castVote,
+  closeVote,
+  settleIfEveryoneVoted,
+  type VotingStore,
+} from '../_shared/api/voting.ts';
 import type { PoolBuilder } from '../_shared/places/pool.ts';
 import type { PickPlaces } from '../_shared/places/pickPlaces.ts';
 import { joinPick, type JoinStore } from '../_shared/api/join.ts';
@@ -560,6 +566,22 @@ export function createApp(
     const user = await deps.getUser(c.req.raw);
     const body = await readJsonBody(c);
     return c.json(await cancelPick(deps.lifecycleStore, c.req.param('id'), user.id, body));
+  });
+  app.post('/picks/:id/leave', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const pickId = c.req.param('id');
+    const result = await leavePick(deps.lifecycleStore, pickId, user.id);
+    // With them gone, everyone left may already be done; never fails the leave.
+    try {
+      await closePick(deps.closingStore, pickId, 'system', null);
+      await settleIfEveryoneVoted(deps.closingStore, pickId);
+    } catch (error) {
+      console.error(
+        'auto-close after leave failed',
+        error instanceof Error ? error.name : 'unknown',
+      );
+    }
+    return c.json(result);
   });
   app.post('/picks/:id/close', async (c) => {
     const user = await deps.getUser(c.req.raw);

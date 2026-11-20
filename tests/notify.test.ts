@@ -252,7 +252,7 @@ describe('Pick events', () => {
     const store: VotingStore = {
       loadForVote: jest.fn().mockResolvedValueOnce(snap).mockResolvedValueOnce(both),
       castVote: jest.fn().mockResolvedValue(undefined),
-      applyVoteClose: jest.fn().mockResolvedValue(undefined),
+      applyVoteClose: jest.fn().mockResolvedValue('committed'),
       notifier,
     };
     await castVote(store, 'p1', 'guest', { placeId: 'a' });

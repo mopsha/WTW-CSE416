@@ -228,6 +228,18 @@ export function chosenLabel(result: LocationResult): string {
 }
 
 /**
+ * Where the phone last was, only if the user already allowed location. Never prompts, so
+ * opening New Pick doesn't ask; it just starts near them instead of at a fixed default.
+ */
+export async function knownLocation(): Promise<LatLng | null> {
+  if (USE_MOCK) return null;
+  const { status } = await Location.getForegroundPermissionsAsync();
+  if (status !== Location.PermissionStatus.GRANTED) return null;
+  const pos = await Location.getLastKnownPositionAsync({ maxAge: 30 * 60_000 });
+  return pos ? { lat: pos.coords.latitude, lng: pos.coords.longitude } : null;
+}
+
+/**
  * The device's current position, or null if the user says no.
  * Throws only for real failures (location services off, timeout).
  */

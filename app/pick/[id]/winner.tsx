@@ -75,7 +75,8 @@ function WinnerContent({ pickId, userId }: { pickId: string; userId: string }) {
   }
 
   const how = HOW[pick.decidedBy ?? 'vote'];
-  const runnersUp = ranking.filter((r) => r.placeId !== winner.placeId);
+  // The next three only: a long list buries the decision the group just made.
+  const runnersUp = ranking.filter((r) => r.placeId !== winner.placeId).slice(0, 3);
   const people = live.progress?.participants ?? [];
 
   return (

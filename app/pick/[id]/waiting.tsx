@@ -75,16 +75,29 @@ export default function WaitingScreen() {
   }, [live.state, pickId]);
 
   const closeNow = async () => {
-    const ok = await confirmAction({
-      title: 'Close swiping now?',
-      message: 'Anyone who hasn’t finished counts as Maybe on the places they skipped.',
-      confirmLabel: 'Close now',
-    });
+    // Everyone's done, so nobody is cut off: no need to ask.
+    const ok =
+      allDone ||
+      (await confirmAction({
+        title: 'Close swiping now?',
+        message: 'Anyone who hasn’t finished counts as Maybe on the places they skipped.',
+        confirmLabel: 'Close now',
+      }));
     if (!ok) return;
     if (await action.run('close', () => api.closePick(pickId))) {
       haptic.success();
       void live.refresh();
     }
+  };
+
+  const leave = async () => {
+    const ok = await confirmAction({
+      title: 'Leave this Pick?',
+      message: 'Your answers are removed and the group carries on without you.',
+      confirmLabel: 'Leave',
+      destructive: true,
+    });
+    if (ok && (await action.run('leave', () => api.leavePick(pickId)))) goToPicks();
   };
 
   const cancel = async () => {
@@ -215,6 +228,15 @@ export default function WaitingScreen() {
           }
         />
         <Button label="Back to your Picks" variant="link" onPress={goToPicks} />
+        {isHost ? null : (
+          <Button
+            label="Leave Pick"
+            variant="link"
+            loading={action.busy === 'leave'}
+            disabled={!!action.busy}
+            onPress={() => void leave()}
+          />
+        )}
       </ScrollView>
 
       {toast ? <ActivityToast key={toast.id} toast={toast} /> : null}

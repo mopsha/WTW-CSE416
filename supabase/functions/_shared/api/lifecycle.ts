@@ -27,7 +27,12 @@ import type { Notifier } from './notify.ts';
 import { canTransition, type PickState } from '../domain/pickState.ts';
 import { shuffleForUser } from '../domain/shuffle.ts';
 import type { LatLng } from '../domain/geo.ts';
-import { candidateSnapshot, NoCandidatesError, type PoolBuilder } from '../places/pool.ts';
+import {
+  candidateSnapshot,
+  NoCandidatesError,
+  PlacesUnavailableError,
+  type PoolBuilder,
+} from '../places/pool.ts';
 import type { PickPlaces } from '../places/pickPlaces.ts';
 import { validFilters, type PlaceFilters } from '../domain/placeFilters.ts';
 import type { HoursMetadata } from '../places/refreshOpenHours.ts';
@@ -114,6 +119,19 @@ export interface LifecycleStore {
   start(pickId: string, userId: string, candidates: CandidateSnapshot[]): Promise<void>;
   refresh(pickId: string, userId: string, candidates: CandidateSnapshot[]): Promise<void>;
   cancel(pickId: string, userId: string, reason: string | null): Promise<void>;
+  /** A guest leaves a Pick that hasn't finished (0053). */
+  leave?(pickId: string, userId: string): Promise<void>;
+  /**
+   * start, only if the Pick still has exactly these participants, saving the (possibly wider)
+   * area in the same transaction (0053). False, changing nothing, if the roster moved.
+   */
+  startChecked?(
+    pickId: string,
+    userId: string,
+    candidates: CandidateSnapshot[],
+    radiusM: number,
+    participantIds: string[],
+  ): Promise<boolean>;
   savedCandidates?(hostId: string): Promise<Candidate[]>;
   groupIdeas?(groupId: string, hostId: string): Promise<GroupIdea[]>;
   candidateUuid?(): string;
@@ -373,6 +391,7 @@ export async function buildCandidates(
     (t) => t.liked.length || t.disliked.length || Object.keys(t.learned).length,
   );
   const foundByCategory: Candidate[][] = [];
+  let unavailable = false;
   for (const category of providerCategories(pick.category, pick.mixCategory)) {
     if (candidates.length >= pick.poolSize && !pick.includeGroupIdeas) break;
     try {
@@ -390,6 +409,7 @@ export async function buildCandidates(
       );
     } catch (error) {
       if (!(error instanceof NoCandidatesError)) throw error;
+      unavailable ||= error instanceof PlacesUnavailableError;
     }
   }
   const taste = (c: Candidate) => groupTasteScore(tastes, tasteTypeOf(c.types));
@@ -405,6 +425,13 @@ export async function buildCandidates(
       ideas,
       pick.poolSize,
       pick.customOptions?.length ?? 0,
+    );
+  // An outage isn't an empty area: say so, so start doesn't widen or tell the host to cancel.
+  if (!candidates.length && unavailable)
+    throw new ApiError(
+      503,
+      'PLACES_UNAVAILABLE',
+      'Couldn’t load places right now. Try again in a minute.',
     );
   if (!candidates.length) throw new ApiError(409, 'NO_CANDIDATES', 'No places found for this Pick');
   return candidates.map((c) => {
@@ -469,10 +496,76 @@ export async function startPick(
     );
   }
   await beforeBuild?.();
-  const candidates = await buildCandidates(pool, pick, store);
-  await store.start(pickId, userId, candidates);
-  await store.notifier?.(othersThan(pick, userId), 'pick_started', pickId);
-  return { state: 'swiping' as const, candidateCount: candidates.length };
+  if (!store.startChecked) {
+    const { candidates } = await buildWidening(pool, pick, store);
+    await store.start(pickId, userId, candidates);
+    await store.notifier?.(othersThan(pick, userId), 'pick_started', pickId);
+    return { state: 'swiping' as const, candidateCount: candidates.length };
+  }
+  // The deck is ordered by the group's taste, and the start notice goes to the group. If
+  // someone joins or leaves while the deck is built, build it again for who is there now.
+  let current = pick;
+  for (let attempt = 0; attempt < START_ATTEMPTS; attempt++) {
+    if (current.participantIds.length < MIN_PARTICIPANTS_TO_START)
+      throw new ApiError(
+        409,
+        'NOT_ENOUGH_PARTICIPANTS',
+        `A Pick needs at least ${MIN_PARTICIPANTS_TO_START} participants to start`,
+      );
+    const { candidates, radiusM } = await buildWidening(pool, current, store);
+    if (await store.startChecked(pickId, userId, candidates, radiusM, current.participantIds)) {
+      await store.notifier?.(othersThan(current, userId), 'pick_started', pickId);
+      return { state: 'swiping' as const, candidateCount: candidates.length };
+    }
+    const fresh = await store.load(pickId, userId);
+    if (!fresh) throw new ApiError(404, 'PICK_NOT_FOUND', 'Pick not found');
+    if (fresh.state !== 'draft')
+      throw new ApiError(409, 'INVALID_PICK_STATE', 'Pick must be draft to start');
+    current = fresh;
+  }
+  throw new ApiError(409, 'PICK_CONFLICT', 'People are still joining. Try starting again.');
+}
+
+/** How many times start rebuilds the deck for a group that changed while it was built. */
+const START_ATTEMPTS = 3;
+
+/** How many times start doubles an area that has no places before giving up. */
+const MAX_WIDENINGS = 2;
+
+/**
+ * Builds the deck, widening an area with no places (2x, then 4x, up to 50 km) instead of
+ * stranding the lobby. Only stores that can save the new radius widen.
+ */
+async function buildWidening(pool: PoolBuilder, pick: LifecyclePick, store: LifecycleStore) {
+  let radiusM = pick.radiusM;
+  for (let widened = 0; ; widened++) {
+    try {
+      return { candidates: await buildCandidates(pool, { ...pick, radiusM }, store), radiusM };
+    } catch (error) {
+      const next = Math.min(radiusM * 2, MAX_RADIUS_M);
+      const empty = error instanceof ApiError && error.code === 'NO_CANDIDATES';
+      if (!empty) throw error;
+      if (!store.startChecked || widened >= MAX_WIDENINGS || next === radiusM) {
+        const miles = Math.round(radiusM / 1609.34);
+        throw new ApiError(
+          409,
+          'NO_CANDIDATES',
+          `No places found within ${miles} mi. Cancel this Pick and try another area.`,
+        );
+      }
+      radiusM = next;
+    }
+  }
+}
+
+/** A guest leaves; the host cancels instead. Their answers stop counting right away. */
+export async function leavePick(store: LifecycleStore, pickId: string, userId: string) {
+  const pick = await loadAsParticipant(store, pickId, userId);
+  if (pick.hostId === userId)
+    throw new ApiError(409, 'HOST_CANNOT_LEAVE', 'The host cancels the Pick instead');
+  if (!store.leave) throw new ApiError(503, 'NOT_CONFIGURED', 'Leaving is unavailable.');
+  await store.leave(pickId, userId);
+  return { state: 'left' as const };
 }
 
 export async function refreshPick(

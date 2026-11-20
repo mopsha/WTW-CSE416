@@ -1,4 +1,9 @@
-import { createPoolBuilder, candidateSnapshot } from '@shared/places/pool.ts';
+import {
+  createPoolBuilder,
+  candidateSnapshot,
+  NoCandidatesError,
+  PlacesUnavailableError,
+} from '@shared/places/pool.ts';
 import {
   MemoryPlaceCache,
   cacheEntry,
@@ -122,7 +127,7 @@ test('empty/unusable primary falls back; both unusable produces meaningful error
         },
       },
     }).buildPool(request),
-  ).rejects.toThrow('No usable nearby places');
+  ).rejects.toBeInstanceOf(PlacesUnavailableError);
   await expect(
     createPoolBuilder(empty, { fallback: { search: async () => [candidate('yes')] } }).buildPool(
       request,
@@ -259,4 +264,27 @@ test('configuration defaults mock, rejects invalid/missing key, reads mode on ev
   await expect(pool.buildPool(request)).rejects.toThrow('PLACES_PROVIDER');
   mode = 'mock';
   expect((await pool.buildPool(request))[0]!.provider).toBe('mock');
+});
+
+test('a failed provider is unavailable, even when the fallback only has filtered-out places', async () => {
+  const builder = createPoolBuilder(
+    {
+      search: async () => {
+        throw new Error('timeout');
+      },
+    },
+    {
+      provider: 'google',
+      // Usable fixtures, but none fit the price filter.
+      fallback: { search: async () => [candidate('pricey', { priceLevel: 4 })] },
+      now: clock,
+    },
+  );
+  await expect(builder.buildPool({ ...request, priceMax: 1 })).rejects.toBeInstanceOf(
+    PlacesUnavailableError,
+  );
+  const empty = createPoolBuilder({ search: async () => [] }, { provider: 'google', now: clock });
+  const error = await empty.buildPool(request).catch((e) => e);
+  expect(error).toBeInstanceOf(NoCandidatesError);
+  expect(error).not.toBeInstanceOf(PlacesUnavailableError);
 });
