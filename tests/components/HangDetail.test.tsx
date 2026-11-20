@@ -87,7 +87,9 @@ test.each([0, 408, 503])(
     jest.mocked(api.getHangPost).mockRejectedValueOnce(failure(status, 'Could not refresh'));
     await act(mockRefresh);
     expect(card().props.post).toEqual(post);
-    expect(banner().props.message).toBe('Could not refresh');
+    expect(banner().props.message).toBe(
+      status >= 500 ? 'WTW hit a snag. Try again in a moment.' : 'Could not refresh',
+    );
 
     const refreshed = { ...post, downCount: 4 };
     jest.mocked(api.getHangPost).mockResolvedValueOnce(refreshed);
