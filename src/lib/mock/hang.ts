@@ -4,6 +4,7 @@ import {
   parseHang,
   respondHang,
   hangPick,
+  type HangAttendee,
   type HangInput,
   type HangPost,
   type HangStatus,
@@ -13,6 +14,7 @@ import { ApiError, errorResponse } from '@shared/api/errors.ts';
 import { MOCK_USER_ID } from './auth';
 import { mockFriendsList } from './friends';
 import { mockGetGroup, mockParticipant, mockAssociateGroupPick } from './groups';
+import { mockUserProfiles } from './userProfiles';
 import { createMockPick, mockPicks, mockBlocks } from './store';
 
 export const mockHangPosts: HangPost[] = [];
@@ -52,7 +54,24 @@ function access(post: HangPost, user: string) {
 }
 const visible = (p: HangPost, user: string) => canSeeHang(p, user, access(p, user));
 function project(post: HangPost, user: string): HangPost {
-  const current = [...responses(post.id)].filter(([id]) => visible(post, id));
+  const current = [...responses(post.id)].filter(
+    ([id]) => visible(post, id) && !(user === MOCK_USER_ID && mockBlocks.has(id)),
+  );
+  const person = (id: string) => ({
+    userId: id,
+    displayName: id === MOCK_USER_ID ? 'You' : mockParticipant(id).name,
+    username: mockUserProfiles.get(id)?.username ?? null,
+  });
+  const attendees: HangAttendee[] = [];
+  for (const [id, status] of current) {
+    if (status !== 'cant') attendees.push({ ...person(id), status });
+  }
+  const pick = post.pickId ? mockPicks.get(post.pickId) : undefined;
+  const downs = attendees.filter((person) => person.status === 'down');
+  const reusable =
+    pick?.state === 'draft' &&
+    pick.participants.length === downs.length &&
+    pick.participants.every((person) => downs.some((down) => down.userId === person.userId));
   const count = (status: HangStatus) => current.filter(([, value]) => value === status).length;
   return {
     ...post,
@@ -62,6 +81,14 @@ function project(post: HangPost, user: string): HangPost {
         : (mockFriendsList().friends.find((f) => f.userId === post.authorId)?.displayName ??
           'Group member'),
     myStatus: responses(post.id).get(user) ?? null,
+    attendees,
+    viewer: person(user),
+    canStartPick:
+      post.authorId === user &&
+      downs.length > 0 &&
+      downs.length <= 30 &&
+      (post.audience !== 'group' || access(post, user).groupMember) &&
+      (!pick || reusable || ['completed', 'canceled'].includes(pick.state)),
     downCount: count('down'),
     maybeCount: count('maybe'),
     cantCount: count('cant'),

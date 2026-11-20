@@ -21,6 +21,15 @@ export interface HangInput {
   startNow?: boolean;
   groupId: string | null;
 }
+export interface HangPerson {
+  userId: string;
+  displayName: string | null;
+  username: string | null;
+}
+export type HangAttendance = 'down' | 'maybe';
+export interface HangAttendee extends HangPerson {
+  status: HangAttendance;
+}
 export interface HangPost extends Pick<
   HangInput,
   'startsAt' | 'expiresAt' | 'activity' | 'audience' | 'groupId'
@@ -29,6 +38,9 @@ export interface HangPost extends Pick<
   authorId: string;
   authorName?: string | null;
   myStatus?: HangStatus | null;
+  attendees?: HangAttendee[];
+  viewer?: HangPerson;
+  canStartPick?: boolean;
   downCount?: number;
   maybeCount?: number;
   cantCount?: number;
