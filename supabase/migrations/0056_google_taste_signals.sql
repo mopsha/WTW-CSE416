@@ -11,6 +11,10 @@
 -- * A per-user epoch (taste_epochs.since): no signal for an action older than the user's last
 --   reset, however late the request arrives. Existing users start at this migration, so a
 --   reset made before 0056 (which left no record) can't be undone by old Picks either.
+-- * Learning never holds up a swipe, vote or close, so a write can still be skipped (a 200ms
+--   wait on the lock while another of the user's Picks closes). A skipped write queues the user
+--   (taste_pending), and the next sweep rebuilds their signals from the saved actions
+--   (taste_reconcile), so the stored taste always converges to the latest swipe, vote or winner.
 -- * The weight and action time come from the saved swipe, ballot or winner, never the caller;
 --   the API proves the type with a server signature (tasteSignals.ts) before calling this.
 -- Numbered 0056: 0052 (on main) and 0053–0055 (pick-flow and Hang PRs) come first.
@@ -33,6 +37,14 @@ create or replace view public.learned_taste with (security_invoker=true) as
  from (select *,max(at) over(partition by user_id,place_type) as latest from public.taste_signals
        where not google or at >= now() - interval '30 days') s
  group by user_id,place_type,latest;
+
+-- Users whose learning write was skipped; drained by taste_reconcile on every sweep.
+create table private.taste_pending (
+  user_id uuid not null,
+  at timestamptz not null default clock_timestamp()
+);
+create index taste_pending_user_idx on private.taste_pending (user_id);
+revoke all on table private.taste_pending from public, anon, authenticated;
 
 create function private.lock_taste(p_user_id uuid) returns void
 language sql volatile set search_path = '' as $$
@@ -65,7 +77,14 @@ begin
     place_type = excluded.place_type, weight = excluded.weight, at = excluded.at,
     google = excluded.google;
 exception when others then
-  null;
+  -- Skipped (usually a 200ms lock wait while another Pick for this user closes): queue the
+  -- user so the sweep rebuilds their signals from the saved swipes, votes and winners
+  -- (taste_reconcile). A plain insert with no unique key never waits on anyone.
+  begin
+    insert into private.taste_pending (user_id) values (p_user_id);
+  exception when others then
+    null;
+  end;
 end $$;
 
 -- 0047's triggers keep calling learn_taste; it now takes the lock and honors the epoch too.
@@ -132,18 +151,89 @@ begin
     on conflict (user_id) do update set since = greatest(private.taste_epochs.since, excluded.since);
 end $$;
 
--- Runs on every sweep (placeCacheStore.ts), like purge_google_coordinates.
+-- Rebuilds one user's signals from their saved actions, under their lock, so a skipped write
+-- converges to the latest swipe, vote or winner. Only sources whose action still exists are
+-- touched (signals from deleted Picks stay as before), and only actions after the epoch.
+-- Own places: set to the canonical type and weight (removed when the weight is 0).
+-- Google places: the type is never stored, so a signal that no longer matches the saved
+-- action (its weight or time changed) is removed; the next recorded action adds it back.
+-- The user's saved actions (after their epoch) and the signal each one should produce.
+create function private.taste_evidence(p_user_id uuid)
+returns table (source uuid, place_type text, weight real, at timestamptz, google boolean)
+language sql stable security definer set search_path = '' as $$
+  select e.* from (
+    select private.taste_source('swipe', pr.pick_id, pr.place_id), c.snapshot ->> 'tasteType',
+           private.swipe_weight(pr.value), pr.updated_at, c.snapshot ->> 'provider' = 'google'
+      from public.preferences pr
+      join public.pick_candidates c on c.pick_id = pr.pick_id and c.place_id = pr.place_id
+     where pr.user_id = p_user_id
+    union all
+    select private.taste_source('vote', v.pick_id, null), c.snapshot ->> 'tasteType', 1::real,
+           v.created_at, c.snapshot ->> 'provider' = 'google'
+      from public.final_votes v
+      join public.pick_candidates c on c.pick_id = v.pick_id and c.place_id = v.place_id
+     where v.user_id = p_user_id
+    union all
+    select private.taste_source('winner', p.id, null), c.snapshot ->> 'tasteType', 2::real,
+           p.decided_at, c.snapshot ->> 'provider' = 'google'
+      from public.picks p
+      join public.pick_participants pp on pp.pick_id = p.id and pp.user_id = p_user_id
+      join public.pick_candidates c on c.pick_id = p.id and c.place_id = p.winner_place_id
+  ) e (source, place_type, weight, at, google)
+  where e.at > coalesce((select since from private.taste_epochs where user_id = p_user_id),
+                        '-infinity')
+$$;
+
+create function private.taste_reconcile(p_user_id uuid) returns void
+language plpgsql security definer set search_path = '' set lock_timeout = '200ms' as $$
+begin
+  perform private.lock_taste(p_user_id);
+  -- Google: drop any signal that no longer matches its saved action.
+  delete from public.taste_signals t using private.taste_evidence(p_user_id) e
+   where t.user_id = p_user_id and t.source = e.source and e.google
+     and (t.weight is distinct from e.weight or t.at is distinct from e.at);
+  -- Own places: removals first, then the canonical value.
+  delete from public.taste_signals t using private.taste_evidence(p_user_id) e
+   where t.user_id = p_user_id and t.source = e.source and not e.google
+     and (e.weight = 0 or e.place_type is null or e.place_type !~ '^[a-z_]{1,60}$');
+  insert into public.taste_signals as t (user_id, source, place_type, weight, at, google)
+  select p_user_id, e.source, e.place_type, greatest(-10, least(10, e.weight)), e.at, false
+    from private.taste_evidence(p_user_id) e
+   where not e.google and e.weight <> 0 and e.place_type ~ '^[a-z_]{1,60}$'
+  on conflict (user_id, source) do update set
+    place_type = excluded.place_type, weight = excluded.weight, at = excluded.at, google = false
+   where (t.place_type, t.weight, t.google) is distinct from (excluded.place_type, excluded.weight, false);
+end $$;
+
+-- Runs on every sweep (placeCacheStore.ts), like purge_google_coordinates. Also drains
+-- taste_pending: each queued user is rebuilt in its own subtransaction, and one that is
+-- still locked stays queued for the next sweep instead of failing it.
+-- ponytail: rebuilds a whole user's history per skip; fine at our scale, key by source if not.
 create function public.purge_google_taste(p_cutoff timestamptz) returns integer
 language plpgsql security definer set search_path = '' as $$
-declare v_removed integer;
+declare
+  v_removed integer;
+  v_user uuid;
+  v_upto timestamptz;
 begin
   delete from public.taste_signals where google and at < p_cutoff;
   get diagnostics v_removed = row_count;
+  for v_user, v_upto in
+    select user_id, max(at) from private.taste_pending group by user_id limit 200
+  loop
+    begin
+      perform private.taste_reconcile(v_user);
+      delete from private.taste_pending where user_id = v_user and at <= v_upto;
+    exception when others then
+      null;
+    end;
+  end loop;
   return v_removed;
 end $$;
 
 revoke all on function private.lock_taste(uuid),
-  private.learn_taste_at(uuid, uuid, text, real, timestamptz, boolean)
+  private.learn_taste_at(uuid, uuid, text, real, timestamptz, boolean),
+  private.taste_reconcile(uuid), private.taste_evidence(uuid)
   from public, anon, authenticated;
 revoke all on function public.taste_record_google_signal(uuid, text, text, text, text),
   public.taste_reset(uuid), public.purge_google_taste(timestamptz)

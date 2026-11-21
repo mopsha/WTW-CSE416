@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(17);
+select plan(22);
 
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
 values
@@ -90,6 +90,39 @@ select taste_reset((select guest from sig));
 select taste_record_google_signal((select guest from sig), (select id::text from gp), 'g1', 'winner', 'sushi_restaurant');
 select is((select count(*)::int from taste_signals where user_id = (select guest from sig)),
   0, 'after a reset, opening an older Pick does not teach again');
+
+-- A skipped learning write queues the user; the sweep rebuilds from the saved actions.
+-- (The two-connection lock case is in tests/db/taste_concurrency.py.)
+reset role;
+update pick_candidates set snapshot = snapshot || '{"tasteType":"thai_restaurant"}'
+  where pick_id = (select id from gp) and place_id = 'c1';
+insert into preferences (pick_id, place_id, user_id, value)
+  values ((select id from gp), 'c1', (select host from sig), 0);
+-- The No's write was "skipped": the old Yes is still there.
+update taste_signals set weight = 1 where user_id = (select host from sig)
+  and source = private.taste_source('swipe', (select id from gp), 'c1');
+-- A Google signal that no longer matches its saved swipe (now No), and one that does (winner).
+insert into taste_signals (user_id, source, place_type, weight, at, google) values
+  ((select host from sig), private.taste_source('swipe', (select id from gp), 'g1'),
+   'sushi_restaurant', 1, now() - interval '1 hour', true),
+  ((select host from sig), private.taste_source('winner', (select id from gp), null),
+   'sushi_restaurant', 2, (select decided_at from picks where id = (select id from gp)), true);
+insert into private.taste_pending (user_id) values ((select host from sig)), ((select guest from sig));
+set local role service_role;
+select purge_google_taste(now() - interval '27 days');
+reset role;
+select is((select weight from taste_signals where user_id = (select host from sig)
+  and source = private.taste_source('swipe', (select id from gp), 'c1')),
+  -1::real, 'a skipped own-place No converges to the saved swipe on the next sweep');
+select is((select count(*)::int from taste_signals where user_id = (select host from sig)
+  and source = private.taste_source('swipe', (select id from gp), 'g1')),
+  0, 'a Google signal that no longer matches its saved swipe is removed');
+select is((select count(*)::int from taste_signals where user_id = (select host from sig)
+  and source = private.taste_source('winner', (select id from gp), null)),
+  1, 'a Google signal that still matches its saved action is kept');
+select is((select count(*)::int from taste_signals where user_id = (select guest from sig)),
+  0, 'a rebuild never brings back actions from before a reset');
+select is((select count(*)::int from private.taste_pending), 0, 'the sweep drains the queue');
 
 -- Clients can't call either function.
 reset role;
