@@ -1,4 +1,5 @@
 import './timeSuggestions_test.ts';
+import { createTasteSigner, tasteProofMessage } from '../_shared/api/tasteSignals.ts';
 import './availability_test.ts';
 import './avatars_test.ts';
 import './pastMoves_test.ts';
@@ -396,6 +397,57 @@ Deno.test('a swipe triggers the auto-close check without failing the swipe', asy
   equal(await result.json(), { status: 'ok' });
   equal(closeChecks, ['checked']);
 });
+
+Deno.test(
+  'a swipe teaches a Google type only with the proof issued for that card (0056)',
+  async () => {
+    const recorded: unknown[][] = [];
+    const signTaste = createTasteSigner('test-secret');
+    const app = createApp({
+      poolBuilder,
+      lifecycleStore: {
+        ...lifecycleStore,
+        signTaste,
+        recordGoogleTaste: async (...args: unknown[]) => {
+          recorded.push(args);
+          throw new Error('learning is optional'); // must not fail the swipe
+        },
+      },
+      getUser: async () => ({ id: 'host' }),
+      store: {
+        loadPick: async () => ({
+          id: 'pick',
+          hostId: 'host',
+          state: 'swiping',
+          center: { lat: 0, lng: 0 },
+          participantIds: ['host'],
+          candidates: [{ placeId: 'a', lat: 0, lng: 0 }],
+          preferences: [],
+          version: '1',
+        }),
+        upsertSwipe: async () => {},
+        saveRanking: async () => {},
+      },
+      closingStore: { ...closingStore, loadForClose: async () => null },
+    });
+    const send = (body: unknown) =>
+      app.request('/picks/pick/swipes', {
+        method: 'POST',
+        body: JSON.stringify(body),
+        headers: { 'Content-Type': 'application/json' },
+      });
+    const proof = await signTaste(tasteProofMessage('host', 'pick', 'a', 'sushi_restaurant'));
+    const swipe = { placeId: 'a', value: 2, tasteType: 'sushi_restaurant', tasteProof: proof };
+    equal((await send(swipe)).status, 200);
+    equal(recorded, [['host', 'pick', 'a', 'swipe', 'sushi_restaurant']]);
+    // A real proof with a different type claimed, a missing proof, or an old app: all ignored,
+    // and the swipe itself still succeeds.
+    equal((await send({ ...swipe, tasteType: 'bowling_alley' })).status, 200);
+    equal((await send({ ...swipe, tasteProof: undefined })).status, 200);
+    equal((await send({ placeId: 'a', value: 1 })).status, 200);
+    equal(recorded.length, 1);
+  },
+);
 
 Deno.test('GET /picks/:id/progress: counts only, participants only', async () => {
   const progressStore = {

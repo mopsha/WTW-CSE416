@@ -119,3 +119,34 @@ for name, (lock, write) in cases.items():
         query("select public.purge_google_coordinates(now()-interval '30 days')")
         assert query("select count(*) from private.pick_candidate_taste where pick_id='%s'" % pick) == '0'
         print('ok - account deletion preserves guest history and deferred cache cleanup')
+
+# #78 (Josh): while another Pick holds this user's taste lock (a closing Pick's winner trigger
+# holds every participant's until it commits), a Yes -> No change elsewhere skips its learning
+# write. It must not leave the old Yes behind: the sweep rebuilds from the saved swipe.
+# (The case above deleted user 1, so bring both users back first.)
+query("insert into auth.users(id,email,raw_user_meta_data) select ('ad000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'taste'||n||'@example.invalid',jsonb_build_object('display_name','Taste '||n) from generate_series(1,2)n on conflict do nothing")
+pick = setup()
+other = query("select public.pick_create('%s','food',40,-73,3000,10,null,100)->>'id'" % user(1))
+query("insert into pick_participants(pick_id,user_id) values('%s','%s')" % (other, user(2)))
+query("select public.pick_start('%s','%s','%s')" % (other, user(1), deck))
+signal = "select coalesce((select weight::text from public.taste_signals where user_id='%s' and source=private.taste_source('swipe','%s','taste-a')),'none')" % (user(2), pick)
+assert query(signal) == '1', query(signal)
+holder = subprocess.Popen(base, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+try:
+    holder.stdin.write("set statement_timeout='20s'; begin;\nselect public.heartbeat_upsert_swipe('%s','%s','taste-b',2);\n\\echo LOCKED\n" % (other, user(2)))
+    holder.stdin.flush()
+    while 'LOCKED' not in holder.stdout.readline():
+        if holder.poll() is not None:
+            raise AssertionError(holder.stderr.read())
+    result = subprocess.run(base + ['-c', "set statement_timeout='5s'; select public.heartbeat_upsert_swipe('%s','%s','taste-a',0)" % (pick, user(2))], capture_output=True, text=True, timeout=10)
+    if result.returncode:
+        raise AssertionError('changed swipe vs held taste lock: %s' % result.stderr)
+finally:
+    holder.stdin.write('commit;\n\\q\n')
+    holder.stdin.flush()
+    holder.wait(timeout=10)
+assert query("select value from public.preferences where pick_id='%s' and user_id='%s' and place_id='taste-a'" % (pick, user(2))) == '0'
+query("select public.purge_google_taste(now()-interval '30 days')")  # the sweep
+got = query(signal)
+assert got == '-1', 'a No skipped behind a held taste lock must not keep the old Yes after the sweep, got %r' % got
+print('ok - changed swipe skipped behind another Pick converges to the saved No on the next sweep')

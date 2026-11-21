@@ -75,19 +75,41 @@ live result (`pickPlaces.ts`). Live deck ordering still uses those types in memo
 - Each signal is its own row, keyed by a hash of its swipe, ballot or winner, and halves every
   30 days. A type's score is their faded sum, capped at −10..10 after fading. Changing an answer replaces that
   row, so it never takes back more or less than the original added, even after a reset or decay.
-- Only typed candidates teach; custom options and untyped places don't. Google places are
-  untyped in storage (see Badge), so for now learning only comes from non-Google places. Making
-  Google places teach would need the API to record signals from live types, or a check that
-  storing the survey label is allowed.
-- The learning runs in triggers, so every write path is covered and nothing else changes. It's
-  best effort: a lock wait or other failure skips the signal instead of failing the swipe,
-  vote, start or refresh.
+- Only typed candidates teach; custom options and untyped places don't.
+- **Google places** (0056, `_shared/api/tasteSignals.ts`): their types are never stored with the
+  place, so the triggers can't see them. Instead the API records the user's signal with the type
+  it has live (agreed with Josh). Only the per-user "leaned toward <type>" signal is stored,
+  marked `google`, and it's ignored after 30 days and deleted by the sweep (`purge_google_taste`),
+  the same window as Google coordinates.
+  - Swipes and votes: when the server shows a Google card (`getPick`) it adds `tasteProof`, an
+    HMAC over user, Pick, place and type with a key derived from a server-only secret. The app
+    sends both back; the API records only a type it signed for exactly that card and user.
+  - Winners: recorded for the viewer when they next open the completed Pick, from the server's
+    own live read (no proof needed, no extra Google calls), dated to `decided_at`.
+  - `taste_record_google_signal` checks the user is in the Pick, the place is a Google
+    candidate and the swipe, ballot or winner exists, and takes the weight and time from it.
+  - Older apps send no type or proof; their Google swipes just don't teach.
+- **Ordering and resets** (0056, all paths including the triggers): one per-user lock
+  (`wtw-taste:<user>`) orders every learning write and every reset, and a recorder reads the
+  swipe or ballot only after taking it, so the latest decision always wins. `taste_epochs.since`
+  is when learning restarts: any action at or before it never teaches, however late its
+  request arrives. Users who existed before 0056 start at the migration, since earlier resets
+  left no record. Races are covered by `tests/db/google_taste_concurrency.py` (not yet in CI:
+  adding it needs a workflow-scoped token) and `tests/db/taste_concurrency.py` (in CI).
+- The learning runs in triggers, so every write path is covered and nothing else changes. It
+  never holds up the swipe, vote, start or refresh: a lock wait or other failure skips the
+  signal. A skipped write isn't lost, though. It queues the user (`private.taste_pending`), and
+  the next sweep (every minute, inside `purge_google_taste`) rebuilds that user's signals from
+  their saved swipes, votes and winners (`taste_reconcile`), so a Yes changed to No while
+  another of their Picks was closing ends at the No. Only sources whose action still exists are
+  rebuilt, only after the user's epoch, and a Google signal that no longer matches its saved
+  action is removed (its type isn't stored, so it's re-added by the next recorded action).
 
 **Preferences screen** (Profile → Preferences, or Settings → Food & activity preferences):
 
 - "What WTW noticed" lists learned likes and passes that my answers don't already cover.
   `GET /me/learned-taste` returns the decayed scores and drops anything below 0.5.
-- "Reset what WTW learned" (`DELETE /me/learned-taste`) clears the learning only.
+- "Reset what WTW learned" (`DELETE /me/learned-taste`) clears the learning only and moves the user's epoch (`taste_reset`), so nothing from before it can teach again.
 - "Swipe again" reopens the practice deck, then returns to where it was opened from.
 
 **Not yet**: "people like you also liked…" (collaborative filtering). That needs real usage

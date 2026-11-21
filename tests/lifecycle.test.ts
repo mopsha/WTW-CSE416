@@ -375,6 +375,63 @@ describe('getPick', () => {
     const store = fixture(null);
     await expect(getPick(store, 'pick', 'host')).rejects.toMatchObject({ status: 404 });
   });
+  describe('a Google winner teaches the viewer from the live read (0056)', () => {
+    const google = { placeId: 'g', snapshot: { placeId: 'g', name: null, provider: 'google' } };
+    const live = jest.fn(async () => [
+      { placeId: 'g', name: 'Live', provider: 'google', tasteType: 'sushi_restaurant' },
+    ]);
+    test('records my +2 once the Pick is completed', async () => {
+      const store = {
+        ...fixture(pick({ state: 'completed', candidates: [google], winnerPlaceId: 'g' })),
+        recordGoogleTaste: jest.fn().mockResolvedValue(undefined),
+      };
+      await getPick(store, 'pick', 'guest', undefined, live);
+      expect(store.recordGoogleTaste).toHaveBeenCalledWith(
+        'guest',
+        'pick',
+        'g',
+        'winner',
+        'sushi_restaurant',
+      );
+    });
+    test("each Google card's live type comes with a proof for this viewer only", async () => {
+      const custom = { placeId: 'c', snapshot: candidate('c') };
+      const store = {
+        ...fixture(pick({ state: 'swiping', candidates: [google, custom] })),
+        signTaste: jest.fn(async (message: string) => `signed:${message}`),
+      };
+      const shown = jest.fn(async () => [
+        { placeId: 'g', name: 'Live', provider: 'google', tasteType: 'sushi_restaurant' },
+        candidate('c'),
+      ]);
+      const result = await getPick(store, 'pick', 'guest', undefined, shown);
+      const byId = new Map(
+        (result.candidates as { placeId: string; tasteProof?: string }[]).map((c) => [
+          c.placeId,
+          c,
+        ]),
+      );
+      expect(byId.get('g')!.tasteProof).toBe(
+        'signed:' + JSON.stringify(['wtw-taste-v1', 'guest', 'pick', 'g', 'sushi_restaurant']),
+      );
+      expect(byId.get('c')).not.toHaveProperty('tasteProof');
+    });
+    test('not before the Pick is decided, and a failure never breaks the read', async () => {
+      const voting = {
+        ...fixture(pick({ state: 'final_vote', candidates: [google], winnerPlaceId: null })),
+        recordGoogleTaste: jest.fn(),
+      };
+      await getPick(voting, 'pick', 'guest', undefined, live);
+      expect(voting.recordGoogleTaste).not.toHaveBeenCalled();
+      const failing = {
+        ...fixture(pick({ state: 'completed', candidates: [google], winnerPlaceId: 'g' })),
+        recordGoogleTaste: jest.fn().mockRejectedValue(new Error('db down')),
+      };
+      await expect(getPick(failing, 'pick', 'guest', undefined, live)).resolves.toMatchObject({
+        state: 'completed',
+      });
+    });
+  });
 });
 
 describe('read-time candidate hours', () => {

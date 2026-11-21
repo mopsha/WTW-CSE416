@@ -15,6 +15,7 @@ import type { GroupIdea } from './groupIdeas.ts';
 // goes through canTransition.
 
 import { priorityCandidates } from '../domain/candidatePriority.ts';
+import { proveTaste, recordGoogleTaste, type TasteSignalStore } from './tasteSignals.ts';
 import {
   groupTasteScore,
   tasteOrder,
@@ -112,7 +113,7 @@ export interface LifecyclePick extends PlaceFilters {
 }
 
 /** Database adapter; mutations must recheck authorization/state atomically. */
-export interface LifecycleStore {
+export interface LifecycleStore extends TasteSignalStore {
   availability?: AvailabilityStore;
   createPick(hostId: string, input: CreatePickInput): Promise<{ id: string }>;
   load(pickId: string, userId: string): Promise<LifecyclePick | null>;
@@ -703,6 +704,28 @@ export async function getPick(
       ),
     });
     pick.candidates.forEach((c, i) => byId.set(c.placeId, shown[i]!));
+    // A Google winner can't teach through 0047's trigger (its type isn't stored); this live
+    // read has the type, so record my +2 now. Idempotent, best effort (0056).
+    const winner = pick.winnerPlaceId ? byId.get(pick.winnerPlaceId) : undefined;
+    if (pick.state === 'completed' && (winner as { provider?: unknown })?.provider === 'google')
+      await recordGoogleTaste(
+        store,
+        userId,
+        pickId,
+        pick.winnerPlaceId,
+        'winner',
+        (winner as { tasteType?: unknown }).tasteType,
+      );
+    // Each Google card's live type comes with a proof for my later swipe or vote, so the app
+    // can't claim a type the place doesn't have (0056). Never stored.
+    await Promise.all(
+      pick.candidates.map(async ({ placeId }) => {
+        const s = byId.get(placeId) as { provider?: unknown; tasteType?: unknown };
+        if (s?.provider !== 'google' || typeof s.tasteType !== 'string') return;
+        const tasteProof = await proveTaste(store, userId, pickId, placeId, s.tasteType);
+        if (tasteProof) byId.set(placeId, { ...s, tasteProof });
+      }),
+    );
   }
   return {
     id: pick.id,
