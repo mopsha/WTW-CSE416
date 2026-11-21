@@ -111,7 +111,7 @@ function WelcomeForm() {
           ...(birthday || skipBirthday ? { birthday: skipBirthday ? null : birthday } : {}),
         });
         // Password first: finishing the profile leaves this screen for good.
-        if (needsPassword) await auth.setPassword(password);
+        if (needsPassword) await auth.setPassword(password, { userId: session.user.id });
         if (birthday || skipBirthday)
           await profile.completeIdentity(input.displayName, input.username, input.birthday);
         else await profile.completeIdentity(input.displayName, input.username);

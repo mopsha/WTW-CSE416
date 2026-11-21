@@ -18,6 +18,8 @@ export type AuthErrorCode =
   | 'invalid_email'
   /** Changing the password needs a code emailed to me first (requestPasswordCode). */
   | 'reauth_needed'
+  /** The signed-in account changed since the screen opened; nothing was changed. */
+  | 'account_changed'
   | 'unknown';
 
 export class AuthError extends Error {
@@ -29,6 +31,12 @@ export class AuthError extends Error {
     super(message);
   }
 }
+
+export const accountChanged = () =>
+  new AuthError(
+    'account_changed',
+    'You’re signed in to a different account now. Open this screen again to change its password.',
+  );
 
 export type AuthMode = 'login' | 'signup';
 
@@ -44,10 +52,12 @@ export interface AuthService {
   /**
    * Sets my password (welcome screen, Settings → Password). Throws 'reauth_needed' when the
    * project requires a recent proof: send requestPasswordCode(), then retry with that code.
+   * `userId` is the account the screen was opened for: if a different one is signed in now,
+   * it throws 'account_changed' and changes nothing.
    */
-  setPassword(password: string, code?: string): Promise<void>;
-  /** Emails me a code that confirms a password change. */
-  requestPasswordCode(): Promise<void>;
+  setPassword(password: string, opts: { userId: string; code?: string }): Promise<void>;
+  /** Emails me a code that confirms a password change (same `userId` check). */
+  requestPasswordCode(userId: string): Promise<void>;
   /** Native Sign in with Apple / Google. Null when the user cancels. */
   signInWithApple(): Promise<AuthSession | null>;
   signInWithGoogle(): Promise<AuthSession | null>;

@@ -13,7 +13,7 @@ function store(overrides: Partial<SignInStore> = {}): jest.Mocked<SignInStore> {
   return {
     usernameOwner: jest.fn(async () => null),
     emailForUsername: jest.fn(async () => null),
-    consumeLoginAttempt: jest.fn(async () => true),
+    consumeLoginAttempt: jest.fn(async () => 'bucket-1'),
     refundLoginAttempt: jest.fn(async () => {}),
     consumeUsernameLookup: jest.fn(async () => {}),
     passwordSignIn: jest.fn(async () => null),
@@ -122,7 +122,7 @@ describe('passwordLogin', () => {
   });
 
   test('each account has an attempt limit, unknown names included', async () => {
-    const s = store({ consumeLoginAttempt: jest.fn(async () => false) });
+    const s = store({ consumeLoginAttempt: jest.fn(async () => null) });
     await expect(
       passwordLogin(s, { identifier: 'ghost', password: 'x' }, 'ip1'),
     ).rejects.toMatchObject({
@@ -166,11 +166,24 @@ describe('passwordLogin', () => {
     await expect(
       passwordLogin(s, { identifier: 'alan', password: 'x' }, 'ip1'),
     ).rejects.toMatchObject({ status: 503 });
-    expect(s.refundLoginAttempt).toHaveBeenCalledWith([
-      'acct:alan@example.com|client:ip1',
-      'client:ip1',
-      'global',
-    ]);
+    // Exactly the attempt that was charged: its own bucket, never a newer window's.
+    expect(s.refundLoginAttempt).toHaveBeenCalledWith(
+      ['acct:alan@example.com|client:ip1', 'client:ip1', 'global'],
+      'bucket-1',
+    );
+  });
+
+  test('a failed account lookup is an outage, not a wrong password, and is never charged', async () => {
+    const s = store({
+      emailForUsername: jest.fn(async () => {
+        throw new ApiError(503, 'SIGN_IN_UNAVAILABLE', 'Sign-in is busy right now.');
+      }),
+    });
+    await expect(
+      passwordLogin(s, { identifier: 'alan', password: 'x' }, 'ip1'),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(s.consumeLoginAttempt).not.toHaveBeenCalled();
+    expect(s.passwordSignIn).not.toHaveBeenCalled();
   });
 
   test('missing or oversized input is a 400', async () => {

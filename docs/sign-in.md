@@ -32,22 +32,28 @@ user a real-looking username.
   The email never leaves the server.
 - Wrong passwords and unknown usernames fail the same way, "Wrong username or password", and
   take about as long (an unknown username still makes a real sign-in call against a dummy
-  address). Other failures say what happened (Supabase busy, email not confirmed) and don't
-  spend the user's tries.
+  address). Other failures say what happened (Supabase busy, email not confirmed, or the
+  account lookup failing) and don't spend the user's tries: a lookup failure is reported before
+  anything is charged, and a sign-in failure refunds exactly the attempt it was charged, in the
+  15-minute bucket it was charged to.
 - These sign-ins all come from the server's address, so Supabase's per-IP limits can't tell
   users apart. Migration 0057 adds limits per 15 minutes, all checked together:
   - 10 per account per client, so a stranger's junk tries can't lock you out;
   - 20 per client across all accounts, so one password can't be sprayed over every username;
   - 600 overall, a backstop for clients that rotate addresses.
-  The client is the edge-reported IP (`cf-connecting-ip`, then `x-real-ip`, then
-  `x-forwarded-for`). Subjects are stored hashed, and the sweep deletes buckets older than a
-  day (`purge_login_limits`).
+    An attempt is charged to all of them or none: if any limit is reached it's refused and spends
+    nothing, so a client that's already blocked can't use up the overall budget and lock others out.
+    The client is the edge-reported IP (`cf-connecting-ip`, then `x-real-ip`, then
+    `x-forwarded-for`). Subjects are stored hashed, and the sweep deletes buckets older than a
+    day (`purge_login_limits`).
 - `GET /usernames/available` spends the same lookup quota as people search (30 a minute), so it
   can't be used to list usernames faster than friend search allows.
 - **Settings → Password** (`app/settings/password.tsx`) sets or changes the password. It's for
   everyone who signed up with a code before passwords existed, and anyone who forgot theirs
   (log in with "Email me a code", then set a new one). If the project requires a recent proof
-  for password changes, Supabase emails a code first and the screen asks for it.
+  for password changes, Supabase emails a code first and the screen asks for it. It only changes
+  the account it was opened for: if a different account is signed in by the time it saves, it
+  refuses and changes nothing.
 
 Code: `_shared/api/signIn.ts` (logic, tested in `tests/signIn.test.ts`), `api/signInStore.ts`,
 `src/lib/auth.ts`, `src/lib/socialSignIn.ts`.
@@ -69,8 +75,9 @@ set, so builds stay exactly as before until then.
 
 ### Sign in with Google (iOS + Android)
 
-On iOS, Google only shows when Apple is on too (App Store guideline 4.8 requires offering Sign in
-with Apple alongside any other third-party sign-in). Set up Apple first.
+On iOS, Google only shows when the Apple button is actually showing on that device (App Store
+guideline 4.8 requires offering Sign in with Apple alongside any other third-party sign-in).
+Set up Apple first.
 
 1. In Google Cloud → Google Auth Platform, configure the consent screen with scopes `openid`,
    `…/auth/userinfo.email` and `…/auth/userinfo.profile`.

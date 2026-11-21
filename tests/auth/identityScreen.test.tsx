@@ -30,7 +30,8 @@ const { create, act } = jest.requireActual<{
   create(element: React.ReactElement): Tree;
   act(work: () => void | Promise<void>): Promise<void>;
 }>('react-test-renderer');
-let mockUser: { email: string | null; provider?: string; name?: string | null } = {
+let mockUser: { id?: string; email: string | null; provider?: string; name?: string | null } = {
+  id: 'me',
   email: 'legacy@example.com',
 };
 jest.mock('@/hooks/useAuth', () => ({ useSession: () => ({ user: mockUser }) }));
@@ -72,7 +73,7 @@ async function render(profile: Record<string, unknown>) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockUser = { email: 'legacy@example.com' };
+  mockUser = { id: 'me', email: 'legacy@example.com' };
   jest
     .mocked(api.usernameAvailable)
     .mockImplementation(async (u: string) => ({ available: true, username: u }));
@@ -141,7 +142,7 @@ test('email sign-ups need an 8+ character password, saved before the profile', a
   expect(button(tree, 'Continue').props.disabled).toBe(true);
   await act(async () => input(tree, 'Password')!.props.onChangeText('long-enough'));
   await act(async () => button(tree, 'Continue').props.onPress());
-  expect(auth.setPassword).toHaveBeenCalledWith('long-enough');
+  expect(auth.setPassword).toHaveBeenCalledWith('long-enough', { userId: 'me' });
   expect(order).toEqual(['password', 'profile']);
   await act(async () => tree.unmount());
 });

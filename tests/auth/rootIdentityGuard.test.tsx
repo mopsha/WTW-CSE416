@@ -126,3 +126,34 @@ test('resumed profile intent replaces a temporary route instead of stacking a sp
   expect(router.replace).toHaveBeenCalledWith({ pathname: '/p/[id]', params: { id: 'target' } });
   await act(async () => tree.unmount());
 });
+
+test('every Settings screen is registered in the signed-in stack', async () => {
+  mockPath = '/settings';
+  jest.mocked(useProfile).mockReturnValue({
+    failed: false,
+    loading: false,
+    username: 'returning',
+    displayName: 'Returning',
+    optionalSetupPending: false,
+  } as ReturnType<typeof useProfile>);
+  let tree: any;
+  await act(async () => {
+    tree = create(<RootLayout />);
+  });
+  const inApp = tree.root
+    .findAllByType('test-Protected')
+    .find((n: { props: { guard: boolean } }) => n.props.guard);
+  const { Stack } = jest.requireMock('expo-router');
+  const names = inApp
+    .findAllByType(Stack.Screen)
+    .map((n: { props: { name: string } }) => n.props.name);
+  const fs = jest.requireActual('fs');
+  const path = jest.requireActual('path');
+  const settings = fs
+    .readdirSync(path.join(process.cwd(), 'app/settings'))
+    .filter((f: string) => f.endsWith('.tsx'))
+    .map((f: string) => `settings/${f.replace(/\.tsx$/, '')}`);
+  expect(settings).toContain('settings/password');
+  for (const route of settings) expect(names).toContain(route);
+  await act(async () => tree.unmount());
+});

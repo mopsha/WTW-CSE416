@@ -15,12 +15,18 @@ import { normalizeUsername } from './usernames.ts';
 export interface SignInStore {
   /** Who holds this (lowercase) username, if anyone. */
   usernameOwner(username: string): Promise<string | null>;
-  /** The account email for a username; null when there's no such user. */
+  /**
+   * The account email for a username; null only when there's no such user. A failed lookup
+   * throws (503) instead, so an outage never looks like a wrong username.
+   */
   emailForUsername(username: string): Promise<string | null>;
-  /** Counts one attempt against each subject; false if any is over its limit. */
-  consumeLoginAttempt(subjects: readonly { key: string; limit: number }[]): Promise<boolean>;
-  /** Gives back an attempt counted for these subjects. */
-  refundLoginAttempt(keys: readonly string[]): Promise<void>;
+  /**
+   * Counts one attempt against every subject, or none if any is over its limit. Returns the
+   * charge (to refund exactly that attempt), or null when refused.
+   */
+  consumeLoginAttempt(subjects: readonly { key: string; limit: number }[]): Promise<string | null>;
+  /** Gives back the attempt `consumeLoginAttempt` charged as `charge`. */
+  refundLoginAttempt(keys: readonly string[], charge: string): Promise<void>;
   /**
    * Supabase password sign-in: tokens, or null for wrong credentials only. Anything else
    * (rate limit, outage, unconfirmed email) throws an ApiError with an honest message.
@@ -123,7 +129,8 @@ export async function passwordLogin(
     { key: `client:${client}`, limit: LOGIN_LIMITS.client },
     { key: 'global', limit: LOGIN_LIMITS.global },
   ];
-  if (!(await store.consumeLoginAttempt(subjects)))
+  const charge = await store.consumeLoginAttempt(subjects);
+  if (charge === null)
     throw new ApiError(429, 'RATE_LIMITED', 'Too many tries. Wait a few minutes and try again.');
 
   let tokens: SignInTokens | null;
@@ -131,7 +138,12 @@ export async function passwordLogin(
     tokens = await store.passwordSignIn(email ?? NOBODY, password);
   } catch (e) {
     // Not the user's fault: don't spend their tries on it.
-    await store.refundLoginAttempt(subjects.map((s) => s.key)).catch(() => {});
+    await store
+      .refundLoginAttempt(
+        subjects.map((s) => s.key),
+        charge,
+      )
+      .catch(() => {});
     throw e;
   }
   if (!tokens || !email) throw new ApiError(401, 'INVALID_LOGIN', WRONG);

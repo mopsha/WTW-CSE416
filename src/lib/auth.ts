@@ -1,7 +1,7 @@
 import { clearPendingProfile } from './pendingProfile';
 import { API_BASE_URL, SUPABASE_ANON_KEY, USE_MOCK } from './config';
 import { mockAuth } from './mock/auth';
-import { AuthError, type AuthService, type AuthSession } from './authTypes';
+import { accountChanged, AuthError, type AuthService, type AuthSession } from './authTypes';
 import { appleIdToken, googleIdToken } from './socialSignIn';
 import { getSupabase } from './supabase';
 
@@ -44,6 +44,12 @@ function toAuthError(error: { code?: string; status?: number; message: string })
     return new AuthError('invalid_email', 'That email address doesn’t look right.');
   }
   return new AuthError('unknown', error.message);
+}
+
+/** A password change only applies to the account the screen was opened for. */
+async function requireAccount(userId: string) {
+  const { data } = await getSupabase().auth.getSession();
+  if (data.session?.user.id !== userId) throw accountChanged();
 }
 
 const supabaseAuth: AuthService = {
@@ -124,7 +130,8 @@ const supabaseAuth: AuthService = {
     if (!session) throw new AuthError('unknown', 'Sign-in did not return a session.');
     return session;
   },
-  async setPassword(password, code) {
+  async setPassword(password, { userId, code }) {
+    await requireAccount(userId);
     const { error } = await getSupabase().auth.updateUser({
       password,
       ...(code ? { nonce: code } : {}),
@@ -139,7 +146,8 @@ const supabaseAuth: AuthService = {
       throw new AuthError('unknown', 'Pick a stronger password (at least 8 characters).');
     if (error) throw toAuthError(error);
   },
-  async requestPasswordCode() {
+  async requestPasswordCode(userId) {
+    await requireAccount(userId);
     const { error } = await getSupabase().auth.reauthenticate();
     if (error) throw toAuthError(error);
   },

@@ -855,7 +855,7 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
       {
         usernameOwner: owner,
         emailForUsername: async () => null,
-        consumeLoginAttempt: async () => true,
+        consumeLoginAttempt: async () => 'mock',
         refundLoginAttempt: async () => {},
         consumeUsernameLookup: async () => {},
         passwordSignIn: async () => null,

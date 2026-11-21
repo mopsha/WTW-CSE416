@@ -23,12 +23,14 @@ export async function appleSignInAvailable(): Promise<boolean> {
 }
 
 /**
- * Whether to show "Continue with Google". On iOS only alongside Sign in with Apple: App Store
- * guideline 4.8 requires offering Apple whenever another third-party sign-in is offered.
+ * Whether to show "Continue with Google". On iOS only when Sign in with Apple is actually
+ * shown (`appleAvailable`, from appleSignInAvailable): App Store guideline 4.8 requires
+ * offering Apple whenever another third-party sign-in is offered. The build flag alone isn't
+ * enough, since Apple can still be unavailable on the device.
  */
-export function googleSignInAvailable(): boolean {
+export function googleSignInAvailable(appleAvailable: boolean): boolean {
   if (USE_MOCK || !GOOGLE_WEB) return false;
-  return Platform.OS === 'android' || (Platform.OS === 'ios' && !!GOOGLE_IOS && APPLE_ON);
+  return Platform.OS === 'android' || (Platform.OS === 'ios' && !!GOOGLE_IOS && appleAvailable);
 }
 
 /** Apple's identity token (and, on first sign-in only, the user's name); null if canceled. */

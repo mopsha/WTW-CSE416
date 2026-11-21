@@ -21,8 +21,15 @@ export function createSignInStore(): SignInStore {
       const id = await owner(username);
       if (!id) return null;
       const { data, error } = await createServiceClient().auth.admin.getUserById(id);
-      if (error) return null;
-      return data.user?.email ?? null;
+      // A profile whose account is gone is an unknown user; any other failure is an outage,
+      // reported as one (and, as it happens before the limit, never charged as a try).
+      if (error && error.status !== 404)
+        throw new ApiError(
+          503,
+          'SIGN_IN_UNAVAILABLE',
+          'Sign-in is busy right now. Try again in a minute.',
+        );
+      return data?.user?.email ?? null;
     },
     async consumeLoginAttempt(subjects) {
       const { data, error } = await createServiceClient().rpc('consume_login_limit', {
@@ -30,10 +37,10 @@ export function createSignInStore(): SignInStore {
         p_limits: subjects.map((s) => s.limit),
       });
       if (error) throw new ApiError(503, 'DATABASE_NOT_READY', 'Sign-in is unavailable');
-      return data === true;
+      return typeof data === 'string' ? data : null;
     },
-    async refundLoginAttempt(keys) {
-      await createServiceClient().rpc('refund_login_limit', { p_subjects: keys });
+    async refundLoginAttempt(keys, charge) {
+      await createServiceClient().rpc('refund_login_limit', { p_subjects: keys, p_bucket: charge });
     },
     async consumeUsernameLookup(userId) {
       const { error } = await createServiceClient().rpc('consume_username_lookup', {

@@ -210,6 +210,7 @@ function RootStack() {
           <Stack.Screen name="settings/index" />
           <Stack.Screen name="settings/profile" />
           <Stack.Screen name="settings/blocked" />
+          <Stack.Screen name="settings/password" />
           <Stack.Screen name="users/[id]" />
           <Stack.Screen name="messages/[id]" />
           <Stack.Screen name="pick/new" />

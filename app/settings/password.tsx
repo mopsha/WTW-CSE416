@@ -8,11 +8,18 @@ import { Text, TextInput } from 'react-native';
 
 import { Button, colors, ErrorState, onboardingStyles, Screen } from '@/components';
 import { useAction } from '@/hooks/useAction';
+import { useSession } from '@/hooks/useAuth';
 import { auth, AuthError } from '@/lib/auth';
 
 const MIN_PASSWORD = 8;
 
 export default function PasswordScreen() {
+  // A different account starts a fresh form; a save already in flight is refused by auth.
+  const { user } = useSession();
+  return <PasswordForm key={user.id} userId={user.id} />;
+}
+
+function PasswordForm({ userId }: { userId: string }) {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   // Shown once Supabase asks for a code to confirm the change.
@@ -33,11 +40,11 @@ export default function PasswordScreen() {
     let saved = false;
     await run('save', async () => {
       try {
-        await auth.setPassword(password, needsCode ? code.trim() : undefined);
+        await auth.setPassword(password, { userId, code: needsCode ? code.trim() : undefined });
         saved = true;
       } catch (e) {
         if (e instanceof AuthError && e.code === 'reauth_needed' && !needsCode) {
-          await auth.requestPasswordCode();
+          await auth.requestPasswordCode(userId);
           setNeedsCode(true);
           return;
         }
@@ -113,7 +120,7 @@ export default function PasswordScreen() {
             label="Email me a new code"
             variant="link"
             disabled={!!busy}
-            onPress={() => void run('code', () => auth.requestPasswordCode())}
+            onPress={() => void run('code', () => auth.requestPasswordCode(userId))}
           />
         </>
       ) : null}

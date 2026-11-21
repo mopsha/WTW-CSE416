@@ -1,5 +1,11 @@
 import { clearPendingProfile } from '../pendingProfile';
-import { AuthError, type AuthService, type AuthSession, type AuthMode } from '../authTypes';
+import {
+  accountChanged,
+  AuthError,
+  type AuthService,
+  type AuthSession,
+  type AuthMode,
+} from '../authTypes';
 
 export const MOCK_CODE = '123456';
 export const MOCK_USER_ID = 'mock-user';
@@ -96,9 +102,12 @@ export const mockAuth: AuthService = {
       throw new AuthError('invalid_code', 'Wrong username or password.');
     return enter(email);
   },
-  async requestPasswordCode() {},
-  async setPassword(password) {
+  async requestPasswordCode(userId) {
+    if (session?.user.id !== userId) throw accountChanged();
+  },
+  async setPassword(password, { userId }) {
     if (!session?.user.email) throw new AuthError('unknown', 'Sign in first.');
+    if (session.user.id !== userId) throw accountChanged();
     if (password.length < 8)
       throw new AuthError('unknown', 'Pick a stronger password (at least 8 characters).');
     passwords.set(session.user.email, password);

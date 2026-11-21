@@ -41,7 +41,7 @@ export default function SignInScreen() {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [apple, setApple] = useState(false);
-  const google = googleSignInAvailable();
+  const google = googleSignInAvailable(apple);
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
