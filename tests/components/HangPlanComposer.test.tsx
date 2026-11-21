@@ -4,14 +4,22 @@ import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { HangCard } from '@/components/HangCard';
 import { HangPlanComposer } from '@/components/HangPlanComposer';
 import { api } from '@/lib/api';
+import { hangPreview, hangTimeLabel } from '@/lib/hangPlan';
 import { queries } from '@/lib/queries';
-import { parseHang } from '@shared/api/hang.ts';
+import type { HangPost } from '@shared/api/hang.ts';
 
 let mockReduceMotion = false;
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => mockReduceMotion }));
 const { act, create } = jest.requireActual('react-test-renderer');
 jest.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ session: { user: { id: 'me' } } }) }));
-jest.mock('@/lib/api', () => ({ api: { createHang: jest.fn(), getHang: jest.fn() } }));
+jest.mock('@/lib/api', () => ({
+  api: {
+    createHang: jest.fn(),
+    getHang: jest.fn(),
+    getHangPost: jest.fn(),
+    listFriends: jest.fn(),
+  },
+}));
 jest.mock('expo-router', () => ({ router: { push: jest.fn() }, useFocusEffect: jest.fn() }));
 jest.mock('@/lib/queries', () => ({ queries: { listMyGroups: jest.fn() } }));
 jest.mock('@react-native-community/datetimepicker', () => ({
@@ -22,6 +30,7 @@ jest.mock('@react-native-community/datetimepicker', () => ({
 jest.mock('@/components/index', () => ({
   ...jest.requireActual('@/components/theme'),
   Screen: ({ children }: { children: React.ReactNode }) => children,
+  Avatar: () => null,
   Button: (props: object) => jest.requireActual('react').createElement('kit-button', props),
   ErrorState: (props: object) => jest.requireActual('react').createElement('kit-error', props),
   IconButton: (props: object) => jest.requireActual('react').createElement('kit-icon', props),
@@ -48,6 +57,17 @@ const onCreated = jest.fn();
 const onClose = jest.fn();
 const onSavingChange = jest.fn();
 const groupId = 'a0000001-2222-4222-8222-222222222222';
+const otherGroupId = 'a0000002-2222-4222-8222-222222222222';
+const friendId = 'a0000003-2222-4222-8222-222222222222';
+const createdPost: HangPost = {
+  id: 'created-hang',
+  authorId: 'me',
+  activity: 'Stargazing',
+  audience: 'all_friends',
+  groupId: null,
+  startsAt: '2026-01-15T12:00:00Z',
+  expiresAt: '2026-01-17T12:00:00Z',
+};
 const originalOS = Platform.OS;
 beforeEach(() => {
   jest.useFakeTimers();
@@ -55,12 +75,16 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockReduceMotion = false;
   Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true });
-  jest
-    .mocked(queries.listMyGroups)
-    .mockResolvedValue([
-      { id: groupId, name: 'Weekend friends', ownerId: 'me', isOwner: true, memberCount: 4 },
-    ]);
-  jest.mocked(api.createHang).mockResolvedValue({} as never);
+  jest.mocked(queries.listMyGroups).mockResolvedValue([
+    { id: groupId, name: 'Weekend friends', ownerId: 'me', isOwner: true, memberCount: 4 },
+    { id: otherGroupId, name: 'Study crew', ownerId: 'me', isOwner: true, memberCount: 3 },
+  ]);
+  jest.mocked(api.listFriends).mockResolvedValue({
+    friends: [{ userId: friendId, displayName: 'Ava', since: '' }],
+    incoming: [],
+  });
+  jest.mocked(api.createHang).mockResolvedValue(createdPost);
+  jest.mocked(api.getHangPost).mockResolvedValue(createdPost);
   jest.mocked(api.getHang).mockResolvedValue({ posts: [], notice: '', sharedAvailable: true });
 });
 afterEach(async () => {
@@ -85,18 +109,25 @@ async function press(label: string) {
   await act(async () => node(label).props.onPress());
 }
 function save() {
-  return tree.root.findAllByType('kit-button').find((n) => n.props.label === 'Save hang plan')!;
+  return tree.root.findAllByType('kit-button').find((n) => n.props.label === 'Send hang')!;
 }
-async function choose(activity: string, current = 'Choose an activity') {
-  await press(`Activity, ${current}`);
-  await press(activity);
+const activityInput = () => tree.root.findAllByType(TextInput)[0]!;
+const enterActivity = (value: string) => act(async () => activityInput().props.onChangeText(value));
+async function audience(...labels: string[]) {
+  await press('Audience, Choose people');
+  for (const label of labels) await press(label);
+  const done = tree.root
+    .findAllByType('kit-button')
+    .find((n) => n.props.label === 'Done choosing people')!;
+  await act(async () => done.props.onPress());
+}
+async function choose(activity: string) {
+  await enterActivity(activity);
+  await audience('All friends');
 }
 const picker = () => tree.root.findAllByType('native-picker')[0]!;
 async function openDate() {
-  const row = tree.root
-    .findAllByProps({ accessibilityRole: 'button' })
-    .find((n) => String(n.props.accessibilityLabel).startsWith('Date,') && n.props.onPress)!;
-  await act(async () => row.props.onPress());
+  await press('Pick time');
 }
 async function openTime() {
   const row = tree.root
@@ -105,50 +136,54 @@ async function openTime() {
   await act(async () => row.props.onPress());
 }
 
-test('suggested activity and default schedule preserve the backend contract and success callback', async () => {
+test('editable suggestions require an explicit audience and Right now uses the time of Send', async () => {
   await mount();
   expect(save().props.disabled).toBe(true);
-  await choose('Game night');
+  await press('Basketball');
+  expect(activityInput().props.value).toBe('Basketball');
+  expect(save().props.disabled).toBe(true);
+  await enterActivity('  Stargazing at the trailhead  ');
+  await audience('All friends');
   expect(save().props.disabled).toBe(false);
+  jest.setSystemTime(new Date(2026, 0, 15, 14));
   await act(async () => save().props.onPress());
-  const input = jest.mocked(api.createHang).mock.calls[0]![0];
-  expect(input).toEqual({
-    activity: 'Game night',
-    audience: 'all_friends',
-    groupId: null,
-    startsAt: new Date(2026, 0, 15, 13).toISOString(),
-    expiresAt: new Date(2026, 0, 15, 17).toISOString(),
-  });
-  expect(parseHang(input)).toEqual(input);
+  expect(api.createHang).toHaveBeenCalledWith(
+    expect.objectContaining({
+      activity: 'Stargazing at the trailhead',
+      audience: 'all_friends',
+      groupId: null,
+      startsAt: new Date(2026, 0, 15, 14).toISOString(),
+      expiresAt: new Date(2026, 0, 15, 18).toISOString(),
+      startNow: true,
+      requestId: expect.any(String),
+    }),
+    'me',
+  );
   expect(onCreated).toHaveBeenCalledTimes(1);
 });
-test('Other keeps custom text when switching suggestions and back', async () => {
+
+test.each(['', '   ', 'x'.repeat(61)])('invalid activity disables send: %j', async (value) => {
   await mount();
-  await choose('Other');
-  await act(async () =>
-    tree.root.findAllByType(TextInput)[0]!.props.onChangeText('  Board games  '),
-  );
-  await choose('Basketball', 'Other');
-  expect(tree.root.findAllByType(TextInput)).toHaveLength(0);
-  await choose('Other', 'Basketball');
-  expect(tree.root.findAllByType(TextInput)[0]!.props.value).toBe('  Board games  ');
+  await choose(value);
+  expect(save().props.disabled).toBe(true);
   await act(async () => save().props.onPress());
-  expect(api.createHang).toHaveBeenCalledWith(expect.objectContaining({ activity: 'Board games' }));
+  expect(api.createHang).not.toHaveBeenCalled();
 });
-test.each(['', '   ', 'x'.repeat(61)])(
-  'invalid custom activity is rejected before sending: %j',
-  async (text) => {
-    await mount();
-    await choose('Other');
-    await act(async () => tree.root.findAllByType(TextInput)[0]!.props.onChangeText(text));
-    expect(save().props.disabled).toBe(true);
-    await act(async () => save().props.onPress());
-    expect(api.createHang).not.toHaveBeenCalled();
-    expect(tree.root.findAllByType('kit-error')[0]!.props.message).toBe(
-      'Enter an activity with 1–60 characters.',
-    );
-  },
-);
+
+test('preview reflects the edited activity and exact selected quick time', async () => {
+  await mount();
+  await press('Volleyball');
+  expect(
+    tree.root.findAllByProps({ children: hangPreview('Volleyball', 'Right now') }),
+  ).not.toHaveLength(0);
+  await enterActivity('Sketch the skyline?');
+  await press('Tomorrow');
+  const tomorrow = hangTimeLabel(new Date(2026, 0, 16, 19));
+  expect(
+    tree.root.findAllByProps({ children: hangPreview('Sketch the skyline?', tomorrow) }),
+  ).not.toHaveLength(0);
+});
+
 test('iOS uses real spinner props, dismisses keyboard, and preserves date/time parts across midnight', async () => {
   const dismiss = jest.spyOn(Keyboard, 'dismiss');
   await mount();
@@ -167,6 +202,7 @@ test('iOS uses real spinner props, dismisses keyboard, and preserves date/time p
       startsAt: new Date(2026, 0, 16, 0, 15).toISOString(),
       expiresAt: new Date(2026, 0, 16, 4, 15).toISOString(),
     }),
+    'me',
   );
   expect(dismiss).toHaveBeenCalled();
 });
@@ -185,21 +221,27 @@ test.each([new Date(2026, 0, 14, 13), new Date(2026, 0, 23, 13)])(
 test('a stale open form rechecks time at submission', async () => {
   await mount();
   await choose('Study session');
-  jest.setSystemTime(new Date(2026, 0, 15, 14));
+  await press('Tonight');
+  jest.setSystemTime(new Date(2026, 0, 15, 20));
   await act(async () => save().props.onPress());
   expect(api.createHang).not.toHaveBeenCalled();
   expect(tree.root.findAllByType('kit-error')[0]!.props.message).toBe(
     'Choose a future date and time.',
   );
 });
-test('audience selection preserves group IDs and existing payload semantics', async () => {
+test('audience selection sends two groups and a friend in a single private Hang', async () => {
   await mount();
-  await choose('House party');
-  await press('Audience, All friends');
-  await press('Weekend friends');
+  await enterActivity('House party');
+  await audience('Weekend friends', 'Study crew', 'Ava');
+  expect(node('Audience, Weekend friends, Study crew +1')).toBeDefined();
   await act(async () => save().props.onPress());
   expect(api.createHang).toHaveBeenCalledWith(
-    expect.objectContaining({ audience: 'group', groupId }),
+    expect.objectContaining({
+      audience: 'selected',
+      groupIds: [groupId, otherGroupId],
+      friendIds: [friendId],
+    }),
+    'me',
   );
 });
 test('duplicate taps are blocked while sending and an API failure preserves selections for retry', async () => {
@@ -229,9 +271,12 @@ test('duplicate taps are blocked while sending and an API failure preserves sele
   expect(onSavingChange).toHaveBeenLastCalledWith(false);
   expect(node('Close compose').props.disabled).toBe(false);
   expect(tree.root.findAllByType('kit-error')[0]!.props.message).toBe('Offline. Try again.');
-  expect(node('Activity, Basketball')).toBeDefined();
+  expect(activityInput().props.value).toBe('Basketball');
   await act(async () => save().props.onPress());
   expect(api.createHang).toHaveBeenCalledTimes(2);
+  expect(jest.mocked(api.createHang).mock.calls[0]).toEqual(
+    jest.mocked(api.createHang).mock.calls[1],
+  );
   expect(onCreated).toHaveBeenCalledTimes(1);
 });
 test('group load failure is retryable and does not prevent sharing with friends', async () => {
@@ -239,16 +284,17 @@ test('group load failure is retryable and does not prevent sharing with friends'
   await mount();
   await choose('Game night');
   expect(save().props.disabled).toBe(false);
-  const error = tree.root.findAllByType('kit-error')[0]!;
-  expect(error.props.message).toBe('Could not load groups: No network');
-  await act(async () => error.props.onRetry());
   await press('Audience, All friends');
+  const error = tree.root.findAllByType('kit-error')[0]!;
+  expect(error.props.message).toBe('Some people couldn’t load.');
+  await act(async () => error.props.onRetry());
   expect(node('Weekend friends')).toBeDefined();
 });
 test('Android opens native dialogs, cancellation retains values and time updates preserve the date', async () => {
   Object.defineProperty(Platform, 'OS', { value: 'android', configurable: true });
   await mount();
   await choose('Game night');
+  await press('Tonight');
   await openDate();
   const date = jest.mocked(DateTimePickerAndroid.open).mock.calls[0]![0];
   expect(date).toMatchObject({ mode: 'date', display: 'default' });
@@ -265,6 +311,7 @@ test('Android opens native dialogs, cancellation retains values and time updates
   await act(async () => save().props.onPress());
   expect(api.createHang).toHaveBeenCalledWith(
     expect.objectContaining({ startsAt: new Date(2026, 0, 15, 18, 30).toISOString() }),
+    'me',
   );
   expect(tree.root.findAllByType('native-picker')).toHaveLength(0);
 });
@@ -272,7 +319,7 @@ test('Android opens native dialogs, cancellation retains values and time updates
 test('selection sheets respect the existing reduced-motion setting', async () => {
   mockReduceMotion = true;
   await mount();
-  await press('Activity, Choose an activity');
+  await press('Audience, Choose people');
   expect(tree.root.findAllByType('selection-sheet')[0]!.props.animationType).toBe('none');
 });
 
@@ -297,9 +344,11 @@ test.each(['ios', 'android'] as const)(
     };
     const last = new Date(Date.now() + 7 * 86400000);
     await select('date', last);
+    if (platform === 'ios') await press('Done choosing date and time');
     expect(save().props.disabled).toBe(false);
     await openTime();
     await select('time', new Date(2026, 0, 15, 23, 59));
+    if (platform === 'ios') await press('Done choosing date and time');
     expect(save().props.disabled).toBe(false);
     await act(async () => save().props.onPress());
     const input = jest.mocked(api.createHang).mock.calls[0]![0];
@@ -312,7 +361,7 @@ test('successful in-flight save keeps Close guarded and reports completion exact
   let finish!: () => void;
   jest.mocked(api.createHang).mockReturnValueOnce(
     new Promise((resolve) => {
-      finish = () => resolve({} as never);
+      finish = () => resolve(createdPost);
     }),
   );
   await mount();
@@ -337,7 +386,7 @@ test.each(['ios', 'android'] as const)(
     let finish!: () => void;
     jest.mocked(api.createHang).mockReturnValueOnce(
       new Promise((resolve) => {
-        finish = () => resolve({} as never);
+        finish = () => resolve(createdPost);
       }),
     );
     await act(async () => {
@@ -389,7 +438,68 @@ test('parent dismissal unlocks after failed save without losing the draft', asyn
   await act(async () => save().props.onPress());
   await act(async () => fail(new Error('Offline')));
   expect(tree.root.findAllByType(Modal)[0]!.props.allowSwipeDismissal).toBe(true);
-  expect(node('Activity, Movie night')).toBeDefined();
+  expect(activityInput().props.value).toBe('Movie night');
   await press('Close compose');
   expect(tree.root.findAllByType(Modal)[0]!.props.visible).toBe(false);
+});
+
+test.each(['ios', 'android'] as const)(
+  '%s cancel leaves the chosen quick time unchanged',
+  async (platform) => {
+    Object.defineProperty(Platform, 'OS', { value: platform, configurable: true });
+    await mount();
+    await choose('Stargazing');
+    for (const choice of ['Right now', 'Tonight', 'Tomorrow']) {
+      await press(choice);
+      await openDate();
+      if (platform === 'ios') {
+        await act(async () => picker().props.onValueChange({}, new Date(2026, 0, 17)));
+        await press('Cancel choosing date and time');
+      } else {
+        await act(async () =>
+          jest.mocked(DateTimePickerAndroid.open).mock.lastCall![0].onDismiss?.(),
+        );
+      }
+      expect(node(choice).props.accessibilityState.selected).toBe(true);
+    }
+  },
+);
+
+test('reopening an uncertain scheduled send allows replay after its start passes', async () => {
+  jest
+    .mocked(api.createHang)
+    .mockRejectedValueOnce(Object.assign(new Error('Timeout'), { status: 0 }));
+  await act(async () => {
+    tree = create(<HangCard />);
+  });
+  const open = async () => {
+    const button = tree.root
+      .findAllByType('kit-button')
+      .find((n) => n.props.label === 'Make a hang plan')!;
+    await act(async () => button.props.onPress());
+  };
+  await open();
+  await choose('Stargazing');
+  await press('Tonight');
+  await act(async () => save().props.onPress());
+  await press('Close compose');
+  jest.setSystemTime(new Date(2026, 0, 15, 20));
+  await open();
+  expect(save().props.disabled).toBe(false);
+  await act(async () => save().props.onPress());
+  expect(jest.mocked(api.createHang).mock.calls[1]).toEqual(
+    jest.mocked(api.createHang).mock.calls[0],
+  );
+});
+
+test('editing an uncertain send creates a different request ID', async () => {
+  jest.mocked(api.createHang).mockRejectedValueOnce(new Error('Timeout'));
+  await mount();
+  await choose('Stargazing');
+  await act(async () => save().props.onPress());
+  await enterActivity('New activity');
+  await act(async () => save().props.onPress());
+  const [first, second] = jest.mocked(api.createHang).mock.calls;
+  expect(second?.[0].requestId).not.toBe(first?.[0].requestId);
+  expect(second?.[0].activity).toBe('New activity');
 });

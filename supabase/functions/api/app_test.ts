@@ -2962,3 +2962,72 @@ Deno.test(
     equal(searches, 1);
   },
 );
+
+Deno.test(
+  'Hang create validates and normalizes selected targets, and pushes only new inbox rows',
+  async () => {
+    const friend = '54000000-0000-4000-8000-000000000002';
+    const group = '54000000-0000-4000-8000-000000000011';
+    const requestId = '54000000-0000-4000-8000-000000000021';
+    const postId = '54000000-0000-4000-8000-000000000031';
+    let creates = 0;
+    let pushes = 0;
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => ({ id: 'author' }),
+      hangStore: {
+        async create(authorId, input) {
+          creates++;
+          equal(authorId, 'author');
+          equal(input.groupIds?.join(','), group);
+          equal(input.friendIds?.join(','), friend);
+          if (input.activity !== 'Late-night stargazing')
+            throw new ApiError(
+              409,
+              'HANG_REQUEST_MISMATCH',
+              'This send was already used for a different Hang.',
+            );
+          equal(input.startNow, true);
+          equal(Date.parse(input.expiresAt) - Date.parse(input.startsAt), 4 * 3600000);
+          return { ...input, id: postId, authorId, recipientIds: creates === 1 ? [friend] : [] };
+        },
+        listOwn: async () => [],
+        load: async () => null,
+        notifier: async (ids, type, pickId, payload, options) => {
+          pushes++;
+          equal(ids.join(','), friend);
+          equal(type, 'hang_invite');
+          equal(pickId, null);
+          equal(payload?.hangId, postId);
+          equal(options?.inboxRecorded, true);
+        },
+      },
+    });
+    const input = {
+      authorId: 'spoofed',
+      activity: '  Late-night stargazing  ',
+      audience: 'selected',
+      groupIds: [group, group],
+      friendIds: [friend],
+      requestId,
+      startNow: true,
+    };
+    const post = (body: unknown) =>
+      app.request('/hang', { method: 'POST', body: JSON.stringify(body) });
+    equal((await post({ ...input, requestId: undefined })).status, 400);
+    equal((await post({ ...input, friendIds: ['bad'] })).status, 400);
+    equal(creates, 0);
+    const first = await post(input);
+    equal(first.status, 201);
+    equal((await first.json()).recipientIds, undefined);
+    equal((await post(input)).status, 201);
+    const changed = await post({ ...input, activity: 'A different Hang' });
+    equal(changed.status, 409);
+    equal((await changed.json()).error.code, 'HANG_REQUEST_MISMATCH');
+    equal(pushes, 1);
+    equal((await app.request(`/hang/${postId}`)).status, 404);
+  },
+);

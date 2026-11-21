@@ -46,13 +46,20 @@ import { swipe, type HeartbeatStore } from '../_shared/api/heartbeat.ts';
 import { getProgress, type ProgressStore } from '../_shared/api/progress.ts';
 import {
   cancelPick,
+  leavePick,
   getPick,
   refreshPick,
   startPick,
   type LifecycleStore,
 } from '../_shared/api/lifecycle.ts';
 import { closePick, type ClosingStore } from '../_shared/api/closing.ts';
-import { castVote, closeVote, parseVote, type VotingStore } from '../_shared/api/voting.ts';
+import {
+  castVote,
+  closeVote,
+  parseVote,
+  settleIfEveryoneVoted,
+  type VotingStore,
+} from '../_shared/api/voting.ts';
 import type { PoolBuilder } from '../_shared/places/pool.ts';
 import type { PickPlaces } from '../_shared/places/pickPlaces.ts';
 import { joinPick, type JoinStore } from '../_shared/api/join.ts';
@@ -134,6 +141,7 @@ async function readJsonBody(c: { req: { text(): Promise<string> } }): Promise<un
 export function createApp(
   deps: {
     getUser(req: Request): Promise<{ id: string }>;
+    runInBackground?(work: Promise<void>): void;
     store: HeartbeatStore;
     progressStore?: ProgressStore;
     availabilityEnabled?: boolean;
@@ -303,11 +311,31 @@ export function createApp(
       notice: '',
     });
   });
+  app.get('/hang/:id', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.hangStore) throw new ApiError(503, 'HANG_UNAVAILABLE', 'Hang posts unavailable');
+    c.header('Cache-Control', 'private, no-store');
+    const post = await deps.hangStore.load(c.req.param('id'), user.id);
+    if (!post) throw new ApiError(404, 'HANG_NOT_FOUND', 'Hang post not found');
+    return c.json(post);
+  });
   app.post('/hang', async (c) => {
     const user = await deps.getUser(c.req.raw);
     const input = parseHang(await readJsonBody(c));
     if (!deps.hangStore) throw new ApiError(503, 'HANG_UNAVAILABLE', 'Hang posts unavailable');
-    return c.json(await deps.hangStore.create(user.id, input), 201);
+    const { recipientIds, ...post } = await deps.hangStore.create(user.id, input);
+    if (recipientIds?.length && deps.hangStore.notifier) {
+      const delivery = deps.hangStore.notifier(
+        recipientIds,
+        'hang_invite',
+        null,
+        { hangId: post.id },
+        { inboxRecorded: true },
+      );
+      if (deps.runInBackground) deps.runInBackground(delivery);
+      else await delivery;
+    }
+    return c.json(post, 201);
   });
   app.post('/hang/:id/respond', async (c) => {
     const user = await deps.getUser(c.req.raw);
@@ -571,6 +599,22 @@ export function createApp(
     const user = await deps.getUser(c.req.raw);
     const body = await readJsonBody(c);
     return c.json(await cancelPick(deps.lifecycleStore, c.req.param('id'), user.id, body));
+  });
+  app.post('/picks/:id/leave', async (c) => {
+    const user = await deps.getUser(c.req.raw);
+    const pickId = c.req.param('id');
+    const result = await leavePick(deps.lifecycleStore, pickId, user.id);
+    // With them gone, everyone left may already be done; never fails the leave.
+    try {
+      await closePick(deps.closingStore, pickId, 'system', null);
+      await settleIfEveryoneVoted(deps.closingStore, pickId);
+    } catch (error) {
+      console.error(
+        'auto-close after leave failed',
+        error instanceof Error ? error.name : 'unknown',
+      );
+    }
+    return c.json(result);
   });
   app.post('/picks/:id/close', async (c) => {
     const user = await deps.getUser(c.req.raw);

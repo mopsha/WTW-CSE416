@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import React from 'react';
-import { AppState, type AppStateStatus } from 'react-native';
+import { AppState, Modal, Platform, type AppStateStatus } from 'react-native';
 import { PlanBlock } from '@/components/PlanBlock';
 import { HangCard } from '@/components/HangCard';
 import { HangInvitation } from '@/components/picks/HangInvitation';
@@ -282,9 +282,9 @@ test('a Hang that already started a Pick stays visible and can still take RSVPs'
   expect(api.respondHang).toHaveBeenCalledWith('hang', 'down', 'A');
 });
 
-test('converted Hang hosts keep the enabled Let’s Pick entry and navigate with the original Hang identity', async () => {
+test('eligible hosts open Start a Pick from the Hang menu and navigate with the original Hang identity', async () => {
   jest.mocked(api.getHang).mockResolvedValue({
-    posts: [{ ...post(), authorId: 'A', pickId: 'existing-draft' }],
+    posts: [{ ...post(), authorId: 'A', pickId: 'existing-draft', canStartPick: true }],
     sharedAvailable: true,
     notice: '',
   });
@@ -293,27 +293,62 @@ test('converted Hang hosts keep the enabled Let’s Pick entry and navigate with
   });
   const invitation = tree.root.findByType(HangInvitation);
   expect(invitation.props.disabled).toBe(false);
-  const start = tree.root.findAll(
-    (n: any) => n.props.label === 'Let’s Pick' && typeof n.props.onPress === 'function',
-  )[0];
-  expect(start.props.disabled).toBe(false);
+  const action = (label: string) =>
+    invitation
+      .findAllByProps({ accessibilityLabel: label })
+      .find((node: { props: { onPress?: unknown } }) => typeof node.props.onPress === 'function');
+  expect(action('Start a Pick')).toBeUndefined();
+  await act(async () => action('Hang options').props.onPress());
+  expect(router.push).not.toHaveBeenCalled();
+
+  const start = action('Start a Pick');
+  expect(start.props.disabled).toBeFalsy();
+  const menu = invitation
+    .findAllByType(Modal)
+    .find((node: { props: { visible: boolean } }) => node.props.visible);
   await act(async () => start.props.onPress());
+  if (Platform.OS === 'ios') {
+    expect(router.push).not.toHaveBeenCalled();
+    await act(async () => menu.props.onDismiss());
+  }
+  expect(router.push).toHaveBeenCalledTimes(1);
   expect(router.push).toHaveBeenCalledWith({
     pathname: '/pick/new',
     params: { hangId: 'hang', hangActivity: 'Walk' },
   });
-  expect(tree.root.findByType(HangInvitation).props.post.pickId).toBe('existing-draft');
+  expect(tree.root.findByType(HangInvitation).props.post).toMatchObject({
+    id: 'hang',
+    pickId: 'existing-draft',
+  });
 });
+
+test.each([
+  { authorId: 'A', canStartPick: false },
+  { authorId: 'other', canStartPick: true },
+])(
+  'the Hang menu requires both host ownership and server eligibility (%o)',
+  async (eligibility) => {
+    jest.mocked(api.getHang).mockResolvedValue({
+      posts: [{ ...post(), pickId: 'existing-draft', ...eligibility }],
+      sharedAvailable: true,
+      notice: '',
+    });
+    await act(async () => {
+      tree = create(<HangCard />);
+    });
+    const invitation = tree.root.findByType(HangInvitation);
+    expect(invitation.findAllByProps({ accessibilityLabel: 'Hang options' })).toHaveLength(0);
+    expect(router.push).not.toHaveBeenCalled();
+  },
+);
 
 test('scheduled RSVP carries the revision the participant saw when choosing', async () => {
   const first = deferred<{ status: 'ok' }>();
-  jest
-    .mocked(api.getPlan)
-    .mockResolvedValue({
-      ...plan(),
-      planAt: new Date(Date.now() + 86400000).toISOString(),
-      scheduleRevision: 3,
-    });
+  jest.mocked(api.getPlan).mockResolvedValue({
+    ...plan(),
+    planAt: new Date(Date.now() + 86400000).toISOString(),
+    scheduleRevision: 3,
+  });
   jest.mocked(api.rsvp).mockReturnValueOnce(first.promise);
   await mountPlan();
   await act(async () => tree.root.findByType(Chips).props.onChange('going'));

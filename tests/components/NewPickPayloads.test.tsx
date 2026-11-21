@@ -38,7 +38,10 @@ jest.mock('@/lib/haptics', () => ({
 jest.mock('@/lib/api', () => ({
   api: { createPick: jest.fn(), createGroupPick: jest.fn(), hangPick: jest.fn() },
 }));
-jest.mock('@/lib/locationSearch', () => ({ DEFAULT_CENTER: { lat: 40.915, lng: -73.123 } }));
+jest.mock('@/lib/locationSearch', () => ({
+  DEFAULT_CENTER: { lat: 40.915, lng: -73.123 },
+  knownLocation: jest.fn().mockResolvedValue(null),
+}));
 jest.mock('@/components/MapPicker', () => ({ MapPicker: () => null }));
 jest.mock('@/components/LocationSearch', () => ({ LocationSearch: () => null }));
 jest.mock('@/components/CustomPlanEditor', () => ({ CustomPlanEditor: () => null }));

@@ -57,6 +57,7 @@ function fixture(picks: Pick[]) {
     castVote: jest.fn(),
     applyVoteClose: jest.fn(async (id, winnerPlaceId) => {
       Object.assign(byId(id)!, { state: 'completed', winnerPlaceId });
+      return 'committed' as const;
     }),
   } satisfies closing.ClosingStore & voting.VotingStore;
   return { store, closers };
@@ -133,7 +134,14 @@ test('continues across pages and phases after a Pick fails without exposing its 
     null,
     expect.any(Object),
   );
-  expect(closers.applyVoteClose).toHaveBeenNthCalledWith(1, 'c', 'a', 'vote');
+  expect(closers.applyVoteClose).toHaveBeenNthCalledWith(
+    1,
+    'c',
+    'a',
+    'vote',
+    [],
+    expect.any(Array),
+  );
   await sweepDeadlines(store, closers);
   expect(closers.applyClose).toHaveBeenNthCalledWith(
     2,

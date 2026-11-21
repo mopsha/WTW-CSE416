@@ -180,7 +180,7 @@ export default function SwipeScreen() {
   const subtitle = [
     others.length
       ? othersDone === others.length
-        ? 'Everyone else is done 👀'
+        ? 'Everyone else is done'
         : `${othersDone} of ${others.length} friends done`
       : null,
     countdown.label,
@@ -203,7 +203,11 @@ export default function SwipeScreen() {
     return (
       <SafeAreaView style={pickStyles.screen}>
         <PickTopBar title="Swipe" />
-        <CenterMessage emoji="📡" title="Couldn’t load the places" body={load.message}>
+        <CenterMessage
+          icon="cloud-offline-outline"
+          title="Couldn’t load the places"
+          body={load.message}
+        >
           <Button label="Try again" onPress={reload} />
           <Button label="Back to your Picks" variant="link" onPress={goToPicks} />
         </CenterMessage>
@@ -215,7 +219,7 @@ export default function SwipeScreen() {
       <SafeAreaView style={pickStyles.screen}>
         <PickTopBar title={pickTitle(pick?.category)} />
         <CenterMessage
-          emoji="🗺️"
+          icon="map-outline"
           title="No places yet"
           body="The pool is still being built. This usually takes a second."
         >
@@ -305,7 +309,6 @@ export default function SwipeScreen() {
           </>
         ) : (
           <CenterMessage
-            emoji="🙌"
             title={failed.length ? 'Almost there' : 'You’re in!'}
             body={
               failed.length

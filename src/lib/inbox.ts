@@ -22,6 +22,7 @@ export function inboxRoute(
 ): string | null {
   return routeForNotification({
     pickId: n.pickId,
+    hangId: n.payload?.hangId,
     type: n.type,
     groupId: n.payload?.groupId,
     conversationId: n.payload?.conversationId,

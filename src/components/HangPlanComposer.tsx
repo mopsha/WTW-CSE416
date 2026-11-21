@@ -15,58 +15,75 @@ import {
 import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
-import type { GroupSummary } from '@/lib/groups';
+import { memberName, type FriendOption, type GroupSummary } from '@/lib/groups';
 import {
   changeHangDate,
   hangPlanInput,
   hangTimeProblem,
   HANG_START_HORIZON_MS,
+  hangPreview,
+  hangTimeLabel,
+  resolveHangTime,
+  type HangQuickTime,
 } from '@/lib/hangPlan';
+import type { HangInput, HangPost } from '@shared/api/hang.ts';
+import { textFilter } from '@shared/domain/textFilter.ts';
 import { queries } from '@/lib/queries';
 import { Button, ErrorState, Screen } from './index';
 import { Sheet } from './TabUi';
 import { colors, MIN_TARGET, picksTheme, radius, space } from './theme';
 
-const ACTIVITIES = [
-  'Game night',
-  'Basketball',
-  'Cookout',
-  'Study session',
-  'House party',
-  'Movie night',
-  'Other',
-];
+const ACTIVITIES = ['Volleyball', 'Food', 'Basketball', 'Movie', 'Study', 'Something else'];
+const TIMES = [
+  { id: 'now', label: 'Right now' },
+  { id: 'tonight', label: 'Tonight' },
+  { id: 'tomorrow', label: 'Tomorrow' },
+  { id: 'custom', label: 'Pick time' },
+] as const;
+
+export interface HangSendRecovery {
+  key: string;
+  input: HangInput;
+}
+
 type Picker = 'date' | 'time';
 
 export function HangPlanComposer({
   onClose,
   onCreated,
   onSavingChange,
+  recovery,
+  onRecoveryChange,
 }: {
   onClose(): void;
-  onCreated(): void;
+  onCreated(post: HangPost): void;
   onSavingChange?(saving: boolean): void;
+  recovery?: HangSendRecovery | null;
+  onRecoveryChange?(recovery: HangSendRecovery | null): void;
 }) {
   const reduceMotion = useMotionPreference();
   const userId = useAuth().session?.user.id;
-  const [activity, setActivity] = useState('');
-  const [custom, setCustom] = useState('');
-  const [start, setStart] = useState(
-    () => new Date(Math.ceil((Date.now() + 3600000) / 60000) * 60000),
+  const [activity, setActivity] = useState(recovery?.input.activity ?? '');
+  const [choice, setChoice] = useState<HangQuickTime>(
+    recovery && !recovery.input.startNow ? 'custom' : 'now',
+  );
+  const [start, setStart] = useState(() =>
+    recovery ? new Date(recovery.input.startsAt) : resolveHangTime('now'),
   );
   const [now, setNow] = useState(Date.now);
-  const [audience, setAudience] = useState('all_friends');
+  const [allFriends, setAllFriends] = useState(recovery?.input.audience === 'all_friends');
+  const [groupIds, setGroupIds] = useState<string[]>(recovery?.input.groupIds ?? []);
+  const [friendIds, setFriendIds] = useState<string[]>(recovery?.input.friendIds ?? []);
   const [groups, setGroups] = useState<GroupSummary[]>([]);
-  const [groupState, setGroupState] = useState<{ loading: boolean; error?: string }>({
-    loading: !!userId,
-  });
+  const [friends, setFriends] = useState<FriendOption[]>([]);
+  const [audienceState, setAudienceState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [retry, setRetry] = useState(0);
-  const [selection, setSelection] = useState<'activity' | 'audience' | null>(null);
-  const [picker, setPicker] = useState<Picker | null>(null);
+  const [audienceOpen, setAudienceOpen] = useState(false);
+  const [picker, setPicker] = useState<{ mode: Picker; date: Date } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [focused, setFocused] = useState(false);
   const pending = useRef(false);
+  const [uncertain, setUncertain] = useState(recovery ?? null);
   const mounted = useRef(true);
   const androidPicker = useRef<Picker | null>(null);
   useEffect(() => {
@@ -82,47 +99,93 @@ export function HangPlanComposer({
   useEffect(() => {
     let active = true;
     if (userId)
-      void queries
-        .listMyGroups(userId)
-        .then((value) => {
-          if (active) {
-            setGroups(value);
-            setGroupState({ loading: false });
-          }
-        })
-        .catch((e) => {
-          if (active)
-            setGroupState({ loading: false, error: `Could not load groups: ${messageOf(e)}` });
-        });
+      void Promise.allSettled([queries.listMyGroups(userId, true), api.listFriends(userId)]).then(
+        ([groupResult, friendResult]) => {
+          if (!active) return;
+          if (groupResult.status === 'fulfilled') setGroups(groupResult.value);
+          if (friendResult.status === 'fulfilled') setFriends(friendResult.value.friends);
+          setAudienceState(
+            groupResult.status === 'fulfilled' && friendResult.status === 'fulfilled'
+              ? 'ready'
+              : 'error',
+          );
+        },
+      );
     return () => {
       active = false;
     };
   }, [userId, retry]);
 
-  const title = activity === 'Other' ? custom : activity;
-  const timeProblem = hangTimeProblem(start, now);
-  const selectedGroup = groups.find((g) => g.id === audience);
+  const timeProblem = choice === 'now' ? null : hangTimeProblem(start, now);
+  const timeLabel = choice === 'now' ? 'Right now' : hangTimeLabel(start);
+  const audienceNames = [
+    ...groups.filter((group) => groupIds.includes(group.id)).map((group) => group.name),
+    ...friends.filter((friend) => friendIds.includes(friend.userId)).map(memberName),
+  ];
+  const audienceSummary = allFriends
+    ? 'All friends'
+    : audienceNames.length
+      ? audienceNames.slice(0, 2).join(', ') +
+        (audienceNames.length > 2 ? ` +${audienceNames.length - 2}` : '')
+      : 'Choose people';
+  const allFriendsAvailable = audienceState !== 'ready' || friends.length > 0;
+  const hasAudience = allFriends ? allFriendsAvailable : groupIds.length + friendIds.length > 0;
+  const key = JSON.stringify([
+    activity.trim(),
+    choice === 'now' ? null : start,
+    allFriends,
+    [...groupIds].sort(),
+    [...friendIds].sort(),
+  ]);
+  const replay = uncertain?.key === key ? uncertain.input : null;
+  const activityAllowed = textFilter(activity).ok;
   const valid =
-    !!title.trim() &&
-    title.trim().length <= 60 &&
-    !timeProblem &&
-    (audience === 'all_friends' || !!selectedGroup);
-  function openSelection(value: 'activity' | 'audience') {
-    if (pending.current) return;
-    Keyboard.dismiss();
-    setPicker(null);
-    setSelection(value);
+    !!replay ||
+    (!!activity.trim() &&
+      activity.trim().length <= 60 &&
+      activityAllowed &&
+      !timeProblem &&
+      hasAudience);
+
+  function toggleAudience(kind: 'all' | 'group' | 'friend', id: string) {
+    const toggle = (items: string[]) =>
+      items.includes(id) ? items.filter((item) => item !== id) : [...items, id];
+    if (kind === 'all') {
+      setAllFriends(!allFriends);
+      setGroupIds([]);
+      setFriendIds([]);
+    } else {
+      setAllFriends(false);
+      if (kind === 'group') setGroupIds(toggle);
+      else setFriendIds(toggle);
+    }
   }
+
+  function selectTime(value: HangQuickTime) {
+    setChoice(value);
+    const selectedAt = resolveHangTime('now').getTime();
+    setStart(resolveHangTime(value, selectedAt));
+    setNow(selectedAt);
+    setPicker(null);
+    setError(null);
+    Keyboard.dismiss();
+  }
+
   function openPicker(mode: Picker) {
     if (pending.current) return;
     Keyboard.dismiss();
     setError(null);
-    const openedAt = Date.now();
+    const openedAt = resolveHangTime('now').getTime();
+    const value =
+      picker?.date ??
+      (choice === 'now' || hangTimeProblem(start, openedAt)
+        ? resolveHangTime('custom', openedAt)
+        : start);
     setNow(openedAt);
     if (Platform.OS === 'android') {
       androidPicker.current = mode;
       DateTimePickerAndroid.open({
-        value: start,
+        value,
         mode,
         display: 'default',
         ...(mode === 'date'
@@ -133,7 +196,10 @@ export function HangPlanComposer({
           : {}),
         onValueChange: (_, date) => {
           androidPicker.current = null;
-          if (mounted.current) setStart(changeHangDate(start, date, mode, Date.now()));
+          if (mounted.current) {
+            setStart(changeHangDate(value, date, mode, Date.now()));
+            setChoice('custom');
+          }
         },
         onDismiss: () => {
           androidPicker.current = null;
@@ -143,17 +209,24 @@ export function HangPlanComposer({
           if (mounted.current) setError('Could not open the date picker. Try again.');
         },
       });
-    } else if (Platform.OS === 'ios') setPicker((current) => (current === mode ? null : mode));
+    } else if (Platform.OS === 'ios') setPicker({ mode, date: value });
     else setError('Choose a date and time in the iOS or Android app.');
   }
   async function submit() {
-    if (pending.current || !userId) return;
+    if (pending.current || !userId || picker) return;
     setError(null);
-    let input;
+    let input: HangInput;
     try {
-      input = hangPlanInput(title, start, audience);
-      if (audience !== 'all_friends' && !selectedGroup)
-        throw new Error('Choose an available group.');
+      if (!replay && !hasAudience) throw new Error('Choose people to invite.');
+      input =
+        replay ??
+        hangPlanInput(
+          activity,
+          start,
+          { allFriends, groupIds, friendIds },
+          Date.now(),
+          choice === 'now',
+        );
     } catch (e) {
       setError(messageOf(e));
       return;
@@ -164,10 +237,26 @@ export function HangPlanComposer({
     Keyboard.dismiss();
     setPicker(null);
     try {
-      await api.createHang(input);
-      if (mounted.current) onCreated();
+      const post = await api.createHang(input, userId);
+      if (mounted.current) {
+        if (!post?.id) throw new Error('Could not confirm the Hang was sent.');
+        onRecoveryChange?.(null);
+        setUncertain(null);
+        onCreated(post);
+      }
     } catch (e) {
-      if (mounted.current) setError(messageOf(e));
+      if (mounted.current) {
+        const status = (e as { status?: number } | null)?.status;
+        if (status === undefined || status === 0 || status === 408 || status >= 500) {
+          const request = { key, input };
+          setUncertain(request);
+          onRecoveryChange?.(request);
+        } else if (replay) {
+          setUncertain(null);
+          onRecoveryChange?.(null);
+        }
+        setError(messageOf(e));
+      }
     } finally {
       pending.current = false;
       if (mounted.current) {
@@ -203,68 +292,94 @@ export function HangPlanComposer({
       >
         <View style={styles.section}>
           <Text accessibilityRole="header" style={styles.label}>
-            {"What's the plan?"}
+            What’s the move?
           </Text>
-          <View style={styles.group}>
-            <FormRow
-              label="Activity"
-              value={activity || 'Choose an activity'}
-              onPress={() => openSelection('activity')}
-              disabled={busy}
-            />
-            {activity === 'Other' ? (
-              <TextInput
-                value={custom}
-                onChangeText={setCustom}
-                maxLength={60}
-                placeholder="What do you want to do?"
-                placeholderTextColor={colors.muted}
-                accessibilityLabel="Hang activity"
-                editable={!busy}
-                returnKeyType="done"
-                onSubmitEditing={() => Keyboard.dismiss()}
-                onFocus={() => {
-                  setFocused(true);
-                  setPicker(null);
-                }}
-                onBlur={() => setFocused(false)}
-                style={[styles.input, focused && styles.inputFocused]}
+          <TextInput
+            value={activity}
+            onChangeText={setActivity}
+            maxLength={60}
+            placeholder="Basketball, food, movies, anything..."
+            placeholderTextColor={colors.muted}
+            accessibilityLabel="Hang activity"
+            editable={!busy}
+            returnKeyType="done"
+            onFocus={() => setPicker(null)}
+            style={styles.input}
+          />
+          {!activityAllowed ? (
+            <Text style={styles.validation}>Try different words for your activity.</Text>
+          ) : null}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.chips}
+          >
+            {ACTIVITIES.map((suggestion) => (
+              <Chip
+                key={suggestion}
+                label={suggestion}
+                selected={activity === suggestion}
+                disabled={busy}
+                onPress={() => setActivity(suggestion)}
               />
-            ) : null}
-          </View>
+            ))}
+          </ScrollView>
         </View>
         <View style={styles.section}>
           <Text accessibilityRole="header" style={styles.label}>
             When?
           </Text>
-          <View style={styles.group}>
-            <FormRow
-              label="Date"
-              value={start.toLocaleDateString(undefined, {
-                weekday: 'short',
-                month: 'short',
-                day: 'numeric',
-                year: 'numeric',
-              })}
-              onPress={() => openPicker('date')}
-              disabled={busy}
-              expanded={picker === 'date'}
-            />
-            <View style={styles.separator} />
-            <FormRow
-              label="Time"
-              value={start.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-              onPress={() => openPicker('time')}
-              disabled={busy}
-              expanded={picker === 'time'}
-            />
+          <View style={styles.times}>
+            {TIMES.map(({ id, label }) => (
+              <Chip
+                key={id}
+                label={label}
+                selected={choice === id}
+                disabled={busy || (id === 'tonight' && resolveHangTime(id, now).getTime() <= now)}
+                onPress={() => (id === 'custom' ? openPicker('date') : selectTime(id))}
+              />
+            ))}
           </View>
+          {choice !== 'now' || picker ? (
+            <View style={styles.group}>
+              <FormRow
+                label="Date"
+                value={(picker?.date ?? start).toLocaleDateString()}
+                onPress={() => openPicker('date')}
+                disabled={busy}
+                expanded={picker?.mode === 'date'}
+              />
+              <FormRow
+                label="Time"
+                value={(picker?.date ?? start).toLocaleTimeString(undefined, {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+                onPress={() => openPicker('time')}
+                disabled={busy}
+                expanded={picker?.mode === 'time'}
+              />
+            </View>
+          ) : null}
           {picker && Platform.OS === 'ios' ? (
             <View style={styles.group}>
               <View style={styles.pickerHead}>
-                <Text style={styles.secondary}>{picker === 'date' ? 'Date' : 'Time'}</Text>
+                <Text style={styles.secondary}>{picker.mode === 'date' ? 'Date' : 'Time'}</Text>
                 <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel choosing date and time"
                   onPress={() => setPicker(null)}
+                  style={styles.done}
+                >
+                  <Text style={styles.secondary}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    setStart(picker.date);
+                    setChoice('custom');
+                    setPicker(null);
+                  }}
                   accessibilityRole="button"
                   accessibilityLabel="Done choosing date and time"
                   style={styles.done}
@@ -273,27 +388,36 @@ export function HangPlanComposer({
                 </Pressable>
               </View>
               <DateTimePicker
-                key={picker}
-                value={start}
-                mode={picker}
+                key={picker.mode}
+                value={picker.date}
+                mode={picker.mode}
                 display="spinner"
                 themeVariant="dark"
                 textColor={colors.text}
                 accentColor={colors.primary}
                 minimumDate={
-                  picker === 'date' ? new Date(Math.floor(now / 60000) * 60000 + 60000) : undefined
+                  picker.mode === 'date'
+                    ? new Date(Math.floor(now / 60000) * 60000 + 60000)
+                    : undefined
                 }
-                maximumDate={picker === 'date' ? new Date(now + HANG_START_HORIZON_MS) : undefined}
+                maximumDate={
+                  picker.mode === 'date' ? new Date(now + HANG_START_HORIZON_MS) : undefined
+                }
                 onValueChange={(_, date) =>
-                  setStart((current) => changeHangDate(current, date, picker, Date.now()))
+                  setPicker(
+                    (current) =>
+                      current && {
+                        ...current,
+                        date: changeHangDate(current.date, date, current.mode, Date.now()),
+                      },
+                  )
                 }
-                accessibilityLabel={`Hang ${picker}`}
+                accessibilityLabel={`Hang ${picker.mode}`}
                 style={styles.wheel}
               />
             </View>
           ) : null}
-          <Text style={styles.note}>Responses stay open until four hours after the start.</Text>
-          {timeProblem ? (
+          {timeProblem && !replay ? (
             <Text accessibilityLiveRegion="polite" style={styles.validation}>
               {timeProblem}
             </Text>
@@ -306,93 +430,155 @@ export function HangPlanComposer({
           <View style={styles.group}>
             <FormRow
               label="Audience"
-              value={
-                audience === 'all_friends'
-                  ? 'All friends'
-                  : (selectedGroup?.name ?? 'Choose a group')
-              }
-              onPress={() => openSelection('audience')}
+              value={audienceSummary}
               disabled={busy}
-            />
-          </View>
-          {groupState.loading ? (
-            <Text accessibilityLiveRegion="polite" style={styles.note}>
-              Loading groups…
-            </Text>
-          ) : null}
-          {groupState.error ? (
-            <ErrorState
-              message={groupState.error}
-              onRetry={() => {
-                setGroupState({ loading: true });
-                setRetry((n) => n + 1);
+              onPress={() => {
+                Keyboard.dismiss();
+                setPicker(null);
+                setAudienceOpen(true);
               }}
             />
-          ) : null}
+          </View>
         </View>
         {error ? <ErrorState message={error} /> : null}
+        {replay ? (
+          <Text style={styles.note}>Send again to check whether this Hang was posted.</Text>
+        ) : null}
       </ScrollView>
       <View style={styles.footer}>
+        {activity.trim() ? (
+          <Text style={styles.preview}>{hangPreview(activity, timeLabel)}</Text>
+        ) : null}
         <Button
-          label="Save hang plan"
-          disabled={!valid || busy || !userId}
+          label="Send hang"
+          disabled={!valid || busy || !userId || !!picker}
           loading={busy}
           onPress={() => void submit()}
         />
       </View>
       <Sheet
         animationType={reduceMotion ? 'none' : 'slide'}
-        visible={selection !== null}
-        title={selection === 'activity' ? "What's the plan?" : 'Who?'}
-        onClose={() => setSelection(null)}
+        visible={audienceOpen}
+        title="Who’s coming?"
+        onClose={() => setAudienceOpen(false)}
       >
-        {(selection === 'activity'
-          ? ACTIVITIES.map((value) => ({ value, label: value }))
-          : [
-              { value: 'all_friends', label: 'All friends' },
-              ...groups.map((g) => ({ value: g.id, label: g.name })),
-            ]
-        ).map((item) => {
-          const selected = item.value === (selection === 'activity' ? activity : audience);
-          return (
-            <Pressable
-              key={item.value}
-              accessibilityRole="radio"
-              accessibilityLabel={item.label}
-              accessibilityState={{ checked: selected }}
-              onPress={() => {
-                if (selection === 'activity') setActivity(item.value);
-                else setAudience(item.value);
-                setSelection(null);
-              }}
-              style={({ pressed }) => [styles.option, pressed && styles.pressed]}
-            >
-              <Text style={[styles.value, selected && styles.accent]}>{item.label}</Text>
-              {selected ? <Ionicons name="checkmark" size={20} color={colors.primary} /> : null}
-            </Pressable>
-          );
-        })}
-        {selection === 'audience' && groupState.loading ? (
-          <Text accessibilityLiveRegion="polite" style={styles.note}>
-            Loading groups…
+        <AudienceOption
+          label="All friends"
+          selected={allFriends}
+          disabled={!allFriendsAvailable}
+          onPress={() => toggleAudience('all', '')}
+        />
+        {groups.length ? (
+          <Text accessibilityRole="header" style={styles.label}>
+            Groups
           </Text>
         ) : null}
-        {selection === 'audience' && groupState.error ? (
+        {groups.map((group) => (
+          <AudienceOption
+            key={group.id}
+            label={group.name}
+            selected={groupIds.includes(group.id)}
+            onPress={() => toggleAudience('group', group.id)}
+          />
+        ))}
+        {audienceState === 'ready' && !friends.length ? (
+          <Text style={styles.note}>No friends to invite yet.</Text>
+        ) : null}
+        {friends.length ? (
+          <Text accessibilityRole="header" style={styles.label}>
+            Friends
+          </Text>
+        ) : null}
+        {friends.map((friend) => (
+          <AudienceOption
+            key={friend.userId}
+            label={memberName(friend)}
+            selected={friendIds.includes(friend.userId)}
+            onPress={() => toggleAudience('friend', friend.userId)}
+          />
+        ))}
+        {audienceState === 'loading' ? <Text style={styles.note}>Loading people…</Text> : null}
+        {audienceState === 'error' ? (
           <ErrorState
-            message={groupState.error}
+            message="Some people couldn’t load."
             onRetry={() => {
-              setGroupState({ loading: true });
+              setAudienceState('loading');
               setRetry((n) => n + 1);
             }}
           />
         ) : null}
-        {selection === 'audience' && !groupState.loading && !groups.length && !groupState.error ? (
-          <Text style={styles.note}>No groups yet. You can share with all friends.</Text>
-        ) : null}
+        <Button
+          variant="secondary"
+          label="Done choosing people"
+          onPress={() => setAudienceOpen(false)}
+        />
       </Sheet>
     </Screen>
   );
 }
+function Chip({
+  label,
+  selected,
+  disabled,
+  onPress,
+}: {
+  label: string;
+  selected: boolean;
+  disabled: boolean;
+  onPress(): void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ selected, disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.chip,
+        selected && styles.chipSelected,
+        pressed && styles.pressed,
+      ]}
+    >
+      <Text style={[styles.secondary, selected && styles.accent]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function AudienceOption({
+  label,
+  selected,
+  disabled = false,
+  onPress,
+}: {
+  label: string;
+  selected: boolean;
+  disabled?: boolean;
+  onPress(): void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="checkbox"
+      accessibilityLabel={label}
+      accessibilityState={{ checked: selected, disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.option,
+        pressed && styles.pressed,
+        disabled && styles.disabled,
+      ]}
+    >
+      <Text style={[styles.value, selected && styles.accent]}>{label}</Text>
+      <Ionicons
+        name={selected ? 'checkbox' : 'square-outline'}
+        size={20}
+        color={selected ? colors.primary : colors.muted}
+      />
+    </Pressable>
+  );
+}
+
 function FormRow({
   label,
   value,
@@ -444,7 +630,21 @@ const styles = StyleSheet.create({
   },
   heading: { ...picksTheme.section, color: colors.text, flex: 1 },
   scroll: { flex: 1 },
-  body: { padding: space.xl, gap: space.xl },
+  body: { padding: space.lg, gap: space.lg },
+  chips: { gap: space.sm },
+  times: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  chip: {
+    minHeight: MIN_TARGET,
+    minWidth: MIN_TARGET,
+    justifyContent: 'center',
+    paddingHorizontal: space.md,
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  chipSelected: { borderColor: colors.primary },
+  preview: { ...picksTheme.secondary, color: colors.text },
   section: { gap: space.sm },
   label: { ...picksTheme.secondary, color: colors.muted, paddingHorizontal: space.md },
   group: { backgroundColor: colors.card, borderRadius: radius.md },
@@ -466,22 +666,16 @@ const styles = StyleSheet.create({
   value: { ...picksTheme.ui, color: colors.text, flexShrink: 1 },
   secondary: { ...picksTheme.secondary, color: colors.muted },
   accent: { color: colors.primary },
-  separator: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.border,
-    marginLeft: space.md,
-  },
   input: {
     ...picksTheme.ui,
     color: colors.text,
     minHeight: MIN_TARGET + space.md,
     padding: space.md,
-    borderTopWidth: 1,
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    borderWidth: 1,
     borderColor: colors.border,
-    borderBottomLeftRadius: radius.md,
-    borderBottomRightRadius: radius.md,
   },
-  inputFocused: { borderColor: colors.primary },
   pickerHead: {
     paddingLeft: space.md,
     flexDirection: 'row',
@@ -513,6 +707,7 @@ const styles = StyleSheet.create({
   disabled: { opacity: 0.5 },
   footer: {
     padding: space.lg,
+    gap: space.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
   },

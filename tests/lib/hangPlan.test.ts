@@ -1,4 +1,4 @@
-import { changeHangDate, hangPlanInput, hangTimeProblem } from '@/lib/hangPlan';
+import { changeHangDate, hangPlanInput, hangTimeProblem, resolveHangTime } from '@/lib/hangPlan';
 
 test('date editing preserves the local clock, including month and year boundaries', () => {
   const before = new Date(2026, 11, 31, 23, 45);
@@ -71,4 +71,29 @@ test('near-midnight minimum advances to the next valid minute and near-limit tim
   const last = new Date(now + 7 * 86400000);
   const time = changeHangDate(last, new Date(2026, 0, 1, 23, 59), 'time', now);
   expect(hangTimeProblem(time, now)).toBeNull();
+});
+
+test('Tomorrow follows the local calendar through a year boundary and spring DST', () => {
+  for (const today of [new Date(2026, 11, 31, 23, 58), new Date(2026, 2, 7, 23, 58)]) {
+    const expected = new Date(today);
+    expected.setDate(expected.getDate() + 1);
+    expected.setHours(19, 0, 0, 0);
+    expect(resolveHangTime('tomorrow', today.getTime())).toEqual(expected);
+  }
+});
+
+test('Tonight resolves to a future evening minute and stops at local midnight', () => {
+  expect(resolveHangTime('tonight', new Date(2026, 0, 15, 12).getTime())).toEqual(
+    new Date(2026, 0, 15, 19),
+  );
+  expect(resolveHangTime('tonight', new Date(2026, 0, 15, 23, 45).getTime())).toEqual(
+    new Date(2026, 0, 15, 23, 59),
+  );
+});
+
+test.each([
+  [new Date(2026, 10, 1, 12), new Date('2026-11-01T06:30:00Z')],
+  [new Date(2026, 2, 8, 12), new Date('2026-03-08T07:30:00Z')],
+])('native time on the same date preserves the exact DST instant', (current, selected) => {
+  expect(changeHangDate(current, selected, 'time')).toEqual(selected);
 });

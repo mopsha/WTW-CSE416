@@ -22,6 +22,7 @@ import { timeAgo } from '@/lib/time';
 
 const ICONS: Record<NotificationType, keyof typeof Ionicons.glyphMap> = {
   group_invite: 'people-outline',
+  hang_invite: 'flash-outline',
   group_message: 'chatbubbles-outline',
   direct_message: 'chatbubble-outline',
   added_to_pick: 'person-add-outline',
@@ -128,7 +129,7 @@ export default function InboxScreen() {
         <ErrorState message={load.message} onRetry={refresh} />
       ) : load.status === 'ready' && rows.length === 0 ? (
         <EmptyState
-          emoji="🔔"
+          icon="notifications-outline"
           title="Nothing yet"
           body="You'll see it here when a Pick starts, it's time to vote, or there's a winner."
         />

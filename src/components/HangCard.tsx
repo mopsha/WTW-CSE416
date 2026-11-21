@@ -3,7 +3,7 @@ import { usePrivateRefresh } from '@/hooks/usePrivateRefresh';
 import { OptimisticChoice, mutationStamp } from '@/lib/optimisticChoice';
 import { canRsvpHang, projectHangRsvp } from '@/lib/optimisticRsvp';
 import { useMotionPreference } from '@/hooks/useMotionPreference';
-import { HangPlanComposer } from './HangPlanComposer';
+import { HangPlanComposer, type HangSendRecovery } from './HangPlanComposer';
 import { picksTheme } from './theme';
 import { HangInvitation } from './picks/HangInvitation';
 import { router } from 'expo-router';
@@ -25,10 +25,12 @@ function HangFeed({ userId }: { userId: string | undefined }) {
   const [compose, setCompose] = useState(false);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const [recovery, setRecovery] = useState<HangSendRecovery | null>(null);
   const closeComposer = () => {
     if (!savingRef.current) setCompose(false);
   };
   const latest = useRef(0);
+  const sentPost = useRef<HangPost | null>(null);
   const [result, setResult] = useState<{
     posts: HangPost[];
     notice: string;
@@ -45,7 +47,26 @@ function HangFeed({ userId }: { userId: string | undefined }) {
     const stamp = mutationStamp();
     try {
       const response = await api.getHang(userId);
-      if (request === latest.current) setResult({ ...response, stamp });
+      if (request === latest.current) {
+        const posted = response.posts.find((post) => post.id === sentPost.current?.id);
+        const sent = sentPost.current;
+        let first = posted;
+        if (!first && sent && Date.parse(sent.expiresAt) > Date.now()) {
+          try {
+            first = await api.getHangPost(sent.id, userId);
+          } catch (error) {
+            if (!isAccessDenied(error)) first = sent;
+          }
+        }
+        if (request !== latest.current) return;
+        setResult({
+          ...response,
+          posts: first
+            ? [first, ...response.posts.filter((post) => post.id !== first.id)]
+            : response.posts,
+          stamp,
+        });
+      }
     } catch (error) {
       if (request !== latest.current) return;
       if (isAccessDenied(error))
@@ -78,6 +99,13 @@ function HangFeed({ userId }: { userId: string | undefined }) {
       {!current ? <Text style={styles.muted}>Loading hang plans…</Text> : null}
       {current?.notice ? <Text style={styles.muted}>{current.notice}</Text> : null}
       {current?.error ? <ErrorState message={current.error} onRetry={() => void reload()} /> : null}
+      <Button
+        variant="secondary"
+        style={styles.composeAction}
+        label="Make a hang plan"
+        icon="add"
+        onPress={() => setCompose(true)}
+      />
       {current?.posts
         .filter((p) => Date.parse(p.expiresAt) > now)
         .map((post) => (
@@ -94,13 +122,6 @@ function HangFeed({ userId }: { userId: string | undefined }) {
             }
           />
         ))}
-      <Button
-        variant="secondary"
-        style={styles.composeAction}
-        label="Make a hang plan"
-        icon="add"
-        onPress={() => setCompose(true)}
-      />
       <Modal
         visible={compose}
         animationType={reduceMotion ? 'none' : 'slide'}
@@ -112,11 +133,22 @@ function HangFeed({ userId }: { userId: string | undefined }) {
           <HangPlanComposer
             key={userId}
             onClose={closeComposer}
+            recovery={recovery}
+            onRecoveryChange={setRecovery}
             onSavingChange={(value) => {
               savingRef.current = value;
               setSaving(value);
             }}
-            onCreated={() => {
+            onCreated={(post) => {
+              if (post?.id) {
+                sentPost.current = post;
+                latest.current++;
+                setResult((previous) => ({
+                  posts: [post, ...(previous?.posts ?? []).filter((item) => item.id !== post.id)],
+                  notice: previous?.notice ?? '',
+                  stamp: mutationStamp(),
+                }));
+              }
               setCompose(false);
               void reload();
             }}
@@ -134,23 +166,29 @@ const styles = StyleSheet.create({
   muted: { ...type.caption, color: colors.muted },
 });
 
-function HangResponse({
-  post,
-  stamp,
-  userId,
-  onStart,
-}: {
+export function HangResponse(props: HangResponseProps) {
+  return <HangResponseContent key={JSON.stringify([props.userId, props.post.id])} {...props} />;
+}
+
+interface HangResponseProps {
   post: HangPost;
   stamp: number;
   userId: string | undefined;
   onStart: () => void;
-}) {
-  const read = async () => {
-    const next = (await api.getHang(userId)).posts.find((value) => value.id === post.id);
-    if (!next)
-      throw Object.assign(new Error('This hang plan is no longer available.'), { status: 404 });
-    return next;
-  };
+  singlePost?: boolean;
+}
+
+function HangResponseContent({
+  post,
+  stamp,
+  userId,
+  onStart,
+  singlePost = false,
+}: HangResponseProps) {
+  const read = async () =>
+    (!singlePost
+      ? (await api.getHang(userId)).posts.find((item) => item.id === post.id)
+      : undefined) ?? api.getHangPost(post.id, userId);
   const rsvp = useOptimisticChoice(
     () =>
       new OptimisticChoice<HangPost, HangStatus>(

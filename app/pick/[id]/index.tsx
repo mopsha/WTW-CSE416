@@ -31,7 +31,7 @@ export default function PickEntry() {
     return (
       <SafeAreaView style={pickStyles.screen}>
         <CenterMessage
-          emoji="🚫"
+          icon="close-circle-outline"
           title="This Pick was canceled"
           body={
             progress?.hostDeleted
@@ -51,7 +51,7 @@ export default function PickEntry() {
     return (
       <SafeAreaView style={pickStyles.screen}>
         <CenterMessage
-          emoji={missing ? '🔍' : '📡'}
+          icon={missing ? 'search-outline' : 'cloud-offline-outline'}
           title={missing ? 'We can’t find this Pick' : 'You’re offline'}
           body={
             missing

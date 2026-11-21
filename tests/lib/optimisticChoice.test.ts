@@ -250,3 +250,32 @@ test('an older post-write RSVP read cannot overwrite a newer participant snapsho
   expect(choice.snapshot().confirmed?.rsvps.going).toBe(3);
   choice.dispose();
 });
+
+test('Hang RSVP moves only the current viewer between attendee tabs', () => {
+  const viewer = { userId: 'viewer', username: 'viewer', displayName: 'Viewer' };
+  const other = {
+    userId: 'friend',
+    username: 'friend',
+    displayName: 'Friend',
+    status: 'down' as const,
+  };
+  const post = {
+    id: 'hang',
+    authorId: 'friend',
+    activity: 'Dinner',
+    startsAt: '',
+    expiresAt: '',
+    audience: 'all_friends' as const,
+    groupId: null,
+    viewer,
+    attendees: [other, { ...viewer, status: 'down' as const }],
+    myStatus: 'down' as const,
+    downCount: 2,
+    maybeCount: 0,
+  };
+  const maybe = projectHangRsvp(post, 'maybe');
+  expect(maybe.attendees).toEqual([{ ...viewer, status: 'maybe' }, other]);
+  expect(maybe).toMatchObject({ downCount: 1, maybeCount: 1 });
+  expect(projectHangRsvp(maybe, 'cant').attendees).toEqual([other]);
+  expect(post.attendees).toHaveLength(2);
+});
