@@ -37,7 +37,7 @@ export default function JoinByLink() {
   if (error) {
     return (
       <SafeAreaView style={pickStyles.screen}>
-        <CenterMessage emoji="🔍" title="Couldn’t join that Pick" body={error}>
+        <CenterMessage icon="search-outline" title="Couldn’t join that Pick" body={error}>
           <Button
             label="Back to your Picks"
             variant="secondary"
@@ -53,7 +53,7 @@ export default function JoinByLink() {
     return (
       <SafeAreaView style={pickStyles.screen}>
         <CenterMessage
-          emoji="🔥"
+          logo
           title="Join this Pick?"
           body="Someone shared a Pick with you. Join only if you know who sent it."
         >

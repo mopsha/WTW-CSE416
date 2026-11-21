@@ -121,7 +121,7 @@ function GroupsContent({ userId }: { userId: string }) {
 
       {groups && groups.length === 0 ? (
         <EmptyState
-          emoji="👯"
+          icon="people-outline"
           title="No groups yet"
           body="Make one for the people you always pick with, then start a Pick for all of them in a tap."
         />
@@ -149,7 +149,6 @@ function GroupsContent({ userId }: { userId: string }) {
             <Button
               label="Start a Pick"
               variant="secondary"
-              icon="flame"
               onPress={() => router.push(newGroupPickRoute(g))}
               accessibilityLabel={`Start a Pick with ${g.name}`}
             />

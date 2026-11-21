@@ -3,7 +3,6 @@ import { useMotionPreference } from '@/hooks/useMotionPreference';
 // Building blocks shared by the Pick screens (lobby, swipe, waiting, results, vote, winner),
 // in the live-demo look: dark surfaces, flame gradient, Poppins.
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useEffect, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -19,8 +18,9 @@ import Animated, {
 import type { LiveMode } from '@/hooks/usePickLive';
 import type { ParticipantProgress } from '@/lib/types';
 
+import { AppLogo, PulsingLogo, type IconName } from './AppLogo';
 import { Avatar } from './Avatar';
-import { colors, flame, fonts, MIN_TARGET, numeric } from './theme';
+import { colors, fonts, MIN_TARGET, numeric } from './theme';
 
 /** Leave the Pick flow for the Picks tab, whatever stack of replaced screens is underneath. */
 export function goToPicks() {
@@ -196,57 +196,32 @@ export function GroupAvatars({
   );
 }
 
-/** The pulsing flame orb the demo used while counting swipes. */
-export function FlameOrb({ emoji = '🔥', size = 110 }: { emoji?: string; size?: number }) {
-  const reducedMotion = useMotionPreference();
-  const s = useSharedValue(1);
-  useEffect(() => {
-    if (reducedMotion) {
-      s.value = 1;
-      return;
-    }
-    s.value = withRepeat(
-      withSequence(withTiming(1.12, { duration: 450 }), withTiming(1, { duration: 450 })),
-      -1,
-    );
-    return () => cancelAnimation(s);
-  }, [s, reducedMotion]);
-  const pulse = useAnimatedStyle(() => ({ transform: [{ scale: s.value }] }));
-  return (
-    <Animated.View style={pulse} accessible={false}>
-      <LinearGradient
-        colors={flame}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={{
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <Text style={{ fontSize: size * 0.47 }}>{emoji}</Text>
-      </LinearGradient>
-    </Animated.View>
-  );
-}
+/** Old name for PulsingLogo (the app icon breathing while a Pick screen loads or counts). */
+export const FlameOrb = PulsingLogo;
 
-/** A full-screen message: big emoji, title, body, then whatever actions. */
+/** A full-screen message: optional muted icon (or the app logo), title, body, then actions. */
 export function CenterMessage({
-  emoji,
+  icon,
+  logo,
   title,
   body,
   children,
 }: {
-  emoji?: string;
+  /** An Ionicons outline glyph, drawn decoratively in colors.muted. */
+  icon?: IconName;
+  /** Show the WTW app icon instead (confirmation screens like "Join this Pick?"). */
+  logo?: boolean;
   title: string;
   body?: string | null;
   children?: ReactNode;
 }) {
   return (
     <View style={styles.center}>
-      {emoji ? <Text style={styles.emoji}>{emoji}</Text> : null}
+      {logo ? (
+        <AppLogo size={72} />
+      ) : icon ? (
+        <Ionicons name={icon} size={56} color={colors.muted} accessible={false} />
+      ) : null}
       <Text style={styles.title} accessibilityRole="header">
         {title}
       </Text>
@@ -356,7 +331,6 @@ const styles = StyleSheet.create({
   ring: { borderRadius: 999, borderWidth: 2, borderColor: colors.bg },
   more: { fontFamily: fonts.bold, fontSize: 13, color: colors.muted },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24 },
-  emoji: { fontSize: 64 },
   title: {
     fontFamily: fonts.black,
     fontSize: 26,

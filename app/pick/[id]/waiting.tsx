@@ -66,7 +66,7 @@ export default function WaitingScreen() {
     lastState.current = live.state;
     if (closed && AppState.currentState !== 'active') {
       void notifyLater(
-        'The results are in 🔥',
+        'The results are in',
         'Tap to see what the group picked.',
         `/pick/${pickId}`,
         1,
@@ -132,7 +132,7 @@ export default function WaitingScreen() {
 
         <View style={styles.hero}>
           <Animated.View entering={reducedMotion ? undefined : ZoomIn.springify()}>
-            <FlameOrb emoji={allDone ? '🔥' : '⏳'} />
+            <FlameOrb />
           </Animated.View>
           <Text
             style={pickStyles.heading}
@@ -203,7 +203,7 @@ export default function WaitingScreen() {
         {isHost ? (
           <View style={{ gap: 8 }}>
             <GradientButton
-              label={allDone ? 'See results 🔥' : 'Close now and rank'}
+              label={allDone ? 'See results' : 'Close now and rank'}
               accessibilityHint="Closes swiping for everyone and ranks the places"
               loading={action.busy === 'close'}
               disabled={!!action.busy}

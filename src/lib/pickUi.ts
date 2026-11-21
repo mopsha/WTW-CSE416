@@ -1,4 +1,6 @@
 // Small pure helpers shared by the Pick screens (kept out of components so they're testable).
+import type { IconName } from '@/components/AppLogo';
+
 import type { Candidate, PickProgress, PickState } from './types';
 
 export function pickTitle(category: string | null | undefined): string {
@@ -10,9 +12,14 @@ export function pickTitle(category: string | null | undefined): string {
       : 'Food Pick';
 }
 
-export function pickEmoji(category: string | null | undefined): string {
-  if (category === 'both') return '🎲';
-  return category === 'custom' ? '✨' : category === 'activities' ? '🎳' : '🍜';
+/** Ionicons glyph for a Pick's category (matches Discover's restaurant/compass fallbacks). */
+export function pickIcon(category: string | null | undefined): IconName {
+  if (category === 'both') return 'shuffle-outline';
+  return category === 'custom'
+    ? 'create-outline'
+    : category === 'activities'
+      ? 'compass-outline'
+      : 'restaurant-outline';
 }
 
 export const STATE_LABEL: Record<PickState, string> = {
@@ -66,7 +73,7 @@ export function shareMessage(code: string | null, link = code ? `wtw://join/${co
 
 /** Waiting-room line: "3 of 5 finished swiping" (counts only, never answers). */
 export function progressLine(p: Pick<PickProgress, 'doneCount' | 'total'>): string {
-  if (p.total > 0 && p.doneCount >= p.total) return 'Everyone’s done 🔥';
+  if (p.total > 0 && p.doneCount >= p.total) return 'Everyone’s done';
   return `${p.doneCount} of ${p.total} finished swiping`;
 }
 

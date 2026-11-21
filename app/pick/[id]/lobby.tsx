@@ -35,7 +35,7 @@ import { api } from '@/lib/api';
 import { confirmAction } from '@/lib/confirm';
 import { messageOf } from '@/lib/errors';
 import { haptic } from '@/lib/haptics';
-import { pickEmoji, pickTitle, shareMessage } from '@/lib/pickUi';
+import { pickTitle, shareMessage } from '@/lib/pickUi';
 import { queries, type JoinCode } from '@/lib/queries';
 import type { PickDetail } from '@/lib/types';
 
@@ -195,7 +195,7 @@ function LobbyContent() {
     <SafeAreaView style={pickStyles.screen} edges={['top', 'left', 'right', 'bottom']}>
       <PickTopBar
         proposedAt={live.progress?.availability?.proposedAt}
-        title={`${pickTitle(pick?.category)} ${pickEmoji(pick?.category)}`}
+        title={pickTitle(pick?.category)}
         subtitle="Lobby · waiting to start"
         right={<LiveDot mode={live.mode} offline={!!live.error} />}
       />
@@ -337,7 +337,7 @@ function LobbyContent() {
         {isHost ? (
           <View style={{ gap: 8 }}>
             <GradientButton
-              label={enough ? 'Start swiping 🔥' : 'Need 2 people to start'}
+              label={enough ? 'Start swiping' : 'Need 2 people to start'}
               accessibilityHint="Builds the pool of places and starts swiping for everyone"
               disabled={!enough || !!action.busy}
               loading={action.busy === 'start'}

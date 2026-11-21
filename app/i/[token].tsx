@@ -51,7 +51,7 @@ export default function InviteLink() {
   if (error) {
     return (
       <SafeAreaView style={pickStyles.screen}>
-        <CenterMessage emoji="🔗" title="Couldn’t use that invite" body={error}>
+        <CenterMessage icon="link-outline" title="Couldn’t use that invite" body={error}>
           <Button label="Back to your Picks" variant="secondary" onPress={goToPicks} />
         </CenterMessage>
       </SafeAreaView>
@@ -62,7 +62,7 @@ export default function InviteLink() {
     return (
       <SafeAreaView style={pickStyles.screen}>
         <CenterMessage
-          emoji="🔗"
+          logo
           title="Accept this invite?"
           body="Someone invited you to a Pick or group. Accept only if you know who sent it."
         >
