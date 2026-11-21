@@ -14,15 +14,49 @@ import { UserProfileMetadata } from '@/components/UserProfileMetadata';
 import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
 export default function UserProfileScreen() {
-  const { id = '' } = useLocalSearchParams<{ id: string }>();
+  const { id = '', hangId } = useLocalSearchParams<{ id: string; hangId?: string }>();
   const { session } = useAuth();
+  const viewer = session?.user.id;
   return (
-    <UserProfileContent key={JSON.stringify([session?.user.id, session?.user.email, id])} id={id} />
+    <UserProfileContent
+      key={JSON.stringify([viewer, session?.user.email, id, hangId])}
+      id={id}
+      hangId={hangId}
+      viewer={viewer}
+    />
   );
 }
-function UserProfileContent({ id }: { id: string }) {
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const photo = useAvatarPhoto(profile?.avatarRef, profile?.id);
+
+type BasicProfile = Pick<UserProfile, 'id' | 'displayName' | 'username'>;
+
+async function loadProfile(id: string, hangId?: string, viewer?: string) {
+  try {
+    return await api.getUserProfile(id);
+  } catch (error) {
+    if (!hangId || !viewer || Number((error as { status?: number } | null)?.status) !== 404)
+      throw error;
+    // For a shared Hang, show only identity already visible on its authorized card.
+    const hang = await api.getHangPost(hangId, viewer);
+    if (Date.parse(hang.expiresAt) <= Date.now()) throw error;
+    const attendee = hang.attendees?.find((person) => person.userId === id);
+    if (attendee) return { id, displayName: attendee.displayName, username: attendee.username };
+    if (hang.authorId === id) return { id, displayName: hang.authorName ?? null, username: null };
+    throw error;
+  }
+}
+
+function UserProfileContent({
+  id,
+  hangId,
+  viewer,
+}: {
+  id: string;
+  hangId?: string;
+  viewer?: string;
+}) {
+  const [profile, setProfile] = useState<UserProfile | BasicProfile | null>(null);
+  const full = profile && 'metadataVisible' in profile ? profile : null;
+  const photo = useAvatarPhoto(full?.avatarRef, profile?.id);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const latest = useRef(0);
@@ -31,7 +65,7 @@ function UserProfileContent({ id }: { id: string }) {
     setError(null);
     setLoading(true);
     try {
-      const value = await api.getUserProfile(id);
+      const value = await loadProfile(id, hangId, viewer);
       if (request === latest.current) setProfile(value);
     } catch (e) {
       if (request === latest.current) {
@@ -41,7 +75,7 @@ function UserProfileContent({ id }: { id: string }) {
     } finally {
       if (request === latest.current) setLoading(false);
     }
-  }, [id]);
+  }, [id, hangId, viewer]);
   const clear = useCallback(() => {
     latest.current++;
     setProfile(null);
@@ -55,7 +89,7 @@ function UserProfileContent({ id }: { id: string }) {
       back
       onRefresh={() => void load()}
       right={
-        profile && !profile.isOwner ? (
+        profile && !full?.isOwner ? (
           <MemberMenu
             userId={profile.id}
             photo={photo.ref ?? undefined}
@@ -72,8 +106,8 @@ function UserProfileContent({ id }: { id: string }) {
           <View style={{ alignItems: 'center', gap: space.sm }}>
             <Avatar
               name={profile.displayName ?? 'WTW friend'}
-              uri={profile.avatarUrl}
-              avatarRef={profile.avatarRef}
+              uri={full?.avatarUrl}
+              avatarRef={full?.avatarRef}
               userId={profile.id}
               size={84}
             />
@@ -84,9 +118,13 @@ function UserProfileContent({ id }: { id: string }) {
               <Text style={{ ...type.body, color: colors.muted }}>@{profile.username}</Text>
             ) : null}
           </View>
-          {!profile.isOwner ? <MessageFriendButton userId={profile.id} /> : null}
-          <UserProfileMetadata profile={profile} />
-          <PastMoves key={`${profile.id}:${profile.metadataVisible}`} userId={profile.id} />
+          {full ? (
+            <>
+              {!full.isOwner ? <MessageFriendButton userId={full.id} /> : null}
+              <UserProfileMetadata profile={full} />
+              <PastMoves key={`${full.id}:${full.metadataVisible}`} userId={full.id} />
+            </>
+          ) : null}
         </View>
       ) : null}
     </Screen>

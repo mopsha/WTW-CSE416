@@ -73,6 +73,12 @@ export function routeForNotification(data: unknown): string | null {
       ? `/groups/${encodeURIComponent(groupId)}?section=chat`
       : null;
   }
+  if ((data as { type?: unknown }).type === 'hang_invite') {
+    const { hangId } = data as { hangId?: unknown };
+    return typeof hangId === 'string' && hangId.trim()
+      ? `/hang/${encodeURIComponent(hangId)}`
+      : '/';
+  }
   if ((data as { type?: unknown }).type === 'group_invite') return '/friends';
   const { url, pickId } = data as { url?: unknown; pickId?: unknown };
   if (typeof url === 'string' && url.startsWith('/')) return url;

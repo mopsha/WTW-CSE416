@@ -9,6 +9,7 @@ export const NOTIFICATION_TYPES = [
   'direct_message',
   'group_message',
   'group_invite',
+  'hang_invite',
   'added_to_pick',
   'pick_started',
   'reminder',
@@ -39,6 +40,7 @@ export const PUSH_TEXT: Readonly<Record<NotificationType, { title: string; body:
     title: 'Group invitation',
     body: 'Someone invited you to a group. Open WTW to respond.',
   },
+  hang_invite: { title: 'New Hang', body: 'Someone invited you to a Hang. Open WTW to respond.' },
   added_to_pick: { title: 'You’re in a Pick', body: 'Someone added you to a Pick.' },
   pick_started: { title: 'Time to swipe', body: 'Your Pick has started.' },
   reminder: { title: 'One hour left', body: 'You haven’t finished swiping yet.' },
@@ -105,6 +107,7 @@ export type Notifier = (
   type: NotificationType,
   pickId: string | null,
   payload?: Record<string, unknown>,
+  options?: { inboxRecorded: true },
 ) => Promise<void>;
 
 export const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
@@ -161,10 +164,14 @@ export function createNotifier(
   fetchFn: PushFetch,
   log: (...args: unknown[]) => void = console.error,
 ): Notifier {
-  return async (userIds, type, pickId, payload = {}) => {
+  return async (userIds, type, pickId, payload = {}, options) => {
     if (!userIds.length) return;
     try {
-      const fresh = await store.insert([...new Set(userIds)], type, pickId, payload);
+      const recipients = [...new Set(userIds)];
+      // Hang creation writes inbox rows atomically and returns only newly inserted recipients.
+      const fresh = options?.inboxRecorded
+        ? recipients
+        : await store.insert(recipients, type, pickId, payload);
       if (!fresh.length) return;
       const tokens = await store.tokensFor(fresh);
       if (!tokens.length) return;
@@ -176,6 +183,7 @@ export function createNotifier(
           data: {
             type,
             pickId,
+            ...(type === 'hang_invite' ? { hangId: payload.hangId } : {}),
             ...(type === 'group_message' ? { groupId: payload.groupId } : {}),
             ...(type === 'direct_message' ? { conversationId: payload.conversationId } : {}),
           },
