@@ -244,7 +244,17 @@ export function createApiClient({
   async function request<T>(
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
-    { body, auth = true, viewer }: { body?: unknown; auth?: boolean; viewer?: string } = {},
+    {
+      body,
+      auth = true,
+      viewer,
+      signal,
+    }: {
+      body?: unknown;
+      auth?: boolean;
+      viewer?: string;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<T> {
     const headers: Record<string, string> = {
       Accept: 'application/json',
@@ -266,6 +276,7 @@ export function createApiClient({
       res = await fetch(`${baseUrl}${path}`, {
         method,
         headers,
+        ...(signal ? { signal } : {}),
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     } catch {
@@ -483,8 +494,23 @@ export function createApiClient({
         sharedAvailable: boolean;
         notice: string;
       }>('GET', '/hang', { viewer }),
-    createHang: (input: import('@shared/api/hang.ts').HangInput) =>
-      request<import('@shared/api/hang.ts').HangPost>('POST', '/hang', { body: input }),
+    getHangPost: (id: string, viewer?: string) =>
+      request<import('@shared/api/hang.ts').HangPost>('GET', `/hang/${encodeURIComponent(id)}`, {
+        viewer,
+      }),
+    async createHang(input: import('@shared/api/hang.ts').HangInput, viewer?: string) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      try {
+        return await request<import('@shared/api/hang.ts').HangPost>('POST', '/hang', {
+          body: input,
+          viewer,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    },
     respondHang: (id: string, status: import('@shared/api/hang.ts').HangStatus, viewer?: string) =>
       request<StatusResponse>('POST', `/hang/${encodeURIComponent(id)}/respond`, {
         body: { status },
@@ -686,7 +712,7 @@ export function createApiClient({
           body: { username, targetId },
         },
       ),
-    listFriends: () => request<FriendsList>('GET', '/friends'),
+    listFriends: (viewer?: string) => request<FriendsList>('GET', '/friends', { viewer }),
     /** @deprecated Retired HTTP route: always rejects with 410 EMAIL_REQUESTS_RETIRED. */
     addFriend: (email: string) =>
       request<{ status: 'sent' }>('POST', '/friends/requests', { body: { email } }),

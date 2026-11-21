@@ -717,6 +717,24 @@ establishes command completion, not end-to-end cron delivery or live provider he
   while eligible. Migration 0022 adds the Pick link and group FK without destructive
   cleanup of legacy rows. Existing Pick/swipe/rank/vote RPCs are reused unchanged.
 
+### Hang composer audiences (0054)
+
+- New composer requests include an author-scoped `requestId`. Identical retries
+  return the original active Hang. A private canonical fingerprint detects changes
+  to activity, audience, or scheduling intent and returns `409 HANG_REQUEST_MISMATCH`.
+  `startNow: true` uses database creation time and keeps responses open for four hours.
+- `audience: "selected"` accepts `groupIds` and `friendIds`. The database checks
+  sender membership and friendship and stores the eligible recipients at send
+  time. Group access also requires continued membership in a selected group.
+  Direct and All Friends access require the original friendship to remain active.
+  Blocks apply in both directions. Hangs created before this migration keep their original audience rules.
+- Hang creation writes the recipient grants and one inbox row per eligible
+  recipient in one transaction. Existing push transport sends a generic notice
+  in the background for freshly inserted inbox rows.
+- `GET /hang/:id` reads an active, visible card even when it falls outside the
+  feed page. Push and inbox links open that card directly. Response counts use current eligibility.
+- Minimum attendee counts, reminders and other coordination features are future work.
+
 ## Group Ideas (0023)
 
 Unscheduled ideas belong to exactly one existing group. The group detail screen uses:

@@ -29,7 +29,7 @@ export interface Queries {
   /** The Pick's share code (Razin's pick_join_codes), or null if there isn't one yet. */
   getJoinCode(pickId: string): Promise<JoinCode | null>;
   /** Groups I'm in (RLS: members only), by name. */
-  listMyGroups(userId: string): Promise<GroupSummary[]>;
+  listMyGroups(userId: string, recentFirst?: boolean): Promise<GroupSummary[]>;
   /** A group I'm in, its members, and its Picks I'm in; null if it's gone or I'm not in it. */
   getGroup(groupId: string): Promise<GroupDetail | null>;
   /** My accepted friends (0008's friendships, PR #24); [] until that table exists. */
@@ -232,14 +232,15 @@ const supabaseQueries: Queries = {
     return row ? { code: row.code, expiresAt: row.expires_at } : null;
   },
 
-  async listMyGroups(userId) {
+  async listMyGroups(userId, recentFirst) {
+    const query = getSupabase()
+      .from('group_members')
+      .select('groups(id, name, owner_id, group_members(count))')
+      .eq('user_id', userId);
     const rows = check(
-      await getSupabase()
-        .from('group_members')
-        .select('groups(id, name, owner_id, group_members(count))')
-        .eq('user_id', userId),
+      await (recentFirst ? query.order('joined_at', { ascending: false }) : query),
     ) as unknown as { groups: GroupRow | GroupRow[] | null }[];
-    return rows
+    const groups = rows
       .flatMap((r) => (Array.isArray(r.groups) ? r.groups : r.groups ? [r.groups] : []))
       .map((g) => ({
         id: g.id,
@@ -247,8 +248,8 @@ const supabaseQueries: Queries = {
         ownerId: g.owner_id,
         isOwner: g.owner_id === userId,
         memberCount: g.group_members?.[0]?.count ?? 1,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      }));
+    return recentFirst ? groups : groups.sort((a, b) => a.name.localeCompare(b.name));
   },
 
   async getGroup(groupId) {

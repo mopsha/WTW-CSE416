@@ -42,9 +42,15 @@ const notifyStore = createNotifyStore();
 const notifier = createNotifier(notifyStore, (url, init) => fetch(url, init));
 
 // Supabase forwards /functions/v1/api/health to the runtime as /api/health.
+const edgeRuntime = (
+  globalThis as typeof globalThis & {
+    EdgeRuntime?: { waitUntil(work: Promise<unknown>): void };
+  }
+).EdgeRuntime;
 const app = createApp(
   {
     getUser,
+    runInBackground: edgeRuntime ? (work) => edgeRuntime.waitUntil(work) : undefined,
     availabilityEnabled: Deno.env.get('ENABLE_AVAILABILITY_PICKS') === 'true',
     timeSuggestionsEnabled: Deno.env.get('ENABLE_TIME_SUGGESTIONS') === 'true',
     timeSuggestionsStore: { ...createTimeSuggestionsStore(), notifier },

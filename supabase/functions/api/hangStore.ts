@@ -13,9 +13,11 @@ function fail(error: { code?: string; message?: string; hint?: string }): never 
         ? 'HANG_NOT_FOUND'
         : status === 429
           ? 'RATE_LIMITED'
-          : error.hint === 'no_down'
-            ? 'NO_DOWN_RESPONSES'
-            : 'HANG_CONFLICT',
+          : error.hint === 'request_mismatch'
+            ? 'HANG_REQUEST_MISMATCH'
+            : error.hint === 'no_down'
+              ? 'NO_DOWN_RESPONSES'
+              : 'HANG_CONFLICT',
       status === 404 ? 'Hang post not found' : (error.message ?? 'Hang request rejected'),
     );
   throw new ApiError(503, 'HANG_UNAVAILABLE', 'Hang posts unavailable');
