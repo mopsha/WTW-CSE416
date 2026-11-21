@@ -1,6 +1,6 @@
 import * as Location from 'expo-location';
 
-import { chosenLabel, describePlace, searchLocations } from '@/lib/locationSearch';
+import { areaName, chosenLabel, describePlace, searchLocations } from '@/lib/locationSearch';
 
 jest.mock('@/lib/config', () => ({ USE_MOCK: false }));
 jest.mock('expo-location', () => ({
@@ -188,4 +188,25 @@ test('a hung obsolete call times out the queue without releasing its native slot
   } finally {
     jest.useRealTimers();
   }
+});
+
+test('the Discover area name waits behind city search and reuses its cached answer', async () => {
+  let answer!: () => void;
+  jest.mocked(Location.reverseGeocodeAsync).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        answer = () => resolve([{ city: 'Port Jefferson', region: 'New York' }] as never);
+      }),
+  );
+  jest.mocked(Location.geocodeAsync).mockResolvedValueOnce([hit(40.9465, -73.0693)]);
+  await searchLocations('Port Jefferson', { onUpdate: jest.fn(), isCurrent: () => true });
+  await settle();
+  const area = areaName({ lat: 40.9465, lng: -73.0693 });
+  await settle();
+  // No overlapping native lookup while city search holds the slot.
+  expect(Location.reverseGeocodeAsync).toHaveBeenCalledTimes(1);
+  answer();
+  await expect(area).resolves.toBe('Port Jefferson');
+  await expect(areaName({ lat: 40.9465, lng: -73.0693 })).resolves.toBe('Port Jefferson');
+  expect(Location.reverseGeocodeAsync).toHaveBeenCalledTimes(1);
 });

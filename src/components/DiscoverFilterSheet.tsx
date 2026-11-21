@@ -5,6 +5,7 @@ import type { DiscoverFilter } from '@/lib/discover';
 import {
   ACTIVITY_TYPES,
   CUISINES,
+  DISCOVER_PRICES,
   FOOD_TYPES,
   milesToMeters,
   METERS_PER_MILE,
@@ -71,11 +72,14 @@ function Options({
 export function DiscoverFilterSheet({
   tab,
   applied,
+  from = 'your search area',
   onClose,
   onApply,
 }: {
   tab: DiscoverFilter;
   applied: DiscoverFilters;
+  /** Where distance is measured from, e.g. "your location" or "Stony Brook". */
+  from?: string;
   onClose(): void;
   onApply(value: DiscoverFilters): void;
 }) {
@@ -128,18 +132,22 @@ export function DiscoverFilterSheet({
           onChange={(activityTypes) => patch({ activityTypes })}
         />
       ) : null}
-      <Options
-        multiple={false}
-        label="Price"
-        anyLabel="Any price"
-        options={[0, 1, 2, 3, 4].map((n) => ({
-          value: String(n),
-          label: n === 0 ? 'Free' : `Up to ${'$'.repeat(n)}`,
-        }))}
-        values={draft.priceMax < 0 ? [] : [String(draft.priceMax)]}
-        onChange={(values) => patch({ priceMax: values.length ? Number(values.at(-1)) : -1 })}
-      />
-      <Text style={s.note}>Maximum price. Unknown prices do not match a price limit.</Text>
+      {tab === 'activities' ? null : (
+        <>
+          <Options
+            label="Price"
+            anyLabel="Any price"
+            options={DISCOVER_PRICES.map((o) => ({ value: String(o.value), label: o.label }))}
+            values={draft.prices.map(String)}
+            onChange={(values) => patch({ prices: values.map(Number).sort((a, b) => a - b) })}
+          />
+          <Text style={s.note}>
+            {tab === 'all'
+              ? 'Applies to food only. Activities are shown at any price.'
+              : 'Shows only the prices you pick. Places without a listed price are left out.'}
+          </Text>
+        </>
+      )}
       <Options
         multiple={false}
         label="Minimum rating"
@@ -185,7 +193,7 @@ export function DiscoverFilterSheet({
             />
           ))}
         </View>
-        <Text style={s.note}>Straight-line radius from Stony Brook, not driving distance.</Text>
+        <Text style={s.note}>Straight-line radius from {from}, not driving distance.</Text>
       </View>
       <View style={s.section}>
         <Text style={s.heading} accessibilityRole="header">
@@ -201,7 +209,7 @@ export function DiscoverFilterSheet({
         </View>
       </View>
       <Text style={s.note}>
-        Filters apply to a limited nearby selection. Some matching places may not be returned.
+        Price, rating and Open Now search again for matching places nearby, up to 20 per category.
       </Text>
     </Sheet>
   );

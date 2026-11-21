@@ -26,6 +26,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/hooks/useAuth';
+import { areaEyebrow, useDiscoverArea } from '@/hooks/useDiscoverArea';
 import { api } from '@/lib/api';
 import { photoSource, photoState, releasePhotos, type PhotoSource } from '@/lib/photoCache';
 import { usePhotoRequests } from '@/hooks/usePhotoRequests';
@@ -36,6 +37,8 @@ import {
   activeFilterCount,
   defaultDiscoverFilters,
   discoverFilterParams,
+  emptyFilterMessage,
+  type DiscoverFilterKey,
   resetDiscoverFilters,
   DISCOVER_SORTS,
   type DiscoverSort,
@@ -52,7 +55,7 @@ import {
   type DiscoverPlace,
 } from '@/lib/discover';
 import { haptic } from '@/lib/haptics';
-import { CAMPUS, formatPriceLevel, formatRating } from '@/lib/places';
+import { formatPriceLevel, formatRating } from '@/lib/places';
 import { directionsUrl } from '@/lib/pickUi';
 
 const EMPTY_PLACES: PhotoPlace[] = [];
@@ -63,7 +66,12 @@ const FILTERS = [
   { value: 'activities' as const, label: 'Activities' },
 ];
 
-type PhotoPlace = DiscoverPlace & { photoSource?: PhotoSource; photoScope?: string };
+type PhotoPlace = DiscoverPlace & {
+  photoSource?: PhotoSource;
+  photoScope?: string;
+  /** Miles measured from the device rather than campus. */
+  fromDevice?: boolean;
+};
 type LazyPlace = PhotoPlace & { photoPending?: boolean };
 
 /** Adds a lazily loaded cover and its photographer credit once it arrives. */
@@ -115,9 +123,8 @@ function PlaceTile({
   busy: boolean;
   ready: boolean;
 }) {
-  const details = [place.kind, milesLabel(place.miles), formatPriceLevel(place.priceLevel)]
-    .filter(Boolean)
-    .join(' · ');
+  const details = [place.kind, milesLabel(place.miles, !place.fromDevice)].join(' · ');
+  const price = formatPriceLevel(place.priceLevel ?? null);
   return (
     <View style={styles.tile}>
       <Pressable
@@ -139,6 +146,11 @@ function PlaceTile({
           </Text>
           <View style={styles.tileMetaRow}>
             <Text style={styles.tileMeta}>{details}</Text>
+            {price ? (
+              <Text style={styles.tileRating} accessibilityLabel={`Price ${price}`}>
+                {price}
+              </Text>
+            ) : null}
             {place.rating !== null ? (
               <Text style={styles.tileRating}>{formatRating(place.rating)}</Text>
             ) : null}
@@ -227,8 +239,8 @@ function PlaceSheet({
                 {[
                   place.kind,
                   formatRating(place.rating),
-                  formatPriceLevel(place.priceLevel),
-                  milesLabel(place.miles),
+                  formatPriceLevel(place.priceLevel ?? null),
+                  milesLabel(place.miles, !place.fromDevice),
                 ]
                   .filter(Boolean)
                   .map((t) => (
@@ -286,7 +298,11 @@ function DiscoverFeed({ userId }: { userId: string }) {
     places: PhotoPlace[];
     notice: string | null;
     error: string | null;
+    emptyBecause: DiscoverFilterKey[];
+    hoursUnknown: number;
+    hoursUnverified: boolean;
   } | null>(null);
+  const area = useDiscoverArea();
   const [retry, setRetry] = useState(0);
   const [applied, setApplied] = useState(defaultDiscoverFilters);
   const [sort, setSort] = useState<DiscoverSort>('recommended');
@@ -337,13 +353,17 @@ function DiscoverFeed({ userId }: { userId: string }) {
 
   const params = useMemo(
     () => ({
-      ...CAMPUS,
+      lat: area?.center.lat ?? NaN,
+      lng: area?.center.lng ?? NaN,
       category: filter,
       ...discoverFilterParams(applied, filter),
       ...(sort !== 'recommended' ? { sort } : {}),
     }),
-    [applied, filter, sort],
+    [applied, filter, sort, area?.center.lat, area?.center.lng],
   );
+  const fromDevice = area?.device ?? false;
+  // The center is part of scope; this only holds the first search until the area is known.
+  const areaReady = area !== null;
   const scope = JSON.stringify([params, userId]);
   const requestKey = JSON.stringify([scope, retry]);
   const viewScope = JSON.stringify([scope, query]);
@@ -375,11 +395,20 @@ function DiscoverFeed({ userId }: { userId: string }) {
   const notice = current?.notice ?? null;
   const error = current?.error ?? null;
   const loading = !current;
+  const emptyBecause = current?.emptyBecause ?? [];
+  const hoursNote = !current
+    ? null
+    : current.hoursUnverified
+      ? 'These places don’t list their hours, so they may not be open now.'
+      : current.hoursUnknown
+        ? `${current.hoursUnknown} place${current.hoursUnknown === 1 ? '' : 's'} without listed hours ${current.hoursUnknown === 1 ? 'is' : 'are'} hidden.`
+        : null;
   const count = activeFilterCount(applied, filter);
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || !areaReady) return;
     let active = true;
     const [requestParams] = JSON.parse(scope) as [Parameters<typeof api.discover>[0], string];
+    const center = { lat: requestParams.lat, lng: requestParams.lng };
     api
       .discover(requestParams)
       .then((result) => {
@@ -388,14 +417,18 @@ function DiscoverFeed({ userId }: { userId: string }) {
             key: requestKey,
             scope,
             places: result.places.map((p) => {
-              const { photoName, ...place } = discoverPlace(p, CAMPUS);
+              const { photoName, ...place } = discoverPlace(p, center);
               return {
                 ...place,
+                fromDevice,
                 ...(photoName ? { photoSource: photoSource(photoName, userId) } : {}),
               };
             }),
             notice: result.notice,
             error: null,
+            emptyBecause: result.emptyBecause ?? [],
+            hoursUnknown: result.hoursUnknown ?? 0,
+            hoursUnverified: result.hoursUnverified ?? false,
           });
       })
       .catch((e) => {
@@ -406,12 +439,15 @@ function DiscoverFeed({ userId }: { userId: string }) {
             places: !isAccessDenied(e) && previous?.scope === scope ? previous.places : [],
             notice: null,
             error: messageOf(e),
+            emptyBecause: [],
+            hoursUnknown: 0,
+            hoursUnverified: false,
           }));
       });
     return () => {
       active = false;
     };
-  }, [requestKey, scope, userId]);
+  }, [requestKey, scope, userId, areaReady, fromDevice]);
 
   const places = useMemo(
     () => filterDiscover(feed, { category: filter, query }),
@@ -432,6 +468,11 @@ function DiscoverFeed({ userId }: { userId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [displayed, saved, savedRevision],
   );
+  const filterEmpty = query.trim() ? null : emptyFilterMessage(emptyBecause, applied, filter);
+  const clearFilters = () => {
+    setQuery('');
+    setApplied(resetDiscoverFilters(applied, filter));
+  };
   const show = (p: PhotoPlace) => {
     haptic.tap();
     setOpen(p);
@@ -471,7 +512,7 @@ function DiscoverFeed({ userId }: { userId: string }) {
               </Text>
               <View style={styles.location}>
                 <Ionicons name="location-outline" size={14} color={colors.muted} />
-                <Text style={styles.eyebrow}>AROUND STONY BROOK</Text>
+                <Text style={styles.eyebrow}>{areaEyebrow(area)}</Text>
               </View>
             </View>
 
@@ -586,8 +627,18 @@ function DiscoverFeed({ userId }: { userId: string }) {
               <Text style={styles.feedTitle} accessibilityRole="header">
                 {query.trim()
                   ? `${places.length} result${places.length === 1 ? '' : 's'}`
-                  : 'Near campus'}
+                  : count
+                    ? 'Matching places'
+                    : fromDevice
+                      ? 'Near you'
+                      : `Around ${area?.name ?? 'you'}`}
               </Text>
+              {current && !error && !query.trim() ? (
+                <Text style={styles.count} accessibilityLiveRegion="polite">
+                  {`${displayed.length} place${displayed.length === 1 ? '' : 's'}`}
+                </Text>
+              ) : null}
+              {hoursNote ? <Text style={styles.sub}>{hoursNote}</Text> : null}
               {notice ? (
                 <Text style={styles.sub}>{notice}</Text>
               ) : current && !error ? (
@@ -605,22 +656,18 @@ function DiscoverFeed({ userId }: { userId: string }) {
             <View style={{ gap: space.sm }}>
               <QuietEmpty
                 icon="search-outline"
-                title="No places match your filters."
-                body="Try another search, or adjust the filters for this nearby selection."
+                title={filterEmpty?.title ?? 'No places match your filters.'}
+                body={
+                  filterEmpty?.body ??
+                  'Try another search, or adjust the filters for this nearby selection.'
+                }
               />
               <Button
                 label="Adjust filters"
                 variant="secondary"
                 onPress={() => setFiltersOpen(true)}
               />
-              <Button
-                label="Reset filters"
-                variant="link"
-                onPress={() => {
-                  setQuery('');
-                  setApplied(resetDiscoverFilters(applied, filter));
-                }}
-              />
+              <Button label="Clear filters" variant="link" onPress={clearFilters} />
             </View>
           )
         }
@@ -634,6 +681,7 @@ function DiscoverFeed({ userId }: { userId: string }) {
         <DiscoverFilterSheet
           tab={filter}
           applied={applied}
+          from={fromDevice ? 'your location' : (area?.name ?? 'Stony Brook')}
           onClose={() => setFiltersOpen(false)}
           onApply={(next) => {
             setApplied(next);
@@ -781,6 +829,7 @@ const styles = StyleSheet.create({
   },
   sub: { fontSize: 13, lineHeight: 19, color: colors.muted },
   feedIntro: { gap: space.xs },
+  count: { ...type.caption, fontFamily: fonts.semibold, color: colors.muted },
   feedTitle: { fontSize: 20, lineHeight: 27, fontWeight: '700', color: colors.text },
   section: { fontFamily: fonts.bold, fontSize: 18, color: colors.text },
   search: {
