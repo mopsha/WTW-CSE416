@@ -265,11 +265,11 @@ export async function currentLocation({
 export async function areaName(center: LatLng): Promise<string | null> {
   if (Platform.OS === 'web') return null;
   try {
-    const [hit] = await Location.reverseGeocodeAsync({
-      latitude: center.lat,
-      longitude: center.lng,
-    });
-    return hit?.city?.trim() || hit?.district?.trim() || hit?.subregion?.trim() || null;
+    // Shares the reverse-geocode queue, 2.5 s timeout and cache with city search (#79):
+    // iOS throttles overlapping lookups.
+    const hit = await reverseGeocode(center, () => true);
+    if (!hit || hit === SKIPPED) return null;
+    return hit.city?.trim() || hit.district?.trim() || hit.subregion?.trim() || null;
   } catch {
     return null;
   }
