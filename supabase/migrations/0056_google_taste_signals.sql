@@ -163,19 +163,19 @@ returns table (source uuid, place_type text, weight real, at timestamptz, google
 language sql stable security definer set search_path = '' as $$
   select e.* from (
     select private.taste_source('swipe', pr.pick_id, pr.place_id), c.snapshot ->> 'tasteType',
-           private.swipe_weight(pr.value), pr.updated_at, c.snapshot ->> 'provider' = 'google'
+           private.swipe_weight(pr.value), pr.updated_at, coalesce(c.snapshot ->> 'provider' = 'google', false)
       from public.preferences pr
       join public.pick_candidates c on c.pick_id = pr.pick_id and c.place_id = pr.place_id
      where pr.user_id = p_user_id
     union all
     select private.taste_source('vote', v.pick_id, null), c.snapshot ->> 'tasteType', 1::real,
-           v.created_at, c.snapshot ->> 'provider' = 'google'
+           v.created_at, coalesce(c.snapshot ->> 'provider' = 'google', false)
       from public.final_votes v
       join public.pick_candidates c on c.pick_id = v.pick_id and c.place_id = v.place_id
      where v.user_id = p_user_id
     union all
     select private.taste_source('winner', p.id, null), c.snapshot ->> 'tasteType', 2::real,
-           p.decided_at, c.snapshot ->> 'provider' = 'google'
+           p.decided_at, coalesce(c.snapshot ->> 'provider' = 'google', false)
       from public.picks p
       join public.pick_participants pp on pp.pick_id = p.id and pp.user_id = p_user_id
       join public.pick_candidates c on c.pick_id = p.id and c.place_id = p.winner_place_id
