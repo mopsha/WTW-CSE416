@@ -85,7 +85,11 @@ export default function VoteScreen() {
     return (
       <SafeAreaView style={pickStyles.screen}>
         <PickTopBar title="Final vote" />
-        <CenterMessage emoji="📡" title="Couldn’t load the finalists" body={reveal.message}>
+        <CenterMessage
+          icon="cloud-offline-outline"
+          title="Couldn’t load the finalists"
+          body={reveal.message}
+        >
           <GradientButton label="Try again" onPress={retry} />
           <Button label="Back to your Picks" variant="link" onPress={goToPicks} />
         </CenterMessage>
@@ -96,7 +100,7 @@ export default function VoteScreen() {
     return (
       <SafeAreaView style={pickStyles.screen}>
         <View style={styles.center}>
-          <FlameOrb emoji="🗳️" />
+          <FlameOrb />
         </View>
       </SafeAreaView>
     );
@@ -123,7 +127,7 @@ export default function VoteScreen() {
         >
           <Text style={pickStyles.eyebrow}>TAP YOUR FAVORITE</Text>
           <Text style={pickStyles.heading} accessibilityRole="header">
-            Where are we going? 🗳️
+            Where are we going?
           </Text>
           <Text style={pickStyles.muted}>
             {mine

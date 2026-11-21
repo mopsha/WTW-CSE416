@@ -38,6 +38,8 @@ export interface CreatePickInput extends PlaceFilters, PlanOptions {
   poolSize: number;
   /** ISO 8601, or null for no deadline (the host closes it, or the threshold does). */
   deadlineAt: string | null;
+  /** The chosen swipe length. Start times it from the server clock (0052), not deadlineAt. */
+  swipeMinutes?: number;
   closeThreshold: number;
 }
 
@@ -86,6 +88,13 @@ export function validateCreatePick(input: unknown, now: number = Date.now()): Cr
       );
   } else if (body.swipeDeadlineMinutes !== undefined)
     add('swipeDeadlineMinutes', 'A deferred deadline requires a proposed outing time.');
+  if (
+    body.swipeMinutes !== undefined &&
+    (!isInt(body.swipeMinutes) ||
+      body.swipeMinutes * 60_000 < MIN_DEADLINE_LEAD_MS ||
+      body.swipeMinutes * 60_000 > MAX_DEADLINE_LEAD_MS)
+  )
+    add('swipeMinutes', 'Choose a supported swipe deadline.');
 
   if (!PICK_CATEGORIES.includes(body.category as PickCategory)) {
     add('category', 'Choose food, activities, both or a custom plan.');

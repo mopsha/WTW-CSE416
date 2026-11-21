@@ -2,13 +2,15 @@ import {
   cancelPick,
   createPick,
   getPick,
+  leavePick,
   parseCreatePick,
   refreshPick,
   startPick,
   type LifecycleStore,
   type LifecyclePick,
 } from '@shared/api/lifecycle.ts';
-import type { PoolBuilder } from '@shared/places/pool.ts';
+import { createPoolBuilder, type PoolBuilder } from '@shared/places/pool.ts';
+import { ProviderTimeoutError } from '@shared/places/timeout.ts';
 import type { Candidate } from '@shared/places/types.ts';
 
 const pick = (overrides: Partial<LifecyclePick> = {}): LifecyclePick => ({
@@ -93,6 +95,68 @@ describe('parseCreatePick', () => {
       deadlineAt: null,
     });
   });
+  test('the chosen swipe length sets the deadline from the server clock', () => {
+    const base = { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000 };
+    const at = (min: number) => new Date(now + min * 60_000).toISOString();
+    // A 5-minute Pick whose request arrived late, and one with no timestamp at all.
+    expect(parseCreatePick({ ...base, deadlineAt: at(4.5), swipeMinutes: 5 }, now)).toMatchObject({
+      swipeMinutes: 5,
+      deadlineAt: at(5),
+    });
+    expect(parseCreatePick({ ...base, swipeMinutes: 30 }, now)).toMatchObject({
+      swipeMinutes: 30,
+      deadlineAt: at(30),
+    });
+    expect(() => parseCreatePick({ ...base, swipeMinutes: 2 }, now)).toThrow();
+  });
+  test.each([
+    [28, 30],
+    [26, 30],
+    [57, 60],
+    [4, 5],
+    [4.5, 5],
+    [5, 5],
+    [25, 30],
+    [30, 30],
+    [55, 60],
+    [175, 180],
+    [1435, 1440],
+  ])("an older build's %i-minute lead becomes %i minutes", (lead, minutes) => {
+    const base = { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000 };
+    const deadlineAt = new Date(now + lead * 60_000).toISOString();
+    expect(parseCreatePick({ ...base, deadlineAt }, now)).toMatchObject({
+      swipeMinutes: minutes,
+      deadlineAt: new Date(now + minutes * 60_000).toISOString(),
+    });
+  });
+  test.each([5, 30, 60, 180, 1440])(
+    'accepts up to 30 seconds of positive skew for the %i-minute choice',
+    (minutes) => {
+      const base = { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000 };
+      const nominal = now + minutes * 60_000;
+      for (const skew of [1_000, 29_999, 30_000]) {
+        const deadlineAt = new Date(nominal + skew).toISOString();
+        expect(parseCreatePick({ ...base, deadlineAt }, now)).toMatchObject({
+          swipeMinutes: minutes,
+          deadlineAt: new Date(nominal).toISOString(),
+        });
+      }
+      const deadlineAt = new Date(nominal + 30_001).toISOString();
+      expect(() => parseCreatePick({ ...base, deadlineAt }, now)).toThrow(
+        'Choose a supported swipe deadline or no deadline.',
+      );
+    },
+  );
+  test.each([3.99, 5.51, 10, 12, 24.99, 34, 61, 1446])(
+    'rejects an ambiguous or unsupported %s-minute legacy lead',
+    (lead) => {
+      const base = { category: 'food', center: { lat: 0, lng: 0 }, radiusM: 1000 };
+      const deadlineAt = new Date(now + lead * 60_000).toISOString();
+      expect(() => parseCreatePick({ ...base, deadlineAt }, now)).toThrow(
+        'Choose a supported swipe deadline or no deadline.',
+      );
+    },
+  );
 });
 
 test('createPick passes the parsed input straight through and returns pickId', async () => {
@@ -478,4 +542,174 @@ test('pure custom start avoids external providers; mixed options keep custom bef
     second.placeId,
     'nearby',
   ]);
+});
+
+describe('an area with no places', () => {
+  test('start widens it (2x, then 4x) and saves the radius with the deck', async () => {
+    const store = { ...fixture(), startChecked: jest.fn().mockResolvedValue(true) };
+    const buildPool = jest
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([candidate('far')]);
+    await startPick(store, { buildPool }, 'pick', 'host');
+    expect(buildPool.mock.calls.map(([q]) => q.radiusM)).toEqual([1000, 2000, 4000]);
+    expect(store.startChecked).toHaveBeenCalledWith(
+      'pick',
+      'host',
+      [expect.objectContaining({ placeId: 'far' })],
+      4000,
+      ['host', 'guest'],
+    );
+    expect(store.start).not.toHaveBeenCalled();
+  });
+
+  test('gives up with a plain message after two widenings', async () => {
+    const store = { ...fixture(), startChecked: jest.fn().mockResolvedValue(true) };
+    await expect(startPick(store, poolOf([]), 'pick', 'host')).rejects.toMatchObject({
+      status: 409,
+      code: 'NO_CANDIDATES',
+      message: 'No places found within 2 mi. Cancel this Pick and try another area.',
+    });
+    expect(store.startChecked).not.toHaveBeenCalled();
+    expect(store.start).not.toHaveBeenCalled();
+  });
+
+  test('a found area keeps its radius', async () => {
+    const store = { ...fixture(), startChecked: jest.fn().mockResolvedValue(true) };
+    await startPick(store, poolOf([candidate('a')]), 'pick', 'host');
+    expect(store.startChecked.mock.calls[0]![3]).toBe(1000);
+  });
+
+  test.each<[string, Candidate[] | Error, Candidate[] | Error]>([
+    ['empty primary, failed fallback', [], new Error('offline')],
+    [
+      'timed-out primary, filtered fallback',
+      new ProviderTimeoutError(),
+      [{ ...candidate('too-expensive'), priceLevel: 4 }],
+    ],
+  ])('%s returns a 503 without widening', async (_label, primaryResult, fallbackResult) => {
+    const primary = {
+      search: jest.fn(async () => {
+        if (primaryResult instanceof Error) throw primaryResult;
+        return primaryResult;
+      }),
+    };
+    const fallback = {
+      search: jest.fn(async () => {
+        if (fallbackResult instanceof Error) throw fallbackResult;
+        return fallbackResult;
+      }),
+    };
+    const store = { ...fixture(pick({ priceMax: 1 })), startChecked: jest.fn() };
+
+    await expect(
+      startPick(store, createPoolBuilder(primary, { fallback }), 'pick', 'host'),
+    ).rejects.toMatchObject({ status: 503, code: 'PLACES_UNAVAILABLE' });
+    expect(primary.search).toHaveBeenCalledTimes(1);
+    expect(fallback.search).toHaveBeenCalledTimes(1);
+    expect(store.startChecked).not.toHaveBeenCalled();
+  });
+
+  test('two genuinely empty providers widen to the radius limit', async () => {
+    const primary = { search: jest.fn().mockResolvedValue([]) };
+    const fallback = { search: jest.fn().mockResolvedValue([]) };
+    const store = { ...fixture(), startChecked: jest.fn() };
+
+    await expect(
+      startPick(store, createPoolBuilder(primary, { fallback }), 'pick', 'host'),
+    ).rejects.toMatchObject({ status: 409, code: 'NO_CANDIDATES' });
+    for (const provider of [primary, fallback]) {
+      expect(provider.search.mock.calls.map(([request]) => request.radiusM)).toEqual([
+        1000, 2000, 4000,
+      ]);
+    }
+    expect(store.startChecked).not.toHaveBeenCalled();
+  });
+
+  test('usable fallback candidates let Start proceed at the requested radius', async () => {
+    const primary = { search: jest.fn().mockRejectedValue(new Error('offline')) };
+    const fallback = { search: jest.fn().mockResolvedValue([candidate('fallback')]) };
+    const store = { ...fixture(), startChecked: jest.fn().mockResolvedValue(true) };
+
+    await startPick(store, createPoolBuilder(primary, { fallback }), 'pick', 'host');
+
+    expect(primary.search).toHaveBeenCalledTimes(1);
+    expect(fallback.search).toHaveBeenCalledTimes(1);
+    expect(store.startChecked).toHaveBeenCalledWith(
+      'pick',
+      'host',
+      [expect.objectContaining({ placeId: 'fallback' })],
+      1000,
+      ['host', 'guest'],
+    );
+  });
+});
+
+describe('membership changing during start', () => {
+  test('rebuilds until the deck matches who is there, and notifies only them', async () => {
+    const notifier = jest.fn();
+    const store = {
+      ...fixture(pick({ participantIds: ['host', 'guest', 'gone'] })),
+      memberTastes: jest.fn().mockResolvedValue([]),
+      // The roster moved twice: someone left, then someone joined during the rebuild.
+      startChecked: jest
+        .fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValue(true),
+      notifier,
+    };
+    store.load
+      .mockResolvedValueOnce(pick({ participantIds: ['host', 'guest', 'gone'] }))
+      .mockResolvedValueOnce(pick({ participantIds: ['host', 'guest'] }))
+      .mockResolvedValueOnce(pick({ participantIds: ['host', 'guest', 'new'] }));
+    await startPick(store, poolOf([candidate('a')]), 'pick', 'host');
+    expect(store.memberTastes.mock.calls.map(([ids]) => ids)).toEqual([
+      ['host', 'guest', 'gone'],
+      ['host', 'guest'],
+      ['host', 'guest', 'new'],
+    ]);
+    expect(store.startChecked.mock.calls.at(-1)![4]).toEqual(['host', 'guest', 'new']);
+    expect(notifier).toHaveBeenCalledTimes(1);
+    expect(notifier).toHaveBeenCalledWith(['guest', 'new'], 'pick_started', 'pick');
+  });
+
+  test('stops if everyone else left', async () => {
+    const store = { ...fixture(), startChecked: jest.fn().mockResolvedValueOnce(false) };
+    store.load
+      .mockResolvedValueOnce(pick())
+      .mockResolvedValueOnce(pick({ participantIds: ['host'] }));
+    await expect(startPick(store, poolOf([candidate('a')]), 'pick', 'host')).rejects.toMatchObject({
+      code: 'NOT_ENOUGH_PARTICIPANTS',
+    });
+    expect(store.startChecked).toHaveBeenCalledTimes(1);
+  });
+
+  test('gives up with a try-again error if the group keeps changing', async () => {
+    const notifier = jest.fn();
+    const store = { ...fixture(), startChecked: jest.fn().mockResolvedValue(false), notifier };
+    await expect(startPick(store, poolOf([candidate('a')]), 'pick', 'host')).rejects.toMatchObject({
+      code: 'PICK_CONFLICT',
+    });
+    expect(store.startChecked).toHaveBeenCalledTimes(3);
+    expect(notifier).not.toHaveBeenCalled();
+  });
+});
+
+describe('leavePick', () => {
+  test('a guest leaves', async () => {
+    const store = { ...fixture(pick({ state: 'swiping' })), leave: jest.fn() };
+    await expect(leavePick(store, 'pick', 'guest')).resolves.toEqual({ state: 'left' });
+    expect(store.leave).toHaveBeenCalledWith('pick', 'guest');
+  });
+
+  test('the host cancels instead, and outsiders get nothing', async () => {
+    const store = { ...fixture(), leave: jest.fn() };
+    await expect(leavePick(store, 'pick', 'host')).rejects.toMatchObject({
+      code: 'HOST_CANNOT_LEAVE',
+    });
+    await expect(leavePick(store, 'pick', 'stranger')).rejects.toMatchObject({ status: 403 });
+    expect(store.leave).not.toHaveBeenCalled();
+  });
 });

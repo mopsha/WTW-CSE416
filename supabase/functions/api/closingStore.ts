@@ -1,6 +1,6 @@
 import { ApiError, type ErrorStatus } from '../_shared/api/errors.ts';
 import type { ClosingSnapshot, ClosingStore, RankingWrite } from '../_shared/api/closing.ts';
-import type { VoteSnapshot, VotingStore } from '../_shared/api/voting.ts';
+import type { VoteSettlement, VoteSnapshot, VotingStore } from '../_shared/api/voting.ts';
 import { createServiceClient } from './serviceClient.ts';
 
 function mapRpcError(error: { code: string; message: string }): never {
@@ -15,10 +15,10 @@ function mapRpcError(error: { code: string; message: string }): never {
   const status = statuses[error.code];
   if (status) {
     const messages = {
-      400: 'Invalid request',
-      403: 'Pick access denied',
-      404: 'Pick not found',
-      409: 'Pick changed; reload before trying again',
+      400: 'Something about that didn’t look right. Try again.',
+      403: 'You can’t do that in this Pick.',
+      404: 'This Pick isn’t available anymore.',
+      409: 'This Pick just changed. Go back and open it again.',
     };
     throw new ApiError(
       status,
@@ -55,12 +55,14 @@ export function createClosingStore(): ClosingStore & VotingStore {
     async castVote(pickId, userId, placeId) {
       await rpc('pick_cast_vote', { p_pick_id: pickId, p_user_id: userId, p_place_id: placeId });
     },
-    async applyVoteClose(pickId, winnerPlaceId, decidedBy) {
-      await rpc('pick_close_vote_apply', {
+    async applyVoteClose(pickId, winnerPlaceId, decidedBy, ballots, participantIds) {
+      return (await rpc('pick_close_vote_apply', {
         p_pick_id: pickId,
         p_winner_place_id: winnerPlaceId,
         p_decided_by: decidedBy,
-      });
+        p_ballots: ballots,
+        p_participant_ids: participantIds,
+      })) as VoteSettlement;
     },
   };
 }

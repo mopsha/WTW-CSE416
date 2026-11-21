@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useMotionPreference } from '@/hooks/useMotionPreference';
 import { useEffect } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
@@ -10,11 +11,13 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import type { IconName } from './AppLogo';
 import { colors, fonts } from './theme';
 
 export interface Toast {
   id: number;
-  emoji: string;
+  /** Ionicons glyph in the colored dot; the dot alone when omitted. */
+  icon?: IconName;
   text: string;
   color?: string;
 }
@@ -52,7 +55,9 @@ export function ActivityToast({ toast }: { toast: Toast }) {
       accessibilityLiveRegion="polite"
     >
       <View style={[styles.dot, { backgroundColor: toast.color ?? colors.primary }]}>
-        <Text style={styles.emoji}>{toast.emoji}</Text>
+        {toast.icon ? (
+          <Ionicons name={toast.icon} size={18} color={colors.primaryText} accessible={false} />
+        ) : null}
       </View>
       <Text style={styles.text} numberOfLines={2}>
         {toast.text}
@@ -83,6 +88,5 @@ const styles = StyleSheet.create({
     elevation: 12,
   },
   dot: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  emoji: { fontSize: 18 },
   text: { flex: 1, fontFamily: fonts.semibold, fontSize: 15, color: colors.text },
 });

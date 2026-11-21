@@ -657,6 +657,8 @@ export function createApiClient({
       request<{ state: PickState }>('POST', `${pickPath(pickId)}/cancel`, {
         body: reason?.trim() ? { reason: reason.trim() } : undefined,
       }),
+    /** Guests only: leave a Pick that hasn't finished. The host cancels instead. */
+    leavePick: (pickId: string) => request<{ state: 'left' }>('POST', `${pickPath(pickId)}/leave`),
     /** Host only: close swiping now (rank -> clear winner or final vote). */
     closePick: (pickId: string) => request<CloseResponse>('POST', `${pickPath(pickId)}/close`),
     /** One changeable ballot among the finalists, while the Pick is in final_vote. */

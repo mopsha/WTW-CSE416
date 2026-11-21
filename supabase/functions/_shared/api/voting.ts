@@ -21,14 +21,22 @@ export interface VoteSnapshot {
 export interface VotingStore {
   loadForVote(pickId: string): Promise<VoteSnapshot | null>;
   castVote(pickId: string, userId: string, placeId: string): Promise<void>;
-  /** Silently a no-op if the vote already settled (host/everyone-voted/deadline raced). */
-  applyVoteClose(pickId: string, winnerPlaceId: string, decidedBy: VoteDecidedBy): Promise<void>;
-  /** Announces the winner; racing settles are deduplicated by the database. */
+  /** Reports whether the winner was written, the snapshot changed, or the round closed. */
+  applyVoteClose(
+    pickId: string,
+    winnerPlaceId: string,
+    decidedBy: VoteDecidedBy,
+    ballots: VoteSnapshot['ballots'],
+    participantIds: string[],
+  ): Promise<VoteSettlement>;
+  /** Announces the winner after the database confirms settlement. */
   notifier?: Notifier;
 }
 
 /** 'tie_break' when the top vote count was shared and rank order picked the winner. */
 export type VoteDecidedBy = 'vote' | 'tie_break';
+
+export type VoteSettlement = 'committed' | 'stale' | 'closed';
 
 /** Pure tally: the winner (voteWinner's tie chain) and whether a tie decided it. */
 export function tallyVotes(
@@ -54,10 +62,41 @@ export function parseVote(body: unknown): string {
   return placeId;
 }
 
-async function settleVote(store: VotingStore, pickId: string, snapshot: VoteSnapshot) {
-  const { winnerPlaceId, decidedBy } = tallyVotes(snapshot.finalists, snapshot.ballots);
-  await store.applyVoteClose(pickId, winnerPlaceId, decidedBy);
-  await store.notifier?.(snapshot.participantIds, 'winner_decided', pickId);
+/** How many times a tally recounts when a vote or a leave lands while it counts. The voters it
+ * counted are the ones the winner notice goes to. */
+const SETTLE_ATTEMPTS = 3;
+
+async function settleVote(store: VotingStore, pickId: string, first: VoteSnapshot) {
+  let snapshot: VoteSnapshot | null = first;
+  for (let attempt = 0; attempt < SETTLE_ATTEMPTS; attempt++) {
+    // With no one left to vote there is no winner to declare; the database cancels the
+    // round (0053), and 0 ballots of 0 voters must not count as everyone voting.
+    if (!snapshot || snapshot.state !== 'final_vote' || !snapshot.participantIds.length) return;
+    const { winnerPlaceId, decidedBy } = tallyVotes(snapshot.finalists, snapshot.ballots);
+    const outcome = await store.applyVoteClose(
+      pickId,
+      winnerPlaceId,
+      decidedBy,
+      snapshot.ballots,
+      snapshot.participantIds,
+    );
+    if (outcome !== 'stale') {
+      if (outcome === 'committed') {
+        await store.notifier?.(snapshot.participantIds, 'winner_decided', pickId);
+      }
+      return;
+    }
+    snapshot = await store.loadForVote(pickId);
+  }
+  if (!snapshot || snapshot.state !== 'final_vote' || !snapshot.participantIds.length) return;
+  throw new ApiError(409, 'PICK_CONFLICT', 'Votes are still coming in. Try again in a moment.');
+}
+
+/** Settles the vote once everyone still in the Pick has voted (after a vote, or a leave). */
+export async function settleIfEveryoneVoted(store: VotingStore, pickId: string) {
+  const pick = await store.loadForVote(pickId);
+  if (pick && pick.state === 'final_vote' && pick.ballots.length >= pick.participantIds.length)
+    await settleVote(store, pickId, pick);
 }
 
 export async function castVote(store: VotingStore, pickId: string, userId: string, body: unknown) {
@@ -75,15 +114,7 @@ export async function castVote(store: VotingStore, pickId: string, userId: strin
   }
 
   await store.castVote(pickId, userId, placeId);
-
-  const after = await store.loadForVote(pickId);
-  if (
-    after &&
-    after.state === 'final_vote' &&
-    after.ballots.length >= after.participantIds.length
-  ) {
-    await settleVote(store, pickId, after);
-  }
+  await settleIfEveryoneVoted(store, pickId);
   return { status: 'ok' as const };
 }
 

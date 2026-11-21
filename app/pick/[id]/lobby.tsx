@@ -35,7 +35,7 @@ import { api } from '@/lib/api';
 import { confirmAction } from '@/lib/confirm';
 import { messageOf } from '@/lib/errors';
 import { haptic } from '@/lib/haptics';
-import { pickEmoji, pickTitle, shareMessage } from '@/lib/pickUi';
+import { pickTitle, shareMessage } from '@/lib/pickUi';
 import { queries, type JoinCode } from '@/lib/queries';
 import type { PickDetail } from '@/lib/types';
 
@@ -97,6 +97,16 @@ function LobbyContent() {
       await live.refresh();
     });
 
+  const leave = async () => {
+    const ok = await confirmAction({
+      title: 'Leave this Pick?',
+      message: 'Your answers are removed and the group carries on without you.',
+      confirmLabel: 'Leave',
+      destructive: true,
+    });
+    if (ok && (await action.run('leave', () => api.leavePick(pickId)))) goToPicks();
+  };
+
   const cancel = async () => {
     const ok = await confirmAction({
       title: 'Cancel this Pick?',
@@ -119,7 +129,7 @@ function LobbyContent() {
     void action.run('link', async () => {
       haptic.tap();
       const link = await api.createInvite({ kind: 'pick', targetId: pickId });
-      await Share.share({ message: `Join my Pick on WTW: ${link.url}` }).catch(() => {});
+      await Share.share({ message: shareMessage(code?.code ?? null, link.url) }).catch(() => {});
     });
 
   const toggleLock = () =>
@@ -135,7 +145,12 @@ function LobbyContent() {
         { icon: 'albums' as const, text: `${pick.poolSize} places` },
         {
           icon: 'timer' as const,
-          text: pick.deadlineAt ? (countdown.label ?? '') : 'No deadline',
+          // The swipe clock restarts when the host starts (0052), so don't count down here.
+          text: !pick.deadlineAt
+            ? 'No deadline'
+            : pick.state === 'draft'
+              ? 'Timer starts with the Pick'
+              : (countdown.label ?? ''),
         },
         {
           icon: 'people' as const,
@@ -180,7 +195,7 @@ function LobbyContent() {
     <SafeAreaView style={pickStyles.screen} edges={['top', 'left', 'right', 'bottom']}>
       <PickTopBar
         proposedAt={live.progress?.availability?.proposedAt}
-        title={`${pickTitle(pick?.category)} ${pickEmoji(pick?.category)}`}
+        title={pickTitle(pick?.category)}
         subtitle="Lobby · waiting to start"
         right={<LiveDot mode={live.mode} offline={!!live.error} />}
       />
@@ -255,11 +270,25 @@ function LobbyContent() {
               ) : null}
             </>
           ) : (
-            <Text style={pickStyles.muted}>
-              {code === undefined
-                ? 'Getting your code…'
-                : 'Join codes are on their way. Add friends from the Friends tab for now.'}
-            </Text>
+            <>
+              <Text style={pickStyles.muted}>
+                {code === undefined
+                  ? 'Getting your code…'
+                  : isHost
+                    ? 'Couldn’t load a join code. Share a link instead.'
+                    : 'Ask the host for an invite link.'}
+              </Text>
+              {code === null && isHost ? (
+                <Button
+                  label="Share invite link"
+                  variant="secondary"
+                  icon="link-outline"
+                  loading={action.busy === 'link'}
+                  disabled={!!action.busy}
+                  onPress={shareLink}
+                />
+              ) : null}
+            </>
           )}
         </Animated.View>
 
@@ -270,7 +299,9 @@ function LobbyContent() {
               icon={s.icon}
               text={s.text}
               tabularCountdown={s.icon === 'timer'}
-              tone={s.icon === 'timer' && countdown.passed ? 'warn' : 'muted'}
+              tone={
+                s.icon === 'timer' && countdown.passed && pick?.state !== 'draft' ? 'warn' : 'muted'
+              }
             />
           ))}
         </View>
@@ -306,7 +337,7 @@ function LobbyContent() {
         {isHost ? (
           <View style={{ gap: 8 }}>
             <GradientButton
-              label={enough ? 'Start swiping 🔥' : 'Need 2 people to start'}
+              label={enough ? 'Start swiping' : 'Need 2 people to start'}
               accessibilityHint="Builds the pool of places and starts swiping for everyone"
               disabled={!enough || !!action.busy}
               loading={action.busy === 'start'}
@@ -327,6 +358,13 @@ function LobbyContent() {
               later: you won&apos;t miss anything.
             </Text>
             <Button label="Back to your Picks" variant="link" onPress={goToPicks} />
+            <Button
+              label="Leave Pick"
+              variant="link"
+              loading={action.busy === 'leave'}
+              disabled={!!action.busy}
+              onPress={() => void leave()}
+            />
           </View>
         )}
       </ScrollView>

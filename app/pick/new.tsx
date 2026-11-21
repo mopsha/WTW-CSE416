@@ -43,7 +43,7 @@ import { PlaceFilterControls } from '@/components/PlaceFilterControls';
 import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
 import { haptic } from '@/lib/haptics';
-import { DEFAULT_CENTER } from '@/lib/locationSearch';
+import { DEFAULT_CENTER, knownLocation } from '@/lib/locationSearch';
 import {
   DEFAULT_POOL_SIZE,
   milesToMeters,
@@ -124,6 +124,21 @@ function CreatePickForm({
   const [mix, setMix] = useState<'none' | 'food' | 'activities'>('none');
   const [center, setCenter] = useState<LatLng>(DEFAULT_CENTER);
   const [placeLabel, setPlaceLabel] = useState('SBU Academic Mall');
+  // Start near the user when they've already allowed location, unless they pick a spot first.
+  const placeChosen = useRef(false);
+  useEffect(() => {
+    let alive = true;
+    knownLocation()
+      .then((here) => {
+        if (!alive || !here || placeChosen.current) return;
+        setCenter(here);
+        setPlaceLabel('My location');
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [miles, setMiles] = useState(defaults.miles ?? 2);
   const [priceMax, setPriceMax] = useState(defaults.priceMax ?? -1);
   const [openNow, setOpenNow] = useState(false);
@@ -156,25 +171,31 @@ function CreatePickForm({
       return next;
     });
   }, []);
+  const capabilityRequest = useRef(0);
   useEffect(() => {
     if (!viewerId || hangId) return;
     let alive = true;
-    const refresh = async () => {
-      disableScheduling();
-      const request = capabilityGeneration.current;
+    // Coming back to the app rechecks, but only clears the chosen time if scheduling was
+    // actually turned off; a host who left to check their calendar keeps what they picked.
+    const refresh = async (initial: boolean) => {
+      if (initial) disableScheduling();
+      const request = ++capabilityRequest.current;
       try {
         const capability = await api.getPickCapabilities(viewerId);
-        if (!alive || request !== capabilityGeneration.current) return;
-        const enabled = capability?.availabilityFirst === true;
-        schedulingAllowed.current = enabled;
-        setSchedulingEnabled(enabled);
+        if (!alive || request !== capabilityRequest.current) return;
+        if (capability?.availabilityFirst !== true) {
+          disableScheduling();
+          return;
+        }
+        schedulingAllowed.current = true;
+        setSchedulingEnabled(true);
       } catch {
-        // Optional scheduling stays hidden; ordinary creation never waits for this read.
+        // Optional scheduling stays as it was; ordinary creation never waits for this read.
       }
     };
-    void refresh();
+    void refresh(true);
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void refresh();
+      if (state === 'active') void refresh(false);
     });
     return () => {
       alive = false;
@@ -256,7 +277,11 @@ function CreatePickForm({
         : deadlineMin
           ? new Date(Date.now() + deadlineMin * 60_000).toISOString()
           : null,
-      ...(scheduledAt ? { proposedAt: scheduledAt, swipeDeadlineMinutes: deadlineMin } : {}),
+      ...(scheduledAt
+        ? { proposedAt: scheduledAt, swipeDeadlineMinutes: deadlineMin }
+        : deadlineMin
+          ? { swipeMinutes: deadlineMin }
+          : {}),
       closeThreshold,
     };
     const found = validateCreatePick(input);
@@ -515,7 +540,6 @@ function CreatePickForm({
       <View style={styles.footer}>
         <Button
           label="Create Pick"
-          icon="flame"
           loading={submitting}
           onPress={() => void submit()}
           accessibilityHint="Creates the Pick so you can invite friends"
@@ -540,6 +564,7 @@ function CreatePickForm({
           initial={{ center, label: placeLabel, miles }}
           onCancel={closeEditor}
           onApply={(next) => {
+            placeChosen.current = true;
             setCenter(next.center);
             setPlaceLabel(next.label);
             setMiles(next.miles);
@@ -605,10 +630,7 @@ function CreatePickForm({
           ) : editor === 'deadline' ? (
             <>
               <Text style={styles.hint}>
-                When swiping closes, not when you’re going out.
-                {schedulingEnabled
-                  ? ' Scheduled Picks start this clock when creation finishes; other Picks start it at creation.'
-                  : ' This clock starts at creation.'}
+                How long everyone gets to swipe. The timer starts when you start the Pick.
               </Text>
               <ChoiceList
                 options={DEADLINES}
@@ -622,10 +644,7 @@ function CreatePickForm({
             </>
           ) : (
             <>
-              <Text style={styles.hint}>
-                The Pick can advance once this many people finish swiping. The server enforces
-                participant requirements.
-              </Text>
+              <Text style={styles.hint}>Swiping closes once this many people are done.</Text>
               <ChoiceList
                 options={THRESHOLDS}
                 value={closeThreshold}
