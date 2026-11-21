@@ -123,6 +123,8 @@ for name, (lock, write) in cases.items():
 # #78 (Josh): while another Pick holds this user's taste lock (a closing Pick's winner trigger
 # holds every participant's until it commits), a Yes -> No change elsewhere skips its learning
 # write. It must not leave the old Yes behind: the sweep rebuilds from the saved swipe.
+# (The case above deleted user 1, so bring both users back first.)
+query("insert into auth.users(id,email,raw_user_meta_data) select ('ad000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'taste'||n||'@example.invalid',jsonb_build_object('display_name','Taste '||n) from generate_series(1,2)n on conflict do nothing")
 pick = setup()
 other = query("select public.pick_create('%s','food',40,-73,3000,10,null,100)->>'id'" % user(1))
 query("insert into pick_participants(pick_id,user_id) values('%s','%s')" % (other, user(2)))
@@ -131,7 +133,7 @@ signal = "select coalesce((select weight::text from public.taste_signals where u
 assert query(signal) == '1', query(signal)
 holder = subprocess.Popen(base, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
 try:
-    holder.stdin.write("set statement_timeout='20s'; begin;\nselect public.heartbeat_upsert_swipe('%s','%s','taste-b',2);\n\echo LOCKED\n" % (other, user(2)))
+    holder.stdin.write("set statement_timeout='20s'; begin;\nselect public.heartbeat_upsert_swipe('%s','%s','taste-b',2);\n\\echo LOCKED\n" % (other, user(2)))
     holder.stdin.flush()
     while 'LOCKED' not in holder.stdout.readline():
         if holder.poll() is not None:
@@ -140,7 +142,7 @@ try:
     if result.returncode:
         raise AssertionError('changed swipe vs held taste lock: %s' % result.stderr)
 finally:
-    holder.stdin.write('commit;\n\q\n')
+    holder.stdin.write('commit;\n\\q\n')
     holder.stdin.flush()
     holder.wait(timeout=10)
 assert query("select value from public.preferences where pick_id='%s' and user_id='%s' and place_id='taste-a'" % (pick, user(2))) == '0'
