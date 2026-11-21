@@ -57,7 +57,7 @@ import {
   type GroupDetail,
 } from '@/lib/groups';
 import { haptic } from '@/lib/haptics';
-import { pickEmoji, pickTitle, STATE_LABEL } from '@/lib/pickUi';
+import { pickIcon, pickTitle, STATE_LABEL } from '@/lib/pickUi';
 import { queries } from '@/lib/queries';
 
 export default function GroupScreen({ details = false }: { details?: boolean }) {
@@ -289,7 +289,7 @@ function GroupConversation({
         {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
         {group === null ? (
           <EmptyState
-            emoji="🔍"
+            icon="search-outline"
             title="Group not found"
             body="It was deleted, or you're not in it anymore. Picks you were in are still in your History."
             action={{ label: 'Back to groups', onPress: () => router.replace('/groups') }}
@@ -535,7 +535,6 @@ function GroupConversation({
           {section === 'plans' ? (
             <Button
               label="Start a Pick"
-              icon="flame"
               onPress={() => router.push(newGroupPickRoute(group))}
               accessibilityHint={`Creates a Pick with everyone in ${group.name}`}
             />
@@ -597,7 +596,7 @@ function GroupConversation({
             <>
               {group.picks.length === 0 ? (
                 <EmptyState
-                  emoji="📅"
+                  icon="calendar-outline"
                   title="No group Picks yet"
                   body="Start a Pick to make your next plan together."
                 />
@@ -615,7 +614,12 @@ function GroupConversation({
                       accessibilityLabel={`${pickTitle(p.category)}, ${p.proposedAt && p.state === 'swiping' ? 'Active · respond to join' : STATE_LABEL[p.state]}`}
                       style={styles.member}
                     >
-                      <Text style={{ fontSize: 22 }}>{pickEmoji(p.category)}</Text>
+                      <Ionicons
+                        name={pickIcon(p.category)}
+                        size={22}
+                        color={colors.muted}
+                        accessible={false}
+                      />
                       <View style={{ flex: 1 }}>
                         <Text style={styles.name}>{pickTitle(p.category)}</Text>
                         <Text style={styles.sub}>

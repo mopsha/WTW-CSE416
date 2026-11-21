@@ -7,7 +7,7 @@ import type { LifecycleStore, LifecyclePick } from '../_shared/api/lifecycle.ts'
 import { memberTastesFrom } from '../_shared/domain/groupTaste.ts';
 import { createServiceClient } from './serviceClient.ts';
 
-function mapRpcError(error: { code: string; message: string }): never {
+function mapRpcError(error: { code: string; message: string; hint?: string }): never {
   if (error.code === 'PGRST202') {
     throw new ApiError(
       503,
@@ -15,14 +15,21 @@ function mapRpcError(error: { code: string; message: string }): never {
       'Pick lifecycle database integration is not installed',
     );
   }
+  if (error.code === 'PT400' && error.hint === 'unsupported_swipe_deadline') {
+    throw new ApiError(
+      400,
+      'INVALID_INPUT',
+      'This Pick has an unsupported swipe deadline. Cancel it and create a new Pick.',
+    );
+  }
   const statuses: Record<string, ErrorStatus> = { PT400: 400, PT403: 403, PT404: 404, PT409: 409 };
   const status = statuses[error.code];
   if (status) {
     const messages = {
-      400: 'Invalid request',
-      403: 'Pick access denied',
-      404: 'Pick not found',
-      409: 'Pick changed; reload before trying again',
+      400: 'Something about that didn’t look right. Try again.',
+      403: 'You can’t do that in this Pick.',
+      404: 'This Pick isn’t available anymore.',
+      409: 'This Pick just changed. Go back and open it again.',
     };
     throw new ApiError(
       status,
@@ -119,6 +126,18 @@ export function createLifecycleStore(): LifecycleStore {
     },
     async cancel(pickId, userId, reason) {
       await rpc('pick_cancel', { p_pick_id: pickId, p_user_id: userId, p_reason: reason });
+    },
+    async leave(pickId, userId) {
+      await rpc('pick_leave', { p_pick_id: pickId, p_user_id: userId });
+    },
+    async startChecked(pickId, userId, candidates, radiusM, participantIds) {
+      return (await rpc('pick_start_checked', {
+        p_pick_id: pickId,
+        p_user_id: userId,
+        p_candidates: candidates,
+        p_radius_m: radiusM,
+        p_participant_ids: participantIds,
+      })) as boolean;
     },
   };
 }

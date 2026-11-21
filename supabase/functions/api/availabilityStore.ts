@@ -16,9 +16,9 @@ export function createAvailabilityStore(): AvailabilityStore {
         status,
         'AVAILABILITY_CONFLICT',
         status === 404
-          ? 'Pick not found'
+          ? 'This Pick isn’t available anymore.'
           : status === 403
-            ? 'Pick access denied'
+            ? 'You can’t do that in this Pick.'
             : status === 503
               ? 'Availability unavailable'
               : error.message,

@@ -69,7 +69,11 @@ export default function ResultsScreen() {
     return (
       <SafeAreaView style={pickStyles.screen}>
         <PickTopBar title="Results" />
-        <CenterMessage emoji="📡" title="Couldn’t load the results" body={reveal.message}>
+        <CenterMessage
+          icon="cloud-offline-outline"
+          title="Couldn’t load the results"
+          body={reveal.message}
+        >
           <GradientButton label="Try again" onPress={retry} />
           <Button label="Back to your Picks" variant="link" onPress={goToPicks} />
         </CenterMessage>
@@ -100,7 +104,11 @@ export default function ResultsScreen() {
     return (
       <SafeAreaView style={pickStyles.screen}>
         <PickTopBar title="Results" />
-        <CenterMessage emoji="🤔" title="Results aren’t ready yet" body="Give it a moment.">
+        <CenterMessage
+          icon="hourglass-outline"
+          title="Results aren’t ready yet"
+          body="Give it a moment."
+        >
           <GradientButton label="Check again" onPress={retry} />
         </CenterMessage>
       </SafeAreaView>
@@ -124,7 +132,7 @@ export default function ResultsScreen() {
               {voting ? 'TOO CLOSE TO CALL' : clear ? 'CLEAR WINNER!' : 'THE GROUP PICKED'}
             </Text>
             <Text style={pickStyles.heading} accessibilityRole="header">
-              {voting ? 'It’s a tie-breaker 👀' : clear ? 'Everyone agrees 🔥' : 'Decided! 🔥'}
+              {voting ? 'It’s a tie-breaker' : clear ? 'Everyone agrees' : 'Decided!'}
             </Text>
             <Text style={pickStyles.muted}>
               {voting
@@ -189,9 +197,9 @@ export default function ResultsScreen() {
             style={{ gap: 8 }}
           >
             {voting ? (
-              <GradientButton label="Vote now 🗳️" onPress={() => go('vote')} />
+              <GradientButton label="Vote now" onPress={() => go('vote')} />
             ) : (
-              <GradientButton label="Let’s go 🚗  See the winner" onPress={() => go('winner')} />
+              <GradientButton label="Let’s go! See the winner" onPress={() => go('winner')} />
             )}
             <Button label="Back to your Picks" variant="link" onPress={goToPicks} />
           </Animated.View>

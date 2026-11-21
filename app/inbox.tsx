@@ -128,7 +128,7 @@ export default function InboxScreen() {
         <ErrorState message={load.message} onRetry={refresh} />
       ) : load.status === 'ready' && rows.length === 0 ? (
         <EmptyState
-          emoji="🔔"
+          icon="notifications-outline"
           title="Nothing yet"
           body="You'll see it here when a Pick starts, it's time to vote, or there's a winner."
         />

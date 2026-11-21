@@ -464,6 +464,16 @@ const ROUTES: Record<string, Handler> = {
     return json(200, { state: 'canceled' });
   }),
 
+  'POST leave': (pick) => {
+    if (pick.hostId === MOCK_USER_ID)
+      return fail(409, 'HOST_CANNOT_LEAVE', 'The host cancels the Pick instead');
+    if (!['draft', 'swiping', 'final_vote'].includes(pick.state))
+      return wrongState('This Pick is already over');
+    pick.participants = pick.participants.filter((p) => p.userId !== MOCK_USER_ID);
+    emit(pick.id);
+    return json(200, { state: 'left' });
+  },
+
   'POST swipes': (pick, body) => {
     if (pick.availability && !votersOf(pick).some((p) => p.userId === MOCK_USER_ID))
       return fail(403, 'FORBIDDEN', 'Not in the locked voting cohort');

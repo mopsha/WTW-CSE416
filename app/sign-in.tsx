@@ -198,7 +198,7 @@ export default function SignInScreen() {
               <Text style={styles.brand} accessibilityRole="header">
                 What&apos;s the Word?
               </Text>
-              <Text style={styles.tagline}>Stop debating. Start deciding. 🔥</Text>
+              <Text style={styles.tagline}>Stop debating. Start deciding.</Text>
             </View>
 
             {USE_MOCK ? (

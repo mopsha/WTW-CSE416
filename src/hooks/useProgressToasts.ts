@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import type { Toast } from '@/components/ActivityToast';
+import type { IconName } from '@/components/AppLogo';
 import { colorForName } from '@/lib/avatar';
 import type { PickProgress } from '@/lib/types';
 
@@ -13,8 +14,8 @@ export function useProgressToasts(progress: PickProgress | null) {
   const nextId = useRef(1);
   const seen = useRef<PickProgress | null>(null);
 
-  const show = (emoji: string, text: string, color?: string) =>
-    setToast({ id: nextId.current++, emoji, text, color });
+  const show = (icon: IconName, text: string, color?: string) =>
+    setToast({ id: nextId.current++, icon, text, color });
 
   useEffect(() => {
     const before = seen.current;
@@ -25,9 +26,9 @@ export function useProgressToasts(progress: PickProgress | null) {
       if (p.isMe) continue;
       const was = old.get(p.userId);
       const color = colorForName(p.displayName);
-      if (!was) show('👋', `${p.displayName} joined the Pick`, color);
-      else if (p.done && !was.done) show('✅', `${p.displayName} finished swiping`, color);
-      else if (p.voted && !was.voted) show('🗳️', `${p.displayName} voted`, color);
+      if (!was) show('person-add-outline', `${p.displayName} joined the Pick`, color);
+      else if (p.done && !was.done) show('checkmark', `${p.displayName} finished swiping`, color);
+      else if (p.voted && !was.voted) show('checkmark-done', `${p.displayName} voted`, color);
     }
   }, [progress]);
 
