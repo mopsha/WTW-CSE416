@@ -3,16 +3,17 @@ import UserProfileScreen from '../../app/users/[id]';
 import { api } from '@/lib/api';
 const { create, act } = jest.requireActual('react-test-renderer');
 let mockId = 'first';
+let mockHangId: string | undefined;
 let mockViewer = 'viewer';
 jest.mock('expo-router', () => ({
-  useLocalSearchParams: () => ({ id: mockId }),
+  useLocalSearchParams: () => ({ id: mockId, hangId: mockHangId }),
   useFocusEffect: (fn: () => void) => jest.requireActual('react').useEffect(fn, [fn]),
 }));
 jest.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({ session: { user: { id: mockViewer } } }),
 }));
 jest.mock('@/hooks/useAvatarSource', () => ({ useAvatarPhoto: () => ({ uri: null, ref: null }) }));
-jest.mock('@/lib/api', () => ({ api: { getUserProfile: jest.fn() } }));
+jest.mock('@/lib/api', () => ({ api: { getUserProfile: jest.fn(), getHangPost: jest.fn() } }));
 jest.mock('@/components/MemberMenu', () => ({ MemberMenu: () => null }));
 jest.mock('@/components/PastMoves', () => ({ PastMoves: () => null }));
 jest.mock('@/components/MessageFriendButton', () => ({ MessageFriendButton: () => null }));
@@ -40,6 +41,7 @@ const text = () => JSON.stringify(tree.toJSON());
 beforeEach(() => {
   jest.clearAllMocks();
   mockId = 'first';
+  mockHangId = undefined;
   mockViewer = 'viewer';
 });
 afterEach(async () => {
@@ -93,4 +95,33 @@ test('same-target refreshing keeps authorized identity; late responses and denia
   await act(async () => tree.root.findByType('test-error').props.onRetry());
   expect(tree.root.findByType('test-error').props.message).toBe('Offline');
   expect(loading()).toBe(false);
+});
+
+test('a Hang can open a nonfriend identity only while the authorized projection contains it', async () => {
+  mockHangId = 'shared-hang';
+  const error = Object.assign(new Error('Profile not found'), { status: 404 });
+  jest.mocked(api.getUserProfile).mockRejectedValue(error);
+  const hang = {
+    id: mockHangId,
+    authorId: 'host',
+    activity: 'Lunch',
+    audience: 'group' as const,
+    groupId: 'group',
+    startsAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+    attendees: [
+      { userId: 'first', displayName: 'Hang attendee', username: null, status: 'down' as const },
+    ],
+  };
+  jest.mocked(api.getHangPost).mockResolvedValueOnce(hang);
+  await act(async () => {
+    tree = create(<UserProfileScreen />);
+  });
+  expect(api.getHangPost).toHaveBeenCalledWith('shared-hang', 'viewer');
+  expect(text()).toContain('Hang attendee');
+
+  jest.mocked(api.getHangPost).mockResolvedValueOnce({ ...hang, attendees: [] });
+  await act(async () => tree.root.findByType('test-screen').props.onRefresh());
+  expect(text()).not.toContain('Hang attendee');
+  expect(tree.root.findByType('test-error').props.message).toBe('Profile not found');
 });
