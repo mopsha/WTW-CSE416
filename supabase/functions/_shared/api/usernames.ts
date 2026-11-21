@@ -29,6 +29,9 @@ export function normalizeUsername(
       'INVALID_INPUT',
       'Username must be 3–24 letters, numbers or underscores',
     );
+  // New names must look like a person's handle: start with a letter (no "123", "_x_").
+  if (!search && username !== currentUsername && !/^[a-z]/.test(username))
+    throw new ApiError(400, 'INVALID_INPUT', 'Username must start with a letter');
   if (!search) requireCleanText(username, 'username');
   if (!search && RESERVED_USERNAMES.includes(username) && username !== currentUsername)
     throw new ApiError(400, 'INVALID_INPUT', 'That username is reserved');

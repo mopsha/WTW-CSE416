@@ -545,6 +545,14 @@ export function createApiClient({
     finishOptionalSetup: () =>
       request<{ optionalSetupPending: false }>('POST', '/me/optional-setup', { body: {} }),
     getMe: () => request<MeResponse>('GET', '/me'),
+    /** While choosing a username: free or not, and an alternative when it's taken. */
+    usernameAvailable: (username: string) =>
+      request<{
+        available: boolean;
+        username: string | null;
+        reason?: string;
+        suggestion?: string;
+      }>('GET', `/usernames/available?username=${encodeURIComponent(username)}`),
     /** Saves the survey (FR-02); even all-empty answers mark onboarding done. */
     savePreferences: (preferences: Preferences) =>
       request<{ preferences: Preferences; onboarded: true }>('POST', '/me/preferences', {

@@ -12,6 +12,12 @@ import {
 } from '../_shared/api/recentWinners.ts';
 import type { Candidate, Category } from '../_shared/places/types.ts';
 import { normalizeUsername } from '../_shared/api/usernames.ts';
+import {
+  clientAddress,
+  passwordLogin,
+  usernameAvailability,
+  type SignInStore,
+} from '../_shared/api/signIn.ts';
 import { parseFriendId } from '../_shared/api/friends.ts';
 import type { PastMovesStore } from '../_shared/api/pastMoves.ts';
 import { sendDirectMessage, type DirectChatStore } from '../_shared/api/directChat.ts';
@@ -155,6 +161,7 @@ export function createApp(
     friendsStore?: FriendsStore;
     profileStore?: ProfileStore;
     userProfilesStore?: UserProfilesStore;
+    signInStore?: SignInStore;
     groupsStore?: GroupsStore;
     groupInvitationsStore?: GroupInvitationsStore;
     groupIdeasStore?: GroupIdeasStore;
@@ -1019,6 +1026,25 @@ export function createApp(
       }
     }
     return c.json(await store.update(user.id, parseProfileDetails(body, currentUsername)));
+  });
+  // While choosing a username: free or not, with an alternative when taken (docs/sign-in.md).
+  app.get('/usernames/available', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const user = await deps.getUser(c.req.raw);
+    if (!deps.signInStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Usernames are unavailable');
+    return c.json(await usernameAvailability(deps.signInStore, user.id, c.req.query('username')));
+  });
+  // Signed out: log in with a username (or email) and password. Returns the session tokens.
+  app.post('/auth/password-login', async (c) => {
+    c.header('Cache-Control', 'no-store');
+    if (!deps.signInStore) throw new ApiError(503, 'NOT_CONFIGURED', 'Sign-in is unavailable');
+    return c.json(
+      await passwordLogin(
+        deps.signInStore,
+        await readJsonBody(c),
+        clientAddress(c.req.raw.headers),
+      ),
+    );
   });
   app.get('/users/:id/profile', async (c) => {
     c.header('Cache-Control', 'private, no-store');

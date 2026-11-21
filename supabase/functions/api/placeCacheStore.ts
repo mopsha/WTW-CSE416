@@ -59,6 +59,9 @@ export function createCacheCleanupStore(): CacheCleanupStore {
         p_cutoff: new Date(Date.parse(`${day}T00:00:00Z`) - 27 * 86_400_000).toISOString(),
       });
       if (purgeError) throw new Error('Google coordinate cleanup failed');
+      // Old password-login attempt counters (0057): buckets are 15 minutes, kept for a day.
+      const { error: loginError } = await createServiceClient().rpc('purge_login_limits');
+      if (loginError) throw new Error('Login limit cleanup failed');
       return data as { removed: number; ran: boolean };
     },
   };
