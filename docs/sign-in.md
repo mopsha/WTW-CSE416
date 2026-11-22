@@ -34,8 +34,9 @@ user a real-looking username.
   take about as long (an unknown username still makes a real sign-in call against a dummy
   address). Other failures say what happened (Supabase busy, email not confirmed, or the
   account lookup failing) and don't spend the user's tries: a lookup failure is reported before
-  anything is charged, and a sign-in failure refunds exactly the attempt it was charged, in the
-  15-minute bucket it was charged to.
+  anything is charged, and a sign-in failure refunds exactly the attempt it was charged. Each
+  charge is a one-time reservation (`private.login_reservations`, deleted as it's refunded), so a
+  refund lands in that attempt's own 15-minute bucket and a repeated refund gives nothing back.
 - These sign-ins all come from the server's address, so Supabase's per-IP limits can't tell
   users apart. Migration 0057 adds limits per 15 minutes, all checked together:
   - 10 per account per client, so a stranger's junk tries can't lock you out;
@@ -53,7 +54,10 @@ user a real-looking username.
   (log in with "Email me a code", then set a new one). If the project requires a recent proof
   for password changes, Supabase emails a code first and the screen asks for it. It only changes
   the account it was opened for: if a different account is signed in by the time it saves, it
-  refuses and changes nothing.
+  refuses and changes nothing. The check and the request use one session snapshot, and the
+  request carries that session's own token (`src/lib/auth.ts` `asAccount`), so a switch right
+  after the check can't redirect the change. The SDK's `updateUser`/`reauthenticate` aren't
+  used here because they re-read the session after any check of ours.
 
 Code: `_shared/api/signIn.ts` (logic, tested in `tests/signIn.test.ts`), `api/signInStore.ts`,
 `src/lib/auth.ts`, `src/lib/socialSignIn.ts`.

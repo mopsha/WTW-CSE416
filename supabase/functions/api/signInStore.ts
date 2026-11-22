@@ -39,8 +39,8 @@ export function createSignInStore(): SignInStore {
       if (error) throw new ApiError(503, 'DATABASE_NOT_READY', 'Sign-in is unavailable');
       return typeof data === 'string' ? data : null;
     },
-    async refundLoginAttempt(keys, charge) {
-      await createServiceClient().rpc('refund_login_limit', { p_subjects: keys, p_bucket: charge });
+    async refundLoginAttempt(charge) {
+      await createServiceClient().rpc('refund_login_limit', { p_reservation: charge });
     },
     async consumeUsernameLookup(userId) {
       const { error } = await createServiceClient().rpc('consume_username_lookup', {

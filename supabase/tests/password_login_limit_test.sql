@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(17);
+select plan(18);
 
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
 values ('00000000-0000-0000-0000-000000000000', '91111111-1111-4111-8111-111111111111',
@@ -42,21 +42,24 @@ select is((select calls from rate_limit_counters where scope = 'password_login'
            and subject = md5('client:blocked')), 1,
   'refused attempts are not counted against the blocked client either');
 
--- A refund gives back the attempt in the bucket it was charged to, and only there.
+-- A refund gives back exactly the attempt that was charged, and only once.
 reset role;
-create temp table charged (bucket text);
+create temp table charged (reservation text);
 grant select, insert on charged to service_role;
 set local role service_role;
 insert into charged select consume_login_limit(array['acct:refund|client:a'], array[1]);
-select isnt((select bucket from charged), null, 'the attempt is charged to a bucket');
+select isnt((select reservation from charged), null, 'the attempt is charged as a reservation');
 select is(consume_login_limit(array['acct:refund|client:a'], array[1]), null,
   'the one attempt is spent');
-select refund_login_limit(array['acct:refund|client:a'], '2000-01-01T00:00');
+select refund_login_limit('00000000-0000-4000-8000-000000000000');
 select is(consume_login_limit(array['acct:refund|client:a'], array[1]), null,
-  'a refund for another window does not give back this one');
-select refund_login_limit(array['acct:refund|client:a'], (select bucket from charged));
+  'refunding an unknown reservation gives nothing back');
+select refund_login_limit((select reservation from charged));
 select isnt(consume_login_limit(array['acct:refund|client:a'], array[1]), null,
   'a refunded attempt can be used again');
+select refund_login_limit((select reservation from charged));
+select is(consume_login_limit(array['acct:refund|client:a'], array[1]), null,
+  'refunding the same reservation twice gives back only one attempt');
 
 select is((select count(*)::int from rate_limit_counters
            where scope = 'password_login' and (subject like '%@%' or subject like '%client%')), 0,

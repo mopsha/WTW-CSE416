@@ -166,11 +166,9 @@ describe('passwordLogin', () => {
     await expect(
       passwordLogin(s, { identifier: 'alan', password: 'x' }, 'ip1'),
     ).rejects.toMatchObject({ status: 503 });
-    // Exactly the attempt that was charged: its own bucket, never a newer window's.
-    expect(s.refundLoginAttempt).toHaveBeenCalledWith(
-      ['acct:alan@example.com|client:ip1', 'client:ip1', 'global'],
-      'bucket-1',
-    );
+    // Exactly the attempt that was charged (its one-time reservation), never another one.
+    expect(s.refundLoginAttempt).toHaveBeenCalledTimes(1);
+    expect(s.refundLoginAttempt).toHaveBeenCalledWith('bucket-1');
   });
 
   test('a failed account lookup is an outage, not a wrong password, and is never charged', async () => {

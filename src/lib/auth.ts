@@ -1,5 +1,5 @@
 import { clearPendingProfile } from './pendingProfile';
-import { API_BASE_URL, SUPABASE_ANON_KEY, USE_MOCK } from './config';
+import { API_BASE_URL, SUPABASE_ANON_KEY, SUPABASE_URL, USE_MOCK } from './config';
 import { mockAuth } from './mock/auth';
 import { accountChanged, AuthError, type AuthService, type AuthSession } from './authTypes';
 import { appleIdToken, googleIdToken } from './socialSignIn';
@@ -46,10 +46,42 @@ function toAuthError(error: { code?: string; status?: number; message: string })
   return new AuthError('unknown', error.message);
 }
 
-/** A password change only applies to the account the screen was opened for. */
-async function requireAccount(userId: string) {
+/**
+ * A password change only applies to the account the screen was opened for. The account check
+ * and the request use one session snapshot: the request carries that session's own token, so
+ * Supabase applies it to that user even if another account signs in meanwhile. (The SDK's
+ * updateUser/reauthenticate re-read the session inside their own lock, after any check of ours.)
+ */
+async function asAccount(
+  userId: string,
+  method: 'PUT' | 'GET',
+  path: '/user' | '/reauthenticate',
+  body?: object,
+): Promise<{ code?: string; status: number; message: string } | null> {
   const { data } = await getSupabase().auth.getSession();
-  if (data.session?.user.id !== userId) throw accountChanged();
+  const session = data.session;
+  if (!session || session.user.id !== userId) throw accountChanged();
+  let res: Response;
+  try {
+    res = await fetch(`${SUPABASE_URL}/auth/v1${path}`, {
+      method,
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${session.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new AuthError('unknown', 'Can’t reach sign-in. Check your connection and try again.');
+  }
+  if (res.ok) return null;
+  const err = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  const code = [err.error_code, err.code].find((c): c is string => typeof c === 'string');
+  const message = [err.msg, err.message, err.error_description].find(
+    (m): m is string => typeof m === 'string',
+  );
+  return { code, status: res.status, message: message ?? `Something went wrong (${res.status}).` };
 }
 
 const supabaseAuth: AuthService = {
@@ -131,8 +163,7 @@ const supabaseAuth: AuthService = {
     return session;
   },
   async setPassword(password, { userId, code }) {
-    await requireAccount(userId);
-    const { error } = await getSupabase().auth.updateUser({
+    const error = await asAccount(userId, 'PUT', '/user', {
       password,
       ...(code ? { nonce: code } : {}),
     });
@@ -147,8 +178,7 @@ const supabaseAuth: AuthService = {
     if (error) throw toAuthError(error);
   },
   async requestPasswordCode(userId) {
-    await requireAccount(userId);
-    const { error } = await getSupabase().auth.reauthenticate();
+    const error = await asAccount(userId, 'GET', '/reauthenticate');
     if (error) throw toAuthError(error);
   },
   async signInWithApple() {

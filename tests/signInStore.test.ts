@@ -36,18 +36,16 @@ test('a profile whose account is gone is an unknown username', async () => {
   await expect(createSignInStore().emailForUsername('alan')).resolves.toBeNull();
 });
 
-test('a charge is the bucket the database spent, and the refund names that bucket', async () => {
+test('a charge is the reservation the database made, and the refund names only that', async () => {
   const store = createSignInStore();
-  mockRpc.mockResolvedValueOnce({ data: '2026-11-20T21:00', error: null });
+  const reservation = '7d4f0c1e-0000-4000-8000-000000000001';
+  mockRpc.mockResolvedValueOnce({ data: reservation, error: null });
   await expect(store.consumeLoginAttempt([{ key: 'global', limit: 600 }])).resolves.toBe(
-    '2026-11-20T21:00',
+    reservation,
   );
   mockRpc.mockResolvedValueOnce({ data: null, error: null });
   await expect(store.consumeLoginAttempt([{ key: 'global', limit: 600 }])).resolves.toBeNull();
   mockRpc.mockResolvedValueOnce({ data: null, error: null });
-  await store.refundLoginAttempt(['global'], '2026-11-20T21:00');
-  expect(mockRpc).toHaveBeenLastCalledWith('refund_login_limit', {
-    p_subjects: ['global'],
-    p_bucket: '2026-11-20T21:00',
-  });
+  await store.refundLoginAttempt(reservation);
+  expect(mockRpc).toHaveBeenLastCalledWith('refund_login_limit', { p_reservation: reservation });
 });

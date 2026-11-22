@@ -25,8 +25,8 @@ export interface SignInStore {
    * charge (to refund exactly that attempt), or null when refused.
    */
   consumeLoginAttempt(subjects: readonly { key: string; limit: number }[]): Promise<string | null>;
-  /** Gives back the attempt `consumeLoginAttempt` charged as `charge`. */
-  refundLoginAttempt(keys: readonly string[], charge: string): Promise<void>;
+  /** Gives back the attempt `consumeLoginAttempt` charged as `charge`, at most once. */
+  refundLoginAttempt(charge: string): Promise<void>;
   /**
    * Supabase password sign-in: tokens, or null for wrong credentials only. Anything else
    * (rate limit, outage, unconfirmed email) throws an ApiError with an honest message.
@@ -138,12 +138,7 @@ export async function passwordLogin(
     tokens = await store.passwordSignIn(email ?? NOBODY, password);
   } catch (e) {
     // Not the user's fault: don't spend their tries on it.
-    await store
-      .refundLoginAttempt(
-        subjects.map((s) => s.key),
-        charge,
-      )
-      .catch(() => {});
+    await store.refundLoginAttempt(charge).catch(() => {});
     throw e;
   }
   if (!tokens || !email) throw new ApiError(401, 'INVALID_LOGIN', WRONG);

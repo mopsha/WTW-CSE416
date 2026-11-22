@@ -14,6 +14,15 @@ alter table public.rate_limit_counters add constraint rate_limit_counters_scope_
  check (scope in ('create','start','refresh','discover','avatar_read','avatar_resolve',
   'username_lookup','discover_photo','password_login'));
 
+-- One row per charged attempt, so each can be refunded exactly once (subjects are hashed).
+create table private.login_reservations (
+  id uuid primary key default gen_random_uuid(),
+  bucket text not null,
+  subjects text[] not null,
+  created_at timestamptz not null default now()
+);
+revoke all on private.login_reservations from public, anon, authenticated;
+
 create function private.login_bucket() returns text
 language sql stable set search_path = '' as $$
   select to_char(date_bin('15 minutes', now(), timestamptz 'epoch') at time zone 'UTC',
@@ -23,13 +32,14 @@ $$;
 -- Counts one attempt against every subject, or against none: if any subject is at its limit
 -- the attempt is refused and nothing is spent, so a client that is already blocked can't use
 -- up the global (or another shared) budget and lock out other people. Rows are locked in a
--- fixed order, so concurrent attempts can't deadlock or overshoot a limit. Returns the bucket
--- that was charged (pass it to refund_login_limit), or null when refused.
+-- fixed order, so concurrent attempts can't deadlock or overshoot a limit. Returns a one-time
+-- reservation id for the charge (pass it to refund_login_limit), or null when refused.
 create function public.consume_login_limit(p_subjects text[], p_limits integer[]) returns text
 language plpgsql security definer set search_path = '' as $$
 declare
   v_bucket text := private.login_bucket();
   v_calls integer;
+  v_id uuid;
   r record;
 begin
   if p_subjects is null or p_limits is null or cardinality(p_subjects) = 0
@@ -49,17 +59,25 @@ begin
   update public.rate_limit_counters set calls = calls + 1
   where scope = 'password_login' and bucket = v_bucket
     and subject in (select md5(lower(s)) from unnest(p_subjects) as u(s));
-  return v_bucket;
+  insert into private.login_reservations (bucket, subjects)
+  values (v_bucket, array(select distinct md5(lower(s)) from unnest(p_subjects) as u(s)))
+  returning id into v_id;
+  return v_id::text;
 end $$;
 
 -- Gives back an attempt (the sign-in failed for a reason that isn't the user's password), in
--- the bucket it was charged to, so a refund never lands on a newer window's attempts.
-create function public.refund_login_limit(p_subjects text[], p_bucket text) returns void
-language sql security definer set search_path = '' as $$
+-- the bucket and subjects it was charged to. The reservation is deleted as it is used, so a
+-- repeated or concurrent refund of the same attempt finds nothing and gives nothing back.
+create function public.refund_login_limit(p_reservation text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare v_bucket text; v_subjects text[];
+begin
+  delete from private.login_reservations where id = private.try_uuid(p_reservation)
+  returning bucket, subjects into v_bucket, v_subjects;
+  if not found then return; end if;
   update public.rate_limit_counters set calls = greatest(calls - 1, 0)
-  where scope = 'password_login' and bucket = p_bucket
-    and subject in (select md5(lower(s)) from unnest(p_subjects) as u(s))
-$$;
+  where scope = 'password_login' and bucket = v_bucket and subject = any(v_subjects);
+end $$;
 
 -- Runs on every sweep (placeCacheStore.ts). Buckets are 15 minutes; keep a day.
 create function public.purge_login_limits() returns integer
@@ -70,6 +88,7 @@ begin
   where scope = 'password_login'
     and bucket < to_char((now() - interval '1 day') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI');
   get diagnostics v_removed = row_count;
+  delete from private.login_reservations where created_at < now() - interval '1 day';
   return v_removed;
 end $$;
 
@@ -82,8 +101,8 @@ end $$;
 
 revoke all on function private.login_bucket() from public, anon, authenticated;
 revoke all on function public.consume_login_limit(text[], integer[]),
-  public.refund_login_limit(text[], text), public.purge_login_limits(),
+  public.refund_login_limit(text), public.purge_login_limits(),
   public.consume_username_lookup(uuid) from public, anon, authenticated;
 grant execute on function public.consume_login_limit(text[], integer[]),
-  public.refund_login_limit(text[], text), public.purge_login_limits(),
+  public.refund_login_limit(text), public.purge_login_limits(),
   public.consume_username_lookup(uuid) to service_role;
