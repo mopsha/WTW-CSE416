@@ -104,6 +104,11 @@ live result (`pickPlaces.ts`). Live deck ordering still uses those types in memo
   another of their Picks was closing ends at the No. Only sources whose action still exists are
   rebuilt, only after the user's epoch, and a Google signal that no longer matches its saved
   action is removed (its type isn't stored, so it's re-added by the next recorded action).
+  The queue row also names the skipped signal's source: if that Pick is deleted before the
+  sweep, the signal is removed instead of kept as history. The sweep deletes only the rows it
+  read (one queued during a rebuild waits for the next sweep), and it never waits on a user
+  whose lock is busy: that user stays queued. A reset reads its epoch after taking the lock,
+  so actions that committed while it waited are cleared too.
 
 **Preferences screen** (Profile → Preferences, or Settings → Food & activity preferences):
 
@@ -114,7 +119,6 @@ live result (`pickPlaces.ts`). Live deck ordering still uses those types in memo
 
 **Not yet**: "people like you also liked…" (collaborative filtering). That needs real usage
 data first.
-
 
 ## Forward hardening (0049)
 

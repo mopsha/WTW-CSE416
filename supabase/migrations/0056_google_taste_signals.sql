@@ -13,8 +13,9 @@
 --   reset made before 0056 (which left no record) can't be undone by old Picks either.
 -- * Learning never holds up a swipe, vote or close, so a write can still be skipped (a 200ms
 --   wait on the lock while another of the user's Picks closes). A skipped write queues the user
---   (taste_pending), and the next sweep rebuilds their signals from the saved actions
---   (taste_reconcile), so the stored taste always converges to the latest swipe, vote or winner.
+--   and the signal's source (taste_pending), and the next sweep rebuilds their signals from the
+--   saved actions (taste_reconcile), so the stored taste converges to the latest swipe, vote or
+--   winner, even if the Pick was deleted in between. The sweep never waits on a busy user.
 -- * The weight and action time come from the saved swipe, ballot or winner, never the caller;
 --   the API proves the type with a server signature (tasteSignals.ts) before calling this.
 -- Numbered 0056: 0052 (on main) and 0053–0055 (pick-flow and Hang PRs) come first.
@@ -38,9 +39,12 @@ create or replace view public.learned_taste with (security_invoker=true) as
        where not google or at >= now() - interval '30 days') s
  group by user_id,place_type,latest;
 
--- Users whose learning write was skipped; drained by taste_reconcile on every sweep.
+-- Learning writes that were skipped (user, and the signal's source when known); drained by
+-- taste_reconcile on every sweep, which deletes exactly the rows it processed.
 create table private.taste_pending (
+  id bigint generated always as identity primary key,
   user_id uuid not null,
+  source uuid,
   at timestamptz not null default clock_timestamp()
 );
 create index taste_pending_user_idx on private.taste_pending (user_id);
@@ -81,7 +85,7 @@ exception when others then
   -- user so the sweep rebuilds their signals from the saved swipes, votes and winners
   -- (taste_reconcile). A plain insert with no unique key never waits on anyone.
   begin
-    insert into private.taste_pending (user_id) values (p_user_id);
+    insert into private.taste_pending (user_id, source) values (p_user_id, p_source);
   exception when others then
     null;
   end;
@@ -109,6 +113,10 @@ begin
   if v_pick is null or p_user_id is null or p_type is null or p_type !~ '^[a-z_]{1,60}$' then
     return;
   end if;
+  v_source := case p_kind when 'swipe' then private.taste_source('swipe', v_pick, p_place_id)
+                          when 'vote' then private.taste_source('vote', v_pick, null)
+                          when 'winner' then private.taste_source('winner', v_pick, null) end;
+  if v_source is null then return; end if;
   -- Lock before reading the action: a newer swipe or vote then commits either before this
   -- read (and is what we record) or after this write (and its own trigger replaces it).
   perform private.lock_taste(p_user_id);
@@ -123,37 +131,44 @@ begin
     select private.swipe_weight(pr.value), pr.updated_at into v_weight, v_at
       from public.preferences pr
       where pr.pick_id = v_pick and pr.place_id = p_place_id and pr.user_id = p_user_id;
-    v_source := private.taste_source('swipe', v_pick, p_place_id);
   elsif p_kind = 'vote' then
     select 1, v.created_at into v_weight, v_at from public.final_votes v
       where v.pick_id = v_pick and v.user_id = p_user_id and v.place_id = p_place_id;
-    v_source := private.taste_source('vote', v_pick, null);
   elsif p_kind = 'winner' then
     select 2, p.decided_at into v_weight, v_at from public.picks p
       where p.id = v_pick and p.winner_place_id = p_place_id;
-    v_source := private.taste_source('winner', v_pick, null);
   else
     return;
   end if;
   if v_weight is null then return; end if;
   perform private.learn_taste_at(p_user_id, v_source, p_type, v_weight, v_at, true);
 exception when others then
-  null;
+  -- Usually the 200ms lock wait above: queue it for the sweep, like learn_taste_at does.
+  begin
+    insert into private.taste_pending (user_id, source) values (p_user_id, v_source);
+  exception when others then
+    null;
+  end;
 end $$;
 
 -- "Reset what WTW learned": under the same lock, clear every signal and move the epoch.
+-- The epoch is read after the lock (clock_timestamp, not now()): actions that committed while
+-- the reset waited are cleared too, so a later rebuild can't bring them back.
 create function public.taste_reset(p_user_id uuid) returns void
 language plpgsql security definer set search_path = '' as $$
 begin
   perform private.lock_taste(p_user_id);
   delete from public.taste_signals where user_id = p_user_id;
-  insert into private.taste_epochs (user_id, since) values (p_user_id, now())
+  insert into private.taste_epochs (user_id, since) values (p_user_id, clock_timestamp())
     on conflict (user_id) do update set since = greatest(private.taste_epochs.since, excluded.since);
 end $$;
 
 -- Rebuilds one user's signals from their saved actions, under their lock, so a skipped write
 -- converges to the latest swipe, vote or winner. Only sources whose action still exists are
--- touched (signals from deleted Picks stay as before), and only actions after the epoch.
+-- touched (signals from deleted Picks stay as history), and only actions after the epoch.
+-- A queued source (p_sources) whose action is gone had a change that never landed, so its
+-- signal may be superseded: it is removed rather than kept as history.
+-- Never waits: if the user's lock is busy it returns false and the rows stay queued.
 -- Own places: set to the canonical type and weight (removed when the weight is 0).
 -- Google places: the type is never stored, so a signal that no longer matches the saved
 -- action (its weight or time changed) is removed; the next recorded action adds it back.
@@ -184,10 +199,16 @@ language sql stable security definer set search_path = '' as $$
                         '-infinity')
 $$;
 
-create function private.taste_reconcile(p_user_id uuid) returns void
+create function private.taste_reconcile(p_user_id uuid, p_sources uuid[]) returns boolean
 language plpgsql security definer set search_path = '' set lock_timeout = '200ms' as $$
 begin
-  perform private.lock_taste(p_user_id);
+  if not pg_catalog.pg_try_advisory_xact_lock(
+       pg_catalog.hashtextextended('wtw-taste:' || p_user_id::text, 0)) then
+    return false;
+  end if;
+  delete from public.taste_signals t
+   where t.user_id = p_user_id and t.source = any(p_sources)
+     and not exists (select 1 from private.taste_evidence(p_user_id) e where e.source = t.source);
   -- Google: drop any signal that no longer matches its saved action.
   delete from public.taste_signals t using private.taste_evidence(p_user_id) e
    where t.user_id = p_user_id and t.source = e.source and e.google
@@ -203,27 +224,32 @@ begin
   on conflict (user_id, source) do update set
     place_type = excluded.place_type, weight = excluded.weight, at = excluded.at, google = false
    where (t.place_type, t.weight, t.google) is distinct from (excluded.place_type, excluded.weight, false);
+  return true;
 end $$;
 
 -- Runs on every sweep (placeCacheStore.ts), like purge_google_coordinates. Also drains
--- taste_pending: each queued user is rebuilt in its own subtransaction, and one that is
--- still locked stays queued for the next sweep instead of failing it.
--- ponytail: rebuilds a whole user's history per skip; fine at our scale, key by source if not.
+-- taste_pending: each queued user is rebuilt in its own subtransaction and only the rows read
+-- for them are deleted, so a row queued during the rebuild waits for the next sweep. A user
+-- whose lock is busy is skipped without waiting and stays queued.
+-- ponytail: rebuilds a whole user's history per skip, 200 users per sweep; fine at our scale.
 create function public.purge_google_taste(p_cutoff timestamptz) returns integer
 language plpgsql security definer set search_path = '' as $$
 declare
   v_removed integer;
   v_user uuid;
-  v_upto timestamptz;
+  v_ids bigint[];
+  v_sources uuid[];
 begin
   delete from public.taste_signals where google and at < p_cutoff;
   get diagnostics v_removed = row_count;
-  for v_user, v_upto in
-    select user_id, max(at) from private.taste_pending group by user_id limit 200
+  for v_user, v_ids, v_sources in
+    select user_id, array_agg(id), array_agg(source) filter (where source is not null)
+      from private.taste_pending group by user_id order by min(id) limit 200
   loop
     begin
-      perform private.taste_reconcile(v_user);
-      delete from private.taste_pending where user_id = v_user and at <= v_upto;
+      if private.taste_reconcile(v_user, coalesce(v_sources, '{}')) then
+        delete from private.taste_pending where id = any(v_ids);
+      end if;
     exception when others then
       null;
     end;
@@ -233,7 +259,7 @@ end $$;
 
 revoke all on function private.lock_taste(uuid),
   private.learn_taste_at(uuid, uuid, text, real, timestamptz, boolean),
-  private.taste_reconcile(uuid), private.taste_evidence(uuid)
+  private.taste_reconcile(uuid, uuid[]), private.taste_evidence(uuid)
   from public, anon, authenticated;
 revoke all on function public.taste_record_google_signal(uuid, text, text, text, text),
   public.taste_reset(uuid), public.purge_google_taste(timestamptz)
