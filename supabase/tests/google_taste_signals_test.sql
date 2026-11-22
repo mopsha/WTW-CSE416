@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(22);
+select plan(27);
 
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
 values
@@ -123,6 +123,80 @@ select is((select count(*)::int from taste_signals where user_id = (select host 
 select is((select count(*)::int from taste_signals where user_id = (select guest from sig)),
   0, 'a rebuild never brings back actions from before a reset');
 select is((select count(*)::int from private.taste_pending), 0, 'the sweep drains the queue');
+
+-- #78 re-review (Josh). Point 2: a reset that waited for the lock also clears what committed
+-- while it waited, so the sweep can't bring it back. In this one-transaction test now() is the
+-- start; this swipe is dated after it, like one that committed during the wait.
+update preferences set value = 2, updated_at = clock_timestamp()
+ where pick_id = (select id from gp) and place_id = 'c1' and user_id = (select host from sig);
+select taste_reset((select host from sig));
+insert into private.taste_pending (user_id) values ((select host from sig));
+set local role service_role;
+select purge_google_taste(now() - interval '27 days');
+reset role;
+select is((select count(*)::int from taste_signals where user_id = (select host from sig)),
+  0, 'a reset clears actions that committed while it waited, and the sweep does not restore them');
+
+-- Point 3: a change skipped behind the lock, then its Pick deleted before the sweep.
+set local role service_role;
+create temporary table gp2 on commit drop as
+  select (pick_create(
+    '81111111-1111-4111-8111-111111111111', 'food', 40.9126, -73.1234, 1000, 20, null, 100
+  ) ->> 'id')::uuid as id;
+insert into pick_participants (pick_id, user_id) values
+  ((select id from gp2), '83333333-3333-4333-8333-333333333333');
+select pick_start((select id::text from gp2), '81111111-1111-4111-8111-111111111111',
+  '[{"placeId":"r1","snapshot":{"name":"Ramen","lat":0,"lng":0,"tasteType":"ramen_restaurant"}},
+    {"placeId":"r2","snapshot":{"name":"Deli","lat":0,"lng":0,"tasteType":"deli"}}]'::jsonb);
+select heartbeat_upsert_swipe((select id::text from gp2), '83333333-3333-4333-8333-333333333333', 'r1', 2);
+select heartbeat_upsert_swipe((select id::text from gp2), '83333333-3333-4333-8333-333333333333', 'r2', 2);
+reset role;
+-- The Yes -> No on r1 is "skipped": the old +1 stays and the change is queued.
+update preferences set value = 0 where pick_id = (select id from gp2) and place_id = 'r1'
+  and user_id = '83333333-3333-4333-8333-333333333333';
+update taste_signals set weight = 1 where user_id = '83333333-3333-4333-8333-333333333333'
+  and source = private.taste_source('swipe', (select id from gp2), 'r1');
+insert into private.taste_pending (user_id, source) values
+  ('83333333-3333-4333-8333-333333333333', private.taste_source('swipe', (select id from gp2), 'r1'));
+delete from picks where id = (select id from gp2);
+set local role service_role;
+select purge_google_taste(now() - interval '27 days');
+reset role;
+select is((select count(*)::int from taste_signals where user_id = '83333333-3333-4333-8333-333333333333'
+  and source = private.taste_source('swipe', (select id from gp2), 'r1')),
+  0, 'a queued change whose Pick was deleted does not leave the superseded Yes behind');
+select is((select weight from taste_signals where user_id = '83333333-3333-4333-8333-333333333333'
+  and source = private.taste_source('swipe', (select id from gp2), 'r2')),
+  1::real, 'signals from a deleted Pick with nothing queued stay as history');
+
+-- Point 1: a row queued while the sweep rebuilds that user is not deleted unprocessed. The
+-- trigger stands in for another connection committing a skip during the rebuild; its row is
+-- dated earlier, as a transaction that began before the sweep would date it.
+create temporary table rebuild_flag (done boolean) on commit drop;
+create function public.taste_test_queue_during_rebuild() returns trigger
+language plpgsql as $f$
+begin
+  if not exists (select 1 from pg_temp.rebuild_flag) then
+    insert into pg_temp.rebuild_flag values (true);
+    insert into private.taste_pending (user_id, at)
+      values ('83333333-3333-4333-8333-333333333333', now() - interval '1 hour');
+  end if;
+  return null;
+end $f$;
+create trigger taste_test_queue_during_rebuild after insert or update or delete on public.taste_signals
+  for each statement execute function public.taste_test_queue_during_rebuild();
+insert into private.taste_pending (user_id) values ('83333333-3333-4333-8333-333333333333');
+set local role service_role;
+select purge_google_taste(now() - interval '27 days');
+reset role;
+select is((select count(*)::int from private.taste_pending
+  where user_id = '83333333-3333-4333-8333-333333333333'),
+  1, 'a row queued during the rebuild waits for the next sweep instead of being deleted unread');
+drop trigger taste_test_queue_during_rebuild on public.taste_signals;
+set local role service_role;
+select purge_google_taste(now() - interval '27 days');
+reset role;
+select is((select count(*)::int from private.taste_pending), 0, 'and the next sweep drains it');
 
 -- Clients can't call either function.
 reset role;

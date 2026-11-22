@@ -150,3 +150,32 @@ query("select public.purge_google_taste(now()-interval '30 days')")  # the sweep
 got = query(signal)
 assert got == '-1', 'a No skipped behind a held taste lock must not keep the old Yes after the sweep, got %r' % got
 print('ok - changed swipe skipped behind another Pick converges to the saved No on the next sweep')
+
+# #78 re-review (Josh), point 4: the sweep never waits on a user whose taste lock is busy
+# (200 locked users used to cost 200ms each). Busy users stay queued; everyone else drains.
+import time
+busy = ['ae000000-0000-4000-8000-%012d' % n for n in range(1, 21)]
+free = 'ae000000-0000-4000-8000-000000000099'
+users = "array[%s]::uuid[]" % ','.join("'%s'" % u for u in busy)
+query("insert into private.taste_pending (user_id) select unnest(%s) union all select '%s'::uuid" % (users, free))
+holder = subprocess.Popen(base, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+try:
+    holder.stdin.write("set statement_timeout='30s'; begin;\nselect count(pg_advisory_xact_lock(hashtextextended('wtw-taste:' || u::text, 0))) from unnest(%s) u;\n\\echo LOCKED\n" % users)
+    holder.stdin.flush()
+    while 'LOCKED' not in holder.stdout.readline():
+        if holder.poll() is not None:
+            raise AssertionError(holder.stderr.read())
+    started = time.time()
+    query("select public.purge_google_taste(now()-interval '30 days')")
+    took = time.time() - started
+    assert took < 1.5, 'the sweep waited on locked users: %.1fs for 20' % took
+    left = query("select count(*) from private.taste_pending where user_id = any(%s)" % users)
+    assert left == '20', 'busy users must stay queued, got %s' % left
+    assert query("select count(*) from private.taste_pending where user_id='%s'" % free) == '0'
+finally:
+    holder.stdin.write('rollback;\n\\q\n')
+    holder.stdin.flush()
+    holder.wait(timeout=10)
+query("select public.purge_google_taste(now()-interval '30 days')")
+assert query("select count(*) from private.taste_pending where user_id = any(%s)" % users) == '0'
+print('ok - the sweep skips users whose taste lock is busy and processes them next time')
