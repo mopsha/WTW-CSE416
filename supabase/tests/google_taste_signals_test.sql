@@ -183,7 +183,8 @@ begin
   end if;
   return null;
 end $f$;
-create trigger taste_test_queue_during_rebuild after insert or update or delete on public.taste_signals
+-- On insert only: the sweep's own first statement (the 30-day purge) is a delete, before it reads the queue.
+create trigger taste_test_queue_during_rebuild after insert on public.taste_signals
   for each statement execute function public.taste_test_queue_during_rebuild();
 insert into private.taste_pending (user_id) values ('83333333-3333-4333-8333-333333333333');
 set local role service_role;
