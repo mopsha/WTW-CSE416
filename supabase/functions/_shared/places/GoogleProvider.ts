@@ -234,7 +234,7 @@ export function textQuery(
 }
 
 /**
- * Text Search (New) body for filters Nearby Search can't apply (price, rating, open now), so
+ * Text Search (New) body for filters Nearby Search can't apply (price, rating), so
  * Google returns new matching places instead of us trimming the same popular ones. Text Search
  * takes one includedType and only a rectangular restriction; pool.ts trims to the circle.
  */
@@ -256,7 +256,7 @@ export function textSearchBody(query: PlaceSearch & { category: Category }, type
         }
       : {}),
     ...(filters.minRating ? { minRating: filters.minRating } : {}),
-    ...(filters.openNow ? { openNow: true } : {}),
+    // No openNow: it drops unknown-hours places before the local unverified fallback.
   };
 }
 

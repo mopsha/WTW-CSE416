@@ -126,9 +126,13 @@ export function matchesDiscovery(place: Candidate, filters: DiscoverConstraints 
   );
 }
 
-/** Filters Nearby Search can't apply, so these switch Discover to Text Search for new places. */
+/**
+ * Filters Nearby Search can't apply, so these switch Discover to Text Search for new places.
+ * Not Open Now: Google's openNow drops places with unknown hours, which applyDiscoverFilters
+ * keeps as an unverified fallback, so Open Now stays a local filter.
+ */
 export function narrowsSearch(filters: DiscoverConstraints | undefined): boolean {
-  return !!(filters?.prices?.length || filters?.minRating || filters?.openNow);
+  return !!(filters?.prices?.length || filters?.minRating);
 }
 /** Price applies to food only; for food, unknown price never matches an explicit price. */
 export function matchesPrice(place: Candidate, prices?: readonly number[]): boolean {

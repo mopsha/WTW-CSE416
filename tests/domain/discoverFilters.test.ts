@@ -405,7 +405,7 @@ test('narrowing filters use Text Search with exact priceLevels around the user; 
   await provider.search(request('&category=food&cuisines=italian'));
   expect(http.mock.calls[0]![0]).toBe('https://places.googleapis.com/v1/places:searchNearby');
 });
-test('Text Search bodies: several types become one query, open now and nearest pass through', () => {
+test('Text Search bodies: several types become one query, nearest passes through, open now stays local', () => {
   const center = { lat: 40.9, lng: -73.1 };
   const body = textSearchBody(
     {
@@ -416,10 +416,8 @@ test('Text Search bodies: several types become one query, open now and nearest p
     },
     discoverSearchTypes('food', { foodTypes: ['burgers', 'pizza'] }),
   );
-  expect(body).toMatchObject({
-    textQuery: 'pizza restaurant or hamburger restaurant',
-    openNow: true,
-  });
+  expect(body).toMatchObject({ textQuery: 'pizza restaurant or hamburger restaurant' });
+  expect(body).not.toHaveProperty('openNow');
   expect(body).toMatchObject({ rankPreference: 'DISTANCE' });
   expect(body).not.toHaveProperty('includedType');
   expect(body).not.toHaveProperty('priceLevels');
@@ -433,6 +431,7 @@ test('Text Search bodies: several types become one query, open now and nearest p
     textSearchBody({ center, radiusM: 8000, category: 'food', discovery: {} }, []).textQuery,
   ).toBe('restaurants');
   expect(narrowsSearch({ cuisines: ['thai'] })).toBe(false);
+  expect(narrowsSearch({ openNow: true })).toBe(false);
   expect(narrowsSearch({ prices: [1] })).toBe(true);
 });
 test('the Text Search rectangle contains the whole search circle', () => {
@@ -474,9 +473,8 @@ test('Text Search queries are generic per category, and Activities never get a f
   expect(body('&prices=2').textQuery).toBe('restaurants');
   // For You + price: the activities search has no narrowing filter, so it stays on Nearby.
   expect(parse('&prices=2').map((r) => narrowsSearch(r.discovery))).toEqual([true, false]);
-  expect(body('&category=activities&openNow=true').textQuery).toBe('things to do');
   expect(body('&category=activities&minRating=4').textQuery).toBe('things to do');
-  expect(body('&category=activities&activityTypes=bowling&openNow=true')).toMatchObject({
+  expect(body('&category=activities&activityTypes=bowling&minRating=4')).toMatchObject({
     textQuery: 'bowling alley',
     includedType: 'bowling_alley',
   });
@@ -489,4 +487,25 @@ test('Text Search queries are generic per category, and Activities never get a f
     expect(q).not.toMatch(food);
   }
   expect(textQuery('activities', {}, [])).not.toMatch(food);
+});
+
+test('Open Now keeps Google places with unknown hours as the unverified fallback', async () => {
+  const sent: Record<string, unknown>[] = [];
+  const http = jest.fn(async (_url: string, init: RequestInit) => {
+    sent.push(JSON.parse(init.body as string));
+    return { ok: true, json: async () => ({ places: [googlePlace('no-hours')] }) };
+  });
+  const pool = createPoolBuilder(new GoogleProvider('key', http), { provider: 'google' });
+  for (const query of ['&category=food&openNow=true', '&category=food&prices=2&openNow=true']) {
+    sent.length = 0;
+    const result = await discover(pool, parse(query), {});
+    expect(sent.some((body) => 'openNow' in body)).toBe(false);
+    expect(result.places.map((p) => p.placeId)).toEqual(['no-hours']);
+    // Shown, but flagged unverified: never presented as confirmed open.
+    expect(result.hoursUnverified).toBe(true);
+  }
+  // Open Now alone adds nothing Google can narrow, so it stays on Nearby Search.
+  http.mockClear();
+  await discover(pool, parse('&category=food&openNow=true'), {});
+  expect(http.mock.calls[0]![0]).toBe('https://places.googleapis.com/v1/places:searchNearby');
 });

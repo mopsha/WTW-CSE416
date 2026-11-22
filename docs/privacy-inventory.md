@@ -33,6 +33,9 @@ tracking. Nothing is sent to analytics; there is no analytics SDK.
 
 Device location: the app asks for location **only** to center a Pick or Discover near you
 ("when in use"). The exact location is not stored except as the Pick center the host chose.
+Discover (PR #82) rounds it to 3 decimal places (~110 m) in `useDiscoverArea`; the rounded
+value is in the `/discover` query string (so it can reach Supabase request logs) and in the
+`place_cache` key (no user id; rows removed by `cleanup_place_cache` within ~28 days).
 
 ## Added by the M4 integration (0008, 0010–0019)
 
