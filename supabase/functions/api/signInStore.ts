@@ -19,6 +19,13 @@ function secretKey(): string | null {
   }
 }
 
+/** The SDK also sends its key as a Bearer token; a secret key belongs only in `apikey`. */
+const withoutBearer: typeof fetch = (input, init) => {
+  const headers = new Headers(init?.headers);
+  headers.delete('Authorization');
+  return fetch(input, { ...init, headers });
+};
+
 /** Service-role adapter for _shared/api/signIn.ts (0057_password_login_limit.sql). */
 export function createSignInStore(): SignInStore {
   async function owner(username: string): Promise<string | null> {
@@ -77,7 +84,9 @@ export function createSignInStore(): SignInStore {
       // A throwaway client: the session goes back to the app, never stays on the server.
       const client = createClient(url, secret ?? anon, {
         auth: { persistSession: false, autoRefreshToken: false },
-        ...(secret && clientIp ? { global: { headers: { 'sb-forwarded-for': clientIp } } } : {}),
+        ...(secret && clientIp
+          ? { global: { headers: { 'sb-forwarded-for': clientIp }, fetch: withoutBearer } }
+          : {}),
       });
       const { data, error } = await client.auth.signInWithPassword({ email, password });
       // Only a real wrong-credentials answer counts as a wrong password.

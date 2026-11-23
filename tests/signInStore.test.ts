@@ -56,8 +56,20 @@ test("the caller's address is forwarded to Supabase, with the secret key that re
   expect(mockCreateClient).toHaveBeenCalledWith(
     'https://x.test',
     'sb_secret_test',
-    expect.objectContaining({ global: { headers: { 'sb-forwarded-for': '1.1.1.1' } } }),
+    expect.objectContaining({
+      global: { headers: { 'sb-forwarded-for': '1.1.1.1' }, fetch: expect.any(Function) },
+    }),
   );
+  // The SDK adds the key as a Bearer token too; a secret key belongs only in apikey.
+  const options = mockCreateClient.mock.calls[0]![2] as { global: { fetch: typeof fetch } };
+  const sent = jest.spyOn(globalThis, 'fetch').mockResolvedValue({} as Response);
+  await options.global.fetch('https://x.test/auth/v1/token', {
+    headers: { apikey: 'sb_secret_test', Authorization: 'Bearer sb_secret_test' },
+  });
+  const headers = new Headers(sent.mock.calls[0]![1]!.headers);
+  sent.mockRestore();
+  expect(headers.get('authorization')).toBeNull();
+  expect(headers.get('apikey')).toBe('sb_secret_test');
 });
 
 test.each([

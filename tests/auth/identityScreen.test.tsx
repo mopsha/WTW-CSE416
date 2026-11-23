@@ -4,6 +4,7 @@ import WelcomeScreen from '../../app/welcome';
 import { useProfile } from '@/hooks/useProfile';
 import { api } from '@/lib/api';
 import { auth } from '@/lib/auth';
+import { AuthError } from '@/lib/authTypes';
 
 type Node = {
   props: {
@@ -100,6 +101,24 @@ test('taken username keeps the form and drafts available for a successful retry'
     ['Legacy', 'taken'],
     ['Legacy', 'available'],
   ]);
+  // Saved by the first try already; Supabase refuses to set the same password again.
+  expect(auth.setPassword).toHaveBeenCalledTimes(1);
+  await act(async () => tree.unmount());
+});
+
+test('a sign-in too old to set a password says to sign in again, not that a code was sent', async () => {
+  jest
+    .mocked(auth.setPassword)
+    .mockRejectedValue(new AuthError('reauth_needed', 'We emailed you a code'));
+  const completeIdentity = jest.fn();
+  const tree = await render({ displayName: 'New', username: 'new_person', completeIdentity });
+  await settle();
+  await act(async () => input(tree, 'Password')!.props.onChangeText('long-enough'));
+  await act(async () => button(tree, 'Continue').props.onPress());
+  expect(tree.root.findAllByType('test-error')[0]!.props.message).toContain(
+    'Use a different account',
+  );
+  expect(completeIdentity).not.toHaveBeenCalled();
   await act(async () => tree.unmount());
 });
 

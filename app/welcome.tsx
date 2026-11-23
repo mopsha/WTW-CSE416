@@ -21,6 +21,7 @@ import { useSession } from '@/hooks/useAuth';
 import { suggestedName, useProfile } from '@/hooks/useProfile';
 import { api } from '@/lib/api';
 import { auth } from '@/lib/auth';
+import { AuthError } from '@/lib/authTypes';
 
 const MIN_PASSWORD = 8;
 
@@ -56,6 +57,7 @@ function WelcomeForm() {
   const [invalid, setInvalid] = useState<string | null>(null);
   const { busy, error, run } = useAction();
   const pending = useRef(false);
+  const savedPassword = useRef<string | null>(null);
 
   // Live availability, a moment after typing stops.
   useEffect(() => {
@@ -111,7 +113,18 @@ function WelcomeForm() {
           ...(birthday || skipBirthday ? { birthday: skipBirthday ? null : birthday } : {}),
         });
         // Password first: finishing the profile leaves this screen for good.
-        if (needsPassword) await auth.setPassword(password, { userId: session.user.id });
+        // A retry (say, the username was taken) must not set it again: Supabase refuses the same one.
+        if (needsPassword && savedPassword.current !== password) {
+          await auth.setPassword(password, { userId: session.user.id }).catch((e: unknown) => {
+            if (e instanceof AuthError && e.code === 'reauth_needed')
+              throw new AuthError(
+                'reauth_needed',
+                'You signed in a while ago. Tap “Use a different account”, then sign in again to set your password.',
+              );
+            throw e;
+          });
+          savedPassword.current = password;
+        }
         if (birthday || skipBirthday)
           await profile.completeIdentity(input.displayName, input.username, input.birthday);
         else await profile.completeIdentity(input.displayName, input.username);

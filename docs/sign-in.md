@@ -107,7 +107,8 @@ Set up Apple first.
 - Supabase → Authentication → Providers → **Email** must allow password sign-in (on by default),
   with a minimum password length of exactly 8, as in the app and `supabase/config.toml`.
 - Turn **Secure password change** on (also as in `config.toml`): the welcome screen sets the
-  password right after the code sign-in, and Settings → Password handles the emailed code.
+  password right after the code sign-in (one over a day old is asked to sign in again), and
+  Settings → Password handles the emailed code.
 - Authentication → **Rate Limits**: turn on **IP Address Forwarding**, and make sure the project
   has an `sb_secret_` key (Settings → API Keys). Supabase gives functions these keys itself
   (`SUPABASE_SECRET_KEYS`), so nothing is added to the function's secrets. Check the sign-in
