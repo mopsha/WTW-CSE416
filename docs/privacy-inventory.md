@@ -33,9 +33,16 @@ tracking. Nothing is sent to analytics; there is no analytics SDK.
 
 Device location: the app asks for location **only** to center a Pick or Discover near you
 ("when in use"). The exact location is not stored except as the Pick center the host chose.
-Discover (PR #82) rounds it to 3 decimal places (~110 m) in `useDiscoverArea`; the rounded
-value is in the `/discover` query string (so it can reach Supabase request logs) and in the
-`place_cache` key (no user id; rows removed by `cleanup_place_cache` within ~28 days).
+For Discover, we round your device's location to approximately 110 meters to find nearby
+places. The rounded location is included in requests to our server and may appear in our
+hosting provider's logs. It is also used in our place-results cache, which is not
+directly linked to your account and is deleted within 28 days. Separately, we store
+locations with Picks when a host chooses a Pick's center. You can disable location
+access at any time in your device settings.
+
+Discover implementation (PR #82): `useDiscoverArea` rounds to 3 decimal places. The rounded
+coordinates are sent in the `/discover` query string, which can reach Supabase request logs.
+The `place_cache` key has no user ID, and `cleanup_place_cache` removes expired rows.
 
 ## Added by the M4 integration (0008, 0010–0019)
 
