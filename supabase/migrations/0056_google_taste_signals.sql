@@ -11,9 +11,13 @@
 -- * A per-user epoch (taste_epochs.since): no signal for an action older than the user's last
 --   reset, however late the request arrives. Existing users start at this migration, so a
 --   reset made before 0056 (which left no record) can't be undone by old Picks either.
--- * Domain triggers save source state in the action's transaction, under the canonical
---   row's write lock. A skipped learning write queues the source for retry. The sweep
---   projects the latest committed state even if the Pick has since been deleted.
+-- * Domain triggers capture the action in its own transaction, under the canonical row's write
+--   lock. If anything in the way is busy or fails, the whole captured action is queued instead
+--   (an insert with no foreign keys or unique rows to wait on), so learning doesn't fail or hold
+--   up a swipe, vote, close or refresh and the new choice isn't lost. The sweep applies it,
+--   even if the Pick has since been deleted.
+-- * Every captured action takes a sequence number while it holds that write lock, so an older
+--   queued action never replaces a newer saved one.
 -- * The weight and action time come from the saved swipe, ballot or winner, never the caller;
 --   the API proves the type with a server signature (tasteSignals.ts) before calling this.
 -- Numbered 0056: 0052 (on main) and 0053–0055 (pick-flow and Hang PRs) come first.
@@ -39,13 +43,18 @@ create or replace view public.learned_taste with (security_invoker=true) as
        where not google or at >= now() - interval '30 days') s
  group by user_id,place_type,latest;
 
--- One durable row per domain source. The swipe, ballot or Pick row serializes its
--- writers before this row is updated. Revisions are equality tokens, never ordered.
+-- Orders captured actions, saved or queued. The swipe, ballot or Pick row serializes a
+-- source's writers, so a later action always draws a higher number (never set a cache here).
+create sequence private.taste_seq;
+
+-- One durable row per domain source: its latest applied action. Revisions are equality
+-- tokens, never ordered; seq orders.
 -- No Pick FK: deletion preserves the last committed action as learning history.
 -- Google rows retain only the revision and action time, never the live type.
 create table private.taste_source_state (
   user_id uuid not null references public.profiles(id) on delete cascade,
   source uuid not null,
+  seq bigint not null,
   revision uuid not null,
   action_at timestamptz not null,
   place_type text,
@@ -55,12 +64,26 @@ create table private.taste_source_state (
   primary key (user_id, source)
 );
 
+-- Queued work. With a revision, the row is a captured action that couldn't be saved (no
+-- profiles FK on purpose: taking one waits on profile saves and account deletion). Without
+-- one, it only asks for the source to be projected again.
 create table private.taste_pending (
-  id bigint generated always as identity primary key,
+  id bigint primary key default nextval('private.taste_seq'),
   user_id uuid not null,
   source uuid,
-  at timestamptz not null default clock_timestamp()
+  at timestamptz not null default clock_timestamp(),
+  revision uuid,
+  action_at timestamptz,
+  place_type text,
+  weight real,
+  google boolean,
+  check (case when revision is null
+    then num_nonnulls(action_at, place_type, weight, google) = 0
+    else source is not null and action_at is not null and google is not null
+      and ((google and place_type is null and weight is null) or (not google and weight is not null))
+    end)
 );
+create index taste_pending_source_idx on private.taste_pending (user_id, source);
 -- The cursor rotates through bounded ID batches, including past entries for busy users.
 create table private.taste_sweep_cursor (
   singleton boolean primary key default true check (singleton),
@@ -70,6 +93,7 @@ create table private.taste_sweep_cursor (
 insert into private.taste_sweep_cursor default values;
 revoke all on table private.taste_source_state, private.taste_pending, private.taste_sweep_cursor
   from public, anon, authenticated;
+revoke all on sequence private.taste_seq from public, anon, authenticated;
 
 create function private.lock_taste(p_user_id uuid) returns void
 language sql volatile set search_path = '' as $$
@@ -111,36 +135,55 @@ language sql volatile set search_path = '' set lock_timeout = '200ms' as $$
         (excluded.place_type, excluded.weight, excluded.at, false, excluded.source_revision)
 $$;
 
--- Capture state before touching optional signal rows. Only the projection may be
--- skipped. A queue failure rolls back the action with its state instead of losing repair.
-create function private.save_taste_source(p_user_id uuid, p_source uuid, p_pick_id uuid,
-  p_place_id text, p_weight real, p_action_at timestamptz) returns void
+-- Save one action for these sources and project it, or queue it whole. Waits are bounded and
+-- nothing outside the handler can wait on another row. p_refresh takes the refresh locks
+-- instead of the user lock (a refresh covers every participant, so it must not hold theirs).
+create function private.capture_taste(p_user_id uuid, p_sources uuid[], p_action_at timestamptz,
+  p_place_type text, p_weight real, p_google boolean, p_refresh boolean) returns void
 language plpgsql security definer set search_path = '' set lock_timeout = '200ms' as $$
 begin
-  insert into private.taste_source_state (user_id, source, revision, action_at, place_type, weight, google)
-  select p_user_id, p_source, gen_random_uuid(), p_action_at,
+  begin
+    if p_refresh then
+      perform pg_catalog.pg_advisory_xact_lock(private.taste_refresh_lock_key(source))
+      from unnest(p_sources) as sources(source);
+    else
+      perform private.lock_taste(p_user_id);
+    end if;
+    insert into private.taste_source_state as s
+      (user_id, source, seq, revision, action_at, place_type, weight, google)
+    select p_user_id, source, nextval('private.taste_seq'), gen_random_uuid(), p_action_at,
+      p_place_type, p_weight, p_google
+    from unnest(p_sources) as sources(source)
+    on conflict (user_id, source) do update set
+      seq = excluded.seq, revision = excluded.revision, action_at = excluded.action_at,
+      place_type = excluded.place_type, weight = excluded.weight, google = excluded.google
+    where s.seq < excluded.seq;
+    perform private.apply_taste_sources(p_user_id, p_sources);
+  exception when others then
+    insert into private.taste_pending
+      (user_id, source, revision, action_at, place_type, weight, google)
+    select p_user_id, source, gen_random_uuid(), p_action_at, p_place_type, p_weight, p_google
+    from unnest(p_sources) as sources(source);
+  end;
+end $$;
+
+create function private.save_taste_source(p_user_id uuid, p_source uuid, p_pick_id uuid,
+  p_place_id text, p_weight real, p_action_at timestamptz) returns void
+language sql volatile security definer set search_path = '' as $$
+  select private.capture_taste(p_user_id, array[p_source], p_action_at,
     case when not c.google and c.place_type ~ '^[a-z_]{1,60}$' then c.place_type end,
-    case when not c.google then greatest(-10, least(10, p_weight)) end, c.google
+    case when not c.google then greatest(-10, least(10, p_weight)) end, c.google, false)
   from (
     select coalesce(snapshot ->> 'provider' = 'google', false) as google,
       snapshot ->> 'tasteType' as place_type
     from public.pick_candidates where pick_id = p_pick_id and place_id = p_place_id
   ) c
-  on conflict (user_id, source) do update set
-    revision = excluded.revision, action_at = excluded.action_at, place_type = excluded.place_type,
-    weight = excluded.weight, google = excluded.google;
-
-  begin
-    perform private.lock_taste(p_user_id);
-    perform private.apply_taste_sources(p_user_id, array[p_source]);
-  exception when others then
-    insert into private.taste_pending (user_id, source) values (p_user_id, p_source);
-  end;
-end $$;
+$$;
 
 -- Override 0047's refresh cleanup. Lock the Pick before collecting actions so a
 -- concurrent swipe or ballot cannot commit between collection and deck replacement.
--- A tombstone survives a failed signal deletion and any queued work for the old deck.
+-- A tombstone, saved or queued, outranks any queued work for the old deck. If it's queued
+-- because the refresh lock was busy, the sweep still removes whatever its holder recorded.
 create or replace function private.unlearn_pick_swipes(p_pick_id text) returns void
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -162,22 +205,7 @@ begin
     ) actions
     group by user_id order by user_id
   loop
-    perform pg_catalog.pg_advisory_xact_lock(private.taste_refresh_lock_key(source))
-    from unnest(v_sources) as sources(source);
-
-    insert into private.taste_source_state (user_id, source, revision, action_at, place_type, weight, google)
-    select v_user, source, gen_random_uuid(), clock_timestamp(), null, 0, false
-    from unnest(v_sources) as sources(source)
-    on conflict (user_id, source) do update set
-      revision = excluded.revision, action_at = excluded.action_at,
-      place_type = null, weight = 0, google = false;
-
-    begin
-      perform private.apply_taste_sources(v_user, v_sources);
-    exception when others then
-      insert into private.taste_pending (user_id, source)
-      select v_user, source from unnest(v_sources) as sources(source);
-    end;
+    perform private.capture_taste(v_user, v_sources, clock_timestamp(), null, 0, false, true);
   end loop;
 end $$;
 
@@ -342,9 +370,18 @@ begin
   end if;
   -- Swipe and ballot retries preserve the original action time. Pre-migration
   -- actions may have no source revision, but must still pass the epoch check.
+  -- A queued action's revision counts too, so the sweep keeps this signal when it applies it.
   select a.weight, a.action_at, s.revision into v_weight, v_at, v_revision
     from private.google_taste_action(p_user_id, v_pick, p_place_id, p_kind) a
-    left join private.taste_source_state s on s.user_id = p_user_id and s.source = v_source and s.google;
+    left join lateral (
+      select r.revision, r.google from (
+        select seq, revision, google from private.taste_source_state
+         where user_id = p_user_id and source = v_source
+        union all
+        select id, revision, google from private.taste_pending
+         where user_id = p_user_id and source = v_source and revision is not null
+      ) r order by r.seq desc limit 1
+    ) s on s.google;
   if v_weight is null then return; end if;
   if v_weight = 0 then
     delete from public.taste_signals where user_id = p_user_id and source = v_source;
@@ -379,7 +416,7 @@ begin
     on conflict (user_id) do update set since = greatest(private.taste_epochs.since, excluded.since);
 end $$;
 
--- Claim and project in one subtransaction. Source-less recorder entries carry no
+-- Apply, project and claim in one subtransaction. Source-less recorder entries carry no
 -- authoritative change or Google type. Only domain entries can repair a source.
 create function private.taste_reconcile(p_user_id uuid, p_ids bigint[]) returns void
 language plpgsql security definer set search_path = '' set lock_timeout = '200ms' as $$
@@ -390,22 +427,35 @@ begin
        pg_catalog.hashtextextended('wtw-taste:' || p_user_id::text, 0)) then
     return;
   end if;
-  with claimed as (
-    delete from private.taste_pending where user_id = p_user_id and id = any(p_ids)
-    returning source
-  )
-  select array_agg(distinct source) filter (where source is not null) into v_sources from claimed;
+  -- A deleted account's queued actions are just dropped.
+  if exists (select 1 from public.profiles where id = p_user_id) then
+    select array_agg(distinct source) into v_sources from private.taste_pending
+     where user_id = p_user_id and id = any(p_ids) and source is not null;
+  end if;
   if v_sources is not null then
-    -- Refresh can hold a source while replacing the deck. Roll back the queue claim
-    -- on contention so the next projection reads the committed tombstone or new action.
+    -- Refresh can hold a source while replacing the deck. Roll back on contention so the
+    -- next projection reads the committed tombstone or new action.
     if exists (
       select 1 from unnest(v_sources) as sources(source)
       where not pg_catalog.pg_try_advisory_xact_lock_shared(private.taste_refresh_lock_key(source))
     ) then
       raise lock_not_available;
     end if;
+    -- The newest queued action per source, even one outside this batch, so an older answer
+    -- never shows between sweeps. seq drops any that a saved action has overtaken.
+    insert into private.taste_source_state as s
+      (user_id, source, seq, revision, action_at, place_type, weight, google)
+    select distinct on (source) user_id, source, id, revision, action_at, place_type, weight, google
+    from private.taste_pending
+    where user_id = p_user_id and source = any(v_sources) and revision is not null
+    order by source, id desc
+    on conflict (user_id, source) do update set
+      seq = excluded.seq, revision = excluded.revision, action_at = excluded.action_at,
+      place_type = excluded.place_type, weight = excluded.weight, google = excluded.google
+    where s.seq < excluded.seq;
     perform private.apply_taste_sources(p_user_id, v_sources);
   end if;
+  delete from private.taste_pending where user_id = p_user_id and id = any(p_ids);
 end $$;
 
 -- Rotate through at most 200 queue rows using the primary key. Skipped rows stay
@@ -471,6 +521,7 @@ end $$;
 revoke all on function private.lock_taste(uuid),
   private.taste_refresh_lock_key(uuid),
   private.apply_taste_sources(uuid, uuid[]),
+  private.capture_taste(uuid, uuid[], timestamptz, text, real, boolean, boolean),
   private.save_taste_source(uuid, uuid, uuid, text, real, timestamptz),
   private.taste_reconcile(uuid, bigint[]),
   private.google_taste_action(uuid, uuid, text, text)

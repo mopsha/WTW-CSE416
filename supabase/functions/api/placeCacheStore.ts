@@ -42,7 +42,8 @@ export function createCacheCleanupStore(): CacheCleanupStore {
         p_day: day,
         p_cutoff: cutoff,
       });
-      if (error) throw new Error('Cache cleanup failed');
+      // Every step runs and the first failure is reported at the end, so one failing step can't
+      // keep the others (or the taste queue, last) from running this sweep.
       // The sweep already runs as service_role. Retain at least 24 hours of
       // message quota events (longest window: one hour), leaving daily safety
       // actions untouched. Run even when the daily cache claim was already used,
@@ -53,16 +54,17 @@ export function createCacheCleanupStore(): CacheCleanupStore {
         .delete()
         .eq('action', 'message_send')
         .lt('created_at', eventCutoff);
-      if (eventError) throw new Error('Rate limit event cleanup failed');
       // Google allows 30 days. Runs on every sweep, so a failed run retries, well inside that.
       const { error: purgeError } = await createServiceClient().rpc('purge_google_coordinates', {
         p_cutoff: new Date(Date.parse(`${day}T00:00:00Z`) - 27 * 86_400_000).toISOString(),
       });
-      if (purgeError) throw new Error('Google coordinate cleanup failed');
       // Signals learned from Google places' types are kept 30 days at most (0056).
       const { error: tasteError } = await createServiceClient().rpc('purge_google_taste', {
         p_cutoff: new Date(Date.parse(`${day}T00:00:00Z`) - 27 * 86_400_000).toISOString(),
       });
+      if (error) throw new Error('Cache cleanup failed');
+      if (eventError) throw new Error('Rate limit event cleanup failed');
+      if (purgeError) throw new Error('Google coordinate cleanup failed');
       if (tasteError) throw new Error('Google taste cleanup failed');
       return data as { removed: number; ran: boolean };
     },

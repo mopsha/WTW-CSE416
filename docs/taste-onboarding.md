@@ -94,21 +94,26 @@ live result (`pickPlaces.ts`). Live deck ordering still uses those types in memo
   swipe or ballot only after taking it, so the latest decision always wins. `taste_epochs.since`
   is when learning restarts: any action at or before it never teaches, however late its
   request arrives. Users who existed before 0056 start at the migration, since earlier resets
-  left no record. Races are covered by `tests/db/google_taste_concurrency.py` (not yet in CI:
-  adding it needs a workflow-scoped token) and `tests/db/taste_concurrency.py` (in CI).
+  left no record. Races are covered by `tests/db/taste_concurrency.py`, which CI runs and which
+  also runs `taste_source_concurrency.py` and `google_taste_concurrency.py`.
 - The learning runs in triggers, so every write path is covered and nothing else changes. It
-  never holds up the swipe, vote, start or refresh: a lock wait or other failure skips the
-  signal. A skipped write isn't lost, though. It queues the user (`private.taste_pending`), and
-  the next sweep (every minute, inside `purge_google_taste`) rebuilds that user's signals from
-  their saved swipes, votes and winners (`taste_reconcile`), so a Yes changed to No while
-  another of their Picks was closing ends at the No. Only sources whose action still exists are
-  rebuilt, only after the user's epoch, and a Google signal that no longer matches its saved
-  action is removed (its type isn't stored, so it's re-added by the next recorded action).
-  The queue row also names the skipped signal's source: if that Pick is deleted before the
-  sweep, the signal is removed instead of kept as history. The sweep deletes only the rows it
-  read (one queued during a rebuild waits for the next sweep), and it never waits on a user
-  whose lock is busy: that user stays queued. A reset reads its epoch after taking the lock,
-  so actions that committed while it waited are cleared too.
+  doesn't fail the swipe, vote, close or refresh, and its waits are bounded (200 ms each). If the
+  learning write hits a busy lock (the user's taste lock, or their profile row during a profile
+  save or account deletion) or fails, the whole captured action is queued in
+  `private.taste_pending`: its type, weight and time, or just its revision and time for a Google
+  place. The queue has no foreign keys, so that insert has nothing to wait on.
+- The next sweep (every minute, inside `purge_google_taste`) applies it (`taste_reconcile`), so a
+  Yes changed to No while another of their Picks was closing ends at the No, even if the Pick has
+  been deleted since. Each captured action takes a number from `private.taste_seq` under its Pick's
+  lock, so an older queued action never replaces a newer one. Only actions after the user's epoch
+  teach, and a Google signal that no longer matches its saved action is removed (its type isn't
+  stored, so it's re-added by the next recorded action). A queued action whose account has been
+  deleted is dropped.
+- The sweep deletes only the rows it read (one queued during a rebuild waits for the next sweep),
+  and it never waits on a user whose lock is busy: that user stays queued. A reset reads its epoch
+  after taking the lock, so actions that committed while it waited are cleared too.
+- A Google recorder call that itself fails isn't retried: that action isn't learned, but nothing
+  stale is kept.
 
 **Preferences screen** (Profile → Preferences, or Settings → Food & activity preferences):
 

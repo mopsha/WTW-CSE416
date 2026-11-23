@@ -331,7 +331,8 @@ def queued_actions(*row):
     return query('select count(*) from private.taste_pending where revision is not null and ' + source_row(*row))
 
 
-profiles_locked = "select 1 from public.profiles where id in ('%s','%s') order by id for update" % (user(1), user(2))
+# The guest only: a close also rechecks picks.host_id, so the host's row is core's own wait.
+profiles_locked = "select 1 from public.profiles where id='%s' for update" % user(2)
 completed = ranking.replace("'final_vote','winnerPlaceId',null", "'completed','winnerPlaceId','taste-a'")
 
 
@@ -340,25 +341,22 @@ def close(pick, payload):
         pick, user(1), pick, payload)
 
 
-def survives_profile_lock(kind, pick, place, people, action, saved, weight):
-    rows = [(kind, pick, place, who) for who in people]
+def survives_profile_lock(kind, pick, place, action, saved, weight):
+    row = (kind, pick, place, user(2))
     with held_lock(profiles_locked):
         act(action)
         assert query(saved) == 't', 'the action did not save'
-        for row in rows:
-            assert (learned(*row), queued_actions(*row)) == ('none', '1'), (learned(*row), queued_actions(*row))
+        assert (learned(*row), queued_actions(*row)) == ('none', '1'), (learned(*row), queued_actions(*row))
         query(sweep)  # still locked: stays queued, and the sweep carries on
-        for row in rows:
-            assert queued_actions(*row) == '1', 'a locked user was dropped from the queue'
+        assert queued_actions(*row) == '1', 'a locked user was dropped from the queue'
     query(sweep)
-    for row in rows:
-        assert (learned(*row), queued_actions(*row)) == (weight, '0'), (learned(*row), queued_actions(*row))
+    assert (learned(*row), queued_actions(*row)) == (weight, '0'), (learned(*row), queued_actions(*row))
 
 
 def swipe_survives_profile_lock():
     pick = setup()
     survives_profile_lock(
-        'swipe', pick, 'taste-b', [user(2)],
+        'swipe', pick, 'taste-b',
         "select public.heartbeat_upsert_swipe('%s','%s','taste-b',0)" % (pick, user(2)),
         "select value=0 from public.preferences where pick_id='%s' and user_id='%s' and place_id='taste-b'" % (pick, user(2)),
         '-1')
@@ -368,7 +366,7 @@ def vote_survives_profile_lock():
     pick = setup()
     query(close(pick, ranking))
     survives_profile_lock(
-        'vote', pick, None, [user(2)],
+        'vote', pick, None,
         "select public.pick_cast_vote('%s','%s','taste-b')" % (pick, user(2)),
         "select place_id='taste-b' from public.final_votes where pick_id='%s' and user_id='%s'" % (pick, user(2)),
         '1')
@@ -377,7 +375,7 @@ def vote_survives_profile_lock():
 def winning_close_survives_profile_lock():
     pick = setup()
     survives_profile_lock(
-        'winner', pick, None, [user(1), user(2)], close(pick, completed),
+        'winner', pick, None, close(pick, completed),
         "select state='completed' and winner_place_id='taste-a' from public.picks where id='%s'" % pick,
         '2')
 
@@ -386,7 +384,7 @@ def vote_settlement_survives_profile_lock():
     pick = setup()
     query(close(pick, ranking))
     survives_profile_lock(
-        'winner', pick, None, [user(1), user(2)],
+        'winner', pick, None,
         "select public.pick_close_vote_apply('%s','taste-b','vote')" % pick,
         "select state='completed' and winner_place_id='taste-b' from public.picks where id='%s'" % pick,
         '2')
