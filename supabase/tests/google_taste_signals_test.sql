@@ -101,13 +101,16 @@ insert into preferences (pick_id, place_id, user_id, value)
 -- The No's write was "skipped": the old Yes is still there.
 update taste_signals set weight = 1 where user_id = (select host from sig)
   and source = private.taste_source('swipe', (select id from gp), 'c1');
--- A Google signal that no longer matches its saved swipe (now No), and one that does (winner).
+-- The stale swipe carries no current revision. The recorded winner carries its
+-- exact revision and survives even if a duplicate retry for it is still queued.
 insert into taste_signals (user_id, source, place_type, weight, at, google) values
   ((select host from sig), private.taste_source('swipe', (select id from gp), 'g1'),
-   'sushi_restaurant', 1, now() - interval '1 hour', true),
-  ((select host from sig), private.taste_source('winner', (select id from gp), null),
-   'sushi_restaurant', 2, (select decided_at from picks where id = (select id from gp)), true);
-insert into private.taste_pending (user_id) values ((select host from sig)), ((select guest from sig));
+   'sushi_restaurant', 1, now() - interval '1 hour', true);
+select taste_record_google_signal((select host from sig), (select id::text from gp), 'g1',
+  'winner', 'sushi_restaurant');
+insert into private.taste_pending (user_id, source)
+select user_id, source from private.taste_source_state where user_id in
+  ((select host from sig), (select guest from sig));
 set local role service_role;
 select purge_google_taste(now() - interval '27 days');
 reset role;
@@ -130,7 +133,8 @@ select is((select count(*)::int from private.taste_pending), 0, 'the sweep drain
 update preferences set value = 2, updated_at = clock_timestamp()
  where pick_id = (select id from gp) and place_id = 'c1' and user_id = (select host from sig);
 select taste_reset((select host from sig));
-insert into private.taste_pending (user_id) values ((select host from sig));
+insert into private.taste_pending (user_id, source)
+select user_id, source from private.taste_source_state where user_id = (select host from sig);
 set local role service_role;
 select purge_google_taste(now() - interval '27 days');
 reset role;
@@ -154,7 +158,8 @@ reset role;
 -- The Yes -> No on r1 is "skipped": the old +1 stays and the change is queued.
 update preferences set value = 0 where pick_id = (select id from gp2) and place_id = 'r1'
   and user_id = '83333333-3333-4333-8333-333333333333';
-update taste_signals set weight = 1 where user_id = '83333333-3333-4333-8333-333333333333'
+update taste_signals set weight = 1, at = now() - interval '1 second'
+where user_id = '83333333-3333-4333-8333-333333333333'
   and source = private.taste_source('swipe', (select id from gp2), 'r1');
 insert into private.taste_pending (user_id, source) values
   ('83333333-3333-4333-8333-333333333333', private.taste_source('swipe', (select id from gp2), 'r1'));
@@ -162,9 +167,9 @@ delete from picks where id = (select id from gp2);
 set local role service_role;
 select purge_google_taste(now() - interval '27 days');
 reset role;
-select is((select count(*)::int from taste_signals where user_id = '83333333-3333-4333-8333-333333333333'
+select is((select weight from taste_signals where user_id = '83333333-3333-4333-8333-333333333333'
   and source = private.taste_source('swipe', (select id from gp2), 'r1')),
-  0, 'a queued change whose Pick was deleted does not leave the superseded Yes behind');
+  -1::real, 'a queued change whose Pick was deleted replaces the superseded Yes');
 select is((select weight from taste_signals where user_id = '83333333-3333-4333-8333-333333333333'
   and source = private.taste_source('swipe', (select id from gp2), 'r2')),
   1::real, 'signals from a deleted Pick with nothing queued stay as history');
@@ -186,7 +191,8 @@ end $f$;
 -- On insert only: the sweep's own first statement (the 30-day purge) is a delete, before it reads the queue.
 create trigger taste_test_queue_during_rebuild after insert on public.taste_signals
   for each statement execute function public.taste_test_queue_during_rebuild();
-insert into private.taste_pending (user_id) values ('83333333-3333-4333-8333-333333333333');
+insert into private.taste_pending (user_id, source) values
+  ('83333333-3333-4333-8333-333333333333', private.taste_source('swipe', (select id from gp2), 'r1'));
 set local role service_role;
 select purge_google_taste(now() - interval '27 days');
 reset role;
