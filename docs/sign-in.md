@@ -37,6 +37,7 @@ user a real-looking username.
   anything is charged, and a sign-in failure refunds exactly the attempt it was charged. Each
   charge is a one-time reservation (`private.login_reservations`, deleted as it's refunded), so a
   refund lands in that attempt's own 15-minute bucket and a repeated refund gives nothing back.
+  A reservation older than a day can't be refunded, even before the sweep purges it.
 - These sign-ins all come from the server's address, so Supabase's per-IP limits can't tell
   users apart. Migration 0057 adds limits per 15 minutes, all checked together:
   - 10 per account per client, so a stranger's junk tries can't lock you out;

@@ -68,11 +68,13 @@ end $$;
 -- Gives back an attempt (the sign-in failed for a reason that isn't the user's password), in
 -- the bucket and subjects it was charged to. The reservation is deleted as it is used, so a
 -- repeated or concurrent refund of the same attempt finds nothing and gives nothing back.
+-- Reservations older than a day can't be refunded, even before the sweep purges them.
 create function public.refund_login_limit(p_reservation text) returns void
 language plpgsql security definer set search_path = '' as $$
 declare v_bucket text; v_subjects text[];
 begin
-  delete from private.login_reservations where id = private.try_uuid(p_reservation)
+  delete from private.login_reservations
+  where id = private.try_uuid(p_reservation) and created_at >= now() - interval '1 day'
   returning bucket, subjects into v_bucket, v_subjects;
   if not found then return; end if;
   update public.rate_limit_counters set calls = greatest(calls - 1, 0)

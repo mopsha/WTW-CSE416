@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(18);
+select plan(20);
 
 insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, created_at, updated_at)
 values ('00000000-0000-0000-0000-000000000000', '91111111-1111-4111-8111-111111111111',
@@ -60,6 +60,24 @@ select isnt(consume_login_limit(array['acct:refund|client:a'], array[1]), null,
 select refund_login_limit((select reservation from charged));
 select is(consume_login_limit(array['acct:refund|client:a'], array[1]), null,
   'refunding the same reservation twice gives back only one attempt');
+-- A reservation older than a day can't be refunded, even if the sweep hasn't purged it yet.
+reset role;
+create temp table stale (reservation text);
+grant select, insert on stale to service_role;
+set local role service_role;
+insert into stale select consume_login_limit(array['acct:stale|client:a'], array[1]);
+reset role;
+update private.login_reservations set created_at = now() - interval '25 hours'
+where id = (select reservation from stale)::uuid;
+set local role service_role;
+select refund_login_limit((select reservation from stale));
+select is(consume_login_limit(array['acct:stale|client:a'], array[1]), null,
+  'a reservation older than a day is not refunded');
+reset role;
+select is((select count(*) from private.login_reservations
+           where id = (select reservation from stale)::uuid),
+  1::bigint, 'an expired reservation is left for the sweep to purge');
+set local role service_role;
 
 select is((select count(*)::int from rate_limit_counters
            where scope = 'password_login' and (subject like '%@%' or subject like '%client%')), 0,
