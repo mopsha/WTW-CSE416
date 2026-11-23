@@ -1,7 +1,9 @@
 """Optional taste rows held locked by another connection never block core Pick writes (0047 + 0049).
 Disposable local migrated database only."""
 import argparse
+import os
 import subprocess
+import sys
 import time
 from contextlib import contextmanager
 from urllib.parse import urlparse
@@ -307,9 +309,155 @@ def split_duplicates_preserve_history():
     assert query("select weight from public.taste_signals where user_id='%s' and source=%s" % (guest, source)) == '-1'
 
 
+# #78 re-review (Mike, Josh): a profile save, photo change or account deletion holds the user's
+# profiles row FOR UPDATE. No Pick action may fail or wait on that because of learning, and
+# what it taught must still arrive once the row is free.
+def act(statement):
+    result = subprocess.run(base + ['-c', "set statement_timeout='5s'; " + statement],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
+def source_row(kind, pick, place, who):
+    return "user_id='%s' and source=private.taste_source('%s','%s',%s)" % (
+        who, kind, pick, "'%s'" % place if place else 'null')
+
+
+def learned(*row):
+    return query('select weight from public.taste_signals where ' + source_row(*row)) or 'none'
+
+
+def queued_actions(*row):
+    return query('select count(*) from private.taste_pending where revision is not null and ' + source_row(*row))
+
+
+profiles_locked = "select 1 from public.profiles where id in ('%s','%s') order by id for update" % (user(1), user(2))
+completed = ranking.replace("'final_vote','winnerPlaceId',null", "'completed','winnerPlaceId','taste-a'")
+
+
+def close(pick, payload):
+    return "select public.pick_close_apply('%s','host','%s',(select version::text from public.picks where id='%s'),%s)" % (
+        pick, user(1), pick, payload)
+
+
+def survives_profile_lock(kind, pick, place, people, action, saved, weight):
+    rows = [(kind, pick, place, who) for who in people]
+    with held_lock(profiles_locked):
+        act(action)
+        assert query(saved) == 't', 'the action did not save'
+        for row in rows:
+            assert (learned(*row), queued_actions(*row)) == ('none', '1'), (learned(*row), queued_actions(*row))
+        query(sweep)  # still locked: stays queued, and the sweep carries on
+        for row in rows:
+            assert queued_actions(*row) == '1', 'a locked user was dropped from the queue'
+    query(sweep)
+    for row in rows:
+        assert (learned(*row), queued_actions(*row)) == (weight, '0'), (learned(*row), queued_actions(*row))
+
+
+def swipe_survives_profile_lock():
+    pick = setup()
+    survives_profile_lock(
+        'swipe', pick, 'taste-b', [user(2)],
+        "select public.heartbeat_upsert_swipe('%s','%s','taste-b',0)" % (pick, user(2)),
+        "select value=0 from public.preferences where pick_id='%s' and user_id='%s' and place_id='taste-b'" % (pick, user(2)),
+        '-1')
+
+
+def vote_survives_profile_lock():
+    pick = setup()
+    query(close(pick, ranking))
+    survives_profile_lock(
+        'vote', pick, None, [user(2)],
+        "select public.pick_cast_vote('%s','%s','taste-b')" % (pick, user(2)),
+        "select place_id='taste-b' from public.final_votes where pick_id='%s' and user_id='%s'" % (pick, user(2)),
+        '1')
+
+
+def winning_close_survives_profile_lock():
+    pick = setup()
+    survives_profile_lock(
+        'winner', pick, None, [user(1), user(2)], close(pick, completed),
+        "select state='completed' and winner_place_id='taste-a' from public.picks where id='%s'" % pick,
+        '2')
+
+
+def vote_settlement_survives_profile_lock():
+    pick = setup()
+    query(close(pick, ranking))
+    survives_profile_lock(
+        'winner', pick, None, [user(1), user(2)],
+        "select public.pick_close_vote_apply('%s','taste-b','vote')" % pick,
+        "select state='completed' and winner_place_id='taste-b' from public.picks where id='%s'" % pick,
+        '2')
+
+
+def forget_state(pick):
+    # A swipe from before 0056 has a signal but no source state, so cleanup inserts a new row.
+    query('delete from private.taste_source_state where ' + source_row('swipe', pick, 'taste-a', user(2)))
+
+
+def refresh_survives(lock):
+    pick = setup()
+    forget_state(pick)
+    row = ('swipe', pick, 'taste-a', user(2))
+    with held_lock(lock.replace('{p}', pick)):
+        act("select public.pick_refresh('%s','%s','%s')" % (pick, user(1), deck))
+        assert query("select count(*) from public.preferences where pick_id='%s'" % pick) == '0'
+        assert queued_actions(*row) == '1', 'the cleanup was not queued'
+    query(sweep)
+    assert (learned(*row), queued_actions(*row)) == ('none', '0'), (learned(*row), queued_actions(*row))
+
+
+def refresh_survives_profile_lock():
+    refresh_survives(profiles_locked)
+
+
+def refresh_survives_a_busy_refresh_lock():
+    refresh_survives("select pg_advisory_xact_lock_shared(private.taste_refresh_lock_key(private.taste_source('swipe','{p}','taste-a')))")
+
+
+def swipe_after_a_queued_refresh_wins():
+    # Same deck again, so the same source: the queued cleanup must not erase the new answer.
+    pick = setup()
+    forget_state(pick)
+    row = ('swipe', pick, 'taste-a', user(2))
+    with held_lock(profiles_locked):
+        act("select public.pick_refresh('%s','%s','%s')" % (pick, user(1), deck))
+    query("select public.heartbeat_upsert_swipe('%s','%s','taste-a',0)" % (pick, user(2)))
+    query(sweep)
+    assert (learned(*row), queued_actions(*row)) == ('-1', '0'), (learned(*row), queued_actions(*row))
+
+
+def newest_queued_action_wins_across_batches():
+    pick = setup()
+    row = ('swipe', pick, 'taste-b', user(2))
+    with held_lock("select private.lock_taste('%s')" % user(2)):
+        query("select public.heartbeat_upsert_swipe('%s','%s','taste-b',2)" % (pick, user(2)))
+        query("insert into private.taste_pending(user_id) select 'f1780000-0000-4000-8000-000000000998' from generate_series(1,200)")
+        query("select public.heartbeat_upsert_swipe('%s','%s','taste-b',0)" % (pick, user(2)))
+    assert queued_actions(*row) == '2'
+    query("delete from public.picks where id='%s'" % pick)
+    query(sweep)
+    assert (learned(*row), queued_actions(*row)) == ('-1', '1'), 'an older queued answer showed between sweeps'
+    query(sweep)
+    assert (learned(*row), queued_actions(*row)) == ('-1', '0')
+
+
+def deleted_account_leaves_nothing_queued():
+    gone = 'f1780000-0000-4000-8000-000000000997'
+    query("insert into private.taste_pending(user_id,source,revision,action_at,place_type,weight,google) values ('%s',gen_random_uuid(),gen_random_uuid(),now(),'cafe',1,false)" % gone)
+    query(sweep)
+    assert query("select (select count(*) from private.taste_pending where user_id='%s')+(select count(*) from private.taste_source_state where user_id='%s')" % (gone, gone)) == '0'
+
+
 failures = []
 checks = [bounded_sweep_reaches_unlocked_user, overlapping_sweeps_preserve_history,
-          failed_rebuild_retains_claimed_entries]
+          failed_rebuild_retains_claimed_entries, swipe_survives_profile_lock,
+          vote_survives_profile_lock, winning_close_survives_profile_lock,
+          vote_settlement_survives_profile_lock, refresh_survives_profile_lock,
+          refresh_survives_a_busy_refresh_lock, swipe_after_a_queued_refresh_wins,
+          newest_queued_action_wins_across_batches, deleted_account_leaves_nothing_queued]
 if query("select to_regclass('private.taste_sweep_cursor') is not null") == 't':
     checks.append(split_duplicates_preserve_history)
 for check in checks:
@@ -322,5 +470,11 @@ for check in checks:
         # Leave other cases independent on the pre-fix schema, too.
         query(sweep)
         query(sweep)
+# The other 0056 races run here too, so CI's one taste step covers all three scripts.
+for script in ('taste_source_concurrency.py', 'google_taste_concurrency.py'):
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), script)
+    sys.stdout.flush()
+    if subprocess.run([sys.executable, path, '--dsn', args.dsn]).returncode:
+        failures.append(script)
 if failures:
     raise SystemExit('failed: ' + ', '.join(failures))

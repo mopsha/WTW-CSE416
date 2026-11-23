@@ -260,6 +260,23 @@ def only_eligible_google_actions_queue():
         finish(holder)
 
 
+def queued_action_keeps_its_recorded_signal():
+    # The swipe's own save was queued; its recorder then succeeds. Applying the queued swipe
+    # must recognize that signal as its own, not delete it as stale.
+    purge()
+    pick = setup()
+    holder = hold("select private.lock_taste('%s')" % guest)
+    try:
+        query("select public.heartbeat_upsert_swipe('%s','%s','g-a',0)" % (pick, guest))
+        assert pending() == '1', 'the swipe was not queued'
+    finally:
+        finish(holder)
+    query(record(pick, 'swipe'))
+    assert signals(guest) == '-1'
+    purge()
+    assert (pending(), signals(guest)) == ('0', '-1'), 'applying the queued swipe erased its own signal'
+
+
 case('stale Yes request vs a changed No swipe', stale_swipe)
 case('winner being recorded vs reset', record_vs_reset)
 case('reset vs a waiting winner request', reset_vs_record)
@@ -269,6 +286,7 @@ case('ballot and winner retries across resets', vote_and_winner_retries_after_re
 case('identical swipe retry while reset is open', swipe_retry_while_reset_is_open)
 case('delayed recorder preserves deleted Google history', delayed_recorder_preserves_deleted_history)
 case('only eligible Google actions queue', only_eligible_google_actions_queue)
+case('a queued Google swipe keeps its recorded signal', queued_action_keeps_its_recorded_signal)
 # Remove the Picks first: deleting a host cancels their Picks, which other tests count.
 query("delete from public.picks where host_id in ('%s','%s')" % (host, guest))
 query("delete from auth.users where id in ('%s','%s')" % (host, guest))
