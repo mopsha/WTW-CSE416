@@ -78,7 +78,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "WTW uses your location to center a Pick on where you are."
+          "locationWhenInUsePermission": "WTW uses your location to center Picks and show nearby places in Discover and during taste setup."
         }
       ],
       "@react-native-community/datetimepicker"

@@ -24,6 +24,8 @@ export interface Candidate extends LatLng {
   attributions?: { provider: string; providerUri?: string }[];
   googleMapsUri?: string;
   openingHours?: OpeningHours | null;
+  /** Request-scoped status from Google's current hours, including special days. */
+  currentOpenNow?: boolean;
   timezone?: string;
   provider?: 'google' | 'mock' | 'custom';
   source?: 'google' | 'mock' | 'custom';

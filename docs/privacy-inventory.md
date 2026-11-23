@@ -31,8 +31,22 @@ tracking. Nothing is sent to analytics; there is no analytics SDK.
 | RSVP | `pick_rsvps` (going / maybe / not going) | Planning after the winner | **Only you** (RLS); the group sees counts | With the Pick | Yes |
 | "Did you go?" | `pick_outcomes` (went, would go again) | Measuring whether the plan happened | **Only you** (RLS); the group sees counts | With the Pick | Yes |
 
-Device location: the app asks for location **only** to center a Pick or Discover near you
-("when in use"). The exact location is not stored except as the Pick center the host chose.
+With foreground permission, the app uses device location to center Picks and find nearby places
+in Discover and during taste setup. Discover uses existing permission without prompting.
+For Discover, we round your device's location to approximately 110 meters to find nearby
+places. The rounded location is included in requests to our server and may appear in our
+hosting provider's request logs. Taste setup can send device coordinates without Discover's
+rounding to the same endpoint, where they may also appear in request logs. To retrieve nearby
+places, our server may send Google Places a search area based on coordinates rounded to about
+110 meters for Discover or potentially unrounded coordinates for taste setup, without sending
+your name or account details. Our shared place-results cache stores search coordinates without a
+user ID. Entries expire after five minutes and are removed by scheduled daily cleanup. They can
+remain longer if cleanup is delayed or unavailable. We store the center a host chooses with
+their Pick. You can disable location access in your device settings.
+
+Discover implementation (PR #82): `useDiscoverArea` rounds to 3 decimal places. The rounded
+coordinates are sent in the `/discover` query string, which can reach Supabase request logs.
+The `place_cache` key has no user ID, and `cleanup_place_cache` removes expired rows.
 
 ## Added by the M4 integration (0008, 0010–0019)
 
@@ -58,7 +72,7 @@ cascade.
 | Reports | `reports` (reporter, target kind and id, reported person, reason text, a copy of a reported message, review time and note) | Moderation | Nobody but the server; the team reviews them in the Supabase dashboard (`docs/moderation.md`) | No general report-metadata retention rule; photo evidence uses configured expiry below | Yes: deleting the reporter's or the reported person's account erases the report and any message copy; retention rule still to decide |
 | Hang posts | `hang_posts` (author, activity text, start/expiry, audience, group) | "Looking to hang" | Active author, accepted friends or current group members; blocked users excluded | Hidden after expiry; stored until account/group deletion (no cleanup job) | Yes |
 | Hang responses | `hang_responses` (down / maybe / can't) | Replies to a hang post | Responder and post author, while currently authorized | With the post | Yes |
-| Search cache | `place_cache` (search coordinates/radius/category, owned fixture content or Google IDs only) | Reuse owned searches without provider calls | Nobody but the server | Five-minute read TTL; expired rows deleted daily | No user identity stored; global query cache |
+| Search cache | `place_cache` (search coordinates/radius/category, owned fixture content or Google IDs only) | Reuse owned searches without provider calls | Nobody but the server | Five-minute expiry. Scheduled daily cleanup removes expired rows and may be delayed or unavailable | No user identity stored; global query cache |
 | Google usage | `provider_usage` (provider, day, call count) | Daily cap on Google Places | Nobody but the server | Indefinitely | Not personal data (no user id) |
 | "Did you go?" launch time | `private.feature_launches` | Prompts only Picks decided after launch | Nobody but the server | Indefinitely | Not personal data |
 
@@ -92,7 +106,7 @@ Draft mapping, to confirm against Apple's current categories in App Store Connec
 
 - **Contact info → Email address:** collected, linked to the user, used for app functionality (sign-in). Not tracking.
 - **Identifiers → User ID:** collected, linked, app functionality.
-- **Location → Precise location:** collected only when the host centers a Pick on their current location; linked (it's on their Pick); app functionality.
+- **Location → Precise location:** used for app functionality in Picks, Discover, and taste setup. Discover rounds coordinates to three decimal places, which still meets [Apple’s definition of Precise Location](https://developer.apple.com/app-store/app-privacy-details/). A Pick center is stored with the host’s Pick. Discover and taste setup use authenticated requests whose coordinates may appear in hosting logs. The shared place-results cache stores search coordinates without a user ID. Entries expire after five minutes and are removed by scheduled daily cleanup. They can remain longer if cleanup is delayed or unavailable. Confirm log access and account linkage before finalizing the App Store label.
 - **User content → Other user content:** display name, group names, cancel reasons, custom plan options and notes, hang posts, report text; linked; app functionality.
 - **Usage data → Product interaction:** swipes, votes, RSVPs, "Did you go?"; linked; app functionality.
 - **User content → Photos or Videos (draft):** selected profile photos; linked to account ID; app functionality. Confirm this selection and any moderation purpose in App Store Connect before submission. See [Apple’s data-type guidance](https://developer.apple.com/app-store/app-privacy-details/).
