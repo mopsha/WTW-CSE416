@@ -40,12 +40,14 @@ test('new usernames must start with a letter; existing ones are kept', () => {
   expect(normalizeUsername('123abc', true)).toBe('123abc');
 });
 
-test('the client address comes from the edge headers', () => {
+test('only the edge header identifies the client; headers a caller can set do not', () => {
   const h = (o: Record<string, string>) => ({ get: (k: string) => o[k] ?? null });
   expect(clientAddress(h({ 'cf-connecting-ip': '1.1.1.1', 'x-forwarded-for': '9.9.9.9' }))).toBe(
     '1.1.1.1',
   );
-  expect(clientAddress(h({ 'x-forwarded-for': '2.2.2.2, 10.0.0.1' }))).toBe('2.2.2.2');
+  expect(clientAddress(h({ 'x-forwarded-for': '2.2.2.2, 10.0.0.1' }))).toBe('unknown');
+  expect(clientAddress(h({ 'x-real-ip': '3.3.3.3' }))).toBe('unknown');
+  expect(clientAddress(h({ 'cf-connecting-ip': ' ' }))).toBe('unknown');
   expect(clientAddress(h({}))).toBe('unknown');
 });
 
@@ -97,14 +99,14 @@ describe('passwordLogin', () => {
     expect(result).toEqual(tokens);
     expect(JSON.stringify(result)).not.toContain('@');
     expect(s.emailForUsername).toHaveBeenCalledWith('alan');
-    expect(s.passwordSignIn).toHaveBeenCalledWith('alan@example.com', 'pw-123456');
+    expect(s.passwordSignIn).toHaveBeenCalledWith('alan@example.com', 'pw-123456', 'ip1');
   });
 
   test('an email signs in directly', async () => {
     const s = store({ passwordSignIn: jest.fn(async () => tokens) });
     await passwordLogin(s, { identifier: 'Alan@Example.com', password: 'x' }, 'ip1');
     expect(s.emailForUsername).not.toHaveBeenCalled();
-    expect(s.passwordSignIn).toHaveBeenCalledWith('alan@example.com', 'x');
+    expect(s.passwordSignIn).toHaveBeenCalledWith('alan@example.com', 'x', 'ip1');
   });
 
   test('unknown user and wrong password fail the same way', async () => {
@@ -153,7 +155,28 @@ describe('passwordLogin', () => {
     await expect(
       passwordLogin(s, { identifier: 'nobody', password: 'x' }, 'ip1'),
     ).rejects.toMatchObject({ status: 401 });
-    expect(s.passwordSignIn).toHaveBeenCalledWith('nobody@invalid.getwtw.app', 'x');
+    expect(s.passwordSignIn).toHaveBeenCalledWith('nobody@invalid.getwtw.app', 'x', 'ip1');
+  });
+
+  test('an unknown client address is never forwarded as if it were one', async () => {
+    const s = store();
+    await expect(
+      passwordLogin(s, { identifier: 'nobody', password: 'x' }, 'unknown'),
+    ).rejects.toMatchObject({ status: 401 });
+    expect(s.passwordSignIn).toHaveBeenCalledWith('nobody@invalid.getwtw.app', 'x', null);
+  });
+
+  test("Supabase's own rate limit is a 429 and the attempt stays charged", async () => {
+    const s = store({
+      emailForUsername: jest.fn(async () => 'alan@example.com'),
+      passwordSignIn: jest.fn(async () => {
+        throw new ApiError(429, 'RATE_LIMITED', 'Too many tries.');
+      }),
+    });
+    await expect(
+      passwordLogin(s, { identifier: 'alan', password: 'x' }, 'ip1'),
+    ).rejects.toMatchObject({ status: 429 });
+    expect(s.refundLoginAttempt).not.toHaveBeenCalled();
   });
 
   test('an outage is reported honestly and the attempt is refunded', async () => {

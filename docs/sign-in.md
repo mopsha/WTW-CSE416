@@ -32,21 +32,26 @@ user a real-looking username.
   The email never leaves the server.
 - Wrong passwords and unknown usernames fail the same way, "Wrong username or password", and
   take about as long (an unknown username still makes a real sign-in call against a dummy
-  address). Other failures say what happened (Supabase busy, email not confirmed, or the
+  address). Other failures say what happened (Supabase down, email not confirmed, or the
   account lookup failing) and don't spend the user's tries: a lookup failure is reported before
   anything is charged, and a sign-in failure refunds exactly the attempt it was charged. Each
   charge is a one-time reservation (`private.login_reservations`, deleted as it's refunded), so a
   refund lands in that attempt's own 15-minute bucket and a repeated refund gives nothing back.
-  A reservation older than a day can't be refunded, even before the sweep purges it.
-- These sign-ins all come from the server's address, so Supabase's per-IP limits can't tell
-  users apart. Migration 0057 adds limits per 15 minutes, all checked together:
+  A reservation older than a day can't be refunded, even before the sweep purges it. A 429 from
+  Supabase's own limit is reported as one and is not refunded, so a flood can't retry for free.
+- These sign-ins all come from the server's address, so by default Supabase's per-IP limits
+  can't tell users apart, and one busy caller can use up everyone's. The server forwards the
+  caller's address (`Sb-Forwarded-For`), which Supabase uses only with IP Address Forwarding on
+  and an `sb_secret_` key (checklist below); until then that limit is shared. Migration 0057
+  adds our own limits per 15 minutes, all checked together:
   - 10 per account per client, so a stranger's junk tries can't lock you out;
   - 20 per client across all accounts, so one password can't be sprayed over every username;
   - 600 overall, a backstop for clients that rotate addresses.
     An attempt is charged to all of them or none: if any limit is reached it's refused and spends
     nothing, so a client that's already blocked can't use up the overall budget and lock others out.
-    The client is the edge-reported IP (`cf-connecting-ip`, then `x-real-ip`, then
-    `x-forwarded-for`). Subjects are stored hashed, and the sweep deletes buckets older than a
+    The client is the edge-reported IP, `cf-connecting-ip` only: a caller can set the other
+    forwarding headers. If it's ever missing, everyone shares one client limit (20 per 15
+    minutes) until it's back. Subjects are stored hashed, and the sweep deletes buckets older than a
     day (`purge_login_limits`).
 - `GET /usernames/available` spends the same lookup quota as people search (30 a minute), so it
   can't be used to list usernames faster than friend search allows.
@@ -100,9 +105,15 @@ Set up Apple first.
 ### Email + password (hosted project)
 
 - Supabase → Authentication → Providers → **Email** must allow password sign-in (on by default),
-  with a minimum password length of 8 or less.
-- If **Secure password change** is on, it still works: the welcome screen sets the password
-  right after the code sign-in.
+  with a minimum password length of exactly 8, as in the app and `supabase/config.toml`.
+- Turn **Secure password change** on (also as in `config.toml`): the welcome screen sets the
+  password right after the code sign-in, and Settings → Password handles the emailed code.
+- Authentication → **Rate Limits**: turn on **IP Address Forwarding**, and make sure the project
+  has an `sb_secret_` key (Settings → API Keys). Supabase gives functions these keys itself
+  (`SUPABASE_SECRET_KEYS`), so nothing is added to the function's secrets. Check the sign-in
+  limit there too.
+- Before release, check on the hosted project that `cf-connecting-ip` reaches the function and
+  a caller can't override it.
 
 ### Deploy order
 

@@ -7,7 +7,8 @@
 //   reaches Supabase from the server's address, so the API limits attempts itself:
 //     per account + client (a stranger can't lock you out), per client across all accounts
 //     (no spraying one password over many usernames), and a global backstop.
-//   Failures that aren't a wrong password (Supabase busy, network) are refunded.
+//   Failures that aren't a wrong password (Supabase down, network) are refunded, except
+//   Supabase's own rate limit: refunding that would let a flood retry for free.
 
 import { ApiError } from './errors.ts';
 import { normalizeUsername } from './usernames.ts';
@@ -30,8 +31,13 @@ export interface SignInStore {
   /**
    * Supabase password sign-in: tokens, or null for wrong credentials only. Anything else
    * (rate limit, outage, unconfirmed email) throws an ApiError with an honest message.
+   * `client` is the caller's address for Supabase's own per-IP limit, or null when unknown.
    */
-  passwordSignIn(email: string, password: string): Promise<SignInTokens | null>;
+  passwordSignIn(
+    email: string,
+    password: string,
+    client: string | null,
+  ): Promise<SignInTokens | null>;
   /** One username lookup against the caller's quota; throws 429 when over. */
   consumeUsernameLookup(userId: string): Promise<void>;
 }
@@ -45,6 +51,8 @@ export interface SignInTokens {
 export const LOGIN_LIMITS = { accountPerClient: 10, client: 20, global: 600 } as const;
 
 const WRONG = 'Wrong username or password.';
+export const TOO_MANY_TRIES = 'Too many tries. Wait a few minutes and try again.';
+const UNKNOWN_CLIENT = 'unknown';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /** Never a real account: unknown usernames still make a real sign-in call, for equal timing. */
 const NOBODY = 'nobody@invalid.getwtw.app';
@@ -130,27 +138,29 @@ export async function passwordLogin(
     { key: 'global', limit: LOGIN_LIMITS.global },
   ];
   const charge = await store.consumeLoginAttempt(subjects);
-  if (charge === null)
-    throw new ApiError(429, 'RATE_LIMITED', 'Too many tries. Wait a few minutes and try again.');
+  if (charge === null) throw new ApiError(429, 'RATE_LIMITED', TOO_MANY_TRIES);
 
   let tokens: SignInTokens | null;
   try {
-    tokens = await store.passwordSignIn(email ?? NOBODY, password);
+    tokens = await store.passwordSignIn(
+      email ?? NOBODY,
+      password,
+      client === UNKNOWN_CLIENT ? null : client,
+    );
   } catch (e) {
-    // Not the user's fault: don't spend their tries on it.
-    await store.refundLoginAttempt(charge).catch(() => {});
+    // Not the user's fault: don't spend their tries on it. A 429 from Supabase stays charged.
+    if (!(e instanceof ApiError && e.status === 429))
+      await store.refundLoginAttempt(charge).catch(() => {});
     throw e;
   }
   if (!tokens || !email) throw new ApiError(401, 'INVALID_LOGIN', WRONG);
   return tokens;
 }
 
-/** The caller's address, as the platform's edge reports it. */
+/**
+ * The caller's address, as the platform's edge reports it. Other forwarding headers can be set
+ * by the caller, so without this one everyone shares a single client limit.
+ */
 export function clientAddress(headers: { get(name: string): string | null }): string {
-  return (
-    headers.get('cf-connecting-ip') ??
-    headers.get('x-real-ip') ??
-    headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
-    'unknown'
-  );
+  return headers.get('cf-connecting-ip')?.trim() || UNKNOWN_CLIENT;
 }

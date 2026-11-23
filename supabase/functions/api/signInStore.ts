@@ -1,7 +1,23 @@
 import { createClient } from '@supabase/supabase-js';
 import { ApiError } from '../_shared/api/errors.ts';
-import type { SignInStore } from '../_shared/api/signIn.ts';
+import { TOO_MANY_TRIES, type SignInStore } from '../_shared/api/signIn.ts';
 import { createServiceClient } from './serviceClient.ts';
+
+/**
+ * The project's new-style secret key, when it has one (Supabase provides them as a JSON
+ * dictionary). Supabase accepts Sb-Forwarded-For only with one of these, never a legacy key.
+ */
+function secretKey(): string | null {
+  try {
+    const keys = JSON.parse(Deno.env.get('SUPABASE_SECRET_KEYS') ?? '{}') as object;
+    const key = Object.values(keys).find(
+      (k) => typeof k === 'string' && k.startsWith('sb_secret_'),
+    );
+    return (key as string | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** Service-role adapter for _shared/api/signIn.ts (0057_password_login_limit.sql). */
 export function createSignInStore(): SignInStore {
@@ -50,18 +66,23 @@ export function createSignInStore(): SignInStore {
         throw new ApiError(429, 'RATE_LIMITED', 'Too many username checks. Try again shortly.');
       if (error) throw new ApiError(503, 'DATABASE_NOT_READY', 'Usernames are unavailable');
     },
-    async passwordSignIn(email, password) {
+    async passwordSignIn(email, password, clientIp) {
       const url = Deno.env.get('SUPABASE_URL');
       const anon = Deno.env.get('SUPABASE_ANON_KEY');
       if (!url || !anon)
         throw new ApiError(503, 'SERVER_NOT_CONFIGURED', 'Backend environment is not configured');
+      // Forward the caller's address so Supabase's per-IP limit counts them, not this server,
+      // which every username login shares. Without a secret key, that limit stays shared.
+      const secret = clientIp ? secretKey() : null;
       // A throwaway client: the session goes back to the app, never stays on the server.
-      const client = createClient(url, anon, {
+      const client = createClient(url, secret ?? anon, {
         auth: { persistSession: false, autoRefreshToken: false },
+        ...(secret && clientIp ? { global: { headers: { 'sb-forwarded-for': clientIp } } } : {}),
       });
       const { data, error } = await client.auth.signInWithPassword({ email, password });
       // Only a real wrong-credentials answer counts as a wrong password.
       if (error?.code === 'invalid_credentials') return null;
+      if (error?.status === 429) throw new ApiError(429, 'RATE_LIMITED', TOO_MANY_TRIES);
       if (error?.code === 'email_not_confirmed')
         throw new ApiError(
           403,

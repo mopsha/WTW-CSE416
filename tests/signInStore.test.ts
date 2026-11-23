@@ -11,6 +11,13 @@ jest.mock('../supabase/functions/api/serviceClient.ts', () => ({
     auth: { admin: { getUserById: mockGetUserById } },
   }),
 }));
+const mockSignIn = jest.fn();
+const mockCreateClient = jest.fn((..._args: unknown[]) => ({
+  auth: { signInWithPassword: mockSignIn },
+}));
+jest.mock('@supabase/supabase-js', () => ({
+  createClient: (...args: unknown[]) => mockCreateClient(...args),
+}));
 const { createSignInStore } = jest.requireActual<{ createSignInStore(): SignInStore }>(
   '../supabase/functions/api/signInStore.ts',
 );
@@ -21,6 +28,69 @@ beforeEach(() => {
     select: () => ({
       eq: () => ({ maybeSingle: async () => ({ data: { id: 'user-1' }, error: null }) }),
     }),
+  });
+});
+
+function env(secretKeys?: string) {
+  const values: Record<string, string | undefined> = {
+    SUPABASE_URL: 'https://x.test',
+    SUPABASE_ANON_KEY: 'anon',
+    SUPABASE_SECRET_KEYS: secretKeys,
+  };
+  (globalThis as { Deno?: unknown }).Deno = { env: { get: (k: string) => values[k] } };
+}
+afterAll(() => {
+  delete (globalThis as { Deno?: unknown }).Deno;
+});
+
+test("the caller's address is forwarded to Supabase, with the secret key that requires", async () => {
+  env('{"default":"sb_secret_test"}');
+  mockSignIn.mockResolvedValue({
+    data: { session: { access_token: 'a', refresh_token: 'r' } },
+    error: null,
+  });
+  await expect(createSignInStore().passwordSignIn('a@b.co', 'x', '1.1.1.1')).resolves.toEqual({
+    accessToken: 'a',
+    refreshToken: 'r',
+  });
+  expect(mockCreateClient).toHaveBeenCalledWith(
+    'https://x.test',
+    'sb_secret_test',
+    expect.objectContaining({ global: { headers: { 'sb-forwarded-for': '1.1.1.1' } } }),
+  );
+});
+
+test.each([
+  ['no secret key', undefined, '1.1.1.1'],
+  ['unreadable secret keys', 'not json', '1.1.1.1'],
+  ['only legacy keys', '{"default":"eyJlegacy"}', '1.1.1.1'],
+  ['an unknown address', '{"default":"sb_secret_test"}', null],
+])('with %s, sign-in uses the anon key and forwards nothing', async (_name, keys, client) => {
+  env(keys);
+  mockSignIn.mockResolvedValue({
+    data: { session: null },
+    error: { code: 'invalid_credentials', status: 400 },
+  });
+  await expect(createSignInStore().passwordSignIn('a@b.co', 'x', client)).resolves.toBeNull();
+  expect(mockCreateClient).toHaveBeenCalledWith(
+    'https://x.test',
+    'anon',
+    expect.not.objectContaining({ global: expect.anything() }),
+  );
+});
+
+test("Supabase's rate limit is reported as one; other failures are an outage", async () => {
+  env();
+  mockSignIn.mockResolvedValueOnce({
+    data: { session: null },
+    error: { code: 'over_request_rate_limit', status: 429 },
+  });
+  await expect(createSignInStore().passwordSignIn('a@b.co', 'x', null)).rejects.toMatchObject({
+    status: 429,
+  });
+  mockSignIn.mockResolvedValueOnce({ data: { session: null }, error: { status: 500 } });
+  await expect(createSignInStore().passwordSignIn('a@b.co', 'x', null)).rejects.toMatchObject({
+    status: 503,
   });
 });
 
