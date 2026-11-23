@@ -2,6 +2,8 @@
 Disposable local migrated database only."""
 import argparse
 import subprocess
+import time
+from contextlib import contextmanager
 from urllib.parse import urlparse
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -153,7 +155,6 @@ print('ok - changed swipe skipped behind another Pick converges to the saved No 
 
 # #78 re-review (Josh), point 4: the sweep never waits on a user whose taste lock is busy
 # (200 locked users used to cost 200ms each). Busy users stay queued; everyone else drains.
-import time
 busy = ['ae000000-0000-4000-8000-%012d' % n for n in range(1, 21)]
 free = 'ae000000-0000-4000-8000-000000000099'
 users = "array[%s]::uuid[]" % ','.join("'%s'" % u for u in busy)
@@ -179,3 +180,147 @@ finally:
 query("select public.purge_google_taste(now()-interval '30 days')")
 assert query("select count(*) from private.taste_pending where user_id = any(%s)" % users) == '0'
 print('ok - the sweep skips users whose taste lock is busy and processes them next time')
+
+
+sweep = "select public.purge_google_taste(now()-interval '30 days')"
+
+
+@contextmanager
+def held_lock(statement):
+    holder = subprocess.Popen(
+        base, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        holder.stdin.write("begin;\n" + statement + ";\n\\echo LOCKED\n")
+        holder.stdin.flush()
+        for line in holder.stdout:
+            if line.strip() == 'LOCKED':
+                break
+        else:
+            raise AssertionError(holder.stderr.read())
+        yield
+    finally:
+        holder.stdin.close()
+        holder.wait(timeout=10)
+
+
+def bounded_sweep_reaches_unlocked_user():
+    pending = 'f1780000-0000-4000-8000-'
+    queued = "('%s' || lpad(n::text, 12, '0'))::uuid" % pending
+    query("insert into private.taste_pending(user_id) select %s from generate_series(1,201) n" % queued)
+    with held_lock("select private.lock_taste(%s) from generate_series(1,200) n" % queued):
+        for _ in range(2):
+            query(sweep)
+        assert query("select count(*) from private.taste_pending where user_id='%s000000000201'" % pending) == '0', (
+            'unlocked user was still queued after sweeping past 200 busy users'
+        )
+        assert query("select count(*) from private.taste_pending where user_id::text like '%s%%'" % pending) == '200'
+    for _ in range(2):
+        query(sweep)
+    assert query("select count(*) from private.taste_pending where user_id::text like '%s%%'" % pending) == '0'
+
+
+def overlapping_sweeps_preserve_history():
+    pick = setup()
+    guest = user(2)
+    source = "private.taste_source('swipe','%s','taste-a')" % pick
+    signal = "select weight from public.taste_signals where user_id='%s' and source=%s" % (guest, source)
+    queued = "select count(*) from private.taste_pending where user_id='%s' and source=%s" % (guest, source)
+    # Put a distinct user ahead of the repair in the batch.
+    query("insert into private.taste_pending(user_id) values ('f1780000-0000-4000-8000-000000000999')")
+    with held_lock("select private.lock_taste('%s')" % guest):
+        query("select public.heartbeat_upsert_swipe('%s','%s','taste-a',0)" % (pick, guest))
+    query("insert into private.taste_pending(user_id,source) values ('%s',%s)" % (guest, source))
+    assert query(signal) == '1' and query(queued) == '2'
+
+    query("""
+        create function private.test_taste_pause_sweep() returns trigger
+        language plpgsql set lock_timeout = '0' as $$
+        begin
+          if current_setting('application_name') = 'taste-overlap-test' then
+            perform pg_advisory_xact_lock(781056);
+          end if;
+          return null;
+        end $$;
+        create trigger test_taste_pause_sweep after insert on public.taste_signals
+          for each statement execute function private.test_taste_pause_sweep()
+    """)
+    first = None
+    try:
+        with held_lock("select pg_advisory_xact_lock(781056)"):
+            first = subprocess.Popen(
+                base + ['-c', "set application_name='taste-overlap-test'; " + sweep],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            deadline = time.monotonic() + 10
+            while query("""select count(*) from pg_stat_activity
+                where application_name='taste-overlap-test' and wait_event='advisory'""") != '1':
+                assert first.poll() is None and time.monotonic() < deadline, 'sweep did not reach the barrier'
+                time.sleep(0.02)
+            query(sweep)
+            if query(queued) == '0':
+                # If sweep B drained the same IDs, delete the Pick before A can use its snapshot.
+                assert query(signal) == '-1'
+                query("delete from public.picks where id='%s'" % pick)
+        _, stderr = first.communicate(timeout=15)
+        assert first.returncode == 0, stderr
+        assert query(queued) == '0'
+        query("delete from public.picks where id='%s'" % pick)
+        assert query(signal) == '-1', 'overlapping sweeps erased the repaired historical No'
+    finally:
+        if first is not None and first.poll() is None:
+            first.kill()
+            first.communicate()
+        query("""drop trigger test_taste_pause_sweep on public.taste_signals;
+                 drop function private.test_taste_pause_sweep()""")
+
+
+def failed_rebuild_retains_claimed_entries():
+    pick = setup()
+    guest = user(2)
+    source = "private.taste_source('swipe','%s','taste-a')" % pick
+    row = "from public.taste_signals where user_id='%s' and source=%s" % (guest, source)
+    pending = "select count(*) from private.taste_pending where user_id='%s' and source=%s" % (guest, source)
+    with held_lock("select private.lock_taste('%s')" % guest):
+        query("select public.heartbeat_upsert_swipe('%s','%s','taste-a',0)" % (pick, guest))
+    with held_lock("select 1 " + row + " for update"):
+        query(sweep)
+        assert query(pending) == '1', 'a rebuild failure discarded the claimed entry'
+    query(sweep)
+    assert query(pending) == '0'
+    assert query("select weight " + row) == '-1'
+
+
+def split_duplicates_preserve_history():
+    pick = setup()
+    guest = user(2)
+    source = "private.taste_source('swipe','%s','taste-a')" % pick
+    with held_lock("select private.lock_taste('%s')" % guest):
+        query("select public.heartbeat_upsert_swipe('%s','%s','taste-a',0)" % (pick, guest))
+    query("""insert into private.taste_pending(user_id,source)
+        select '%s', %s from public.preferences, generate_series(1,200)
+        where pick_id='%s' and user_id='%s' and place_id='taste-a'""" % (guest, source, pick, guest))
+    query(sweep)
+    assert query("select count(*) from private.taste_pending where user_id='%s' and source=%s" % (guest, source)) == '1'
+    query("delete from public.picks where id='%s'" % pick)
+    query(sweep)
+    assert query("select weight from public.taste_signals where user_id='%s' and source=%s" % (guest, source)) == '-1'
+
+
+failures = []
+checks = [bounded_sweep_reaches_unlocked_user, overlapping_sweeps_preserve_history,
+          failed_rebuild_retains_claimed_entries]
+if query("select to_regclass('private.taste_sweep_cursor') is not null") == 't':
+    checks.append(split_duplicates_preserve_history)
+for check in checks:
+    try:
+        check()
+        print('ok -', check.__name__)
+    except AssertionError as error:
+        failures.append(check.__name__)
+        print('FAIL -', check.__name__, error)
+        # Leave other cases independent on the pre-fix schema, too.
+        query(sweep)
+        query(sweep)
+if failures:
+    raise SystemExit('failed: ' + ', '.join(failures))

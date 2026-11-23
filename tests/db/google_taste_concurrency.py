@@ -49,7 +49,10 @@ def user(n):
 
 
 query("insert into auth.users(id,email,raw_user_meta_data) select ('ae000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'gtaste'||n||'@example.invalid',jsonb_build_object('display_name','G '||n) from generate_series(1,2)n on conflict do nothing")
-deck = '[{"placeId":"g-a","snapshot":{"placeId":"g-a","name":null,"category":"food","lat":40,"lng":-73,"provider":"google"}}]'
+deck = '''[
+  {"placeId":"g-a","snapshot":{"name":null,"category":"food","lat":40,"lng":-73,"provider":"google"}},
+  {"placeId":"g-b","snapshot":{"name":null,"category":"food","lat":40,"lng":-73,"provider":"google"}}
+]'''
 host, guest = user(1), user(2)
 
 
@@ -68,8 +71,8 @@ def signals(u):
     return query("select coalesce(string_agg(weight::text, ','), '') from public.taste_signals where user_id='%s'" % u)
 
 
-def record(pick, kind):
-    return "select public.taste_record_google_signal('%s','%s','g-a','%s','sushi_restaurant')" % (guest, pick, kind)
+def record(pick, kind, place='g-a'):
+    return f"select public.taste_record_google_signal('{guest}','{pick}','{place}','{kind}','sushi_restaurant')"
 
 
 failures = []
@@ -131,10 +134,141 @@ def delayed_swipe_after_reset():
     assert got == '', 'a pre-reset swipe must not teach, got %r' % got
 
 
+def pending():
+    return query("select count(*) from private.taste_pending where user_id='%s'" % guest)
+
+
+def purge():
+    query("select public.purge_google_taste(now()-interval '30 days')")
+
+
+def swipe_retries_after_reset():
+    pick = setup()
+    yes = f"select public.heartbeat_upsert_swipe('{pick}','{guest}','g-a',2)"
+    query(yes)
+    query(record(pick, 'swipe'))
+    assert signals(guest) == '1'
+    for _ in range(2):
+        query(f"select public.taste_reset('{guest}')")
+        for _ in range(2):
+            query(yes)
+            query(record(pick, 'swipe'))
+            purge()
+            assert signals(guest) == '', 'identical Yes restored a cleared signal'
+    query(f"select public.heartbeat_upsert_swipe('{pick}','{guest}','g-a',0)")
+    query(record(pick, 'swipe'))
+    purge()
+    assert signals(guest) == '-1', 'changed No did not teach after reset'
+
+
+def vote_and_winner_retries_after_reset():
+    pick = setup()
+    query(f"""select public.pick_close_apply('{pick}','host','{host}',version::text,
+        jsonb_build_object('state','final_vote','voteDeadlineAt',now()+interval '30 minutes',
+            'rows','[{{"place_id":"g-a","rank":1,"score":80,"finalist":true}},
+                     {{"place_id":"g-b","rank":2,"score":70,"finalist":true}}]'::jsonb))
+        from public.picks where id='{pick}'""")
+    vote = f"select public.pick_cast_vote('{pick}','{guest}','g-a')"
+    query(vote)
+    query(record(pick, 'vote'))
+    assert signals(guest) == '1'
+    query(f"select public.taste_reset('{guest}')")
+    query(vote)
+    query(record(pick, 'vote'))
+    assert signals(guest) == '', 'identical ballot restored a cleared signal'
+    query(f"select public.pick_cast_vote('{pick}','{guest}','g-b')")
+    query(record(pick, 'vote', 'g-b'))
+    assert signals(guest) == '1', 'changed ballot did not teach after reset'
+
+    settle = f"select public.pick_close_vote_apply('{pick}','g-b','vote')"
+    query(settle)
+    query(record(pick, 'winner', 'g-b'))
+    assert signals(guest).split(',').count('2') == 1, 'new winner did not teach'
+    query(f"select public.taste_reset('{guest}')")
+    query(settle)
+    query(record(pick, 'winner', 'g-b'))
+    purge()
+    assert signals(guest) == '', 'retrying settlement restored a cleared winner'
+
+
+def swipe_retry_while_reset_is_open():
+    pick = setup()
+    yes = f"select public.heartbeat_upsert_swipe('{pick}','{guest}','g-a',2)"
+    query(yes)
+    query(record(pick, 'swipe'))
+    assert signals(guest) == '1'
+    with subprocess.Popen(base, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as reset:
+        try:
+            reset.stdin.write(f"begin; select public.taste_reset('{guest}');\n\\echo reset-open\n")
+            reset.stdin.flush()
+            for line in reset.stdout:
+                if line.strip() == 'reset-open':
+                    break
+            else:
+                raise AssertionError('reset did not reach the transaction barrier')
+            query("set statement_timeout = '2s'; " + yes)
+            reset.stdin.write('commit;\n')
+        finally:
+            reset.stdin.close()
+        assert reset.wait(timeout=5) == 0, 'reset failed to commit'
+    query(record(pick, 'swipe'))
+    purge()
+    assert signals(guest) == '', 'retry concurrent with reset restored a cleared signal'
+
+
+def delayed_recorder_preserves_deleted_history():
+    purge()
+    pick = setup()
+    query("select public.heartbeat_upsert_swipe('%s','%s','g-a',2)" % (pick, guest))
+    query(record(pick, 'swipe'))
+    assert signals(guest) == '1'
+    query("delete from public.picks where id='%s'" % pick)
+    holder = hold("select private.lock_taste('%s')" % guest)
+    try:
+        query(record(pick, 'swipe'))
+        queued = pending()
+    finally:
+        finish(holder)
+    purge()
+    assert (queued, signals(guest)) == ('0', '1'), 'deleted Pick queued work or lost valid history'
+
+
+def only_eligible_google_actions_queue():
+    purge()
+    pick = setup()
+    query("select public.heartbeat_upsert_swipe('%s','%s','g-a',2)" % (pick, guest))
+    holder = hold("select private.lock_taste('%s')" % guest)
+    try:
+        query(record(pick, 'vote'))
+        query(record(pick, 'winner'))
+        assert pending() == '0', 'missing ballot or winner queued repair'
+        query(record(pick, 'swipe'))
+        assert pending() == '1', 'valid swipe was not queued when the lock timed out'
+        assert query("select source is null from private.taste_pending where user_id='%s'" % guest) == 't', (
+            'an advisory-only Google repair must never authorize deletion of historical sources'
+        )
+    finally:
+        finish(holder)
+    purge()
+    assert pending() == '0'
+    query("select public.taste_reset('%s')" % guest)
+    holder = hold("select private.lock_taste('%s')" % guest)
+    try:
+        query(record(pick, 'swipe'))
+        assert pending() == '0', 'a pre-reset swipe queued repair'
+    finally:
+        finish(holder)
+
+
 case('stale Yes request vs a changed No swipe', stale_swipe)
 case('winner being recorded vs reset', record_vs_reset)
 case('reset vs a waiting winner request', reset_vs_record)
 case('delayed swipe request after reset', delayed_swipe_after_reset)
+case('identical swipe retries across resets and a changed No', swipe_retries_after_reset)
+case('ballot and winner retries across resets', vote_and_winner_retries_after_reset)
+case('identical swipe retry while reset is open', swipe_retry_while_reset_is_open)
+case('delayed recorder preserves deleted Google history', delayed_recorder_preserves_deleted_history)
+case('only eligible Google actions queue', only_eligible_google_actions_queue)
 # Remove the Picks first: deleting a host cancels their Picks, which other tests count.
 query("delete from public.picks where host_id in ('%s','%s')" % (host, guest))
 query("delete from auth.users where id in ('%s','%s')" % (host, guest))
