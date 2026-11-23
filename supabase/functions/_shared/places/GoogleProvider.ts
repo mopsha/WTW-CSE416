@@ -30,6 +30,8 @@ const FIELDS = [
 ];
 export const NEARBY_FIELD_MASK = FIELDS.map((f) => `places.${f}`).join(',');
 export const DISCOVER_FIELD_MASK = `${NEARBY_FIELD_MASK},places.userRatingCount`;
+// Current hours include special-day overrides and are in the same Enterprise tier.
+const DISCOVER_OPEN_NOW_FIELD_MASK = `${DISCOVER_FIELD_MASK},places.currentOpeningHours.openNow`;
 /** Enough to show a Pick's place, without the fields Google bills at a higher tier. */
 const PICK_FIELDS = [
   'id',
@@ -122,6 +124,7 @@ export function normalizePlace(
 ): Candidate | null {
   const p = record(value),
     location = record(p.location);
+  const currentOpenNow = record(p.currentOpeningHours).openNow;
   const placeId = str(p.id),
     name = str(record(p.displayName).text);
   const types = strings(p.types);
@@ -184,6 +187,7 @@ export function normalizePlace(
         }
       : {}),
     openingHours: normalizeHours(p.regularOpeningHours, p.businessStatus),
+    ...(typeof currentOpenNow === 'boolean' ? { currentOpenNow } : {}),
     timezone: str(record(p.timeZone).id),
     googleMapsUri: str(p.googleMapsUri),
     attributions: (Array.isArray(p.attributions) ? p.attributions : []).flatMap((value) => {
@@ -312,10 +316,15 @@ export class GoogleProvider implements PlaceProvider {
           : [...categoryMap.food, ...categoryMap.activities];
     // Discover only; Picks never send discovery, so they keep Nearby Search.
     const text = !!query.category && narrowsSearch(query.discovery);
+    const mask = query.discovery?.openNow
+      ? DISCOVER_OPEN_NOW_FIELD_MASK
+      : query.discovery
+        ? DISCOVER_FIELD_MASK
+        : NEARBY_FIELD_MASK;
     const result = record(
       await this.request(
         text ? 'places:searchText' : 'places:searchNearby',
-        options?.mask ?? (query.discovery ? DISCOVER_FIELD_MASK : NEARBY_FIELD_MASK),
+        options?.mask ?? mask,
         {
           method: 'POST',
           body: JSON.stringify(

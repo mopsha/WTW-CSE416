@@ -836,7 +836,7 @@ test('an emptied feed names the filter that caused it and offers Clear filters',
   expect(jest.mocked(api.discover).mock.calls.at(-1)![0]).not.toHaveProperty('prices');
   await act(async () => tree.unmount());
 });
-test('Open Now explains places without listed hours instead of hiding them', async () => {
+test('Open Now explains places with unverified hours', async () => {
   jest.mocked(api.discover).mockResolvedValue({
     places,
     fallback: false,
@@ -845,7 +845,7 @@ test('Open Now explains places without listed hours instead of hiding them', asy
     hoursUnverified: true,
   });
   const tree = await mount();
-  expect(textOf(tree)).toContain('don’t list their hours');
+  expect(textOf(tree)).toContain('couldn’t verify whether these places are open now');
   jest.mocked(api.discover).mockResolvedValue({
     places,
     fallback: false,
@@ -854,6 +854,6 @@ test('Open Now explains places without listed hours instead of hiding them', asy
     hoursUnverified: false,
   });
   await act(async () => press(tree, 'Open Now'));
-  expect(textOf(tree)).toContain('3 places without listed hours are hidden.');
+  expect(textOf(tree)).toContain('3 places with unverified hours are hidden.');
   await act(async () => tree.unmount());
 });

@@ -509,3 +509,57 @@ test('Open Now keeps Google places with unknown hours as the unverified fallback
   await discover(pool, parse('&category=food&openNow=true'), {});
   expect(http.mock.calls[0]![0]).toBe('https://places.googleapis.com/v1/places:searchNearby');
 });
+
+test.each([
+  ['', 'searchNearby'],
+  ['&prices=2', 'searchText'],
+])('Open Now uses current Google hours through %s (%s)', async (priceFilter, method) => {
+  const now = new Date('2026-12-25T17:00:00Z');
+  const withWeeklyHours = (id: string, start: number, end: number) => ({
+    ...googlePlace(id),
+    regularOpeningHours: {
+      periods: [{ open: { day: 5, hour: start }, close: { day: 5, hour: end } }],
+    },
+    timeZone: { id: 'America/New_York' },
+  });
+  const holidayClosed = {
+    ...withWeeklyHours('holiday-closed', 9, 17),
+    currentOpeningHours: { openNow: false },
+  };
+  const holidayOpen = {
+    ...withWeeklyHours('holiday-open', 14, 17),
+    currentOpeningHours: { openNow: true },
+  };
+  const ordinary = {
+    ...withWeeklyHours('ordinary', 9, 17),
+    currentOpeningHours: { openNow: true },
+  };
+  const weeklyOnly = withWeeklyHours('weekly-only', 9, 17);
+  const noHours = googlePlace('no-hours');
+  const wrongPrice = { ...holidayOpen, ...googlePlace('wrong-price', 'PRICE_LEVEL_EXPENSIVE') };
+  let places = [holidayClosed, holidayOpen, ordinary, weeklyOnly, noHours, wrongPrice];
+  const http = jest.fn(async (_url: string, _init: RequestInit) => ({
+    ok: true,
+    json: async () => ({ places }),
+  }));
+  const pool = createPoolBuilder(new GoogleProvider('key', http), { provider: 'google' });
+  const requests = parse(`&category=food&openNow=true${priceFilter}`);
+
+  const result = await discover(pool, requests, {}, now);
+  expect(result.places.map((p) => p.placeId).sort()).toEqual(
+    priceFilter ? ['holiday-open', 'ordinary'] : ['holiday-open', 'ordinary', 'wrong-price'],
+  );
+  expect(result).toMatchObject({ hoursUnknown: 2, hoursUnverified: false });
+  expect(http).toHaveBeenCalledTimes(1);
+  const [url, init] = http.mock.calls[0]!;
+  expect(url).toBe(`https://places.googleapis.com/v1/places:${method}`);
+  expect((init.headers as Record<string, string>)['X-Goog-FieldMask']).toBe(
+    `${DISCOVER_FIELD_MASK},places.currentOpeningHours.openNow`,
+  );
+  expect(JSON.parse(init.body as string)).not.toHaveProperty('openNow');
+
+  places = [holidayClosed, weeklyOnly, noHours];
+  const fallback = await discover(pool, requests, {}, now);
+  expect(fallback.places.map((p) => p.placeId).sort()).toEqual(['no-hours', 'weekly-only']);
+  expect(fallback).toMatchObject({ hoursUnknown: 2, hoursUnverified: true });
+});

@@ -399,9 +399,9 @@ function DiscoverFeed({ userId }: { userId: string }) {
   const hoursNote = !current
     ? null
     : current.hoursUnverified
-      ? 'These places don’t list their hours, so they may not be open now.'
+      ? 'We couldn’t verify whether these places are open now.'
       : current.hoursUnknown
-        ? `${current.hoursUnknown} place${current.hoursUnknown === 1 ? '' : 's'} without listed hours ${current.hoursUnknown === 1 ? 'is' : 'are'} hidden.`
+        ? `${current.hoursUnknown} place${current.hoursUnknown === 1 ? '' : 's'} with unverified hours ${current.hoursUnknown === 1 ? 'is' : 'are'} hidden.`
         : null;
   const count = activeFilterCount(applied, filter);
   useEffect(() => {

@@ -115,7 +115,7 @@ export interface DiscoverResult {
   emptyBecause: DiscoverFilterKey[];
   /** Open Now: how many places had no listed hours. */
   hoursUnknown: number;
-  /** Open Now: no place was known to be open, so places without listed hours are shown. */
+  /** Open Now: no place was known to be open, so places with unverified hours are shown. */
   hoursUnverified: boolean;
 }
 

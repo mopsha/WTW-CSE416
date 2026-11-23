@@ -61,7 +61,7 @@ export interface DiscoverConstraints {
   minRating?: number;
   /** Food only: activities rarely have a Google price. Sorted, unique, 1..4. */
   prices?: readonly number[];
-  /** Applied in discover() so places without listed hours can be reported, not hidden. */
+  /** Applied in discover() so places with unverified hours can be reported, not hidden. */
   openNow?: boolean;
   sort?: DiscoverSort;
 }
@@ -146,9 +146,9 @@ export interface DiscoverFilterResult {
   places: Candidate[];
   /** Set only when places were found but filters removed all of them, or none were found. */
   emptyBecause: DiscoverFilterKey[];
-  /** Open Now: places without listed hours. Hidden, unless nothing was known to be open. */
+  /** Open Now: places with unverified hours. Hidden, unless nothing was known to be open. */
   hoursUnknown: number;
-  /** Open Now found no place known to be open, so places without listed hours are shown. */
+  /** Open Now found no place known to be open, so places with unverified hours are shown. */
   hoursUnverified: boolean;
 }
 /** Active narrowing filters, in the order the empty state names them. */
@@ -184,7 +184,10 @@ export function applyDiscoverFilters(
   const open: Candidate[] = [],
     unknown: Candidate[] = [];
   for (const p of priced) {
-    const state = isOpenAt(p.openingHours, now, p.timezone ?? '');
+    // A weekly schedule cannot confirm Google's status on a special day.
+    const state =
+      p.currentOpenNow ??
+      (p.provider === 'google' ? null : isOpenAt(p.openingHours, now, p.timezone ?? ''));
     if (state === true) open.push(p);
     else if (state === null) unknown.push(p);
   }

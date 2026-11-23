@@ -33,22 +33,21 @@ Discover searches around the device when location permission is already granted 
 onboarding and Create Pick do). Otherwise it uses Stony Brook. Coordinates are rounded to about
 110 m before they're sent.
 
-- **No price, rating or Open Now filter:** Nearby Search with the selected types, as before.
-- **Any of those set:** Text Search (New) with `priceLevels`, `minRating` and `openNow`, so Google
+- **No price or rating filter:** Nearby Search with the selected types, including when Open Now is on.
+- **Price or rating filter:** Text Search (New) with `priceLevels` or `minRating`, so Google
   returns new places that match instead of us trimming the same popular 20. Text Search takes one
   `includedType` (used when exactly one type is selected) and only a rectangular
   `locationRestriction`, so the pool still trims results to the search circle.
 - **Price is exact and food-only:** `prices=1,2` means $ or $$. Activities never send it, and For
   You applies it only to the food search. Older app builds that send `priceMax` keep the old
   "up to" meaning, for food only.
-- **Open Now** is applied after the search. If no place is known to be open but some don't list
-  hours, those are shown and the screen says their hours are unknown, rather than showing nothing.
+- **Open Now** uses Google's current open status, which accounts for special hours. If there
+  are no confirmed-open results, places with unverified status are shown with a notice.
 - The response's `emptyBecause` names the filters that removed every place, for the empty state.
 
-Each search is one call through the same `GOOGLE_DAILY_CALL_CAP` budget, with the same Discover
-field mask, and it stores the same thing: place IDs only, under a cache key that includes every
-filter. Text Search requests the same Enterprise-tier fields as the Discover Nearby Search, so
-check its rate against real billing.
+Each search is one call through the same `GOOGLE_DAILY_CALL_CAP` budget. Open Now adds an
+Enterprise-tier response field to that call. The cache stores Google place IDs and search
+parameters. Text Search requests the same Enterprise-tier fields as Discover Nearby Search.
 
 ## How places are shown
 
