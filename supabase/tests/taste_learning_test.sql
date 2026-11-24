@@ -25,7 +25,9 @@ select lives_ok(
   $$select pick_start((select id::text from tp), '71111111-1111-4111-8111-111111111111',
     '[{"placeId":"t-sushi","snapshot":{"name":"Sushi","lat":0,"lng":0,"tasteType":"sushi_restaurant"},"tasteScore":0.5},
       {"placeId":"t-pizza","snapshot":{"name":"Pizza","lat":0,"lng":0,"tasteType":"pizza_restaurant"},"tasteScore":-0.25},
-      {"placeId":"t-plain","snapshot":{"name":"Plain","lat":0,"lng":0},"tasteScore":0}]'::jsonb)$$,
+      {"placeId":"t-plain","snapshot":{"name":"Plain","lat":0,"lng":0},"tasteScore":0},
+      {"placeId":"t-park","snapshot":{"name":"Park","lat":0,"lng":0,"tasteType":"park"}},
+      {"placeId":"t-zoo","snapshot":{"name":"Zoo","lat":0,"lng":0,"tasteType":"zoo"}}]'::jsonb)$$,
   'pick_start accepts candidates carrying taste');
 
 select is((select count(*)::int from private.pick_candidate_taste where pick_id = (select id from tp)),
@@ -63,15 +65,16 @@ select ok(abs((select score from learned_taste
 -- Old signals fade: 30 days later a new Maybe lands on half the old one.
 update taste_signals set at = now() - interval '30 days'
   where user_id = '71111111-1111-4111-8111-111111111111' and place_type = 'pizza_restaurant';
--- learn_taste is trigger-only (no service_role grant); call it as the owner here.
+-- The trigger helper is private. Run it as owner to seed additional sources.
 reset role;
-select private.learn_taste('71111111-1111-4111-8111-111111111111', gen_random_uuid(),
-  'pizza_restaurant', 0.3);
+select private.save_taste_source('71111111-1111-4111-8111-111111111111', gen_random_uuid(),
+  (select id from tp), 't-pizza', 0.3, now());
 select ok(abs((select score from learned_taste
   where user_id = '71111111-1111-4111-8111-111111111111' and place_type = 'pizza_restaurant')
   - 0.45) < 0.001, 'signals halve after 30 days');
 
-select private.learn_taste('71111111-1111-4111-8111-111111111111', gen_random_uuid(), 'park', 50);
+select private.save_taste_source('71111111-1111-4111-8111-111111111111', gen_random_uuid(),
+  (select id from tp), 't-park', 50, now());
 set local role service_role;
 select is((select score from learned_taste
   where user_id = '71111111-1111-4111-8111-111111111111' and place_type = 'park'),
@@ -205,7 +208,8 @@ select is((select count(*)::int from private.pick_candidate_taste where pick_id 
 -- The ±10 cap applies after the API fades the total (groupTaste.decayedScore), not here:
 -- twenty 60-day-old +1 signals total 20 as of their own time, which fades to 5.
 reset role;
-select private.learn_taste('72222222-2222-4222-8222-222222222222', gen_random_uuid(), 'zoo', 1)
+select private.save_taste_source('72222222-2222-4222-8222-222222222222', gen_random_uuid(),
+  (select id from tp), 't-zoo', 1, now())
   from generate_series(1, 20);
 set local role service_role;
 update taste_signals set at = now() - interval '60 days'
@@ -241,8 +245,8 @@ select throws_ok($$select * from private.pick_candidate_taste$$, '42501', null,
   'clients cannot read group taste scores');
 select throws_ok($$select * from taste_signals$$, '42501', null,
   'clients cannot read taste signals');
-select throws_ok($$select private.learn_taste('72222222-2222-4222-8222-222222222222',
-  gen_random_uuid(), 'zoo', 5)$$, '42501', null, 'clients cannot add learning signals');
+select throws_ok($$select private.save_taste_source('72222222-2222-4222-8222-222222222222',
+  gen_random_uuid(), null, 't-zoo', 5, now())$$, '42501', null, 'clients cannot add learning signals');
 select throws_ok($$select pick_load_for_close((select id::text from tp2))$$, '42501', null,
   'clients cannot call the re-created close snapshot');
 

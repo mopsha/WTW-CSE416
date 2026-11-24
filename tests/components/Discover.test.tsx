@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { clearPhotoCache } from '@/lib/photoCache';
 import { CAMPUS } from '@/lib/places';
 import type { Candidate } from '@shared/places/types.ts';
+import { areaName, currentLocation } from '@/lib/locationSearch';
 
 let mockUser = 'me';
 const { create, act } = jest.requireActual('react-test-renderer');
@@ -13,6 +14,7 @@ jest.mock('expo-router', () => ({
   router: { push: jest.fn() },
   useFocusEffect: (fn: () => void) => jest.requireActual('react').useEffect(fn, [fn]),
 }));
+jest.mock('@/lib/locationSearch', () => ({ currentLocation: jest.fn(), areaName: jest.fn() }));
 jest.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ session: { user: { id: mockUser } } }) }));
 jest.mock('@/lib/api', () => ({
   api: {
@@ -89,6 +91,8 @@ beforeEach(() => {
   mockUser = 'me';
   jest.mocked(api.discover).mockResolvedValue({ places, fallback: false, notice: null });
   jest.mocked(api.getSaved).mockResolvedValue({ places: [] });
+  jest.mocked(currentLocation).mockResolvedValue(null);
+  jest.mocked(areaName).mockResolvedValue(null);
   jest.mocked(api.savePlace).mockResolvedValue({ status: 'ok' });
   jest.mocked(api.removeSaved).mockResolvedValue({ status: 'ok' });
 });
@@ -129,9 +133,10 @@ test('compact category/search controls preserve local search and provider reques
     ...CAMPUS,
     category: 'all',
     radiusM: 5000,
-    priceMax: undefined,
     openNow: false,
   });
+  expect(currentLocation).toHaveBeenCalledWith({ prompt: false });
+  expect(textOf(tree)).toContain('AROUND STONY BROOK');
   expect(textOf(tree)).toContain('Places from Google Maps');
   expect(textOf(tree)).not.toContain('Find places to eat, hang out, and more.');
   await act(async () =>
@@ -158,7 +163,8 @@ test('filter sheet applies all shared filters together; Reset changes only the d
   const tree = await mount();
   await act(async () => press(tree, 'Filters'));
   const calls = jest.mocked(api.discover).mock.calls.length;
-  await act(async () => press(tree, 'Up to $$'));
+  await act(async () => press(tree, '$$'));
+  await act(async () => press(tree, '$$$'));
   await act(async () => press(tree, '4.0+'));
   await act(async () => tree.root.findByType(Switch).props.onValueChange(true));
   await act(async () => tree.root.findByType('test-slider').props.onValueChange(10));
@@ -168,7 +174,7 @@ test('filter sheet applies all shared filters together; Reset changes only the d
     expect.objectContaining({
       category: 'all',
       radiusM: 16093,
-      priceMax: 2,
+      prices: [2, 3],
       minRating: 4,
       openNow: true,
     }),
@@ -365,11 +371,11 @@ test('adaptive sections preserve cuisine/activity selections independently and A
 test('closing discards edits; applying an unchanged draft causes no extra request', async () => {
   const tree = await mount();
   await act(async () => press(tree, 'Filters'));
-  await act(async () => press(tree, 'Free'));
+  await act(async () => press(tree, '$'));
   await act(async () => tree.root.findByType('test-sheet').props.onClose());
   expect(api.discover).toHaveBeenCalledTimes(1);
   await act(async () => press(tree, 'Filters'));
-  await act(async () => press(tree, 'Free'));
+  await act(async () => press(tree, '$'));
   await act(async () => press(tree, 'Any price'));
   await act(async () => button(tree, 'Show places').props.onPress());
   expect(api.discover).toHaveBeenCalledTimes(1);
@@ -770,4 +776,84 @@ test('failed metadata refresh backs off while rapid visibility changes do not am
     clearPhotoCache();
     jest.useRealTimers();
   }
+});
+
+test('uses an already-granted device location, never prompts, and names the area', async () => {
+  jest.mocked(currentLocation).mockResolvedValue({ lat: 40.94649, lng: -73.06931 });
+  jest.mocked(areaName).mockResolvedValue('Port Jefferson');
+  const tree = await mount();
+  expect(currentLocation).toHaveBeenCalledWith({ prompt: false });
+  expect(api.discover).toHaveBeenCalledTimes(1);
+  expect(api.discover).toHaveBeenLastCalledWith(
+    expect.objectContaining({ lat: 40.946, lng: -73.069 }),
+  );
+  expect(textOf(tree)).toContain('AROUND PORT JEFFERSON');
+  expect(textOf(tree)).toContain('Near you');
+  expect(textOf(tree)).not.toContain('STONY BROOK');
+  await act(async () => tree.unmount());
+});
+test('a denied or failed location falls back to campus without a second search', async () => {
+  jest.mocked(currentLocation).mockRejectedValue(new Error('services off'));
+  const tree = await mount();
+  expect(api.discover).toHaveBeenCalledTimes(1);
+  expect(api.discover).toHaveBeenLastCalledWith(expect.objectContaining(CAMPUS));
+  await act(async () => tree.unmount());
+});
+test('cards show price and the feed shows a result count', async () => {
+  const tree = await mount();
+  expect(textOf(tree)).toContain('2 places');
+  expect(tree.root.findByProps({ accessibilityLabel: 'Price $$' }).props.children).toBe('$$');
+  await act(async () => tree.unmount());
+});
+test('price is hidden on Activities and not sent there', async () => {
+  const tree = await mount();
+  await act(async () => press(tree, 'Filters'));
+  await act(async () => press(tree, '$$'));
+  expect(textOf(tree)).toContain('Applies to food only.');
+  await act(async () => button(tree, 'Show places').props.onPress());
+  expect(api.discover).toHaveBeenLastCalledWith(expect.objectContaining({ prices: [2] }));
+  await act(async () => press(tree, 'Activities'));
+  expect(jest.mocked(api.discover).mock.calls.at(-1)![0]).not.toHaveProperty('prices');
+  expect(textOf(tree)).not.toContain('Filters · 1');
+  await act(async () => press(tree, 'Filters'));
+  expect(tree.root.findAllByProps({ accessibilityLabel: '$$' })).toHaveLength(0);
+  await act(async () => tree.unmount());
+});
+test('an emptied feed names the filter that caused it and offers Clear filters', async () => {
+  const tree = await mount();
+  await act(async () => press(tree, 'Food'));
+  jest
+    .mocked(api.discover)
+    .mockResolvedValue({ places: [], fallback: false, notice: null, emptyBecause: ['price'] });
+  await act(async () => press(tree, 'Filters'));
+  await act(async () => press(tree, '$$$$'));
+  await act(async () => button(tree, 'Show places').props.onPress());
+  const empty = tree.root.findByType('test-empty');
+  expect(empty.props.title).toBe('No $$$$ places nearby.');
+  expect(empty.props.body).toContain('$$$$ price');
+  jest.mocked(api.discover).mockResolvedValue({ places, fallback: false, notice: null });
+  await act(async () => button(tree, 'Clear filters').props.onPress());
+  expect(jest.mocked(api.discover).mock.calls.at(-1)![0]).not.toHaveProperty('prices');
+  await act(async () => tree.unmount());
+});
+test('Open Now explains places with unverified hours', async () => {
+  jest.mocked(api.discover).mockResolvedValue({
+    places,
+    fallback: false,
+    notice: null,
+    hoursUnknown: 2,
+    hoursUnverified: true,
+  });
+  const tree = await mount();
+  expect(textOf(tree)).toContain('couldn’t verify whether these places are open now');
+  jest.mocked(api.discover).mockResolvedValue({
+    places,
+    fallback: false,
+    notice: null,
+    hoursUnknown: 3,
+    hoursUnverified: false,
+  });
+  await act(async () => press(tree, 'Open Now'));
+  expect(textOf(tree)).toContain('3 places with unverified hours are hidden.');
+  await act(async () => tree.unmount());
 });

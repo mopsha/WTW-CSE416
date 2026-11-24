@@ -75,24 +75,57 @@ live result (`pickPlaces.ts`). Live deck ordering still uses those types in memo
 - Each signal is its own row, keyed by a hash of its swipe, ballot or winner, and halves every
   30 days. A type's score is their faded sum, capped at −10..10 after fading. Changing an answer replaces that
   row, so it never takes back more or less than the original added, even after a reset or decay.
-- Only typed candidates teach; custom options and untyped places don't. Google places are
-  untyped in storage (see Badge), so for now learning only comes from non-Google places. Making
-  Google places teach would need the API to record signals from live types, or a check that
-  storing the survey label is allowed.
-- The learning runs in triggers, so every write path is covered and nothing else changes. It's
-  best effort: a lock wait or other failure skips the signal instead of failing the swipe,
-  vote, start or refresh.
+- Only typed candidates teach; custom options and untyped places don't.
+- **Google places** (0056, `_shared/api/tasteSignals.ts`): their types are never stored with the
+  place, so the triggers can't see them. Instead the API records the user's signal with the type
+  it has live (agreed with Josh). Only the per-user "leaned toward <type>" signal is stored,
+  marked `google`, and it's ignored after 30 days and deleted by the sweep (`purge_google_taste`),
+  the same window as Google coordinates.
+  - Swipes and votes: when the server shows a Google card (`getPick`) it adds `tasteProof`, an
+    HMAC over user, Pick, place and type with a key derived from a server-only secret. The app
+    sends both back; the API records only a type it signed for exactly that card and user.
+  - Winners: recorded for the viewer when they next open the completed Pick, from the server's
+    own live read (no proof needed, no extra Google calls), dated to `decided_at`.
+  - `taste_record_google_signal` checks the user is in the Pick, the place is a Google
+    candidate and the swipe, ballot or winner exists, and takes the weight and time from it.
+  - Older apps send no type or proof; their Google swipes just don't teach.
+- **Ordering and resets** (0056, all paths including the triggers): one per-user lock
+  (`wtw-taste:<user>`) orders every learning write and every reset, and a recorder reads the
+  swipe or ballot only after taking it, so the latest decision always wins. `taste_epochs.since`
+  is when learning restarts: any action at or before it never teaches, however late its
+  request arrives. Users who existed before 0056 start at the migration, since earlier resets
+  left no record. Races are covered by `tests/db/taste_concurrency.py`, which CI runs and which
+  also runs `taste_source_concurrency.py` and `google_taste_concurrency.py`.
+- The learning runs in triggers, so every write path is covered. Ordinary taste capture waits
+  at most 200 ms per lock acquisition. If learning hits a busy lock (the user's taste lock or
+  their profile row during a profile save or account deletion) or fails, the captured action
+  is queued in `private.taste_pending`: its type, weight and time, or just its revision and
+  time for a Google place. The queue insert does not take a profile row lock.
+- The next sweep (every minute, inside `purge_google_taste`) applies it (`taste_reconcile`), so a
+  Yes changed to No while another of their Picks was closing ends at the No, even if the Pick has
+  been deleted since. Each captured action takes a number from `private.taste_seq` under its Pick's
+  lock, so an older queued action never replaces a newer one. Only actions after the user's epoch
+  teach, and a Google signal that no longer matches its saved action is removed (its type isn't
+  stored, so it's re-added by the next recorded action). Deleting an
+  account removes its queued actions in the same transaction. An enqueue checks the account again
+  at commit under an account-specific advisory lock. For the same account it can wait for deletion
+  outside the 200 ms capture timeout. If deletion commits the enqueue drops its row, and if deletion
+  rolls back the queue entry is preserved. Other accounts use separate keys.
+- The sweep deletes only the rows it read (one queued during a rebuild waits for the next sweep),
+  and it never waits on a user whose lock is busy: that user stays queued. A reset reads its epoch
+  after taking the lock, so actions that committed while it waited are cleared too.
+- A Google recorder call that itself fails isn't retried: that action isn't learned, but nothing
+  stale is kept.
 
 **Preferences screen** (Profile → Preferences, or Settings → Food & activity preferences):
 
 - "What WTW noticed" lists learned likes and passes that my answers don't already cover.
   `GET /me/learned-taste` returns the decayed scores and drops anything below 0.5.
-- "Reset what WTW learned" (`DELETE /me/learned-taste`) clears the learning only.
+- "Reset what WTW learned" (`DELETE /me/learned-taste`) clears the learning only and moves the user's epoch (`taste_reset`), so nothing from before it can teach again.
 - "Swipe again" reopens the practice deck, then returns to where it was opened from.
 
 **Not yet**: "people like you also liked…" (collaborative filtering). That needs real usage
 data first.
-
 
 ## Forward hardening (0049)
 
