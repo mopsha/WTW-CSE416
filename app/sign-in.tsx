@@ -1,9 +1,11 @@
+import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -18,10 +20,11 @@ import { GradientButton } from '@/components/GradientButton';
 import { colors, flame, fonts, MIN_TARGET } from '@/components/theme';
 import type { AuthMode } from '@/lib/authTypes';
 import { auth, AuthError } from '@/lib/auth';
-import { REVIEW_EMAIL, USE_MOCK } from '@/lib/config';
+import { USE_MOCK } from '@/lib/config';
 import { messageOf } from '@/lib/errors';
 import { openLegalPage, PRIVACY_URL, TERMS_URL } from '@/lib/legal';
 import { MOCK_CODE } from '@/lib/mock/auth';
+import { appleSignInAvailable, googleSignInAvailable } from '@/lib/socialSignIn';
 
 /** Supabase's default minimum interval between OTP emails to the same address. */
 const RESEND_SECONDS = 60;
@@ -31,8 +34,14 @@ export default function SignInScreen() {
   // The intro's "Get started" opens sign-up; "Log in" and every other entry open log-in.
   const params = useLocalSearchParams<{ mode?: string }>();
   const [mode, setMode] = useState<AuthMode>(params.mode === 'signup' ? 'signup' : 'login');
-  const [step, setStep] = useState<'email' | 'code' | 'password'>('email');
+  // Log in: username or email + password, or an emailed code. Sign up: email -> code; the
+  // welcome screen then asks for a name, username and password.
+  const [step, setStep] = useState<'form' | 'code'>('form');
+  const [loginWith, setLoginWith] = useState<'password' | 'code'>('password');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [apple, setApple] = useState(false);
+  const google = googleSignInAvailable(apple);
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -41,6 +50,14 @@ export default function SignInScreen() {
   const [cooldown, setCooldown] = useState(0);
   const pending = useRef(false);
   const codeInput = useRef<TextInput>(null);
+
+  useEffect(() => {
+    let active = true;
+    void appleSignInAvailable().then((ok) => active && setApple(ok));
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -56,10 +73,6 @@ export default function SignInScreen() {
     setNotice(null);
     if (!EMAIL_RE.test(trimmedEmail)) {
       setError('Enter a valid email address.');
-      return;
-    }
-    if (trimmedEmail === REVIEW_EMAIL) {
-      setStep('password');
       return;
     }
     pending.current = true;
@@ -115,22 +128,43 @@ export default function SignInScreen() {
     }
   }
 
-  /** Only the App Store review account has a password; it can't receive emailed codes. */
-  async function signInWithPassword() {
-    if (!password || pending.current) return;
+  /** Runs one sign-in attempt; the root layout's auth guard then opens the app. */
+  async function attempt(work: () => Promise<unknown>) {
+    if (pending.current) return;
     setError(null);
+    setNotice(null);
     pending.current = true;
     setBusy(true);
     try {
-      await auth.signInWithPassword(trimmedEmail, password);
-      // The root layout's auth guard switches to the signed-in stack.
+      await work();
     } catch (e) {
       setError(messageOf(e));
-      setPassword('');
     } finally {
       pending.current = false;
       setBusy(false);
     }
+  }
+
+  function signInWithPassword() {
+    if (!identifier.trim() || !password) {
+      setError('Enter your username or email and your password.');
+      return;
+    }
+    void attempt(async () => {
+      try {
+        await auth.signInWithPassword(identifier, password);
+      } catch (e) {
+        setPassword('');
+        throw e;
+      }
+    });
+  }
+
+  function switchMode(next: AuthMode) {
+    setMode(next);
+    setLoginWith('password');
+    setError(null);
+    setNotice(null);
   }
 
   function onCodeChange(text: string) {
@@ -169,57 +203,151 @@ export default function SignInScreen() {
 
             {USE_MOCK ? (
               <Text style={styles.mock}>
-                Demo · Log in with demo@wtw.test or sign up · code {MOCK_CODE}
+                Demo · Log in as demo / password, or sign up · code {MOCK_CODE}
               </Text>
             ) : null}
 
-            {step === 'email' ? (
+            {step === 'form' ? (
               <View style={styles.form}>
+                {apple || google ? (
+                  <>
+                    {apple ? (
+                      <SocialButton
+                        icon="logo-apple"
+                        label="Continue with Apple"
+                        disabled={busy}
+                        onPress={() => void attempt(() => auth.signInWithApple())}
+                      />
+                    ) : null}
+                    {google ? (
+                      <SocialButton
+                        icon="logo-google"
+                        label="Continue with Google"
+                        disabled={busy}
+                        onPress={() => void attempt(() => auth.signInWithGoogle())}
+                      />
+                    ) : null}
+                    <View style={styles.divider} accessibilityElementsHidden>
+                      <View style={styles.line} />
+                      <Text style={styles.fine}>or</Text>
+                      <View style={styles.line} />
+                    </View>
+                  </>
+                ) : null}
                 <View style={styles.row}>
                   <Button
                     label="Log In"
                     variant={mode === 'login' ? 'secondary' : 'link'}
                     disabled={busy}
-                    onPress={() => {
-                      setMode('login');
-                      setError(null);
-                    }}
+                    onPress={() => switchMode('login')}
                   />
                   <Button
                     label="Sign Up"
                     variant={mode === 'signup' ? 'secondary' : 'link'}
                     disabled={busy}
-                    onPress={() => {
-                      setMode('signup');
-                      setError(null);
-                    }}
+                    onPress={() => switchMode('signup')}
                   />
                 </View>
-                <Text style={styles.body}>
-                  {mode === 'login' ? 'Welcome back' : 'Create your WTW account'}
-                </Text>
-                <TextInput
-                  style={styles.input}
-                  editable={!busy}
-                  value={email}
-                  onChangeText={setEmail}
-                  placeholder="you@stonybrook.edu"
-                  placeholderTextColor={colors.muted}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  autoComplete="email"
-                  textContentType="emailAddress"
-                  returnKeyType="send"
-                  onSubmitEditing={() => void sendCode(false)}
-                  accessibilityLabel="Email"
-                />
-                <GradientButton
-                  label={mode === 'login' ? 'Email login code' : 'Email signup code'}
-                  onPress={() => void sendCode(false)}
-                  loading={busy}
-                />
-                <Text style={styles.fine}>No passwords. We email you a 6-digit code.</Text>
+                {mode === 'login' && loginWith === 'password' ? (
+                  <>
+                    <Text style={styles.body}>Welcome back</Text>
+                    <TextInput
+                      style={styles.input}
+                      editable={!busy}
+                      value={identifier}
+                      onChangeText={setIdentifier}
+                      placeholder="Username or email"
+                      placeholderTextColor={colors.muted}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      autoComplete="username"
+                      textContentType="username"
+                      returnKeyType="next"
+                      accessibilityLabel="Username or email"
+                    />
+                    <TextInput
+                      style={styles.input}
+                      editable={!busy}
+                      value={password}
+                      onChangeText={setPassword}
+                      placeholder="Password"
+                      placeholderTextColor={colors.muted}
+                      secureTextEntry
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      autoComplete="current-password"
+                      textContentType="password"
+                      returnKeyType="go"
+                      onSubmitEditing={signInWithPassword}
+                      accessibilityLabel="Password"
+                    />
+                    <GradientButton label="Log in" onPress={signInWithPassword} loading={busy} />
+                    <Button
+                      label="Forgot password? Email me a code"
+                      variant="link"
+                      accessibilityHint="Log in with a 6-digit code sent to your email instead"
+                      disabled={busy}
+                      onPress={() => {
+                        setLoginWith('code');
+                        if (identifier.includes('@')) setEmail(identifier.trim());
+                        setError(null);
+                      }}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.body}>
+                      {mode === 'login'
+                        ? 'We’ll email you a login code'
+                        : 'Create your WTW account'}
+                    </Text>
+                    <TextInput
+                      style={styles.input}
+                      editable={!busy}
+                      value={email}
+                      onChangeText={setEmail}
+                      placeholder="you@stonybrook.edu"
+                      placeholderTextColor={colors.muted}
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      autoComplete="email"
+                      textContentType="emailAddress"
+                      returnKeyType="send"
+                      onSubmitEditing={() => void sendCode(false)}
+                      accessibilityLabel="Email"
+                    />
+                    <GradientButton
+                      label={mode === 'login' ? 'Email login code' : 'Continue'}
+                      onPress={() => void sendCode(false)}
+                      loading={busy}
+                    />
+                    <Text style={styles.fine}>
+                      {mode === 'login'
+                        ? 'We email you a 6-digit code. Once you’re in, set a new password in Settings → Password.'
+                        : 'We’ll email a 6-digit code to confirm it’s you. Then pick a username and password.'}
+                    </Text>
+                    {mode === 'login' ? (
+                      <Button
+                        label="Log in with a password instead"
+                        variant="link"
+                        disabled={busy}
+                        onPress={() => {
+                          setLoginWith('password');
+                          setError(null);
+                        }}
+                      />
+                    ) : null}
+                    {/* For a code you got another way, or when sending just hit a limit. */}
+                    <Button
+                      label="I already have a code"
+                      variant="link"
+                      accessibilityHint="Skips sending an email and goes to the code boxes"
+                      disabled={busy}
+                      onPress={enterCode}
+                    />
+                  </>
+                )}
                 {mode === 'signup' ? (
                   <>
                     <Text style={styles.fine}>
@@ -240,55 +368,6 @@ export default function SignInScreen() {
                     </View>
                   </>
                 ) : null}
-                {/* For a code you got another way (e.g. from the host on wtw-dev, where the
-                    email can't carry the code yet), or when sending just hit a limit. */}
-                <Button
-                  label="I already have a code"
-                  variant="link"
-                  accessibilityHint="Skips sending an email and goes to the code boxes"
-                  disabled={busy}
-                  onPress={enterCode}
-                />
-              </View>
-            ) : step === 'password' ? (
-              <View style={styles.form}>
-                <Text style={styles.body}>
-                  Enter the password for{'\n'}
-                  <Text style={styles.bold}>{trimmedEmail}</Text>
-                </Text>
-                <TextInput
-                  style={styles.input}
-                  editable={!busy}
-                  value={password}
-                  onChangeText={setPassword}
-                  placeholder="Password"
-                  placeholderTextColor={colors.muted}
-                  secureTextEntry
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  autoComplete="password"
-                  textContentType="password"
-                  returnKeyType="go"
-                  onSubmitEditing={() => void signInWithPassword()}
-                  accessibilityLabel="Password"
-                  autoFocus
-                />
-                <GradientButton
-                  label="Log in"
-                  onPress={() => void signInWithPassword()}
-                  loading={busy}
-                  disabled={!password}
-                />
-                <Button
-                  disabled={busy}
-                  label="Change email"
-                  variant="link"
-                  onPress={() => {
-                    setStep('email');
-                    setPassword('');
-                    setError(null);
-                  }}
-                />
               </View>
             ) : (
               <View style={styles.form}>
@@ -352,7 +431,7 @@ export default function SignInScreen() {
                     label="Change email"
                     variant="link"
                     onPress={() => {
-                      setStep('email');
+                      setStep('form');
                       setCode('');
                       setError(null);
                       setNotice(null);
@@ -375,7 +454,46 @@ export default function SignInScreen() {
   );
 }
 
+/** Apple's guidelines allow a white button with its logo and "Continue with Apple" on dark UI. */
+function SocialButton({
+  icon,
+  label,
+  onPress,
+  disabled,
+}: {
+  icon: 'logo-apple' | 'logo-google';
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: !!disabled }}
+      style={({ pressed }) => [styles.social, (pressed || disabled) && { opacity: 0.7 }]}
+    >
+      <Ionicons name={icon} size={20} color={colors.bg} />
+      <Text style={styles.socialText}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
+  social: {
+    minHeight: MIN_TARGET + 8,
+    borderRadius: 999,
+    backgroundColor: colors.text,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  socialText: { fontFamily: fonts.bold, fontSize: 17, color: colors.bg },
+  divider: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  line: { flex: 1, height: 1, backgroundColor: colors.border },
   root: { flex: 1, backgroundColor: colors.bg },
   flex: { flex: 1 },
   content: { flexGrow: 1, justifyContent: 'center', padding: 24, gap: 22 },

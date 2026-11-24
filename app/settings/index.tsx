@@ -115,6 +115,7 @@ export default function SettingsScreen() {
           onPress={() => open('location')}
         />
         <ListRow title="Food & activity preferences" onPress={() => router.push('/preferences')} />
+        <ListRow title="Password" onPress={() => router.push('/settings/password')} />
       </Card>
       <SectionHeading title="Safety & privacy" />
       <Card>
