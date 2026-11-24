@@ -1,4 +1,9 @@
-import { validDiscovery, type DiscoverConstraints } from '../domain/discoverFilters.ts';
+import {
+  applyDiscoverFilters,
+  validDiscovery,
+  type DiscoverConstraints,
+  type DiscoverFilterKey,
+} from '../domain/discoverFilters.ts';
 import { distanceMeters } from '../domain/geo.ts';
 import { ApiError } from './errors.ts';
 import { validFilters } from '../domain/placeFilters.ts';
@@ -42,15 +47,25 @@ export function parseDiscover(params: URLSearchParams): PoolRequest[] {
     lng = params.get('lng');
   const radiusM = Number(params.get('radiusM') ?? 5000);
   const category = params.get('category') ?? 'all';
+  // Older app builds send a maximum price; it keeps its old meaning, for food only.
   const priceMax = params.has('priceMax') ? Number(params.get('priceMax')) : null;
   const open = params.get('openNow');
   const selection = (key: string) =>
     params.has(key) ? params.get(key)!.split(',').sort() : undefined;
+  const prices = params.has('prices')
+    ? params
+        .get('prices')!
+        .split(',')
+        .map((v) => (/^[1-4]$/.test(v) ? Number(v) : NaN))
+        .sort((a, b) => a - b)
+    : undefined;
   const discovery: DiscoverConstraints = {
     ...(params.has('cuisines') ? { cuisines: selection('cuisines') } : {}),
     ...(params.has('foodTypes') ? { foodTypes: selection('foodTypes') } : {}),
     ...(params.has('activityTypes') ? { activityTypes: selection('activityTypes') } : {}),
     ...(params.has('minRating') ? { minRating: Number(params.get('minRating')) } : {}),
+    ...(prices ? { prices } : {}),
+    ...(open === 'true' ? { openNow: true } : {}),
     ...(params.has('sort') ? { sort: params.get('sort') as DiscoverConstraints['sort'] } : {}),
   };
   if (
@@ -69,28 +84,47 @@ export function parseDiscover(params: URLSearchParams): PoolRequest[] {
     (open !== null && open !== 'true' && open !== 'false') ||
     (params.has('priceMax') && !params.get('priceMax')?.trim()) ||
     !validFilters({ priceMax }) ||
+    (priceMax !== null && prices !== undefined) ||
     !validDiscovery(discovery, category)
   ) {
     throw new ApiError(400, 'INVALID_INPUT', 'Invalid Discover location or filters');
   }
   return (
     category === 'all' ? (['food', 'activities'] as const) : [category as 'food' | 'activities']
-  ).map((category) => ({
-    center: { lat: Number(lat), lng: Number(lng) },
-    radiusM,
-    category,
-    poolSize: 30,
-    priceMax,
-    openNow: open === 'true',
-    discovery,
-  }));
+  ).map((category) => {
+    // Price is food-only, so an activities search never carries it.
+    const shared: DiscoverConstraints = { ...discovery };
+    delete shared.prices;
+    return {
+      center: { lat: Number(lat), lng: Number(lng) },
+      radiusM,
+      category,
+      poolSize: 30,
+      priceMax: category === 'food' ? priceMax : null,
+      // discover() applies Open Now itself, so the pool must not drop places without hours.
+      openNow: false,
+      discovery: category === 'food' ? discovery : shared,
+    };
+  });
+}
+
+export interface DiscoverResult {
+  places: Candidate[];
+  fallback: boolean;
+  /** Which filters removed every place; empty when places are shown. */
+  emptyBecause: DiscoverFilterKey[];
+  /** Open Now: how many places had no listed hours. */
+  hoursUnknown: number;
+  /** Open Now: no place was known to be open, so places with unverified hours are shown. */
+  hoursUnverified: boolean;
 }
 
 export async function discover(
   pool: PoolBuilder,
   requests: PoolRequest[],
   preferences: DiscoverPreferences,
-) {
+  now: Date = new Date(),
+): Promise<DiscoverResult> {
   const groups = await Promise.all(
     requests.map(async (request) => {
       try {
@@ -103,7 +137,15 @@ export async function discover(
       }
     }),
   );
-  const candidates = groups.flatMap((group) => group.places);
+  // The food request carries prices; matchesPrice ignores them for activities.
+  const filters =
+    requests.find((r) => r.category === 'food')?.discovery ?? requests[0]!.discovery ?? {};
+  const filtered = applyDiscoverFilters(
+    groups.flatMap((group) => group.places),
+    filters,
+    now,
+  );
+  const candidates = filtered.places;
   const center = requests[0]!.center;
   const sort = requests[0]!.discovery?.sort ?? 'recommended';
   const metric = (p: Candidate) =>
@@ -121,5 +163,11 @@ export async function discover(
               metric(b) - metric(a) || (a.placeId < b.placeId ? -1 : a.placeId > b.placeId ? 1 : 0),
           )
           .slice(0, 20);
-  return { places, fallback: groups.some((group) => group.fallback) };
+  return {
+    places,
+    fallback: groups.some((group) => group.fallback),
+    emptyBecause: filtered.emptyBecause,
+    hoursUnknown: filtered.hoursUnknown,
+    hoursUnverified: filtered.hoursUnverified,
+  };
 }

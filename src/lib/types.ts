@@ -59,6 +59,8 @@ export interface Candidate {
   locationProvided?: boolean;
   /** The survey type this place counts as (e.g. "sushi_restaurant"), for "Matches your taste". */
   tasteType?: string;
+  /** The server's proof for a Google card's live tasteType, sent back with my swipe/vote. */
+  tasteProof?: string;
 }
 
 export interface MyPreference {

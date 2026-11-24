@@ -4,6 +4,7 @@
 // work on web. TODO(Alan/Josh): swap for a server-side GET /places/autocomplete so the
 // Google key never ships in the app.
 import * as Location from 'expo-location';
+import { Platform } from 'react-native';
 
 import { distanceMeters, type LatLng } from '@shared/domain/geo.ts';
 
@@ -242,10 +243,34 @@ export async function knownLocation(): Promise<LatLng | null> {
 /**
  * The device's current position, or null if the user says no.
  * Throws only for real failures (location services off, timeout).
+ * With `prompt: false` it only reads the permission and never shows the system prompt, and a
+ * recent last-known fix is used first so screens like Discover don't wait for a new one.
  */
-export async function currentLocation(): Promise<LatLng | null> {
-  const { status } = await Location.requestForegroundPermissionsAsync();
+export async function currentLocation({
+  prompt = true,
+}: { prompt?: boolean } = {}): Promise<LatLng | null> {
+  const { status } = prompt
+    ? await Location.requestForegroundPermissionsAsync()
+    : await Location.getForegroundPermissionsAsync();
   if (status !== Location.PermissionStatus.GRANTED) return null;
-  const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+  const last = prompt
+    ? null
+    : await Location.getLastKnownPositionAsync({ maxAge: 10 * 60_000, requiredAccuracy: 1000 });
+  const pos =
+    last ?? (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
   return { lat: pos.coords.latitude, lng: pos.coords.longitude };
+}
+
+/** A short area name ("Port Jefferson") for a point, or null. Native only; never throws. */
+export async function areaName(center: LatLng): Promise<string | null> {
+  if (Platform.OS === 'web') return null;
+  try {
+    // Shares the reverse-geocode queue, 2.5 s timeout and cache with city search (#79):
+    // iOS throttles overlapping lookups.
+    const hit = await reverseGeocode(center, () => true);
+    if (!hit || hit === SKIPPED) return null;
+    return hit.city?.trim() || hit.district?.trim() || hit.subregion?.trim() || null;
+  } catch {
+    return null;
+  }
 }
