@@ -1,3 +1,10 @@
+import { bodyLimit } from 'hono/body-limit';
+import {
+  parseLocationQuery,
+  validDiscoverLocationId,
+  type DiscoverLocationSuggestion,
+  type ResolvedDiscoverLocation,
+} from '../_shared/api/discoverLocation.ts';
 import {
   suggestTime,
   actOnTimeSuggestion,
@@ -183,6 +190,10 @@ export function createApp(
     cronSecret?: string;
     discoverPool?: PoolBuilder;
     discoverPhoto?: ResolvePhoto;
+    discoverLocations?: {
+      suggest(query: string, signal?: AbortSignal): Promise<DiscoverLocationSuggestion[]>;
+      resolve(id: string, signal?: AbortSignal): Promise<ResolvedDiscoverLocation | null>;
+    };
     discoverStore?: {
       preferences(userId: string): Promise<DiscoverPreferences>;
       saved(userId: string): Promise<{ placeId: string; createdAt: string }[]>;
@@ -190,7 +201,7 @@ export function createApp(
       remove(userId: string, placeId: string): Promise<void>;
     };
     checkLimit?: (
-      scope: 'create' | 'start' | 'refresh' | 'discover' | 'discover_photo',
+      scope: 'create' | 'start' | 'refresh' | 'discover' | 'discover_photo' | 'discover_location',
       userId: string,
       pickId?: string,
     ) => Promise<void>;
@@ -399,6 +410,44 @@ export function createApp(
     if (progress.availability && c.req.header('X-Client-Info') !== AVAILABILITY_CAPABILITY)
       throw new ApiError(409, 'UPDATE_REQUIRED', 'Update WTW to open this availability Pick.');
     return c.json(progress);
+  });
+  app.post(
+    '/discover/locations',
+    bodyLimit({
+      maxSize: 2048,
+      onError: () => {
+        throw new ApiError(400, 'INVALID_INPUT', 'Location query is too long');
+      },
+    }),
+    async (c) => {
+      c.header('Cache-Control', 'private, no-store');
+      const user = await deps.getUser(c.req.raw);
+      const query = parseLocationQuery(await c.req.json().catch(() => null));
+      if (!deps.discoverLocations || !deps.checkLimit)
+        throw new ApiError(503, 'LOCATION_UNAVAILABLE', 'Location search is unavailable');
+      await deps.checkLimit('discover_location', user.id);
+      const suggestions = await deps.discoverLocations
+        .suggest(query, c.req.raw.signal)
+        .catch(() => {
+          throw new ApiError(503, 'LOCATION_UNAVAILABLE', 'Location search is unavailable');
+        });
+      return c.json({ suggestions });
+    },
+  );
+  app.get('/discover/locations/:id', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const user = await deps.getUser(c.req.raw);
+    const id = c.req.param('id');
+    if (!validDiscoverLocationId(id))
+      throw new ApiError(400, 'INVALID_INPUT', 'Invalid location identifier');
+    if (!deps.discoverLocations || !deps.checkLimit)
+      throw new ApiError(503, 'LOCATION_UNAVAILABLE', 'Location search is unavailable');
+    await deps.checkLimit('discover_location', user.id);
+    const location = await deps.discoverLocations.resolve(id, c.req.raw.signal).catch(() => {
+      throw new ApiError(503, 'LOCATION_UNAVAILABLE', 'Could not look up that location');
+    });
+    if (!location) throw new ApiError(404, 'LOCATION_NOT_FOUND', 'That location is unavailable');
+    return c.json({ location });
   });
   app.get('/discover', async (c) => {
     const user = await deps.getUser(c.req.raw);

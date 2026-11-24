@@ -36,6 +36,12 @@ export const pickPoolBuilder = createConfiguredPoolBuilder(
 
 const google = () => new GoogleProvider(Deno.env.get('GOOGLE_PLACES_API_KEY') ?? '', googleHttp);
 
+export const discoverLocations = {
+  suggest: (query: string, signal?: AbortSignal) =>
+    google().suggestDiscoverLocations(query, signal),
+  resolve: (id: string, signal?: AbortSignal) => google().resolveDiscoverLocation(id, signal),
+};
+
 /** Fills in a Pick's Google places on each read, against the same daily cap. */
 export const pickPlaces = createPickPlaces({
   search: (query) => google().search(query, { mask: PICK_SEARCH_MASK }),

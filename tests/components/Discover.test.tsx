@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React from 'react';
 import { AppState, FlatList, Text, Switch } from 'react-native';
 import DiscoverScreen from '../../app/(tabs)/discover';
@@ -6,6 +7,10 @@ import { clearPhotoCache } from '@/lib/photoCache';
 import { CAMPUS } from '@/lib/places';
 import type { Candidate } from '@shared/places/types.ts';
 import { areaName, currentLocation } from '@/lib/locationSearch';
+import type {
+  DiscoverLocationSuggestion,
+  ResolvedDiscoverLocation,
+} from '@shared/api/discoverLocation.ts';
 
 let mockUser = 'me';
 const { create, act } = jest.requireActual('react-test-renderer');
@@ -14,11 +19,16 @@ jest.mock('expo-router', () => ({
   router: { push: jest.fn() },
   useFocusEffect: (fn: () => void) => jest.requireActual('react').useEffect(fn, [fn]),
 }));
-jest.mock('@/lib/locationSearch', () => ({ currentLocation: jest.fn(), areaName: jest.fn() }));
+jest.mock('@/lib/locationSearch', () => ({
+  currentLocation: jest.fn(),
+  areaName: jest.fn(),
+}));
 jest.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ session: { user: { id: mockUser } } }) }));
 jest.mock('@/lib/api', () => ({
   api: {
     discover: jest.fn(),
+    suggestDiscoverLocations: jest.fn(),
+    resolveDiscoverLocation: jest.fn(),
     discoverPhoto: jest.fn(),
     getSaved: jest.fn(),
     savePlace: jest.fn(),
@@ -84,7 +94,11 @@ const places: Candidate[] = [
   },
 ];
 beforeEach(() => {
-  jest.resetAllMocks();
+  jest.clearAllMocks();
+  jest.mocked(AsyncStorage.clear)();
+  jest.mocked(api.discoverPhoto).mockReset();
+  jest.mocked(api.suggestDiscoverLocations).mockReset();
+  jest.mocked(api.resolveDiscoverLocation).mockReset();
   clearPhotoCache();
   AppState.currentState = 'active';
   jest.spyOn(AppState, 'addEventListener').mockReturnValue({ remove: jest.fn() });
@@ -129,13 +143,13 @@ function textOf(tree: ReturnType<typeof create>) {
 }
 test('compact category/search controls preserve local search and provider request parameters', async () => {
   const tree = await mount();
-  expect(api.discover).toHaveBeenLastCalledWith({
+  expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual({
     ...CAMPUS,
     category: 'all',
     radiusM: 5000,
     openNow: false,
   });
-  expect(currentLocation).toHaveBeenCalledWith({ prompt: false });
+  expect(currentLocation).toHaveBeenCalledWith({ prompt: false, timeoutMs: 5000 });
   expect(textOf(tree)).toContain('AROUND STONY BROOK');
   expect(textOf(tree)).toContain('Places from Google Maps');
   expect(textOf(tree)).not.toContain('Find places to eat, hang out, and more.');
@@ -148,13 +162,15 @@ test('compact category/search controls preserve local search and provider reques
   expect(api.discover).toHaveBeenCalledTimes(1); // search still filters locally
   await act(async () => press(tree, 'Clear search'));
   await act(async () => press(tree, 'Food'));
-  expect(api.discover).toHaveBeenLastCalledWith(expect.objectContaining({ category: 'food' }));
+  expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
+    expect.objectContaining({ category: 'food' }),
+  );
   await act(async () => press(tree, 'Open Now'));
-  expect(api.discover).toHaveBeenLastCalledWith(
+  expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
     expect.objectContaining({ category: 'food', openNow: true }),
   );
   await act(async () => press(tree, 'Activities'));
-  expect(api.discover).toHaveBeenLastCalledWith(
+  expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
     expect.objectContaining({ category: 'activities', openNow: true }),
   );
   await act(async () => tree.unmount());
@@ -170,7 +186,7 @@ test('filter sheet applies all shared filters together; Reset changes only the d
   await act(async () => tree.root.findByType('test-slider').props.onValueChange(10));
   expect(api.discover).toHaveBeenCalledTimes(calls);
   await act(async () => button(tree, 'Show places').props.onPress());
-  expect(api.discover).toHaveBeenLastCalledWith(
+  expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
     expect.objectContaining({
       category: 'all',
       radiusM: 16093,
@@ -184,7 +200,7 @@ test('filter sheet applies all shared filters together; Reset changes only the d
   await act(async () => button(tree, 'Reset').props.onPress());
   expect(api.discover).toHaveBeenCalledTimes(calls + 1);
   await act(async () => button(tree, 'Show places').props.onPress());
-  expect(api.discover).toHaveBeenLastCalledWith(
+  expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
     expect.objectContaining({ radiusM: 5000, openNow: false }),
   );
   expect(jest.mocked(api.discover).mock.calls.at(-1)![0]).not.toHaveProperty('minRating');
@@ -343,7 +359,7 @@ test('adaptive sections preserve cuisine/activity selections independently and A
   await act(async () => press(tree, 'Chinese'));
   await act(async () => press(tree, 'Pizza'));
   await act(async () => button(tree, 'Show places').props.onPress());
-  expect(api.discover).toHaveBeenLastCalledWith(
+  expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
     expect.objectContaining({ cuisines: ['chinese', 'italian'], foodTypes: ['pizza'] }),
   );
   await act(async () => press(tree, 'Activities'));
@@ -353,7 +369,7 @@ test('adaptive sections preserve cuisine/activity selections independently and A
   expect(textOf(tree)).not.toContain('Any cuisine');
   await act(async () => press(tree, 'Bowling'));
   await act(async () => button(tree, 'Show places').props.onPress());
-  expect(api.discover).toHaveBeenLastCalledWith(
+  expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
     expect.objectContaining({ activityTypes: ['bowling'] }),
   );
   await act(async () => press(tree, 'Food'));
@@ -401,7 +417,9 @@ test('sort is outside Filters, requests bounded sorting, and photo promotion doe
     .mockResolvedValue({ places: [places[1]!, places[0]!], notice: null, fallback: false });
   await act(async () => press(tree, 'Sort places'));
   await act(async () => press(tree, 'Highest rated'));
-  expect(api.discover).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'rating' }));
+  expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
+    expect.objectContaining({ sort: 'rating' }),
+  );
   expect(textOf(tree).indexOf('Local Museum')).toBeLessThan(textOf(tree).indexOf('Campus Cafe'));
   expect(textOf(tree)).toContain('limited selection');
   await act(async () => tree.unmount());
@@ -423,7 +441,7 @@ test('an older request cannot overwrite the newly selected tab or account; accou
   await act(async () => press(tree, 'Open Now'));
   mockUser = 'other-account';
   await act(async () => tree.update(<DiscoverScreen />));
-  expect(api.discover).toHaveBeenLastCalledWith(
+  expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
     expect.objectContaining({ category: 'all', openNow: false, radiusM: 5000 }),
   );
   await act(async () => tree.unmount());
@@ -782,9 +800,9 @@ test('uses an already-granted device location, never prompts, and names the area
   jest.mocked(currentLocation).mockResolvedValue({ lat: 40.94649, lng: -73.06931 });
   jest.mocked(areaName).mockResolvedValue('Port Jefferson');
   const tree = await mount();
-  expect(currentLocation).toHaveBeenCalledWith({ prompt: false });
+  expect(currentLocation).toHaveBeenCalledWith({ prompt: false, timeoutMs: 5000 });
   expect(api.discover).toHaveBeenCalledTimes(1);
-  expect(api.discover).toHaveBeenLastCalledWith(
+  expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
     expect.objectContaining({ lat: 40.946, lng: -73.069 }),
   );
   expect(textOf(tree)).toContain('AROUND PORT JEFFERSON');
@@ -796,7 +814,7 @@ test('a denied or failed location falls back to campus without a second search',
   jest.mocked(currentLocation).mockRejectedValue(new Error('services off'));
   const tree = await mount();
   expect(api.discover).toHaveBeenCalledTimes(1);
-  expect(api.discover).toHaveBeenLastCalledWith(expect.objectContaining(CAMPUS));
+  expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(expect.objectContaining(CAMPUS));
   await act(async () => tree.unmount());
 });
 test('cards show price and the feed shows a result count', async () => {
@@ -811,7 +829,9 @@ test('price is hidden on Activities and not sent there', async () => {
   await act(async () => press(tree, '$$'));
   expect(textOf(tree)).toContain('Applies to food only.');
   await act(async () => button(tree, 'Show places').props.onPress());
-  expect(api.discover).toHaveBeenLastCalledWith(expect.objectContaining({ prices: [2] }));
+  expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
+    expect.objectContaining({ prices: [2] }),
+  );
   await act(async () => press(tree, 'Activities'));
   expect(jest.mocked(api.discover).mock.calls.at(-1)![0]).not.toHaveProperty('prices');
   expect(textOf(tree)).not.toContain('Filters · 1');
@@ -856,4 +876,303 @@ test('Open Now explains places with unverified hours', async () => {
   await act(async () => press(tree, 'Open Now'));
   expect(textOf(tree)).toContain('3 places with unverified hours are hidden.');
   await act(async () => tree.unmount());
+});
+
+const city = {
+  id: 'boston',
+  label: 'Boston',
+  detail: 'Massachusetts, United States',
+  chosen: 'Boston, Massachusetts',
+  center: { lat: 42.3601, lng: -71.0589 },
+};
+const secondCity = {
+  id: 'brooklyn',
+  label: 'Brooklyn',
+  detail: 'New York, United States',
+  center: { lat: 40.6782, lng: -73.9442 },
+};
+const resolved = (hit: typeof city | typeof secondCity) => ({
+  ...hit,
+  label: 'chosen' in hit ? hit.chosen : hit.label,
+});
+const locationInput = 'Search cities, neighborhoods, and addresses';
+const selectLocation = (tree: ReturnType<typeof create>, hit: typeof city | typeof secondCity) =>
+  act(async () => press(tree, `${hit.label}, ${hit.detail}`));
+
+async function typeLocation(tree: ReturnType<typeof create>, query: string) {
+  await act(async () => {
+    tree.root.findByProps({ accessibilityLabel: locationInput }).props.onChangeText(query);
+  });
+}
+
+async function suggestLocation(
+  tree: ReturnType<typeof create>,
+  hit: typeof city | typeof secondCity,
+) {
+  jest.mocked(api.suggestDiscoverLocations).mockResolvedValueOnce({ suggestions: [hit] });
+  jest.mocked(api.resolveDiscoverLocation).mockResolvedValueOnce({ location: resolved(hit) });
+  await act(async () => press(tree, 'Change search location'));
+  await typeLocation(tree, hit.label);
+  await act(async () => jest.advanceTimersByTime(350));
+}
+
+describe('Discover search location', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  test('selects and restores a city; category, text, sort and radius use its center', async () => {
+    const local = { ...places[0]!, ...city.center, name: 'Boston Cafe' };
+    const tree = await mount();
+    jest.mocked(api.discover).mockResolvedValue({ places: [local], fallback: false, notice: null });
+    await suggestLocation(tree, city);
+    await selectLocation(tree, city);
+    expect(textOf(tree)).toContain('AROUND BOSTON, MASSACHUSETTS');
+    expect(textOf(tree)).toContain('nearby');
+    expect(textOf(tree)).not.toContain('on campus');
+    expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
+      expect.objectContaining({
+        ...city.center,
+        category: 'all',
+      }),
+    );
+    for (const [label, category] of [
+      ['Food', 'food'],
+      ['Activities', 'activities'],
+      ['For You', 'all'],
+    ]) {
+      await act(async () => press(tree, label!));
+      expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
+        expect.objectContaining({ ...city.center, category }),
+      );
+    }
+    const calls = jest.mocked(api.discover).mock.calls.length;
+    await act(async () =>
+      tree.root.findByProps({ accessibilityLabel: 'Search places' }).props.onChangeText('Boston'),
+    );
+    expect(textOf(tree)).toContain('Boston Cafe');
+    expect(api.discover).toHaveBeenCalledTimes(calls);
+    await act(async () => press(tree, 'Filters'));
+    await act(async () => tree.root.findByType('test-slider').props.onValueChange(10));
+    await act(async () => button(tree, 'Show places').props.onPress());
+    expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
+      expect.objectContaining({ ...city.center, radiusM: 16093 }),
+    );
+    await act(async () => press(tree, 'Sort places'));
+    await act(async () => press(tree, 'Nearest'));
+    expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
+      expect.objectContaining({ ...city.center, sort: 'nearest' }),
+    );
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith('wtw.discover-area.v1.me', city.id);
+    await act(async () => tree.unmount());
+    jest.mocked(api.discover).mockClear();
+    jest.mocked(currentLocation).mockClear();
+    jest.mocked(api.resolveDiscoverLocation).mockResolvedValueOnce({ location: resolved(city) });
+    const restored = await mount();
+    expect(currentLocation).not.toHaveBeenCalled();
+    expect(api.discover).toHaveBeenCalledTimes(1);
+    expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
+      expect.objectContaining(city.center),
+    );
+    await act(async () => press(restored, 'Change search location'));
+    expect(textOf(restored)).toContain('Selected location');
+    await act(async () => restored.unmount());
+  });
+
+  test('returns to current location and clears manual persistence without retaining GPS', async () => {
+    const tree = await mount();
+    await suggestLocation(tree, city);
+    await selectLocation(tree, city);
+    const here = { lat: 40.946, lng: -73.069 };
+    jest.mocked(currentLocation).mockResolvedValueOnce(here);
+    await act(async () => press(tree, 'Change search location'));
+    await act(async () => press(tree, 'Use my current location'));
+    expect(currentLocation).toHaveBeenLastCalledWith({ timeoutMs: 8000 });
+    expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(expect.objectContaining(here));
+    expect(textOf(tree)).toContain('NEAR YOU');
+    expect(await AsyncStorage.getItem('wtw.discover-area.v1.me')).toBeNull();
+    expect(AsyncStorage.setItem).toHaveBeenCalledTimes(1);
+    await act(async () => tree.unmount());
+  });
+
+  test.each([
+    ['permission is off', () => jest.mocked(currentLocation).mockResolvedValueOnce(null)],
+    [
+      'Couldn’t get your location',
+      () => jest.mocked(currentLocation).mockRejectedValueOnce(new Error('timeout')),
+    ],
+  ])('retains the manual selection after %s', async (message, fail) => {
+    const tree = await mount();
+    await suggestLocation(tree, city);
+    await selectLocation(tree, city);
+    fail();
+    await act(async () => press(tree, 'Change search location'));
+    await act(async () => press(tree, 'Use my current location'));
+    expect(textOf(tree)).toContain(message);
+    expect(textOf(tree)).toContain('AROUND BOSTON, MASSACHUSETTS');
+    expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
+      expect.objectContaining(city.center),
+    );
+    expect(await AsyncStorage.getItem('wtw.discover-area.v1.me')).toBe(city.id);
+    expect(tree.root.findByProps({ accessibilityLabel: locationInput })).toBeDefined();
+    await act(async () => press(tree, 'Clear saved location and use Stony Brook'));
+    expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(expect.objectContaining(CAMPUS));
+    expect(await AsyncStorage.getItem('wtw.discover-area.v1.me')).toBeNull();
+    await act(async () => tree.unmount());
+  });
+
+  test('ignores late GPS and previous-center feeds and drops old places while loading', async () => {
+    const tree = await mount();
+    let finishGps!: (center: typeof city.center) => void;
+    jest
+      .mocked(currentLocation)
+      .mockReturnValueOnce(new Promise((resolve) => (finishGps = resolve)));
+    let finishFeed!: (feed: Awaited<ReturnType<typeof api.discover>>) => void;
+    jest.mocked(api.discover).mockReturnValueOnce(new Promise((resolve) => (finishFeed = resolve)));
+    await suggestLocation(tree, city);
+    await act(async () => press(tree, 'Use my current location'));
+    await selectLocation(tree, city);
+    expect(textOf(tree)).not.toContain('Campus Cafe');
+    const obsolete = jest.mocked(api.discover).mock.lastCall?.[2];
+    const local = { ...places[0]!, ...secondCity.center, name: 'Brooklyn Cafe' };
+    jest.mocked(api.discover).mockResolvedValue({ places: [local], notice: null, fallback: false });
+    await suggestLocation(tree, secondCity);
+    await selectLocation(tree, secondCity);
+    expect(obsolete?.aborted).toBe(true);
+    await act(async () => {
+      finishGps(CAMPUS);
+      finishFeed({
+        places: [{ ...places[0]!, name: 'Stale Cafe' }],
+        notice: null,
+        fallback: false,
+      });
+    });
+    expect(textOf(tree)).not.toContain('Stale Cafe');
+    expect(textOf(tree)).toContain('Brooklyn Cafe');
+    expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
+      expect.objectContaining(secondCity.center),
+    );
+    await act(async () => tree.unmount());
+  });
+
+  test('debounces typing and rejects obsolete searches and resolutions', async () => {
+    const tree = await mount();
+    await act(async () => press(tree, 'Change search location'));
+    let finish!: (value: { suggestions: DiscoverLocationSuggestion[] }) => void;
+    jest
+      .mocked(api.suggestDiscoverLocations)
+      .mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    await typeLocation(tree, 'Bos');
+    await typeLocation(tree, 'Boston');
+    await act(async () => jest.advanceTimersByTime(349));
+    expect(api.suggestDiscoverLocations).not.toHaveBeenCalled();
+    await act(async () => jest.advanceTimersByTime(1));
+    expect(api.suggestDiscoverLocations).toHaveBeenCalledTimes(1);
+    const signal = jest.mocked(api.suggestDiscoverLocations).mock.calls[0]![2];
+    jest.mocked(api.suggestDiscoverLocations).mockResolvedValueOnce({ suggestions: [] });
+    await typeLocation(tree, 'Brooklyn');
+    expect(signal.aborted).toBe(true);
+    await act(async () => jest.advanceTimersByTime(350));
+    await act(async () => finish({ suggestions: [city] }));
+    expect(textOf(tree)).toContain('No locations found');
+    expect(textOf(tree)).not.toContain('Massachusetts');
+    jest.mocked(api.suggestDiscoverLocations).mockRejectedValueOnce(new Error('unavailable'));
+    await typeLocation(tree, 'Albany');
+    await act(async () => jest.advanceTimersByTime(350));
+    expect(textOf(tree)).toContain('Location search is unavailable');
+
+    jest
+      .mocked(api.suggestDiscoverLocations)
+      .mockResolvedValueOnce({ suggestions: [city, secondCity] });
+    await typeLocation(tree, 'new query');
+    await act(async () => jest.advanceTimersByTime(350));
+    let finishResolution!: (value: { location: ResolvedDiscoverLocation }) => void;
+    jest
+      .mocked(api.resolveDiscoverLocation)
+      .mockReturnValueOnce(new Promise((resolve) => (finishResolution = resolve)));
+    await selectLocation(tree, city);
+    const resolveSignal = jest.mocked(api.resolveDiscoverLocation).mock.calls[0]![2];
+    await act(async () => tree.root.findByType('test-sheet').props.onClose());
+    expect(resolveSignal.aborted).toBe(true);
+    await act(async () => finishResolution({ location: resolved(city) }));
+    expect(api.discover).toHaveBeenCalledTimes(1);
+    await act(async () => tree.unmount());
+  });
+
+  test('manual search uses the server after GPS denial on Android', async () => {
+    const { Platform } = jest.requireActual('react-native');
+    const platform = jest.replaceProperty(Platform, 'OS', 'android');
+    try {
+      const tree = await mount();
+      await act(async () => press(tree, 'Change search location'));
+      await act(async () => press(tree, 'Use my current location'));
+      expect(textOf(tree)).toContain('permission is off');
+      jest.mocked(api.suggestDiscoverLocations).mockResolvedValueOnce({ suggestions: [city] });
+      jest.mocked(api.resolveDiscoverLocation).mockResolvedValueOnce({ location: resolved(city) });
+      const calls = jest.mocked(currentLocation).mock.calls.length;
+      await typeLocation(tree, 'Boston');
+      await act(async () => jest.advanceTimersByTime(350));
+      expect(api.suggestDiscoverLocations).toHaveBeenCalledWith('Boston', 'me', expect.anything());
+      await selectLocation(tree, city);
+      expect(currentLocation).toHaveBeenCalledTimes(calls);
+      expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
+        expect.objectContaining({ ...city.center, centerMode: 'manual' }),
+      );
+      await act(async () => tree.unmount());
+    } finally {
+      platform.restore();
+    }
+  });
+
+  test('rejects invalid coordinates when restoring a saved ID', async () => {
+    await AsyncStorage.setItem('wtw.discover-area.v1.me', city.id);
+    jest.mocked(api.resolveDiscoverLocation).mockResolvedValueOnce({
+      location: { ...resolved(city), center: { lat: 91, lng: 0 } },
+    });
+    const tree = await mount();
+    expect(api.discover).toHaveBeenCalledTimes(1);
+    expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(expect.objectContaining(CAMPUS));
+    expect(tree.root.findByType('test-error').props.message).toContain(
+      'restore your saved search location',
+    );
+    expect(await AsyncStorage.getItem('wtw.discover-area.v1.me')).toBe(city.id);
+    await act(async () => tree.unmount());
+  });
+
+  test('switching accounts during restoration cancels the old lookup before any old feed loads', async () => {
+    await AsyncStorage.setItem('wtw.discover-area.v1.me', city.id);
+    let finish!: (value: { location: ResolvedDiscoverLocation }) => void;
+    jest
+      .mocked(api.resolveDiscoverLocation)
+      .mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    const tree = await mount();
+    expect(api.discover).not.toHaveBeenCalled();
+    const signal = jest.mocked(api.resolveDiscoverLocation).mock.calls[0]![2];
+    mockUser = 'other';
+    await act(async () => tree.update(<DiscoverScreen />));
+    expect(signal.aborted).toBe(true);
+    await act(async () => finish({ location: resolved(city) }));
+    expect(api.discover).toHaveBeenCalledTimes(1);
+    expect(api.discover).toHaveBeenCalledWith(
+      expect.objectContaining(CAMPUS),
+      'other',
+      expect.anything(),
+    );
+    expect(textOf(tree)).not.toContain('BOSTON');
+    await act(async () => tree.unmount());
+  });
+
+  test('a manual choice wins while passive GPS is still resolving', async () => {
+    let finish!: (center: typeof city.center) => void;
+    jest.mocked(currentLocation).mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    const tree = await mount();
+    expect(api.discover).not.toHaveBeenCalled();
+    await suggestLocation(tree, city);
+    await selectLocation(tree, city);
+    await act(async () => finish(CAMPUS));
+    expect(api.discover).toHaveBeenCalledTimes(1);
+    expect(jest.mocked(api.discover).mock.lastCall?.[0]).toEqual(
+      expect.objectContaining(city.center),
+    );
+    await act(async () => tree.unmount());
+  });
 });

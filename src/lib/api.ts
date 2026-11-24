@@ -7,6 +7,11 @@ import type { GroupMessage, GroupMessageInput } from '@shared/api/groupChat.ts';
 import type { UserProfile, ProfileDetailsInput } from '@shared/api/userProfiles.ts';
 import type { GroupInvitation } from '@shared/api/groupInvitations.ts';
 import type { GroupIdea, GroupIdeaInput } from '@shared/api/groupIdeas.ts';
+import type {
+  DiscoverLocationSuggestion,
+  ResolvedDiscoverLocation,
+} from '@shared/api/discoverLocation.ts';
+import { withTimeout } from '@shared/places/timeout.ts';
 // Typed client for our Edge Function (`${EXPO_PUBLIC_SUPABASE_URL}/functions/v1/api`).
 // Every write goes through here with the user's access token; reads use Supabase + RLS.
 import { auth, getAccessToken, refreshPhotoSession, type AuthSession } from './auth';
@@ -263,6 +268,10 @@ export function createApiClient({
       signal?: AbortSignal;
     } = {},
   ): Promise<T> {
+    const checkCanceled = () => {
+      if (signal?.aborted) throw new ApiError('request_canceled', 'Request canceled', 0);
+    };
+    checkCanceled();
     const headers: Record<string, string> = {
       Accept: 'application/json',
       'X-Client-Info': AVAILABILITY_CAPABILITY,
@@ -276,6 +285,7 @@ export function createApiClient({
       if (!token) throw new ApiError('not_signed_in', 'Please sign in again.', 401);
       headers.Authorization = `Bearer ${token}`;
     }
+    checkCanceled();
     if (body !== undefined) headers['Content-Type'] = 'application/json';
 
     let res: Response;
@@ -287,6 +297,7 @@ export function createApiClient({
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     } catch {
+      checkCanceled();
       throw new ApiError('network_error', 'Can’t reach WTW. Check your connection.', 0);
     }
 
@@ -460,20 +471,47 @@ export function createApiClient({
         'DELETE',
         `/groups/${encodeURIComponent(groupId)}/ideas/${encodeURIComponent(id)}`,
       ),
-    discover: (params: {
-      cuisines?: readonly string[];
-      foodTypes?: readonly string[];
-      activityTypes?: readonly string[];
-      minRating?: number;
-      sort?: import('@shared/domain/discoverFilters.ts').DiscoverSort;
-      lat: number;
-      lng: number;
-      radiusM?: number;
-      category?: string;
-      /** Exact price levels, food only; sent as "1,2". */
-      prices?: readonly number[];
-      openNow?: boolean;
-    }) => {
+    suggestDiscoverLocations: (query: string, viewer: string, signal: AbortSignal) =>
+      withTimeout(
+        (bounded) =>
+          request<{ suggestions: DiscoverLocationSuggestion[] }>('POST', '/discover/locations', {
+            body: { query },
+            viewer,
+            signal: bounded,
+          }),
+        8000,
+        signal,
+      ),
+    resolveDiscoverLocation: (id: string, viewer: string, signal: AbortSignal) =>
+      withTimeout(
+        (bounded) =>
+          request<{ location: ResolvedDiscoverLocation }>(
+            'GET',
+            `/discover/locations/${encodeURIComponent(id)}`,
+            { viewer, signal: bounded },
+          ),
+        8000,
+        signal,
+      ),
+    discover: (
+      params: {
+        cuisines?: readonly string[];
+        foodTypes?: readonly string[];
+        activityTypes?: readonly string[];
+        minRating?: number;
+        sort?: import('@shared/domain/discoverFilters.ts').DiscoverSort;
+        lat: number;
+        lng: number;
+        radiusM?: number;
+        category?: string;
+        /** Exact price levels, food only; sent as "1,2". */
+        prices?: readonly number[];
+        openNow?: boolean;
+        centerMode?: 'manual';
+      },
+      viewer?: string,
+      signal?: AbortSignal,
+    ) => {
       const query = new URLSearchParams(
         Object.entries(params)
           .filter(([, v]) => v !== undefined)
@@ -487,7 +525,7 @@ export function createApiClient({
         emptyBecause?: import('@shared/domain/discoverFilters.ts').DiscoverFilterKey[];
         hoursUnknown?: number;
         hoursUnverified?: boolean;
-      }>('GET', `/discover?${query}&photos=lazy`);
+      }>('GET', `/discover?${query}&photos=lazy`, { viewer, signal });
     },
     /** One Discover cover, fetched only once its card is on screen. */
     discoverPhoto: (name: string, viewer?: string) =>

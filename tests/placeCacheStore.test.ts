@@ -145,7 +145,32 @@ test.each([false, true])(
       'cleanup_place_cache',
       'purge_google_coordinates',
       'purge_login_limits',
+      'purge_discover_location_limits',
       'purge_google_taste',
     ]);
   },
 );
+
+test('Discover quota cleanup errors surface without skipping later tasks and retry on an already claimed day', async () => {
+  mockRpc.mockImplementation(async (name) => ({
+    data: { ran: false, removed: 0 },
+    error:
+      name === 'purge_discover_location_limits' ? { message: 'private database detail' } : null,
+  }));
+  const cleanup = createCacheCleanupStore();
+  await expect(cleanup.deleteExpiredOnce('2026-11-03', '2026-11-03T11:55:00Z')).rejects.toThrow(
+    'Discover location limit cleanup failed',
+  );
+  expect(mockRpc).toHaveBeenLastCalledWith('purge_google_taste', {
+    p_cutoff: '2026-10-07T00:00:00.000Z',
+  });
+  mockRpc.mockResolvedValue({ data: { ran: false, removed: 0 }, error: null });
+  await expect(cleanup.deleteExpiredOnce('2026-11-03', '2026-11-03T11:55:00Z')).resolves.toEqual({
+    ran: false,
+    removed: 0,
+  });
+  expect(mockRpc.mock.calls.filter(([name]) => name === 'purge_discover_location_limits')).toEqual([
+    ['purge_discover_location_limits'],
+    ['purge_discover_location_limits'],
+  ]);
+});

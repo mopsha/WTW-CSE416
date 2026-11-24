@@ -1,10 +1,21 @@
 import * as Location from 'expo-location';
 
-import { areaName, chosenLabel, describePlace, searchLocations } from '@/lib/locationSearch';
+import {
+  areaName,
+  chosenLabel,
+  currentLocation,
+  describePlace,
+  searchLocations,
+} from '@/lib/locationSearch';
 
 jest.mock('@/lib/config', () => ({ USE_MOCK: false }));
 jest.mock('expo-location', () => ({
   geocodeAsync: jest.fn(),
+  getForegroundPermissionsAsync: jest.fn(),
+  getLastKnownPositionAsync: jest.fn(),
+  requestForegroundPermissionsAsync: jest.fn(),
+  getCurrentPositionAsync: jest.fn(),
+  Accuracy: { Balanced: 3 },
   reverseGeocodeAsync: jest.fn(),
   PermissionStatus: { GRANTED: 'granted' },
 }));
@@ -209,4 +220,75 @@ test('the Discover area name waits behind city search and reuses its cached answ
   await expect(area).resolves.toBe('Port Jefferson');
   await expect(areaName({ lat: 40.9465, lng: -73.0693 })).resolves.toBe('Port Jefferson');
   expect(Location.reverseGeocodeAsync).toHaveBeenCalledTimes(1);
+});
+
+test('a denied foreground permission never starts a GPS fix', async () => {
+  jest.mocked(Location.requestForegroundPermissionsAsync).mockResolvedValueOnce({
+    status: 'denied',
+  } as never);
+  await expect(currentLocation({ timeoutMs: 8000 })).resolves.toBeNull();
+  expect(Location.getCurrentPositionAsync).not.toHaveBeenCalled();
+});
+
+test('GPS fix timeout starts after the foreground permission response', async () => {
+  jest.useFakeTimers();
+  try {
+    let allow!: (response: Location.LocationPermissionResponse) => void;
+    jest
+      .mocked(Location.requestForegroundPermissionsAsync)
+      .mockReturnValueOnce(new Promise((resolve) => (allow = resolve)));
+    jest.mocked(Location.getCurrentPositionAsync).mockReturnValueOnce(new Promise(() => {}));
+    const result = currentLocation({ timeoutMs: 8000 });
+    const expected = expect(result).rejects.toThrow('Location request timed out');
+    await jest.advanceTimersByTimeAsync(10000);
+    expect(Location.getCurrentPositionAsync).not.toHaveBeenCalled();
+    allow({ status: 'granted' } as never);
+    await jest.advanceTimersByTimeAsync(8000);
+    await expected;
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test('the passive deadline includes permission lookup and skips a late GPS fix', async () => {
+  jest.useFakeTimers();
+  try {
+    jest.mocked(Location.getCurrentPositionAsync).mockClear();
+    let allow!: (response: Location.LocationPermissionResponse) => void;
+    jest
+      .mocked(Location.getForegroundPermissionsAsync)
+      .mockReturnValueOnce(new Promise((resolve) => (allow = resolve)));
+    const result = currentLocation({ prompt: false, timeoutMs: 5000 });
+    const expected = expect(result).rejects.toThrow('Location request timed out');
+    await jest.advanceTimersByTimeAsync(5000);
+    await expected;
+    allow({ status: 'granted' } as never);
+    await Promise.resolve();
+    expect(Location.getLastKnownPositionAsync).not.toHaveBeenCalled();
+    expect(Location.getCurrentPositionAsync).not.toHaveBeenCalled();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test('a late passive GPS response cannot settle the timed-out request', async () => {
+  jest.useFakeTimers();
+  try {
+    jest
+      .mocked(Location.getForegroundPermissionsAsync)
+      .mockResolvedValueOnce({ status: 'granted' } as never);
+    jest.mocked(Location.getLastKnownPositionAsync).mockResolvedValueOnce(null);
+    let finish!: (value: Location.LocationObject) => void;
+    jest
+      .mocked(Location.getCurrentPositionAsync)
+      .mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    const result = currentLocation({ prompt: false, timeoutMs: 5000 });
+    const expected = expect(result).rejects.toThrow('Location request timed out');
+    await jest.advanceTimersByTimeAsync(5000);
+    await expected;
+    finish({ coords: { latitude: 40, longitude: -70 } } as Location.LocationObject);
+    await expect(result).rejects.toThrow('Location request timed out');
+  } finally {
+    jest.useRealTimers();
+  }
 });

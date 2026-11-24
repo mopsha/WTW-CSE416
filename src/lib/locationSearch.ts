@@ -9,6 +9,7 @@ import { Platform } from 'react-native';
 import { distanceMeters, type LatLng } from '@shared/domain/geo.ts';
 
 import { USE_MOCK } from './config';
+import { MOCK_LOCATIONS } from './mock/locations';
 
 export interface LocationResult {
   id: string;
@@ -18,22 +19,6 @@ export interface LocationResult {
   /** What the form shows once chosen, when it differs from the label. */
   chosen?: string;
 }
-
-const MOCK_LOCATIONS: readonly LocationResult[] = [
-  ['SBU Academic Mall', 'Stony Brook University', 40.9126, -73.1234],
-  ['SBU Student Activities Center', 'Stony Brook University', 40.9145, -73.1243],
-  ['Stony Brook Village Center', 'Stony Brook, NY', 40.9178, -73.1462],
-  ['Port Jefferson Village', 'Port Jefferson, NY', 40.9465, -73.0693],
-  ['East Setauket', 'Setauket, NY', 40.9387, -73.0979],
-  ['Smith Haven Mall', 'Lake Grove, NY', 40.8668, -73.1336],
-  ['Centereach', 'Centereach, NY', 40.8584, -73.0996],
-  ['Smithtown', 'Smithtown, NY', 40.8559, -73.2007],
-].map(([label, detail, lat, lng], i) => ({
-  id: `mock-loc-${i}`,
-  label: label as string,
-  detail: detail as string,
-  center: { lat: lat as number, lng: lng as number },
-}));
 
 /** Where the map starts before we know anything (SBU Academic Mall). */
 export const DEFAULT_CENTER: LatLng = MOCK_LOCATIONS[0]!.center;
@@ -240,6 +225,21 @@ export async function knownLocation(): Promise<LatLng | null> {
   return pos ? { lat: pos.coords.latitude, lng: pos.coords.longitude } : null;
 }
 
+async function locationTimeout<T>(work: Promise<T>, timeoutMs?: number): Promise<T> {
+  if (timeoutMs === undefined) return work;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Location request timed out')), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * The device's current position, or null if the user says no.
  * Throws only for real failures (location services off, timeout).
@@ -248,14 +248,36 @@ export async function knownLocation(): Promise<LatLng | null> {
  */
 export async function currentLocation({
   prompt = true,
-}: { prompt?: boolean } = {}): Promise<LatLng | null> {
-  const { status } = prompt
-    ? await Location.requestForegroundPermissionsAsync()
-    : await Location.getForegroundPermissionsAsync();
-  if (status !== Location.PermissionStatus.GRANTED) return null;
-  const last = prompt
-    ? null
-    : await Location.getLastKnownPositionAsync({ maxAge: 10 * 60_000, requiredAccuracy: 1000 });
+  timeoutMs,
+}: { prompt?: boolean; timeoutMs?: number } = {}): Promise<LatLng | null> {
+  if (prompt) {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== Location.PermissionStatus.GRANTED) return null;
+    // Give the user time to answer the system permission dialog.
+    return locationTimeout(devicePosition(), timeoutMs);
+  }
+
+  let expired = false;
+  try {
+    return await locationTimeout(
+      (async () => {
+        const { status } = await Location.getForegroundPermissionsAsync();
+        if (expired || status !== Location.PermissionStatus.GRANTED) return null;
+        const last = await Location.getLastKnownPositionAsync({
+          maxAge: 10 * 60_000,
+          requiredAccuracy: 1000,
+        });
+        if (expired) return null;
+        return devicePosition(last);
+      })(),
+      timeoutMs,
+    );
+  } finally {
+    expired = true;
+  }
+}
+
+async function devicePosition(last?: Location.LocationObject | null): Promise<LatLng> {
   const pos =
     last ?? (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
   return { lat: pos.coords.latitude, lng: pos.coords.longitude };
