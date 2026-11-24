@@ -47,13 +47,13 @@ export function createFriendsStore(): FriendsStore {
     person: async (viewer, target) =>
       (await peopleRpc('person_lookup', { p_user_id: viewer, p_target_id: target }, viewer))[0]!,
     async requestUsername(viewer, username, targetId) {
-      const { data, error } = await createServiceClient().rpc('friend_request_username', {
+      const { data, error } = await createServiceClient().rpc('friend_request_activity', {
         p_user_id: viewer,
         p_username: username,
         p_target_id: targetId,
       });
       if (error) fail(error);
-      return data as { status: 'sent'; relationship: 'requested' | 'friends' };
+      return data as Awaited<ReturnType<NonNullable<FriendsStore['requestUsername']>>>;
     },
     takeFriendRequestLimit,
     async list(userId) {

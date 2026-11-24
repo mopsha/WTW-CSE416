@@ -15,7 +15,7 @@ import { photoBase64 } from './photoBytes';
 import { photoChanged } from './photoEvents';
 import { API_BASE_URL, USE_MOCK } from './config';
 import { MOCK_API_BASE_URL, mockFetch } from './mock/api';
-import { INBOX_REVALIDATE_LIMIT, type NotificationRow } from '@shared/api/notify.ts';
+import type { ActivityPage, NotificationRow } from '@shared/api/notify.ts';
 import type { HistoryItem, PlanSummary, RsvpStatus } from '@shared/api/plans.ts';
 import type { CreatePickInput } from '@shared/domain/createPick.ts';
 import type { FriendsList } from '@shared/api/friends.ts';
@@ -750,36 +750,19 @@ export function createApiClient({
       photoChanged(userId);
       return result;
     },
-    /** A page of notifications, newest first. Older builds may omit nextCursor. */
+    /** A page of notifications, newest first.  */
     listNotifications: (before?: string, viewer?: string) =>
-      request<{
-        notifications: NotificationRow[];
-        unreadCount: number;
-        nextCursor?: string | null;
-      }>('GET', `/notifications${before ? `?before=${encodeURIComponent(before)}` : ''}`, {
-        viewer,
-      }),
-    async revalidateNotifications(ids: string[], viewer: string, before?: string) {
-      const batches = [];
-      for (let i = 0; i < ids.length || i === 0; i += INBOX_REVALIDATE_LIMIT) {
-        batches.push(
-          request<{
-            notifications: NotificationRow[];
-            page?: { notifications: NotificationRow[]; nextCursor: string | null };
-          }>('POST', '/notifications/revalidate', {
-            viewer,
-            body: {
-              ids: ids.slice(i, i + INBOX_REVALIDATE_LIMIT),
-              before: i === 0 ? before : undefined,
-            },
-          }),
-        );
-      }
-      const result = await Promise.all(batches);
-      return {
-        notifications: result.flatMap((batch) => batch.notifications),
-        page: result[0]?.page,
-      };
+      request<ActivityPage>(
+        'GET',
+        `/notifications${before ? `?before=${encodeURIComponent(before)}` : ''}`,
+        { viewer },
+      ),
+    revalidateNotifications(ids: string[], viewer: string, before?: string, includePage?: boolean) {
+      return request<{ notifications: NotificationRow[]; page?: ActivityPage }>(
+        'POST',
+        '/notifications/revalidate',
+        { viewer, body: { ids, before, includePage } },
+      );
     },
     markNotificationRead: (id: string, viewer?: string) =>
       request<StatusResponse>('POST', `/notifications/${encodeURIComponent(id)}/read`, { viewer }),

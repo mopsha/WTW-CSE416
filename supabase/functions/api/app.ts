@@ -682,7 +682,22 @@ export function createApp(
     const targetId = parseFriendId(typeof body?.targetId === 'string' ? body.targetId : '');
     if (!store.requestUsername)
       throw new ApiError(503, 'NOT_CONFIGURED', 'Username requests unavailable');
-    return c.json(await store.requestUsername(user.id, username, targetId));
+    const { notificationId, ...result } = await store.requestUsername(user.id, username, targetId);
+    if (notificationId && deps.lifecycleStore.notifier) {
+      const delivery = deps.lifecycleStore.notifier(
+        [targetId],
+        'friend_request',
+        null,
+        {},
+        {
+          inboxRecorded: true,
+          notificationId,
+        },
+      );
+      if (deps.runInBackground) deps.runInBackground(delivery);
+      else await delivery;
+    }
+    return c.json(result);
   });
   app.get('/friends', async (c) => {
     c.header('Cache-Control', 'private, no-store');
