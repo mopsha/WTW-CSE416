@@ -24,6 +24,7 @@ jest.mock('expo-router', () => ({
   useFocusEffect: (effect: () => void) => jest.requireActual('react').useEffect(effect, [effect]),
 }));
 jest.mock('@/hooks/useAuth', () => ({ useSession: jest.fn() }));
+jest.mock('@/hooks/useProfile', () => ({ useProfile: () => ({ username: 'alex' }) }));
 jest.mock('@/lib/api', () => ({
   api: {
     listFriends: jest.fn(),
@@ -50,6 +51,7 @@ jest.mock('@/components', () => ({
   ...jest.requireActual('@/components/theme'),
   Screen: (p: object) => jest.requireActual('react').createElement('test-screen', p),
   Button: (p: object) => jest.requireActual('react').createElement('test-button', p),
+  Card: (p: object) => jest.requireActual('react').createElement('test-card', p),
   ErrorState: (p: object) => jest.requireActual('react').createElement('test-error', p),
 }));
 const friend = { userId: 'ava', displayName: 'Ava', since: '2026-01-01T12:00:00Z' };
@@ -153,6 +155,20 @@ test('empty and failed lists remain actionable without placeholder conversations
   await act(async () => press(tree, 'Add a friend'));
   expect(JSON.stringify(tree.toJSON())).toContain("Friend's username");
   expect(api.openDirectConversation).not.toHaveBeenCalled();
+  await act(async () => tree.unmount());
+});
+
+test('Add Friend opens username search and can switch to invitations and back', async () => {
+  const tree = await mount();
+  await act(async () => press(tree, 'Add a friend'));
+  expect(JSON.stringify(tree.toJSON())).toContain("Friend's username");
+
+  await act(async () => button(tree, 'Invite from contacts').props.onPress());
+  expect(JSON.stringify(tree.toJSON())).toContain('Find me as @alex on WTW!');
+  expect(JSON.stringify(tree.toJSON())).not.toContain("Friend's username");
+
+  await act(async () => button(tree, 'Back to username search').props.onPress());
+  expect(JSON.stringify(tree.toJSON())).toContain("Friend's username");
   await act(async () => tree.unmount());
 });
 

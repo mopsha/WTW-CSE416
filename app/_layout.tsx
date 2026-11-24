@@ -23,6 +23,7 @@ import { ProfileProvider, useProfile } from '@/hooks/useProfile';
 import { auth } from '@/lib/auth';
 import { hasSeenIntro, markIntroSeen } from '@/lib/intro';
 import { configureNotifications, onNotificationTap } from '@/lib/notify';
+import { setPendingFriends, takePendingFriends } from '@/lib/pendingFriends';
 import { takePendingInvite, setPendingInvite } from '@/lib/pendingInvite';
 import { takePendingJoin } from '@/lib/pendingJoin';
 import { registerForPush } from '@/lib/push';
@@ -102,7 +103,14 @@ function RootStack() {
     return onNotificationTap((route) => router.push(route as never));
   }, [ready, inApp]);
 
-  // A join link that arrived signed out: once required identity is available, finish joining.
+  useEffect(() => {
+    if (!ready || pathname !== '/friend-invite') return;
+    setPendingFriends();
+    if (!session) router.replace('/sign-in');
+    else if (needsName) router.replace('/welcome');
+  }, [ready, pathname, session, needsName]);
+
+  // Resume links after the authenticated stack and first-run setup are ready.
   useEffect(() => {
     if (!session) {
       offered.current = null;
@@ -112,10 +120,16 @@ function RootStack() {
     if (!profile.optionalSetupPending) offered.current = null;
     if (profile.optionalSetupPending && offered.current !== userId) {
       offered.current = userId ?? null;
-      if (pathname !== '/onboarding' && !pathname.startsWith('/p/')) router.push('/onboarding');
+      if (pathname === '/friend-invite') router.replace('/onboarding');
+      else if (pathname !== '/onboarding' && !pathname.startsWith('/p/'))
+        router.push('/onboarding');
       return;
     }
     if (pathname === '/onboarding') return;
+    if (profile.optionalSetupPending && pathname === '/friend-invite') {
+      router.dismissTo('/onboarding');
+      return;
+    }
     const code = takePendingJoin();
     if (code) {
       router.push({ pathname: '/join/[code]', params: { code } });
@@ -135,15 +149,22 @@ function RootStack() {
         }
         return;
       }
+      let openedProfile = false;
       retry = await resumePendingProfile(
         () => current,
         (id) => {
+          openedProfile = true;
           const route = { pathname: '/p/[id]' as const, params: { id } };
           if (pathname.startsWith('/p/')) router.replace(route);
           else router.push(route);
         },
         userId,
       );
+      if (openedProfile || retry || !current || profile.optionalSetupPending) return;
+      // Stay out of active Pick, join, group invite and profile destinations.
+      if (pathname === '/friend-invite' && takePendingFriends()) router.dismissTo('/friends');
+      else if (pathname === '/' && takePendingFriends()) router.navigate('/friends');
+      else if (pathname === '/friends') takePendingFriends();
     })()
       .catch(() => {
         /* Keep navigation failures from becoming unhandled rejections. */
@@ -245,6 +266,7 @@ function RootStack() {
         <Stack.Screen name="join/[code]" options={{ animation: reducedMotion ? 'none' : 'fade' }} />
         <Stack.Screen name="p/[id]" options={{ animation: reducedMotion ? 'none' : 'fade' }} />
         <Stack.Screen name="i/[token]" options={{ animation: reducedMotion ? 'none' : 'fade' }} />
+        <Stack.Screen name="friend-invite" />
       </Stack>
     </>
   );

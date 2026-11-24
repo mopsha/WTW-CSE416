@@ -1,4 +1,5 @@
 import { RowsSkeleton } from '@/components/LoadingStates';
+import { ContactInvite } from '@/components/friends/ContactInvite';
 import { UsernameFriendSearch } from '@/components/friends/UsernameFriendSearch';
 import {
   RequestsEntry,
@@ -48,6 +49,7 @@ function FriendsContent({ userId }: { userId: string }) {
   const { requests } = useLocalSearchParams<{ requests?: string }>();
   const [tab, setTab] = useState<'friends' | 'groups'>('friends');
   const [adding, setAdding] = useState(false);
+  const [contactInvites, setContactInvites] = useState(false);
   const [requestsOpen, setRequestsOpen] = useState(false);
   const handoff = useRef<{ kind: 'requests' } | { kind: 'profile'; id: string } | null>(null);
   useEffect(
@@ -158,7 +160,10 @@ function FriendsContent({ userId }: { userId: string }) {
           icon="person-add-outline"
           label="Add a friend"
           tone="accent"
-          onPress={() => setAdding(true)}
+          onPress={() => {
+            setContactInvites(false);
+            setAdding(true);
+          }}
         />
       </View>
       <Segments
@@ -365,7 +370,7 @@ function FriendsContent({ userId }: { userId: string }) {
       )}
       <Sheet
         visible={adding}
-        title="Add a friend"
+        title={contactInvites ? 'Invite a friend' : 'Add a friend'}
         onClose={() => {
           handoff.current = null;
           Keyboard.dismiss();
@@ -373,14 +378,30 @@ function FriendsContent({ userId }: { userId: string }) {
         }}
         onDismiss={finishHandoff}
       >
-        <UsernameFriendSearch
-          onAdded={() => void load()}
-          onNavigate={(target) => {
-            Keyboard.dismiss();
-            handoff.current = target;
-            setAdding(false);
-          }}
-        />
+        {adding &&
+          (contactInvites ? (
+            <ContactInvite onBack={() => setContactInvites(false)} />
+          ) : (
+            <>
+              <UsernameFriendSearch
+                onAdded={() => void load()}
+                onNavigate={(target) => {
+                  Keyboard.dismiss();
+                  handoff.current = target;
+                  setAdding(false);
+                }}
+              />
+              <Button
+                label="Invite from contacts"
+                icon="people-outline"
+                variant="secondary"
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setContactInvites(true);
+                }}
+              />
+            </>
+          ))}
       </Sheet>
     </Screen>
   );
