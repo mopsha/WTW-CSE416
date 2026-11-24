@@ -86,7 +86,7 @@ describe('plans API', () => {
     const planAt = new Date(Date.now() + 3_600_000).toISOString();
     expect(await setPlanTime(s, 'p1', 'host', { planAt })).toEqual({ planAt });
     expect(s.setPlanTime).toHaveBeenCalledWith('p1', 'host', planAt);
-    expect(s.notifier).toHaveBeenCalledWith(['guest'], 'plan_time_set', 'p1');
+    expect(s.notifier).toHaveBeenCalledWith(['guest'], 'plan_time_set', 'p1', { planAt });
   });
 
   test('RSVP and outcome validate before touching the database', async () => {
@@ -135,8 +135,8 @@ describe('plan events in the sweep', () => {
     const sweep: SweepStore = {
       expiredPage: jest.fn().mockResolvedValue([]),
       planTargets: jest.fn().mockResolvedValue([
-        { pickId: 'p1', kind: 'plan_reminder', userIds: ['a'] },
-        { pickId: 'p2', kind: 'did_you_go', userIds: ['b', 'c'] },
+        { pickId: 'p1', kind: 'plan_reminder', userIds: ['a'], scheduleRevision: 1 },
+        { pickId: 'p2', kind: 'did_you_go', userIds: ['b', 'c'], scheduleRevision: 2 },
       ]),
     };
     const closingStore = {
@@ -150,8 +150,8 @@ describe('plan events in the sweep', () => {
     const now = new Date('2026-10-30T12:00:00.000Z');
     const result = await sweepDeadlines(sweep, closingStore, now);
     expect(sweep.planTargets).toHaveBeenCalledWith('2026-10-30T12:00:00.000Z');
-    expect(notifier).toHaveBeenCalledWith(['a'], 'plan_reminder', 'p1');
-    expect(notifier).toHaveBeenCalledWith(['b', 'c'], 'did_you_go', 'p2');
+    expect(notifier).toHaveBeenCalledWith(['a'], 'plan_reminder', 'p1', { scheduleRevision: 1 });
+    expect(notifier).toHaveBeenCalledWith(['b', 'c'], 'did_you_go', 'p2', { scheduleRevision: 2 });
     expect(result).toMatchObject({ status: 'ok', planEvents: { picks: 2 } });
   });
 });

@@ -10,9 +10,7 @@ export interface SweepStore {
   /** Unfinished participants of swiping Picks whose deadline is in (from, until]. */
   reminderTargets?(from: string, until: string): Promise<{ pickId: string; userIds: string[] }[]>;
   /** Plan reminders (1 h before the plan time) and "Did you go?" prompts due at `now`. */
-  planTargets?(
-    now: string,
-  ): Promise<{ pickId: string; kind: 'plan_reminder' | 'did_you_go'; userIds: string[] }[]>;
+  planTargets?(now: string): Promise<PlanTarget[]>;
 }
 
 /** "You haven't finished" goes out when the deadline is this close. */
@@ -104,7 +102,8 @@ export async function sweepDeadlines(
   };
 }
 
-type Due = { pickId: string; kind: NotificationType; userIds: string[] };
+type Due = { pickId: string; kind: NotificationType; userIds: string[]; scheduleRevision?: number };
+type PlanTarget = Due & { kind: 'plan_reminder' | 'did_you_go'; scheduleRevision: number };
 
 /** Once per person per Pick: notify_insert's unique index drops repeats. */
 async function sendDue(notifier: Notifier | undefined, load: (() => Promise<Due[]>) | undefined) {
@@ -117,8 +116,9 @@ async function sendDue(notifier: Notifier | undefined, load: (() => Promise<Due[
     counts.queryFailed = true;
     return counts;
   }
-  for (const { pickId, kind, userIds } of due) {
-    await notifier(userIds, kind, pickId);
+  for (const { pickId, kind, userIds, scheduleRevision } of due) {
+    if (scheduleRevision === undefined) await notifier(userIds, kind, pickId);
+    else await notifier(userIds, kind, pickId, { scheduleRevision });
     counts.picks++;
   }
   return counts;

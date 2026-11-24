@@ -43,7 +43,7 @@ export const PUSH_TEXT: Readonly<Record<NotificationType, { title: string; body:
   hang_invite: { title: 'New Hang', body: 'Someone invited you to a Hang. Open WTW to respond.' },
   added_to_pick: { title: 'You’re in a Pick', body: 'Someone added you to a Pick.' },
   pick_started: { title: 'Time to swipe', body: 'Your Pick has started.' },
-  reminder: { title: 'One hour left', body: 'You haven’t finished swiping yet.' },
+  reminder: { title: 'Swipe deadline approaching', body: 'You haven’t finished swiping yet.' },
   vote_needed: { title: 'Time to vote', body: 'Your Pick is down to a final vote.' },
   winner_decided: { title: 'It’s decided', body: 'Your Pick has a winner.' },
   pick_canceled: { title: 'Pick canceled', body: 'The host canceled a Pick.' },
@@ -52,7 +52,7 @@ export const PUSH_TEXT: Readonly<Record<NotificationType, { title: string; body:
     body: 'Someone suggested a different time. Open WTW to review it.',
   },
   plan_time_set: { title: 'Plan time set', body: 'Your plan has a time. Are you going?' },
-  plan_reminder: { title: 'Starting soon', body: 'Your plan starts in about an hour.' },
+  plan_reminder: { title: 'Starting soon', body: 'Your plan is starting soon.' },
   did_you_go: { title: 'Did you go?', body: 'Tap to tell your group.' },
 };
 
@@ -79,16 +79,20 @@ export interface NotificationCursor {
 
 /** Database adapter (service role). */
 export interface NotifyStore {
-  /** Returns the users who got a new row; repeats of a once-per-Pick event return none. */
+  /** Returns only newly inserted notification IDs. */
   insert(
     userIds: string[],
     type: NotificationType,
     pickId: string | null,
     payload: Record<string, unknown>,
   ): Promise<string[]>;
-  tokensFor(userIds: string[]): Promise<string[]>;
+  pushTargets(
+    notificationIds: string[],
+    hang?: { id: string; userIds: string[] },
+  ): Promise<{ token: string; notification_id: string; deadline: string | null }[]>;
   deleteTokens(tokens: string[]): Promise<void>;
   list(userId: string, limit: number, before?: NotificationCursor): Promise<NotificationRow[]>;
+  revalidate(userId: string, ids: string[]): Promise<NotificationRow[]>;
   /** Rejects (404) a notification that isn't the caller's. */
   markRead(id: string, userId: string): Promise<void>;
   registerToken(userId: string, token: string, platform: 'ios' | 'android'): Promise<void>;
@@ -120,18 +124,23 @@ export const PUSH_TIMEOUT_MS = 5_000;
 /** Sends one message to every token; returns tokens Expo says are no longer registered. */
 export async function sendPush(
   fetchFn: PushFetch,
-  tokens: readonly string[],
-  message: { title: string; body: string; data: Record<string, unknown> },
+  messages: readonly {
+    to: string;
+    title: string;
+    body: string;
+    data: Record<string, unknown>;
+    expiration?: number;
+  }[],
   log: (...args: unknown[]) => void = console.error,
 ): Promise<string[]> {
   const dead: string[] = [];
-  for (let i = 0; i < tokens.length; i += PUSH_BATCH) {
-    const batch = tokens.slice(i, i + PUSH_BATCH);
+  for (let i = 0; i < messages.length; i += PUSH_BATCH) {
+    const batch = messages.slice(i, i + PUSH_BATCH);
     try {
       const res = await fetchFn(EXPO_PUSH_URL, {
         method: 'POST',
         headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify(batch.map((to) => ({ to, sound: 'default', ...message }))),
+        body: JSON.stringify(batch.map((message) => ({ sound: 'default', ...message }))),
         // A slow Expo must not hold up the close/cancel/vote that triggered this push.
         signal: AbortSignal.timeout(PUSH_TIMEOUT_MS),
       });
@@ -144,7 +153,7 @@ export async function sendPush(
       if (!Array.isArray(tickets)) continue;
       const errors = new Set<string>();
       tickets.forEach((t: { status?: string; details?: { error?: string } } | null, j) => {
-        const token = batch[j];
+        const token = batch[j]?.to;
         if (t?.status !== 'error') return;
         const code = t.details?.error ?? 'unknown';
         if (token && code === 'DeviceNotRegistered') dead.push(token);
@@ -168,28 +177,32 @@ export function createNotifier(
     if (!userIds.length) return;
     try {
       const recipients = [...new Set(userIds)];
-      // Hang creation writes inbox rows atomically and returns only newly inserted recipients.
-      const fresh = options?.inboxRecorded
-        ? recipients
-        : await store.insert(recipients, type, pickId, payload);
-      if (!fresh.length) return;
-      const tokens = await store.tokensFor(fresh);
-      if (!tokens.length) return;
-      const dead = await sendPush(
-        fetchFn,
-        tokens,
-        {
+      // Hang creation returns only recipients whose inbox rows were just inserted.
+      const hang =
+        options?.inboxRecorded && type === 'hang_invite' && typeof payload.hangId === 'string'
+          ? { id: payload.hangId, userIds: recipients }
+          : undefined;
+      if (options?.inboxRecorded && !hang) return;
+      const fresh = hang ? [] : await store.insert(recipients, type, pickId, payload);
+      if (!hang && !fresh.length) return;
+      const targets = await store.pushTargets(fresh, hang);
+      const now = Date.now();
+      const messages = targets
+        .filter(({ deadline }) => deadline === null || Date.parse(deadline) > now)
+        .map(({ token, notification_id, deadline }) => ({
+          to: token,
           ...notificationText(type, payload),
+          ...(deadline ? { expiration: Math.floor(Date.parse(deadline) / 1000) } : {}),
           data: {
             type,
             pickId,
+            notificationId: notification_id,
             ...(type === 'hang_invite' ? { hangId: payload.hangId } : {}),
             ...(type === 'group_message' ? { groupId: payload.groupId } : {}),
             ...(type === 'direct_message' ? { conversationId: payload.conversationId } : {}),
           },
-        },
-        log,
-      );
+        }));
+      const dead = await sendPush(fetchFn, messages, log);
       if (dead.length) await store.deleteTokens(dead);
     } catch (error) {
       log('notify failed', type, error instanceof Error ? error.name : 'unknown');
@@ -261,6 +274,25 @@ export async function listNotifications(store: NotifyStore, userId: string, befo
     unreadCount: notifications.filter((n) => !n.readAt).length,
     nextCursor: page.length > INBOX_LIMIT && last ? `${last.createdAt}|${last.id}` : null,
   };
+}
+
+export const INBOX_REVALIDATE_LIMIT = 500;
+
+export async function revalidateNotifications(store: NotifyStore, userId: string, body: unknown) {
+  const input = body as { ids?: unknown; before?: unknown } | null;
+  if (
+    !Array.isArray(input?.ids) ||
+    input.ids.length > INBOX_REVALIDATE_LIMIT ||
+    input.ids.some((id) => typeof id !== 'string' || !UUID_RE.test(id)) ||
+    (input.before !== undefined && typeof input.before !== 'string')
+  )
+    throw new ApiError(400, 'INVALID_INPUT', 'Invalid notification page');
+  const ids = [...new Set<string>(input.ids)];
+  const [notifications, page] = await Promise.all([
+    ids.length ? store.revalidate(userId, ids) : [],
+    input.before === undefined ? undefined : listNotifications(store, userId, input.before),
+  ]);
+  return { notifications, page };
 }
 
 /** POST /notifications/:id/read. Someone else's id is a 404, same as an unknown one. */

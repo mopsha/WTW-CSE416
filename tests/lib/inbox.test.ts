@@ -90,7 +90,7 @@ test('group invitations open request cards and keep private names out of generic
     pickId: null,
     payload: { inviteId: 'private-id' },
   });
-  expect(inboxRoute(invitation)).toBe('/friends');
+  expect(inboxRoute(invitation)).toBe('/friends?requests=1');
   expect(inboxText(invitation)).toEqual({
     title: 'Group invitation',
     body: 'Someone invited you to a group. Open WTW to respond.',

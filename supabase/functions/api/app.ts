@@ -80,6 +80,7 @@ import {
   listNotifications,
   markNotificationRead,
   registerPushToken,
+  revalidateNotifications,
   unregisterPushToken,
   type NotifyStore,
 } from '../_shared/api/notify.ts';
@@ -503,7 +504,7 @@ export function createApp(
       const ready = await deps.lifecycleStore.load(created.pickId, user.id);
       await deps.lifecycleStore.notifier?.(
         ready?.participantIds.filter((id) => id !== user.id) ?? [],
-        'added_to_pick',
+        'pick_started',
         created.pickId,
       );
       return c.json({ ...created, state: 'swiping' as const }, 201);
@@ -713,6 +714,11 @@ export function createApp(
     c.header('Cache-Control', 'private, no-store');
     const user = await deps.getUser(c.req.raw);
     return c.json(await listNotifications(requireNotify(), user.id, c.req.query('before')));
+  });
+  app.post('/notifications/revalidate', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const user = await deps.getUser(c.req.raw);
+    return c.json(await revalidateNotifications(requireNotify(), user.id, await readJsonBody(c)));
   });
   app.post('/notifications/:id/read', async (c) => {
     const user = await deps.getUser(c.req.raw);

@@ -20,6 +20,7 @@ import { colors } from '@/components/theme';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { useAvatarLifecycle } from '@/hooks/useAvatarSource';
 import { ProfileProvider, useProfile } from '@/hooks/useProfile';
+import { api } from '@/lib/api';
 import { auth } from '@/lib/auth';
 import { hasSeenIntro, markIntroSeen } from '@/lib/intro';
 import { configureNotifications, onNotificationTap } from '@/lib/notify';
@@ -98,9 +99,12 @@ function RootStack() {
   // Tapping a WTW notification opens the screen it points at (e.g. the results), including
   // the tap that launched the app; wait for the signed-in stack so the route exists.
   useEffect(() => {
-    if (!ready || !inApp) return;
-    return onNotificationTap((route) => router.push(route as never));
-  }, [ready, inApp]);
+    if (!ready || !inApp || !userId) return;
+    return onNotificationTap((route, notificationId) => {
+      if (notificationId) void api.markNotificationRead(notificationId, userId).catch(() => {});
+      router.push(route as never);
+    });
+  }, [ready, inApp, userId]);
 
   // A join link that arrived signed out: once required identity is available, finish joining.
   useEffect(() => {

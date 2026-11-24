@@ -941,19 +941,33 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
     if (!mockGetGroup(id)) return fail(404, 'GROUP_NOT_FOUND', 'Group not found');
     return json(200, { picks: historyOf().filter((p) => p.groupId === id) });
   }
-  if (method === 'GET' && path.split('?')[0] === '/notifications') {
-    const cursor = new URL(url).searchParams.get('before');
+  const revalidate = method === 'POST' && path === '/notifications/revalidate';
+  if (revalidate || (method === 'GET' && path.split('?')[0] === '/notifications')) {
+    const input = revalidate ? (readBody(init) as { ids?: string[]; before?: string }) : null;
+    const cursor = revalidate ? input?.before : new URL(url).searchParams.get('before');
     const [stamp, id] = cursor?.split('|') ?? [];
-    const all = [...mockNotifications, ...mockGroupChatNotices(), ...mockDirectNotices()]
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
-      .filter((n) => !stamp || !id || n.createdAt < stamp || (n.createdAt === stamp && n.id < id));
-    const notifications = all.slice(0, 50);
+    const all = [...mockNotifications, ...mockGroupChatNotices(), ...mockDirectNotices()].sort(
+      (a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
+    );
+    const matches = all.filter(
+      (n) => !stamp || !id || n.createdAt < stamp || (n.createdAt === stamp && n.id < id),
+    );
+    const notifications = matches.slice(0, 50);
     const last = notifications[notifications.length - 1];
-    return json(200, {
+    const page = {
       notifications,
       unreadCount: notifications.filter((n) => !n.readAt).length,
-      nextCursor: all.length > 50 && last ? `${last.createdAt}|${last.id}` : null,
-    });
+      nextCursor: matches.length > 50 && last ? `${last.createdAt}|${last.id}` : null,
+    };
+    return json(
+      200,
+      revalidate
+        ? {
+            notifications: all.filter((n) => input?.ids?.includes(n.id)),
+            ...(input?.before ? { page } : {}),
+          }
+        : page,
+    );
   }
   const read = method === 'POST' && /^\/notifications\/([^/]+)\/read$/.exec(path);
   if (read) {

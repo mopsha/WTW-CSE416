@@ -24,11 +24,22 @@ interface Row {
   read_at: string | null;
 }
 
+function mapRows(data: Row[] | null): NotificationRow[] {
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    type: r.type,
+    pickId: r.pick_id,
+    payload: r.payload,
+    createdAt: r.created_at,
+    readAt: r.read_at,
+  }));
+}
+
 /** Service-role adapter for 0009_notifications.sql. */
 export function createNotifyStore(): NotifyStore {
   return {
     async insert(userIds, type, pickId, payload) {
-      const { data, error } = await createServiceClient().rpc('notify_insert', {
+      const { data, error } = await createServiceClient().rpc('notification_record', {
         p_user_ids: userIds,
         p_type: type,
         p_pick_id: pickId,
@@ -37,13 +48,14 @@ export function createNotifyStore(): NotifyStore {
       if (error) fail(error);
       return (data ?? []) as string[];
     },
-    async tokensFor(userIds) {
-      const { data, error } = await createServiceClient()
-        .from('push_tokens')
-        .select('token')
-        .in('user_id', userIds);
+    async pushTargets(ids, hang) {
+      const { data, error } = await createServiceClient().rpc('notification_push_targets', {
+        p_ids: ids,
+        p_hang_id: hang?.id ?? null,
+        p_hang_users: hang?.userIds ?? null,
+      });
       if (error) fail(error);
-      return (data ?? []).map((r: { token: string }) => r.token);
+      return data ?? [];
     },
     async deleteTokens(tokens) {
       const { error } = await createServiceClient()
@@ -53,27 +65,22 @@ export function createNotifyStore(): NotifyStore {
       if (error) fail(error);
     },
     async list(userId, limit, before) {
-      let query = createServiceClient()
-        .from('notifications')
-        .select('id, type, pick_id, payload, created_at, read_at')
-        .eq('user_id', userId);
-      if (before)
-        query = query.or(
-          `created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})`,
-        );
-      const { data, error } = await query
-        .order('created_at', { ascending: false })
-        .order('id', { ascending: false })
-        .limit(limit);
+      const { data, error } = await createServiceClient().rpc('notification_feed', {
+        p_user: userId,
+        p_limit: limit,
+        p_before: before?.createdAt ?? null,
+        p_before_id: before?.id ?? null,
+      });
       if (error) fail(error);
-      return ((data ?? []) as Row[]).map((r) => ({
-        id: r.id,
-        type: r.type,
-        pickId: r.pick_id,
-        payload: r.payload,
-        createdAt: r.created_at,
-        readAt: r.read_at,
-      }));
+      return mapRows(data);
+    },
+    async revalidate(userId, ids) {
+      const { data, error } = await createServiceClient().rpc('notification_revalidate', {
+        p_user: userId,
+        p_ids: ids,
+      });
+      if (error) fail(error);
+      return mapRows(data);
     },
     async markRead(id, userId) {
       const { error } = await createServiceClient().rpc('notification_mark_read', {

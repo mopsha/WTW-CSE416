@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import type { NotificationRow, NotificationType } from '@shared/api/notify.ts';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { AppState, StyleSheet, Text, View } from 'react-native';
 
 import {
   Button,
@@ -15,6 +15,7 @@ import {
   space,
   type,
 } from '@/components';
+import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
 import { inboxLabel, inboxRoute, inboxText } from '@/lib/inbox';
@@ -39,95 +40,181 @@ const ICONS: Record<NotificationType, keyof typeof Ionicons.glyphMap> = {
 
 type Load = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready' };
 
-// Paginated inbox. Tapping a notification marks it read and opens its destination.
 export default function InboxScreen() {
-  const [rows, setRows] = useState<NotificationRow[]>([]);
-  const [load, setLoad] = useState<Load>({ status: 'loading' });
-  const [refreshing, setRefreshing] = useState(false);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [pageError, setPageError] = useState<string | null>(null);
-  // Only the newest request may update the list (a refresh can race the focus load).
-  const latest = useRef(0);
-  const returningFromNotification = useRef(false);
+  const viewer = useAuth().session?.user.id;
+  return viewer ? <Inbox key={viewer} viewer={viewer} /> : null;
+}
 
-  const fetchRows = useCallback(() => {
-    const request = ++latest.current;
-    setLoadingMore(false);
-    setPageError(null);
-    return api.listNotifications().then(
-      (r) => {
+type InboxPage = { rows: NotificationRow[]; nextCursor: string | null; olderLoaded: boolean };
+const emptyPage: InboxPage = { rows: [], nextCursor: null, olderLoaded: false };
+
+// PostgreSQL cursors preserve microseconds, while Date.parse only preserves milliseconds.
+function comparePosition(a: string, b: string) {
+  const [aTime, aId] = a.split('|');
+  const [bTime, bId] = b.split('|');
+  if (!aTime || !aId || !bTime || !bId) throw new Error('Invalid notification cursor');
+  const micros = (time: string) =>
+    Date.parse(time) * 1000 + Number((time.match(/\.(\d+)/)?.[1] ?? '').padEnd(6, '0').slice(3, 6));
+  return micros(aTime) - micros(bTime) || aId.localeCompare(bId);
+}
+
+const position = (row: NotificationRow) => `${row.createdAt}|${row.id}`;
+
+function mergeNewest(
+  previous: InboxPage,
+  newest: { notifications: NotificationRow[]; nextCursor?: string | null },
+  verified: Map<string, NotificationRow>,
+): InboxPage {
+  const known = new Set(previous.rows.map((row) => row.id));
+  const rows = newest.notifications
+    .filter((row) => !known.has(row.id) || verified.has(row.id))
+    .map((row) => ({ ...row, readAt: row.readAt ?? verified.get(row.id)?.readAt ?? null }));
+  const nextCursor = newest.nextCursor ?? null;
+  if (
+    !nextCursor ||
+    !rows.some((row) => verified.has(row.id)) ||
+    (previous.nextCursor && comparePosition(previous.nextCursor, nextCursor) >= 0)
+  )
+    return { rows, nextCursor, olderLoaded: false };
+
+  // The shared row connects both ranges. Only keep verified rows past the newest
+  // cursor, so the old tail cursor never jumps across an unvisited gap.
+  const older = previous.rows.flatMap((old) => {
+    const row = verified.get(old.id);
+    return row && comparePosition(position(row), nextCursor) < 0 ? [row] : [];
+  });
+  return { rows: [...rows, ...older], nextCursor: previous.nextCursor, olderLoaded: true };
+}
+
+function Inbox({ viewer }: { viewer: string }) {
+  const [page, setPage] = useState(emptyPage);
+  const current = useRef(emptyPage);
+  const [load, setLoad] = useState<Load>({ status: 'loading' });
+  const [pending, setPending] = useState<'focus' | 'refresh' | 'older' | null>(null);
+  const [checking, setChecking] = useState(true);
+  const latest = useRef(0);
+  const inFlight = useRef<'older' | 'newest' | null>(null);
+
+  const fetchRows = useCallback(
+    async (mode: 'focus' | 'refresh' | 'older' = 'focus') => {
+      const previous = current.current;
+      if (
+        mode === 'older' ? inFlight.current || !previous.nextCursor : inFlight.current === 'newest'
+      )
+        return;
+      inFlight.current = mode === 'older' ? 'older' : 'newest';
+      const request = ++latest.current;
+      setPending(mode);
+      setChecking(true);
+      try {
+        let next: InboxPage;
+        if (mode === 'older') {
+          const result = await api.revalidateNotifications(
+            previous.rows.map((row) => row.id),
+            viewer,
+            previous.nextCursor ?? undefined,
+          );
+          const verified = new Map(result.notifications.map((row) => [row.id, row]));
+          const rows = new Map<string, NotificationRow>();
+          // Keep the original order for preserved pages. The cursor remains valid
+          // even when the row that supplied it has since become unavailable.
+          for (const old of previous.rows) {
+            const row = verified.get(old.id);
+            if (row) rows.set(row.id, row);
+          }
+          const known = new Set(previous.rows.map((row) => row.id));
+          for (const row of result.page?.notifications ?? []) {
+            if (!known.has(row.id)) rows.set(row.id, row);
+          }
+          next = {
+            rows: [...rows.values()],
+            nextCursor: result.page ? result.page.nextCursor : previous.nextCursor,
+            olderLoaded: true,
+          };
+        } else if (previous.olderLoaded && previous.rows.length) {
+          const [newest, result] = await Promise.all([
+            api.listNotifications(undefined, viewer),
+            api.revalidateNotifications(
+              previous.rows.map((row) => row.id),
+              viewer,
+            ),
+          ]);
+          next = mergeNewest(
+            previous,
+            newest,
+            new Map(result.notifications.map((row) => [row.id, row])),
+          );
+        } else {
+          const result = await api.listNotifications(undefined, viewer);
+          next = {
+            rows: result.notifications,
+            nextCursor: result.nextCursor ?? null,
+            olderLoaded: false,
+          };
+        }
         if (request !== latest.current) return;
-        setRows(r.notifications);
-        setNextCursor(r.nextCursor ?? null);
+        current.current = next;
+        setPage(next);
         setLoad({ status: 'ready' });
-      },
-      (e: unknown) => {
-        if (request === latest.current) setLoad({ status: 'error', message: messageOf(e) });
-      },
-    );
-  }, []);
+      } catch (error) {
+        if (request !== latest.current) return;
+        current.current = emptyPage;
+        setPage(emptyPage);
+        setLoad({ status: 'error', message: messageOf(error) });
+      } finally {
+        if (request === latest.current) {
+          inFlight.current = null;
+          setPending(null);
+          setChecking(false);
+        }
+      }
+    },
+    [viewer],
+  );
 
   useFocusEffect(
     useCallback(() => {
-      // Stack keeps this screen/ScrollView mounted. Preserve loaded pages and
-      // position when returning from our own notification; pull-to-refresh still
-      // explicitly reloads the newest page.
-      if (returningFromNotification.current) {
-        returningFromNotification.current = false;
-        return;
+      const invalidate = () => {
+        latest.current++;
+        inFlight.current = null;
+        setChecking(true);
+      };
+      if (AppState.currentState !== 'background' && AppState.currentState !== 'inactive') {
+        void fetchRows();
       }
-      void fetchRows();
+      const subscription = AppState.addEventListener('change', (state) => {
+        if (state === 'active') void fetchRows();
+        else invalidate();
+      });
+      return () => {
+        subscription.remove();
+        invalidate();
+      };
     }, [fetchRows]),
   );
 
-  const refresh = () => {
-    setRefreshing(true);
-    void fetchRows().finally(() => setRefreshing(false));
-  };
-
-  const loadMore = () => {
-    if (!nextCursor || loadingMore) return;
-    const request = ++latest.current;
-    setLoadingMore(true);
-    setPageError(null);
-    void api
-      .listNotifications(nextCursor)
-      .then(
-        (r) => {
-          if (request !== latest.current) return;
-          setRows((previous) => {
-            const seen = new Set(previous.map((n) => n.id));
-            return [...previous, ...r.notifications.filter((n) => !seen.has(n.id))];
-          });
-          setNextCursor(r.nextCursor ?? null);
-        },
-        (e: unknown) => {
-          if (request === latest.current) setPageError(messageOf(e));
-        },
-      )
-      .finally(() => {
-        if (request === latest.current) setLoadingMore(false);
-      });
-  };
-
+  const refresh = () => void fetchRows('refresh');
+  const { rows, nextCursor } = page;
   const open = (n: NotificationRow, route: string) => {
+    if (checking) return;
     if (!n.readAt) {
       const readAt = new Date().toISOString();
-      setRows((all) => all.map((x) => (x.id === n.id ? { ...x, readAt } : x)));
-      // A failed write shows as unread again on the next load; it never blocks opening the Pick.
-      void api.markNotificationRead(n.id).catch(() => {});
+      const snapshot = {
+        ...current.current,
+        rows: current.current.rows.map((x) => (x.id === n.id ? { ...x, readAt } : x)),
+      };
+      current.current = snapshot;
+      setPage(snapshot);
+      void api.markNotificationRead(n.id, viewer).catch(() => {});
     }
-    returningFromNotification.current = true;
     router.push(route as never);
   };
 
   return (
-    <Screen title="Notifications" back onRefresh={refresh} refreshing={refreshing}>
-      {/* A failed refresh keeps the list it already has. */}
+    <Screen title="Notifications" back onRefresh={refresh} refreshing={pending === 'refresh'}>
       {load.status === 'error' && rows.length === 0 ? (
         <ErrorState message={load.message} onRetry={refresh} />
-      ) : load.status === 'ready' && rows.length === 0 ? (
+      ) : load.status === 'ready' && rows.length === 0 && !checking ? (
         <EmptyState
           icon="notifications-outline"
           title="Nothing yet"
@@ -136,6 +223,13 @@ export default function InboxScreen() {
       ) : (
         rows.map((n) => {
           const route = inboxRoute(n);
+          if (checking) {
+            return (
+              <Card key={n.id} accessibilityLabel="Checking notification">
+                <View style={styles.placeholder} />
+              </Card>
+            );
+          }
           const { title, body } = inboxText(n);
           return (
             <Card
@@ -161,14 +255,13 @@ export default function InboxScreen() {
           );
         })
       )}
-      {pageError ? <ErrorState variant="banner" message={pageError} onRetry={loadMore} /> : null}
       {nextCursor ? (
         <Button
           label="Load older notifications"
           variant="secondary"
-          loading={loadingMore}
-          disabled={refreshing || load.status === 'loading'}
-          onPress={loadMore}
+          loading={pending === 'older'}
+          disabled={checking || pending !== null}
+          onPress={() => void fetchRows('older')}
         />
       ) : null}
     </Screen>
@@ -176,6 +269,7 @@ export default function InboxScreen() {
 }
 
 const styles = StyleSheet.create({
+  placeholder: { minHeight: 58 },
   row: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
   text: { flex: 1, gap: 2 },
   title: { fontFamily: fonts.medium, fontSize: 16, color: colors.text },

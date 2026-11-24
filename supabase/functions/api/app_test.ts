@@ -924,10 +924,14 @@ function notifyApp(user: string | null) {
   const calls: unknown[][] = [];
   const notifyStore: NotifyStore = {
     insert: async () => [],
-    tokensFor: async () => [],
+    pushTargets: async () => [],
     deleteTokens: async () => {},
     list: async (userId) => {
       calls.push(['list', userId]);
+      return [];
+    },
+    revalidate: async (userId, ids) => {
+      calls.push(['revalidate', userId, ids]);
       return [];
     },
     markRead: async (id, userId) => {
@@ -969,6 +973,12 @@ Deno.test('notifications: always the verified caller, never a body-supplied user
   equal(await inbox.json(), { notifications: [], unreadCount: 0, nextCursor: null });
   const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
   equal((await app.request(`/notifications/${id}/read`, { method: 'POST' })).status, 200);
+  const revalidated = await app.request('/notifications/revalidate', {
+    method: 'POST',
+    body: JSON.stringify({ ids: [id, id], userId: 'someone' }),
+  });
+  equal(revalidated.status, 200);
+  equal(await revalidated.json(), { notifications: [] });
   const token = await app.request('/push-tokens', {
     method: 'POST',
     body: JSON.stringify({ token: 'ExponentPushToken[abc]', platform: 'ios', userId: 'someone' }),
@@ -982,6 +992,7 @@ Deno.test('notifications: always the verified caller, never a body-supplied user
   equal(calls, [
     ['list', 'me'],
     ['markRead', id, 'me'],
+    ['revalidate', 'me', [id]],
     ['registerToken', 'me', 'ExponentPushToken[abc]', 'ios'],
     ['removeToken', 'me', 'ExponentPushToken[abc]'],
   ]);
