@@ -64,9 +64,9 @@ create table private.taste_source_state (
   primary key (user_id, source)
 );
 
--- Queued work. With a revision, the row is a captured action that couldn't be saved (no
--- profiles FK on purpose: taking one waits on profile saves and account deletion). Without
--- one, it only asks for the source to be projected again.
+-- Queued work. With a revision, the row is a captured action that couldn't be saved. Without
+-- one, it only asks for the source to be projected again. No profiles FK on purpose: checking
+-- one waits on profile saves and account deletion. The triggers below clean up instead.
 create table private.taste_pending (
   id bigint primary key default nextval('private.taste_seq'),
   user_id uuid not null,
@@ -94,6 +94,34 @@ insert into private.taste_sweep_cursor default values;
 revoke all on table private.taste_source_state, private.taste_pending, private.taste_sweep_cursor
   from public, anon, authenticated;
 revoke all on sequence private.taste_seq from public, anon, authenticated;
+
+-- Deleting an account removes its queued work. Both sides check as they commit, under one lock
+-- (queueing shares it, a deletion takes it alone), so whichever is second sees the other: an
+-- enqueue drops its own row if the account is gone, and a deletion removes every row already
+-- committed. Neither waits for anything else while holding it: a sweep holds the profile row
+-- of the users it's working on, so a deletion has already waited for it.
+create function private.taste_pending_commit() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  perform pg_catalog.pg_advisory_xact_lock_shared(
+    pg_catalog.hashtextextended('wtw-taste-pending', 0));
+  delete from private.taste_pending where id = new.id
+    and not exists (select 1 from public.profiles where id = new.user_id);
+  return null;
+end $$;
+create constraint trigger taste_pending_commit after insert on private.taste_pending
+  deferrable initially deferred for each row execute function private.taste_pending_commit();
+
+create function private.taste_pending_forget() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('wtw-taste-pending', 0));
+  delete from private.taste_pending where user_id = old.id;
+  return null;
+end $$;
+create constraint trigger taste_pending_forget after delete on public.profiles
+  deferrable initially deferred for each row execute function private.taste_pending_forget();
 
 create function private.lock_taste(p_user_id uuid) returns void
 language sql volatile set search_path = '' as $$
@@ -427,8 +455,10 @@ begin
        pg_catalog.hashtextextended('wtw-taste:' || p_user_id::text, 0)) then
     return;
   end if;
-  -- A deleted account's queued actions are just dropped.
-  if exists (select 1 from public.profiles where id = p_user_id) then
+  -- Hold off a deletion until this commits or rolls back, or leave the user queued if theirs is
+  -- in progress. A deleted account's work is just dropped (normally gone already, see above).
+  perform 1 from public.profiles where id = p_user_id for key share nowait;
+  if found then
     select array_agg(distinct source) into v_sources from private.taste_pending
      where user_id = p_user_id and id = any(p_ids) and source is not null;
   end if;
@@ -518,7 +548,8 @@ begin
   return v_removed;
 end $$;
 
-revoke all on function private.lock_taste(uuid),
+revoke all on function private.taste_pending_commit(), private.taste_pending_forget(),
+  private.lock_taste(uuid),
   private.taste_refresh_lock_key(uuid),
   private.apply_taste_sources(uuid, uuid[]),
   private.capture_taste(uuid, uuid[], timestamptz, text, real, boolean, boolean),

@@ -107,8 +107,9 @@ live result (`pickPlaces.ts`). Live deck ordering still uses those types in memo
   been deleted since. Each captured action takes a number from `private.taste_seq` under its Pick's
   lock, so an older queued action never replaces a newer one. Only actions after the user's epoch
   teach, and a Google signal that no longer matches its saved action is removed (its type isn't
-  stored, so it's re-added by the next recorded action). A queued action whose account has been
-  deleted is dropped.
+  stored, so it's re-added by the next recorded action). Deleting an
+  account removes its queued actions in the same transaction. One still being queued at that moment
+  checks again as it commits and drops itself.
 - The sweep deletes only the rows it read (one queued during a rebuild waits for the next sweep),
   and it never waits on a user whose lock is busy: that user stays queued. A reset reads its epoch
   after taking the lock, so actions that committed while it waited are cleared too.

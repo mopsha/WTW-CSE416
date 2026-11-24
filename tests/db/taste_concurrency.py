@@ -554,6 +554,25 @@ def enqueue_waits_for_a_committing_deletion():
     assert victim_rows() == '0'
 
 
+# A sweep that claims a row and then rolls back must not bring it back after the deletion.
+def deletion_waits_for_an_open_sweep():
+    add_victim()
+    query("insert into private.taste_pending(user_id) values ('%s')" % victim)
+    with held_lock(sweep):
+        gone = in_background(forget)
+    finished(gone)
+    assert victim_rows() == '0', 'a sweep that rolled back kept a deleted account queued'
+
+
+def sweep_leaves_an_account_being_deleted():
+    add_victim()
+    query("insert into private.taste_pending(user_id) values ('%s')" % victim)
+    with held_lock(forget, 'commit'):
+        query(sweep)
+        assert victim_rows() == '1', 'the sweep claimed work for an account being deleted'
+    assert victim_rows() == '0'
+
+
 def sweep_drops_a_leftover_of_a_deleted_account():
     # Backstop: a row that got past the trigger.
     gone = 'f1780000-0000-4000-8000-000000000997'
@@ -573,6 +592,7 @@ checks = [bounded_sweep_reaches_unlocked_user, overlapping_sweeps_preserve_histo
           deletion_during_an_open_swipe, enqueue_commits_after_the_deletion,
           enqueue_commits_inside_the_deletion, enqueue_survives_a_deletion_that_rolls_back,
           deletion_waits_for_a_committing_enqueue, enqueue_waits_for_a_committing_deletion,
+          deletion_waits_for_an_open_sweep, sweep_leaves_an_account_being_deleted,
           sweep_drops_a_leftover_of_a_deleted_account]
 if query("select to_regclass('private.taste_sweep_cursor') is not null") == 't':
     checks.append(split_duplicates_preserve_history)
