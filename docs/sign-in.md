@@ -50,8 +50,9 @@ user a real-looking username.
     An attempt is charged to all of them or none: if any limit is reached it's refused and spends
     nothing, so a client that's already blocked can't use up the overall budget and lock others out.
     The client is the edge-reported IP, `cf-connecting-ip` only: a caller can set the other
-    forwarding headers. If it's ever missing, everyone shares one client limit (20 per 15
-    minutes) until it's back. Subjects are stored hashed, and the sweep deletes buckets older than a
+    forwarding headers. It must be a valid address, and equivalent spellings count as one; an
+    IPv6 caller is counted by /64. If it's ever missing or invalid, everyone shares one client
+    limit (20 per 15 minutes) until it's back. Subjects are stored hashed, and the sweep deletes buckets older than a
     day (`purge_login_limits`).
 - `GET /usernames/available` spends the same lookup quota as people search (30 a minute), so it
   can't be used to list usernames faster than friend search allows.

@@ -51,6 +51,66 @@ test('only the edge header identifies the client; headers a caller can set do no
   expect(clientAddress(h({}))).toBe('unknown');
 });
 
+const edge = (ip: string) =>
+  clientAddress({ get: (k: string) => (k === 'cf-connecting-ip' ? ip : null) });
+
+test.each([
+  'abc',
+  '1',
+  '1.2.3',
+  '1.2.3.4.5',
+  '1.2.3.',
+  '256.1.1.1',
+  '01.2.3.4',
+  '0x7f.0.0.1',
+  '1.1.1.1, 2.2.2.2',
+  '1.1.1.1:443',
+  ':',
+  '1::2::3',
+  '2001:db8::g',
+  '2001:db8:0:0:0:0:0:0:1',
+  '::ffff:1.2.3.256',
+  'fe80::1%eth0',
+  '[2001:db8::1]',
+  '::1]/x[',
+])('a malformed edge address (%s) is the shared unknown client', (ip) => {
+  expect(edge(ip)).toBe('unknown');
+});
+
+test('equivalent addresses are one client', () => {
+  for (const ip of [
+    '2001:db8::1',
+    '2001:DB8::1',
+    '2001:0db8:0:0:0:0:0:1',
+    ' 2001:db8:0000:0000:0000:0000:0000:0001 ',
+  ])
+    expect(edge(ip)).toBe('2001:db8::1');
+  for (const ip of ['1.2.3.4', '::ffff:1.2.3.4', '::FFFF:0102:0304', '0:0:0:0:0:ffff:1.2.3.4'])
+    expect(edge(ip)).toBe('1.2.3.4');
+  expect(edge('::1')).toBe('::1');
+  expect(edge('1.2.3.5')).not.toBe(edge('1.2.3.4'));
+  expect(edge('2001:db8::2')).not.toBe(edge('2001:db8::1'));
+});
+
+test.each([
+  ['2001:db8:1:2:3:4:5:6', '2001:db8:1:2::/64'],
+  ['2001:db8:1:2::9', '2001:db8:1:2::/64'],
+  ['2001:db8::1', '2001:db8:0:0::/64'],
+  ['::1', '0:0:0:0::/64'],
+  ['2001:db8:1:3::9', '2001:db8:1:3::/64'],
+  ['1.2.3.4', '1.2.3.4'],
+])('limits for %s count against %s, and Supabase gets the full address', async (ip, key) => {
+  const s = store();
+  await expect(
+    passwordLogin(s, { identifier: 'nobody', password: 'x' }, edge(ip)),
+  ).rejects.toMatchObject({ status: 401 });
+  expect(s.consumeLoginAttempt.mock.calls[0]![0].slice(0, 2).map((k) => k.key)).toEqual([
+    `acct:username:nobody|client:${key}`,
+    `client:${key}`,
+  ]);
+  expect(s.passwordSignIn).toHaveBeenCalledWith('nobody@invalid.getwtw.app', 'x', ip);
+});
+
 describe('usernameAvailability', () => {
   test('each check spends one lookup from the quota, and invalid names spend none', async () => {
     const s = store();

@@ -131,10 +131,11 @@ export async function passwordLogin(
   }
 
   // The account named (unknown names keyed by what was typed), per client, and overall.
-  const account = `acct:${email ?? `username:${identifier}`}|client:${client}`;
+  const from = network(client);
+  const account = `acct:${email ?? `username:${identifier}`}|client:${from}`;
   const subjects = [
     { key: account, limit: LOGIN_LIMITS.accountPerClient },
-    { key: `client:${client}`, limit: LOGIN_LIMITS.client },
+    { key: `client:${from}`, limit: LOGIN_LIMITS.client },
     { key: 'global', limit: LOGIN_LIMITS.global },
   ];
   const charge = await store.consumeLoginAttempt(subjects);
@@ -157,10 +158,39 @@ export async function passwordLogin(
   return tokens;
 }
 
+const IPV4_RE = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?!$)|$)){4}$/;
+
+/** An IPv4 or IPv6 address in its one canonical spelling, or null if it isn't one. */
+function normalizeAddress(raw: string): string | null {
+  if (IPV4_RE.test(raw)) return raw;
+  if (!raw.includes(':') || !/^[0-9a-f:.]+$/i.test(raw)) return null;
+  let v6: string;
+  try {
+    v6 = new URL(`http://[${raw}]`).hostname.slice(1, -1);
+  } catch {
+    return null;
+  }
+  // ::ffff:a.b.c.d is that IPv4 address.
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(v6);
+  if (!mapped) return v6;
+  const [hi, lo] = [parseInt(mapped[1]!, 16), parseInt(mapped[2]!, 16)];
+  return [hi >> 8, hi & 255, lo >> 8, lo & 255].join('.');
+}
+
+/** What the limits count: a whole IPv6 /64, since one caller usually has all of its addresses. */
+function network(client: string): string {
+  if (!client.includes(':')) return client;
+  const [head = [], tail = []] = client
+    .split('::')
+    .map((part) => part.split(':').filter((group) => group !== ''));
+  const zeros = Array<string>(8 - head.length - tail.length).fill('0');
+  return `${[...head, ...zeros, ...tail].slice(0, 4).join(':')}::/64`;
+}
+
 /**
  * The caller's address, as the platform's edge reports it. Other forwarding headers can be set
- * by the caller, so without this one everyone shares a single client limit.
+ * by the caller, so without a valid address here everyone shares a single client limit.
  */
 export function clientAddress(headers: { get(name: string): string | null }): string {
-  return headers.get('cf-connecting-ip')?.trim() || UNKNOWN_CLIENT;
+  return normalizeAddress(headers.get('cf-connecting-ip')?.trim() ?? '') ?? UNKNOWN_CLIENT;
 }
