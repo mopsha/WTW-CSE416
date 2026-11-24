@@ -125,3 +125,27 @@ test('failed Google coordinate purge surfaces and retries after the daily cache 
   });
   expect(mockRpc.mock.calls.filter(([name]) => name === 'purge_google_coordinates')).toHaveLength(2);
 });
+
+test.each([false, true])(
+  'login cleanup failure allows all cleanup operations to run (cache failure: %p)',
+  async (cacheFailure) => {
+    mockRpc.mockImplementation(async (name) => ({
+      data: { ran: false, removed: 0 },
+      error:
+        name === 'purge_login_limits' || (cacheFailure && name === 'cleanup_place_cache')
+          ? { message: 'private database detail' }
+          : null,
+    }));
+
+    await expect(
+      createCacheCleanupStore().deleteExpiredOnce('2026-11-03', '2026-11-03T11:55:00Z'),
+    ).rejects.toThrow(cacheFailure ? 'Cache cleanup failed' : 'Login limit cleanup failed');
+    expect(mockLt).toHaveBeenCalledWith('created_at', '2026-11-02T00:00:00.000Z');
+    expect(mockRpc.mock.calls.map(([name]) => name)).toEqual([
+      'cleanup_place_cache',
+      'purge_google_coordinates',
+      'purge_login_limits',
+      'purge_google_taste',
+    ]);
+  },
+);
