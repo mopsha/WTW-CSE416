@@ -554,6 +554,30 @@ def enqueue_waits_for_a_committing_deletion():
     assert victim_rows() == '0'
 
 
+def unrelated_swipe_and_vote_commit_during_deletion():
+    add_victim()
+    swipe_pick = setup()
+    vote_pick = setup()
+    query(close(vote_pick, ranking))
+    guest = user(2)
+    swipe_row = ('swipe', swipe_pick, 'taste-a', guest)
+    vote_row = ('vote', vote_pick, None, guest)
+
+    # Hold the deletion's commit lock while an independent lock forces both actions to queue.
+    # Each RPC must commit before either holder is released.
+    with held_lock(forget + '; set constraints all immediate', 'commit'):
+        with held_lock("select private.lock_taste('%s')" % guest):
+            act("set lock_timeout='2s'; select public.heartbeat_upsert_swipe('%s','%s','taste-a',0)" % (swipe_pick, guest))
+            act("set lock_timeout='2s'; select public.pick_cast_vote('%s','%s','taste-b')" % (vote_pick, guest))
+            assert query("select value from public.preferences where pick_id='%s' and user_id='%s' and place_id='taste-a'" % (swipe_pick, guest)) == '0'
+            assert query("select place_id from public.final_votes where pick_id='%s' and user_id='%s'" % (vote_pick, guest)) == 'taste-b'
+            assert (queued_actions(*swipe_row), queued_actions(*vote_row)) == ('1', '1')
+
+    query(sweep)
+    assert (learned(*swipe_row), queued_actions(*swipe_row)) == ('-1', '0')
+    assert (learned(*vote_row), queued_actions(*vote_row)) == ('1', '0')
+
+
 # A sweep that claims a row and then rolls back must not bring it back after the deletion.
 def deletion_waits_for_an_open_sweep():
     add_victim()
@@ -592,6 +616,7 @@ checks = [bounded_sweep_reaches_unlocked_user, overlapping_sweeps_preserve_histo
           deletion_during_an_open_swipe, enqueue_commits_after_the_deletion,
           enqueue_commits_inside_the_deletion, enqueue_survives_a_deletion_that_rolls_back,
           deletion_waits_for_a_committing_enqueue, enqueue_waits_for_a_committing_deletion,
+          unrelated_swipe_and_vote_commit_during_deletion,
           deletion_waits_for_an_open_sweep, sweep_leaves_an_account_being_deleted,
           sweep_drops_a_leftover_of_a_deleted_account]
 if query("select to_regclass('private.taste_sweep_cursor') is not null") == 't':

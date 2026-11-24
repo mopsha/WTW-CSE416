@@ -96,20 +96,21 @@ live result (`pickPlaces.ts`). Live deck ordering still uses those types in memo
   request arrives. Users who existed before 0056 start at the migration, since earlier resets
   left no record. Races are covered by `tests/db/taste_concurrency.py`, which CI runs and which
   also runs `taste_source_concurrency.py` and `google_taste_concurrency.py`.
-- The learning runs in triggers, so every write path is covered and nothing else changes. It
-  doesn't fail the swipe, vote, close or refresh, and its waits are bounded (200 ms each). If the
-  learning write hits a busy lock (the user's taste lock, or their profile row during a profile
-  save or account deletion) or fails, the whole captured action is queued in
-  `private.taste_pending`: its type, weight and time, or just its revision and time for a Google
-  place. The queue has no foreign keys, so that insert has nothing to wait on.
+- The learning runs in triggers, so every write path is covered. Ordinary taste capture waits
+  at most 200 ms per lock acquisition. If learning hits a busy lock (the user's taste lock or
+  their profile row during a profile save or account deletion) or fails, the captured action
+  is queued in `private.taste_pending`: its type, weight and time, or just its revision and
+  time for a Google place. The queue insert does not take a profile row lock.
 - The next sweep (every minute, inside `purge_google_taste`) applies it (`taste_reconcile`), so a
   Yes changed to No while another of their Picks was closing ends at the No, even if the Pick has
   been deleted since. Each captured action takes a number from `private.taste_seq` under its Pick's
   lock, so an older queued action never replaces a newer one. Only actions after the user's epoch
   teach, and a Google signal that no longer matches its saved action is removed (its type isn't
   stored, so it's re-added by the next recorded action). Deleting an
-  account removes its queued actions in the same transaction. One still being queued at that moment
-  checks again as it commits and drops itself.
+  account removes its queued actions in the same transaction. An enqueue checks the account again
+  at commit under an account-specific advisory lock. For the same account it can wait for deletion
+  outside the 200 ms capture timeout. If deletion commits the enqueue drops its row, and if deletion
+  rolls back the queue entry is preserved. Other accounts use separate keys.
 - The sweep deletes only the rows it read (one queued during a rebuild waits for the next sweep),
   and it never waits on a user whose lock is busy: that user stays queued. A reset reads its epoch
   after taking the lock, so actions that committed while it waited are cleared too.

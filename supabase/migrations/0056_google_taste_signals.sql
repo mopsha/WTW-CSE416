@@ -95,16 +95,16 @@ revoke all on table private.taste_source_state, private.taste_pending, private.t
   from public, anon, authenticated;
 revoke all on sequence private.taste_seq from public, anon, authenticated;
 
--- Deleting an account removes its queued work. Both sides check as they commit, under one lock
--- (queueing shares it, a deletion takes it alone), so whichever is second sees the other: an
--- enqueue drops its own row if the account is gone, and a deletion removes every row already
--- committed. Neither waits for anything else while holding it: a sweep holds the profile row
--- of the users it's working on, so a deletion has already waited for it.
+-- Deleting an account removes its queued work. Both sides check as they commit under that
+-- account's lock (shared for enqueue, exclusive for deletion). An enqueue drops its own row
+-- if the account is gone, and a deletion removes every row already committed. A same-account
+-- enqueue can wait for deletion at commit. A sweep holds the profile row of the users it's
+-- working on, so a deletion has already waited for it before taking the advisory lock.
 create function private.taste_pending_commit() returns trigger
 language plpgsql security definer set search_path = '' as $$
 begin
   perform pg_catalog.pg_advisory_xact_lock_shared(
-    pg_catalog.hashtextextended('wtw-taste-pending', 0));
+    pg_catalog.hashtextextended('wtw-taste-pending:' || new.user_id::text, 0));
   delete from private.taste_pending where id = new.id
     and not exists (select 1 from public.profiles where id = new.user_id);
   return null;
@@ -116,7 +116,7 @@ create function private.taste_pending_forget() returns trigger
 language plpgsql security definer set search_path = '' as $$
 begin
   perform pg_catalog.pg_advisory_xact_lock(
-    pg_catalog.hashtextextended('wtw-taste-pending', 0));
+    pg_catalog.hashtextextended('wtw-taste-pending:' || old.id::text, 0));
   delete from private.taste_pending where user_id = old.id;
   return null;
 end $$;
