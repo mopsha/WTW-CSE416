@@ -13,9 +13,10 @@
 --   reset made before 0056 (which left no record) can't be undone by old Picks either.
 -- * Domain triggers capture the action in its own transaction, under the canonical row's write
 --   lock. If anything in the way is busy or fails, the whole captured action is queued instead
---   (an insert with no foreign keys or unique rows to wait on), so learning doesn't fail or hold
---   up a swipe, vote, close or refresh and the new choice isn't lost. The sweep applies it,
---   even if the Pick has since been deleted.
+--   (an insert with no foreign keys or unique rows to wait on), so learning doesn't fail a swipe,
+--   vote, close or refresh and the new choice isn't lost. Its waits are bounded, except that a
+--   queued action can wait at commit for its own account's deletion to finish committing. The
+--   sweep applies it, even if the Pick has since been deleted.
 -- * Every captured action takes a sequence number while it holds that write lock, so an older
 --   queued action never replaces a newer saved one.
 -- * The weight and action time come from the saved swipe, ballot or winner, never the caller;
@@ -163,9 +164,9 @@ language sql volatile set search_path = '' set lock_timeout = '200ms' as $$
         (excluded.place_type, excluded.weight, excluded.at, false, excluded.source_revision)
 $$;
 
--- Save one action for these sources and project it, or queue it whole. Waits are bounded and
--- nothing outside the handler can wait on another row. p_refresh takes the refresh locks
--- instead of the user lock (a refresh covers every participant, so it must not hold theirs).
+-- Save one action for these sources and project it, or queue it whole. Waits here are bounded and
+-- nothing outside the handler can wait on another row (taste_pending_commit runs at commit).
+-- p_refresh takes the refresh locks instead of the user lock (a refresh covers every participant, so it must not hold theirs).
 create function private.capture_taste(p_user_id uuid, p_sources uuid[], p_action_at timestamptz,
   p_place_type text, p_weight real, p_google boolean, p_refresh boolean) returns void
 language plpgsql security definer set search_path = '' set lock_timeout = '200ms' as $$

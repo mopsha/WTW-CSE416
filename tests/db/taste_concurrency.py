@@ -13,13 +13,28 @@ parser.add_argument('--dsn', required=True)
 args = parser.parse_args()
 if not ('host=/tmp/' in args.dsn or urlparse(args.dsn).hostname in ('localhost', '127.0.0.1', '::1')):
     parser.error('Use a disposable local database only.')
+sys.stdout.reconfigure(line_buffering=True)  # show progress even if the step times out
 base = ['psql', '-X', '-qAt', args.dsn, '-v', 'ON_ERROR_STOP=1']
 
+session = None
+
+
 def query(statement):
-    result = subprocess.run(base + ['-c', statement], capture_output=True, text=True, timeout=15)
-    if result.returncode:
-        raise AssertionError(result.stderr)
-    return result.stdout.strip()
+    """Runs on one kept-open connection (CI limits this step to 60 s). An error ends it."""
+    global session
+    if session is None:
+        session = subprocess.Popen(base, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        session.stdin.write("set statement_timeout='15s'; set client_min_messages=error;\n")
+    session.stdin.write(statement + '\n;\n\\echo QUERY_DONE\n')
+    session.stdin.flush()
+    lines = []
+    for line in session.stdout:
+        if line.strip() == 'QUERY_DONE':
+            return ''.join(lines).strip()
+        lines.append(line)
+    _, stderr = session.communicate(timeout=15)
+    session = None
+    raise AssertionError(stderr)
 
 def user(n):
     return 'ad000000-0000-4000-8000-' + str(n).zfill(12)
