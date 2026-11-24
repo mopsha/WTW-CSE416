@@ -1,3 +1,4 @@
+import { isHangPost, validHangPosts } from '@shared/api/hang.ts';
 import { AVAILABILITY_CAPABILITY, type AvailabilityResponse } from '@shared/domain/availability.ts';
 import type { Birthday } from '@shared/api/birthdays.ts';
 import type { PersonIdentity } from '@shared/api/people.ts';
@@ -500,16 +501,19 @@ export function createApiClient({
       request<StatusResponse>('POST', `/saved/${encodeURIComponent(placeId)}`, { viewer }),
     removeSaved: (placeId: string, viewer?: string) =>
       request<StatusResponse>('DELETE', `/saved/${encodeURIComponent(placeId)}`, { viewer }),
-    getHang: (viewer?: string) =>
-      request<{
-        posts: import('@shared/api/hang.ts').HangPost[];
-        sharedAvailable: boolean;
-        notice: string;
-      }>('GET', '/hang', { viewer }),
-    getHangPost: (id: string, viewer?: string) =>
-      request<import('@shared/api/hang.ts').HangPost>('GET', `/hang/${encodeURIComponent(id)}`, {
-        viewer,
-      }),
+    async getHang(viewer?: string) {
+      const response = await request<{ posts: unknown; sharedAvailable: boolean; notice: string }>(
+        'GET',
+        '/hang',
+        { viewer },
+      );
+      return { ...response, posts: validHangPosts(response?.posts) };
+    },
+    async getHangPost(id: string, viewer?: string) {
+      const post = await request<unknown>('GET', `/hang/${encodeURIComponent(id)}`, { viewer });
+      if (!isHangPost(post)) throw new ApiError('HANG_NOT_FOUND', 'Hang post not found', 404);
+      return post;
+    },
     async createHang(input: import('@shared/api/hang.ts').HangInput, viewer?: string) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15000);

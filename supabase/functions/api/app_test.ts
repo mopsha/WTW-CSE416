@@ -1913,8 +1913,8 @@ Deno.test(
       },
       hangStore: {
         create: async (authorId, input) => ({ ...input, id: 'post', authorId }),
-        listOwn: async () => [post],
-        load: async () => post,
+        listOwn: async () => [null as unknown as typeof post, post],
+        load: async (id) => (id === post.id ? post : null),
       },
     });
     equal((await app.request('/hang')).status, 401);
@@ -1926,7 +1926,17 @@ Deno.test(
     });
     equal(created.status, 201);
     equal((await created.json()).authorId, 'josh');
-    equal((await app.request('/hang', { headers })).status, 200);
+    const list = await app.request('/hang', { headers });
+    equal(list.status, 200);
+    const { posts } = await list.json();
+    equal(posts.length, 1);
+    equal(posts[0].id, post.id);
+    const detail = await app.request('/hang/post', { headers });
+    equal(detail.status, 200);
+    equal((await detail.json()).id, post.id);
+    const missing = await app.request('/hang/unavailable', { headers });
+    equal(missing.status, 404);
+    equal((await missing.json()).error.code, 'HANG_NOT_FOUND');
     equal(
       (
         await app.request('/hang/post/respond', {

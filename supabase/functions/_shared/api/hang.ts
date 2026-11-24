@@ -46,6 +46,53 @@ export interface HangPost extends Pick<
   cantCount?: number;
   pickId?: string | null;
 }
+const isNullableText = (value: unknown) => value === null || typeof value === 'string';
+const isHangRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+const isHangDate = (value: unknown) =>
+  typeof value === 'string' && Number.isFinite(Date.parse(value));
+const isHangPerson = (value: unknown): value is HangPerson =>
+  isHangRecord(value) &&
+  typeof value.userId === 'string' &&
+  isNullableText(value.displayName) &&
+  isNullableText(value.username);
+
+export function isHangPost(value: unknown): value is HangPost {
+  return (
+    isHangRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.authorId === 'string' &&
+    typeof value.activity === 'string' &&
+    isHangDate(value.startsAt) &&
+    isHangDate(value.expiresAt) &&
+    (value.audience === 'all_friends' ||
+      value.audience === 'group' ||
+      value.audience === 'selected') &&
+    isNullableText(value.groupId) &&
+    (value.authorName === undefined || isNullableText(value.authorName)) &&
+    (value.pickId === undefined || isNullableText(value.pickId)) &&
+    (value.myStatus == null ||
+      ['down', 'maybe', 'cant'].some((status) => status === value.myStatus)) &&
+    (value.canStartPick === undefined || typeof value.canStartPick === 'boolean') &&
+    [value.downCount, value.maybeCount, value.cantCount].every(
+      (count) => count === undefined || (typeof count === 'number' && Number.isFinite(count)),
+    ) &&
+    (value.viewer === undefined || isHangPerson(value.viewer)) &&
+    (value.attendees === undefined ||
+      (Array.isArray(value.attendees) &&
+        value.attendees.every(
+          (person) =>
+            isHangPerson(person) &&
+            'status' in person &&
+            (person.status === 'down' || person.status === 'maybe'),
+        )))
+  );
+}
+
+export function validHangPosts(value: unknown): HangPost[] {
+  return Array.isArray(value) ? value.filter(isHangPost) : [];
+}
+
 export interface HangAccess {
   blocked: boolean;
   acceptedFriends: boolean;
