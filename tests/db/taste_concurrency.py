@@ -155,6 +155,15 @@ got = query(signal)
 assert got == '-1', 'a No skipped behind a held taste lock must not keep the old Yes after the sweep, got %r' % got
 print('ok - changed swipe skipped behind another Pick converges to the saved No on the next sweep')
 
+# The queue tests below need real accounts (removed again at the end): a queued row whose
+# account is gone is dropped when it commits.
+def add_users(ids):
+    query("insert into auth.users(id,email,raw_user_meta_data) select id::uuid,'q'||id||'@example.invalid','{\"display_name\":\"Queued\"}'::jsonb from (%s) u(id) on conflict do nothing" % ids)
+
+
+add_users("select 'ae000000-0000-4000-8000-'||lpad(n::text,12,'0') from generate_series(1,99) n where n<=20 or n=99")
+add_users("select 'f1780000-0000-4000-8000-'||lpad(n::text,12,'0') from generate_series(1,999) n where n<=201 or n>=998")
+
 # #78 re-review (Josh), point 4: the sweep never waits on a user whose taste lock is busy
 # (200 locked users used to cost 200ms each). Busy users stay queued; everyone else drains.
 busy = ['ae000000-0000-4000-8000-%012d' % n for n in range(1, 21)]
@@ -188,7 +197,7 @@ sweep = "select public.purge_google_taste(now()-interval '30 days')"
 
 
 @contextmanager
-def held_lock(statement):
+def held_lock(statement, end='rollback'):
     holder = subprocess.Popen(
         base, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
@@ -202,8 +211,10 @@ def held_lock(statement):
             raise AssertionError(holder.stderr.read())
         yield
     finally:
+        holder.stdin.write(end + ';\n')
         holder.stdin.close()
         holder.wait(timeout=10)
+    assert holder.returncode == 0, holder.stderr.read()
 
 
 def bounded_sweep_reaches_unlocked_user():
@@ -442,9 +453,112 @@ def newest_queued_action_wins_across_batches():
     assert (learned(*row), queued_actions(*row)) == ('-1', '0')
 
 
-def deleted_account_leaves_nothing_queued():
+# #78 re-review (Josh): deleting an account removes what's queued for it, however the deletion
+# and an enqueue overlap.
+victim = user(3)
+forget = "delete from auth.users where id='%s'" % victim
+enqueue = "select private.capture_taste('%s',array['f1780000-0000-4000-8000-00000000000a'::uuid],clock_timestamp(),'cafe',1,false,false)" % victim
+busy_taste = "select private.lock_taste('%s')" % victim
+
+
+def victim_rows(table='taste_pending'):
+    return query("select count(*) from private.%s where user_id='%s'" % (table, victim))
+
+
+def add_victim():
+    add_users("select '%s'" % victim)
+    assert victim_rows() == '0'
+
+
+def in_background(statement, waiting="wait_event_type='Lock'"):
+    """Starts a statement and returns once it's blocked on a lock."""
+    name = 'taste-race-%s' % time.monotonic_ns()
+    run = subprocess.Popen(base + ['-c', "set application_name='%s'; set statement_timeout='10s'; %s" % (name, statement)],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    deadline = time.monotonic() + 5
+    while query("select count(*) from pg_stat_activity where application_name='%s' and %s" % (name, waiting)) != '1':
+        assert run.poll() is None and time.monotonic() < deadline, 'did not wait: ' + (run.communicate(timeout=15)[1] or '')
+        time.sleep(0.02)
+    return run
+
+
+def finished(run):
+    _, stderr = run.communicate(timeout=15)
+    assert run.returncode == 0, stderr
+
+
+def deletion_drops_a_committed_enqueue():
+    add_victim()
+    with held_lock(busy_taste):
+        query(enqueue)
+    assert victim_rows() == '1'
+    query(forget)
+    assert victim_rows() == '0', 'a queued action outlived its account'
+
+
+def deletion_during_an_open_swipe():
+    # The real path: the swipe queues, and the deletion waits for its transaction.
+    add_victim()
+    pick = setup()
+    query("insert into pick_participants(pick_id,user_id) values('%s','%s')" % (pick, victim))
+    query("select public.heartbeat_upsert_swipe('%s','%s','taste-a',2)" % (pick, victim))
+    with held_lock(busy_taste):
+        with held_lock("select public.heartbeat_upsert_swipe('%s','%s','taste-a',0)" % (pick, victim), 'commit'):
+            gone = in_background(forget)
+    finished(gone)
+    assert victim_rows() == '0', 'a swipe queued during the deletion outlived the account'
+
+
+def enqueue_commits_after_the_deletion():
+    add_victim()
+    with held_lock(busy_taste):
+        with held_lock(enqueue, 'commit'):
+            query(forget)
+    assert victim_rows() == '0', 'an enqueue that committed after the deletion was kept'
+
+
+def enqueue_commits_inside_the_deletion():
+    add_victim()
+    with held_lock(forget, 'commit'):
+        act(enqueue)
+        assert victim_rows() == '1'
+    assert victim_rows() == '0', 'an enqueue that committed inside the deletion was kept'
+
+
+def enqueue_survives_a_deletion_that_rolls_back():
+    add_victim()
+    with held_lock(forget):
+        act(enqueue)
+    query(sweep)
+    assert (victim_rows(), victim_rows('taste_source_state')) == ('0', '1')
+    query(forget)
+    assert victim_rows('taste_source_state') == '0'
+
+
+# "set constraints all immediate" runs the commit-time step early and keeps the transaction
+# open, which is the moment between one side's check and its commit.
+def deletion_waits_for_a_committing_enqueue():
+    add_victim()
+    with held_lock(busy_taste):
+        with held_lock(enqueue + '; set constraints all immediate', 'commit'):
+            gone = in_background(forget, "wait_event='advisory'")
+    finished(gone)
+    assert victim_rows() == '0'
+
+
+def enqueue_waits_for_a_committing_deletion():
+    add_victim()
+    with held_lock(forget + '; set constraints all immediate', 'commit'):
+        late = in_background(enqueue, "wait_event='advisory'")
+    finished(late)
+    assert victim_rows() == '0'
+
+
+def sweep_drops_a_leftover_of_a_deleted_account():
+    # Backstop: a row that got past the trigger.
     gone = 'f1780000-0000-4000-8000-000000000997'
-    query("insert into private.taste_pending(user_id,source,revision,action_at,place_type,weight,google) values ('%s',gen_random_uuid(),gen_random_uuid(),now(),'cafe',1,false)" % gone)
+    query("begin; alter table private.taste_pending disable trigger user; insert into private.taste_pending(user_id,source,revision,action_at,place_type,weight,google) values ('%s',gen_random_uuid(),gen_random_uuid(),now(),'cafe',1,false); alter table private.taste_pending enable trigger user; commit" % gone)
+    assert query("select count(*) from private.taste_pending where user_id='%s'" % gone) == '1'
     query(sweep)
     assert query("select (select count(*) from private.taste_pending where user_id='%s')+(select count(*) from private.taste_source_state where user_id='%s')" % (gone, gone)) == '0'
 
@@ -455,7 +569,11 @@ checks = [bounded_sweep_reaches_unlocked_user, overlapping_sweeps_preserve_histo
           vote_survives_profile_lock, winning_close_survives_profile_lock,
           vote_settlement_survives_profile_lock, refresh_survives_profile_lock,
           refresh_survives_a_busy_refresh_lock, swipe_after_a_queued_refresh_wins,
-          newest_queued_action_wins_across_batches, deleted_account_leaves_nothing_queued]
+          newest_queued_action_wins_across_batches, deletion_drops_a_committed_enqueue,
+          deletion_during_an_open_swipe, enqueue_commits_after_the_deletion,
+          enqueue_commits_inside_the_deletion, enqueue_survives_a_deletion_that_rolls_back,
+          deletion_waits_for_a_committing_enqueue, enqueue_waits_for_a_committing_deletion,
+          sweep_drops_a_leftover_of_a_deleted_account]
 if query("select to_regclass('private.taste_sweep_cursor') is not null") == 't':
     checks.append(split_duplicates_preserve_history)
 for check in checks:
@@ -468,6 +586,7 @@ for check in checks:
         # Leave other cases independent on the pre-fix schema, too.
         query(sweep)
         query(sweep)
+query("delete from auth.users where id='%s' or id::text like 'ae000000-0000-4000-8000-%%' or id::text like 'f1780000-0000-4000-8000-%%'" % victim)
 # The other 0056 races run here too, so CI's one taste step covers all three scripts.
 for script in ('taste_source_concurrency.py', 'google_taste_concurrency.py'):
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), script)
