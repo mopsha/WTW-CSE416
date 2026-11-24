@@ -7,14 +7,23 @@ const { createNotifyStore } = jest.requireActual<{ createNotifyStore(): NotifySt
   '../supabase/functions/api/notifyStore.ts',
 );
 test('the relevance-filtered page stays scoped to the verified user and preserves microsecond cursors', async () => {
-  mockRpc.mockResolvedValue({ data: [], error: null });
+  mockRpc.mockResolvedValue({
+    data: { page: [], notifications: [], orderVersion: '7', reset: false },
+    error: null,
+  });
   const before = {
     createdAt: '2026-11-03T12:00:00.123456+00:00',
     id: '00000000-0000-4000-8000-000000000001',
+    orderVersion: '7',
   };
-  await expect(createNotifyStore().list('verified-user', 51, before)).resolves.toEqual([]);
-  expect(mockRpc).toHaveBeenCalledWith('notification_feed', {
+  await expect(
+    createNotifyStore().snapshot('verified-user', [before.id], 51, before),
+  ).resolves.toMatchObject({ orderVersion: '7' });
+  expect(mockRpc).toHaveBeenCalledTimes(1);
+  expect(mockRpc).toHaveBeenCalledWith('activity_snapshot', {
     p_user: 'verified-user',
+    p_ids: [before.id],
+    p_version: before.orderVersion,
     p_limit: 51,
     p_before: before.createdAt,
     p_before_id: before.id,

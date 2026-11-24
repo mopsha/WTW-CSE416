@@ -15,7 +15,7 @@ export function NotificationBell() {
     <Pressable
       onPress={() => router.push('/inbox')}
       accessibilityRole="button"
-      accessibilityLabel={unread ? `Notifications, ${unread} unread` : 'Notifications'}
+      accessibilityLabel={unread ? `Activity, ${unread} unread` : 'Activity'}
       style={({ pressed }) => [styles.bell, pressed && styles.pressed]}
     >
       <Ionicons name="notifications-outline" size={22} color={colors.text} />

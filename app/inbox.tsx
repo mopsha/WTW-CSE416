@@ -1,16 +1,23 @@
 import { Ionicons } from '@expo/vector-icons';
-import type { NotificationRow, NotificationType } from '@shared/api/notify.ts';
+import {
+  INBOX_REVALIDATE_LIMIT,
+  type ActivityPage,
+  type NotificationRow,
+  type NotificationType,
+} from '@shared/api/notify.ts';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { Fragment, useCallback, useRef, useState } from 'react';
 import { AppState, StyleSheet, Text, View } from 'react-native';
 
 import {
+  Avatar,
   Button,
   Card,
   colors,
   EmptyState,
   ErrorState,
   fonts,
+  radius,
   Screen,
   space,
   type,
@@ -22,6 +29,9 @@ import { inboxLabel, inboxRoute, inboxText } from '@/lib/inbox';
 import { timeAgo } from '@/lib/time';
 
 const ICONS: Record<NotificationType, keyof typeof Ionicons.glyphMap> = {
+  friend_request: 'person-add-outline',
+  friend_accepted: 'people-outline',
+  hang_rsvp: 'flash-outline',
   group_invite: 'people-outline',
   hang_invite: 'flash-outline',
   group_message: 'chatbubbles-outline',
@@ -45,7 +55,12 @@ export default function InboxScreen() {
   return viewer ? <Inbox key={viewer} viewer={viewer} /> : null;
 }
 
-type InboxPage = { rows: NotificationRow[]; nextCursor: string | null; olderLoaded: boolean };
+type InboxPage = {
+  rows: NotificationRow[];
+  nextCursor: string | null;
+  olderLoaded: boolean;
+  orderVersion?: string;
+};
 const emptyPage: InboxPage = { rows: [], nextCursor: null, olderLoaded: false };
 
 // PostgreSQL cursors preserve microseconds, while Date.parse only preserves milliseconds.
@@ -58,24 +73,31 @@ function comparePosition(a: string, b: string) {
   return micros(aTime) - micros(bTime) || aId.localeCompare(bId);
 }
 
-const position = (row: NotificationRow) => `${row.createdAt}|${row.id}`;
+const activityTime = (row: NotificationRow) => row.activityAt ?? row.createdAt;
+const position = (row: NotificationRow) => `${activityTime(row)}|${row.id}`;
+
+function firstPage(page: ActivityPage): InboxPage {
+  return {
+    rows: page.notifications,
+    nextCursor: page.nextCursor ?? null,
+    olderLoaded: false,
+    orderVersion: page.orderVersion,
+  };
+}
 
 function mergeNewest(
   previous: InboxPage,
-  newest: { notifications: NotificationRow[]; nextCursor?: string | null },
+  newest: ActivityPage,
   verified: Map<string, NotificationRow>,
 ): InboxPage {
-  const known = new Set(previous.rows.map((row) => row.id));
-  const rows = newest.notifications
-    .filter((row) => !known.has(row.id) || verified.has(row.id))
-    .map((row) => ({ ...row, readAt: row.readAt ?? verified.get(row.id)?.readAt ?? null }));
-  const nextCursor = newest.nextCursor ?? null;
+  const { notifications: rows, nextCursor } = newest;
   if (
+    previous.orderVersion !== newest.orderVersion ||
     !nextCursor ||
     !rows.some((row) => verified.has(row.id)) ||
     (previous.nextCursor && comparePosition(previous.nextCursor, nextCursor) >= 0)
   )
-    return { rows, nextCursor, olderLoaded: false };
+    return firstPage(newest);
 
   // The shared row connects both ranges. Only keep verified rows past the newest
   // cursor, so the old tail cursor never jumps across an unvisited gap.
@@ -83,7 +105,7 @@ function mergeNewest(
     const row = verified.get(old.id);
     return row && comparePosition(position(row), nextCursor) < 0 ? [row] : [];
   });
-  return { rows: [...rows, ...older], nextCursor: previous.nextCursor, olderLoaded: true };
+  return { ...previous, rows: [...rows, ...older] };
 }
 
 function Inbox({ viewer }: { viewer: string }) {
@@ -108,49 +130,39 @@ function Inbox({ viewer }: { viewer: string }) {
       setChecking(true);
       try {
         let next: InboxPage;
+        // Keep all rendered rows within one authorized database snapshot. Beyond
+        // the request limit, continue paging in a fresh window.
+        const ids =
+          previous.rows.length <= INBOX_REVALIDATE_LIMIT ? previous.rows.map((row) => row.id) : [];
         if (mode === 'older') {
           const result = await api.revalidateNotifications(
-            previous.rows.map((row) => row.id),
+            ids,
             viewer,
             previous.nextCursor ?? undefined,
           );
-          const verified = new Map(result.notifications.map((row) => [row.id, row]));
-          const rows = new Map<string, NotificationRow>();
-          // Keep the original order for preserved pages. The cursor remains valid
-          // even when the row that supplied it has since become unavailable.
-          for (const old of previous.rows) {
-            const row = verified.get(old.id);
-            if (row) rows.set(row.id, row);
+          if (!result.page) throw new Error('Missing activity page');
+          if (result.page.reset || !ids.length) {
+            next = { ...firstPage(result.page), olderLoaded: !result.page.reset };
+          } else {
+            const verified = new Map(result.notifications.map((row) => [row.id, row]));
+            const rows = new Map<string, NotificationRow>();
+            for (const old of previous.rows) {
+              const row = verified.get(old.id);
+              if (row) rows.set(row.id, row);
+            }
+            for (const row of result.page.notifications) rows.set(row.id, row);
+            next = { ...firstPage(result.page), rows: [...rows.values()], olderLoaded: true };
           }
-          const known = new Set(previous.rows.map((row) => row.id));
-          for (const row of result.page?.notifications ?? []) {
-            if (!known.has(row.id)) rows.set(row.id, row);
-          }
-          next = {
-            rows: [...rows.values()],
-            nextCursor: result.page ? result.page.nextCursor : previous.nextCursor,
-            olderLoaded: true,
-          };
-        } else if (previous.olderLoaded && previous.rows.length) {
-          const [newest, result] = await Promise.all([
-            api.listNotifications(undefined, viewer),
-            api.revalidateNotifications(
-              previous.rows.map((row) => row.id),
-              viewer,
-            ),
-          ]);
+        } else if (previous.olderLoaded && ids.length) {
+          const result = await api.revalidateNotifications(ids, viewer, undefined, true);
+          if (!result.page) throw new Error('Missing activity page');
           next = mergeNewest(
             previous,
-            newest,
+            result.page,
             new Map(result.notifications.map((row) => [row.id, row])),
           );
         } else {
-          const result = await api.listNotifications(undefined, viewer);
-          next = {
-            rows: result.notifications,
-            nextCursor: result.nextCursor ?? null,
-            olderLoaded: false,
-          };
+          next = firstPage(await api.listNotifications(undefined, viewer));
         }
         if (request !== latest.current) return;
         current.current = next;
@@ -195,6 +207,7 @@ function Inbox({ viewer }: { viewer: string }) {
 
   const refresh = () => void fetchRows('refresh');
   const { rows, nextCursor } = page;
+  const today = new Date().toDateString();
   const open = (n: NotificationRow, route: string) => {
     if (checking) return;
     if (!n.readAt) {
@@ -211,53 +224,83 @@ function Inbox({ viewer }: { viewer: string }) {
   };
 
   return (
-    <Screen title="Notifications" back onRefresh={refresh} refreshing={pending === 'refresh'}>
+    <Screen title="Activity" back onRefresh={refresh} refreshing={pending === 'refresh'}>
       {load.status === 'error' && rows.length === 0 ? (
         <ErrorState message={load.message} onRetry={refresh} />
       ) : load.status === 'ready' && rows.length === 0 && !checking ? (
         <EmptyState
           icon="notifications-outline"
-          title="Nothing yet"
-          body="You'll see it here when a Pick starts, it's time to vote, or there's a winner."
+          title="No activity yet"
+          body="Friend requests, invitations, and updates to your plans will appear here."
         />
       ) : (
-        rows.map((n) => {
-          const route = inboxRoute(n);
+        rows.map((n, index) => {
           if (checking) {
             return (
-              <Card key={n.id} accessibilityLabel="Checking notification">
+              <Card
+                key={n.id}
+                variant="flat"
+                style={styles.activityCard}
+                accessibilityLabel="Checking notification"
+              >
                 <View style={styles.placeholder} />
               </Card>
             );
           }
+          const route = inboxRoute(n);
           const { title, body } = inboxText(n);
+          const actor = n.activity?.actorName?.trim();
+          const emphasized = actor && title.startsWith(`${actor} `) ? actor : undefined;
+          const section = activitySection(activityTime(n), today);
+          const previous = rows[index - 1];
           return (
-            <Card
-              key={n.id}
-              onPress={route ? () => open(n, route) : undefined}
-              accessibilityLabel={inboxLabel(n)}
-              accessibilityHint="Opens the Pick"
-            >
-              <View style={styles.row}>
-                <Ionicons
-                  name={ICONS[n.type] ?? 'notifications-outline'}
-                  size={22}
-                  color={n.readAt ? colors.muted : colors.primary}
-                />
-                <View style={styles.text}>
-                  <Text style={[styles.title, !n.readAt && styles.unreadTitle]}>{title}</Text>
-                  <Text style={styles.body}>{body}</Text>
-                  <Text style={styles.time}>{timeAgo(n.createdAt)}</Text>
+            <Fragment key={n.id}>
+              {(!previous || activitySection(activityTime(previous), today) !== section) && (
+                <Text accessibilityRole="header" style={styles.section}>
+                  {section}
+                </Text>
+              )}
+              <Card
+                variant="flat"
+                style={[styles.activityCard, !n.readAt && styles.unreadCard]}
+                onPress={route ? () => open(n, route) : undefined}
+                accessibilityLabel={inboxLabel(n)}
+              >
+                <View style={styles.row}>
+                  {n.activity?.actorId ? (
+                    <Avatar
+                      name={actor || 'WTW member'}
+                      avatarRef={n.activity.avatarRef}
+                      size={46}
+                      variant="social"
+                    />
+                  ) : (
+                    <View style={styles.icon}>
+                      <Ionicons
+                        name={ICONS[n.type] ?? 'notifications-outline'}
+                        size={21}
+                        color={colors.primary}
+                      />
+                    </View>
+                  )}
+                  <View style={styles.text}>
+                    <Text style={styles.title}>
+                      {emphasized ? <Text style={styles.actor}>{emphasized}</Text> : null}
+                      {title.slice(emphasized?.length ?? 0)}
+                    </Text>
+                    {body ? <Text style={styles.body}>{body}</Text> : null}
+                    <Text style={styles.time}>{timeAgo(activityTime(n))}</Text>
+                  </View>
+                  {n.readAt ? null : <View style={styles.dot} />}
                 </View>
-                {n.readAt ? null : <View style={styles.dot} />}
-              </View>
-            </Card>
+              </Card>
+            </Fragment>
           );
         })
       )}
       {nextCursor ? (
         <Button
-          label="Load older notifications"
+          label="Load older activity"
           variant="secondary"
           loading={pending === 'older'}
           disabled={checking || pending !== null}
@@ -268,13 +311,34 @@ function Inbox({ viewer }: { viewer: string }) {
   );
 }
 
+function activitySection(value: string, today: string) {
+  const date = new Date(value).toDateString();
+  return date === today ? 'Today' : 'Earlier';
+}
+
 const styles = StyleSheet.create({
-  placeholder: { minHeight: 58 },
-  row: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
-  text: { flex: 1, gap: 2 },
-  title: { fontFamily: fonts.medium, fontSize: 16, color: colors.text },
-  unreadTitle: { fontFamily: fonts.bold },
+  placeholder: { minHeight: 46 },
+  section: { ...type.heading, color: colors.text, marginTop: space.xs },
+  activityCard: { padding: space.md, borderRadius: radius.md, backgroundColor: colors.bg },
+  unreadCard: { backgroundColor: colors.card },
+  row: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  icon: {
+    width: 46,
+    height: 46,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.cardHi,
+  },
+  text: { flex: 1, gap: space.xs },
+  title: { ...type.body, color: colors.text },
+  actor: { fontFamily: fonts.semibold },
   body: { ...type.caption, color: colors.muted },
   time: { ...type.caption, color: colors.muted },
-  dot: { width: 10, height: 10, borderRadius: 5, marginTop: 6, backgroundColor: colors.primary },
+  dot: {
+    width: space.sm,
+    height: space.sm,
+    borderRadius: radius.pill,
+    backgroundColor: colors.primary,
+  },
 });

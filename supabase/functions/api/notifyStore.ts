@@ -1,5 +1,5 @@
 import { ApiError } from '../_shared/api/errors.ts';
-import type { NotificationRow, NotifyStore } from '../_shared/api/notify.ts';
+import type { ActivityDetails, NotificationRow, NotifyStore } from '../_shared/api/notify.ts';
 import { createServiceClient } from './serviceClient.ts';
 
 function fail(error: { code: string }): never {
@@ -21,7 +21,9 @@ interface Row {
   pick_id: string | null;
   payload: Record<string, unknown>;
   created_at: string;
+  activity_at: string | null;
   read_at: string | null;
+  activity?: ActivityDetails;
 }
 
 function mapRows(data: Row[] | null): NotificationRow[] {
@@ -31,7 +33,9 @@ function mapRows(data: Row[] | null): NotificationRow[] {
     pickId: r.pick_id,
     payload: r.payload,
     createdAt: r.created_at,
+    ...(r.activity_at ? { activityAt: r.activity_at } : {}),
     readAt: r.read_at,
+    ...(r.activity ? { activity: r.activity } : {}),
   }));
 }
 
@@ -64,23 +68,22 @@ export function createNotifyStore(): NotifyStore {
         .in('token', tokens);
       if (error) fail(error);
     },
-    async list(userId, limit, before) {
-      const { data, error } = await createServiceClient().rpc('notification_feed', {
-        p_user: userId,
-        p_limit: limit,
-        p_before: before?.createdAt ?? null,
-        p_before_id: before?.id ?? null,
-      });
-      if (error) fail(error);
-      return mapRows(data);
-    },
-    async revalidate(userId, ids) {
-      const { data, error } = await createServiceClient().rpc('notification_revalidate', {
+    async snapshot(userId, ids, limit, before) {
+      const { data, error } = await createServiceClient().rpc('activity_snapshot', {
         p_user: userId,
         p_ids: ids,
+        p_limit: limit ?? null,
+        p_before: before?.createdAt ?? null,
+        p_before_id: before?.id ?? null,
+        p_version: before?.orderVersion ?? null,
       });
       if (error) fail(error);
-      return mapRows(data);
+      return {
+        notifications: mapRows(data.notifications),
+        page: mapRows(data.page),
+        orderVersion: data.orderVersion,
+        reset: data.reset,
+      };
     },
     async markRead(id, userId) {
       const { error } = await createServiceClient().rpc('notification_mark_read', {

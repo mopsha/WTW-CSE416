@@ -4,8 +4,12 @@
 // 0009_notifications.sql decides. Contract: docs/api-integration.md.
 
 import { ApiError } from './errors.ts';
+import type { AvatarRef } from './avatars.ts';
 
 export const NOTIFICATION_TYPES = [
+  'friend_request',
+  'friend_accepted',
+  'hang_rsvp',
   'direct_message',
   'group_message',
   'group_invite',
@@ -28,6 +32,9 @@ export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
  * reasons. Details are in the in-app inbox, which only the owner can read.
  */
 export const PUSH_TEXT: Readonly<Record<NotificationType, { title: string; body: string }>> = {
+  friend_request: { title: 'Friend request', body: 'Someone sent you a friend request.' },
+  friend_accepted: { title: 'Friend request accepted', body: 'You have a new friend on WTW.' },
+  hang_rsvp: { title: 'Hang responses', body: 'People responded to your Hang.' },
   direct_message: {
     title: 'New message',
     body: 'A friend sent you a message. Open WTW to read it.',
@@ -63,18 +70,48 @@ export function notificationText(type: NotificationType, payload: Record<string,
   return PUSH_TEXT[type] ?? { title: 'WTW', body: 'Something happened.' };
 }
 
+export interface ActivityDetails {
+  actorId?: string;
+  actorName?: string;
+  avatarRef?: AvatarRef;
+  groupName?: string;
+  hangName?: string;
+  winnerName?: string;
+  replyCount?: number;
+  otherReplyCount?: number;
+  replyStatus?: 'down' | 'maybe' | 'cant';
+}
+
 export interface NotificationRow {
   id: string;
   type: NotificationType;
   pickId: string | null;
   payload: Record<string, unknown>;
   createdAt: string;
+  activityAt?: string;
   readAt: string | null;
+  activity?: ActivityDetails;
 }
 
 export interface NotificationCursor {
   createdAt: string;
   id: string;
+  orderVersion?: string;
+}
+
+export interface ActivitySnapshot {
+  page: NotificationRow[];
+  notifications: NotificationRow[];
+  orderVersion: string;
+  reset: boolean;
+}
+
+export interface ActivityPage {
+  notifications: NotificationRow[];
+  unreadCount: number;
+  nextCursor: string | null;
+  orderVersion?: string;
+  reset?: boolean;
 }
 
 /** Database adapter (service role). */
@@ -91,8 +128,12 @@ export interface NotifyStore {
     hang?: { id: string; userIds: string[] },
   ): Promise<{ token: string; notification_id: string; deadline: string | null }[]>;
   deleteTokens(tokens: string[]): Promise<void>;
-  list(userId: string, limit: number, before?: NotificationCursor): Promise<NotificationRow[]>;
-  revalidate(userId: string, ids: string[]): Promise<NotificationRow[]>;
+  snapshot(
+    userId: string,
+    ids: string[],
+    limit?: number,
+    before?: NotificationCursor,
+  ): Promise<ActivitySnapshot>;
   /** Rejects (404) a notification that isn't the caller's. */
   markRead(id: string, userId: string): Promise<void>;
   registerToken(userId: string, token: string, platform: 'ios' | 'android'): Promise<void>;
@@ -111,7 +152,7 @@ export type Notifier = (
   type: NotificationType,
   pickId: string | null,
   payload?: Record<string, unknown>,
-  options?: { inboxRecorded: true },
+  options?: { inboxRecorded: true; notificationId?: string },
 ) => Promise<void>;
 
 export const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
@@ -174,7 +215,7 @@ export function createNotifier(
   log: (...args: unknown[]) => void = console.error,
 ): Notifier {
   return async (userIds, type, pickId, payload = {}, options) => {
-    if (!userIds.length) return;
+    if (!userIds.length || type === 'friend_accepted' || type === 'hang_rsvp') return;
     try {
       const recipients = [...new Set(userIds)];
       // Hang creation returns only recipients whose inbox rows were just inserted.
@@ -182,8 +223,13 @@ export function createNotifier(
         options?.inboxRecorded && type === 'hang_invite' && typeof payload.hangId === 'string'
           ? { id: payload.hangId, userIds: recipients }
           : undefined;
-      if (options?.inboxRecorded && !hang) return;
-      const fresh = hang ? [] : await store.insert(recipients, type, pickId, payload);
+      const recordedRequest = type === 'friend_request' ? options?.notificationId : undefined;
+      if (options?.inboxRecorded && !hang && !recordedRequest) return;
+      const fresh = recordedRequest
+        ? [recordedRequest]
+        : hang
+          ? []
+          : await store.insert(recipients, type, pickId, payload);
       if (!hang && !fresh.length) return;
       const targets = await store.pushTargets(fresh, hang);
       const now = Date.now();
@@ -249,9 +295,11 @@ export const INBOX_LIMIT = 50;
 /** Keep database timestamp precision; Date.toISOString would truncate microseconds. */
 export function parseNotificationCursor(value?: string): NotificationCursor | undefined {
   if (value === undefined) return undefined;
-  const [createdAt, id, extra] = value.split('|');
+  const [createdAt, id, orderVersion, extra] = value.split('|');
   if (
     extra !== undefined ||
+    (orderVersion !== undefined &&
+      (!/^(0|[1-9]\d{0,18})$/.test(orderVersion) || BigInt(orderVersion) > 9223372036854775807n)) ||
     !createdAt ||
     !id ||
     !UUID_RE.test(id) ||
@@ -259,40 +307,60 @@ export function parseNotificationCursor(value?: string): NotificationCursor | un
     !Number.isFinite(Date.parse(createdAt))
   )
     throw new ApiError(400, 'INVALID_INPUT', 'Invalid notification cursor');
-  return { createdAt, id };
+  return { createdAt, id, ...(orderVersion === undefined ? {} : { orderVersion }) };
 }
 
 /** GET /notifications: same newest-first inbox, with an optional older-page cursor.
  * unreadCount keeps its existing meaning: unread rows on the returned page.
  */
 export async function listNotifications(store: NotifyStore, userId: string, before?: string) {
-  const page = await store.list(userId, INBOX_LIMIT + 1, parseNotificationCursor(before));
-  const notifications = page.slice(0, INBOX_LIMIT);
+  return formatPage(
+    await store.snapshot(userId, [], INBOX_LIMIT + 1, parseNotificationCursor(before)),
+  );
+}
+
+function formatPage(snapshot: ActivitySnapshot): ActivityPage {
+  const notifications = snapshot.page.slice(0, INBOX_LIMIT);
   const last = notifications[notifications.length - 1];
+  const version = snapshot.orderVersion === '0' ? undefined : snapshot.orderVersion;
   return {
     notifications,
     unreadCount: notifications.filter((n) => !n.readAt).length,
-    nextCursor: page.length > INBOX_LIMIT && last ? `${last.createdAt}|${last.id}` : null,
+    nextCursor:
+      snapshot.page.length > INBOX_LIMIT && last
+        ? [last.activityAt ?? last.createdAt, last.id, ...(version ? [version] : [])].join('|')
+        : null,
+    ...(version ? { orderVersion: version } : {}),
+    ...(snapshot.reset ? { reset: true } : {}),
   };
 }
 
-export const INBOX_REVALIDATE_LIMIT = 500;
+// 1,500 UUIDs fit within the Edge API's 64 KiB JSON body limit.
+export const INBOX_REVALIDATE_LIMIT = 1500;
 
 export async function revalidateNotifications(store: NotifyStore, userId: string, body: unknown) {
-  const input = body as { ids?: unknown; before?: unknown } | null;
+  const input = body as { ids?: unknown; before?: unknown; includePage?: unknown } | null;
   if (
     !Array.isArray(input?.ids) ||
     input.ids.length > INBOX_REVALIDATE_LIMIT ||
     input.ids.some((id) => typeof id !== 'string' || !UUID_RE.test(id)) ||
-    (input.before !== undefined && typeof input.before !== 'string')
+    (input.before !== undefined && typeof input.before !== 'string') ||
+    (input.includePage !== undefined && typeof input.includePage !== 'boolean')
   )
     throw new ApiError(400, 'INVALID_INPUT', 'Invalid notification page');
   const ids = [...new Set<string>(input.ids)];
-  const [notifications, page] = await Promise.all([
-    ids.length ? store.revalidate(userId, ids) : [],
-    input.before === undefined ? undefined : listNotifications(store, userId, input.before),
-  ]);
-  return { notifications, page };
+  const before = parseNotificationCursor(input.before);
+  const includePage = input.includePage || before !== undefined;
+  const snapshot = await store.snapshot(
+    userId,
+    ids,
+    includePage ? INBOX_LIMIT + 1 : undefined,
+    before,
+  );
+  return {
+    notifications: snapshot.notifications,
+    page: includePage ? formatPage(snapshot) : undefined,
+  };
 }
 
 /** POST /notifications/:id/read. Someone else's id is a 404, same as an unknown one. */

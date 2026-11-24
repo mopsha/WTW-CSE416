@@ -24,7 +24,7 @@ jest.mock('@/components', () => {
   return {
     ...jest.requireActual('@/components/theme'),
     ...Object.fromEntries(
-      ['Screen', 'Card', 'Button', 'ErrorState', 'EmptyState'].map((name) => [
+      ['Screen', 'Card', 'Button', 'ErrorState', 'EmptyState', 'Avatar'].map((name) => [
         name,
         (props: object) => React.createElement(`test-${name}`, props),
       ]),
@@ -103,10 +103,7 @@ async function mount() {
 
 test('discovers new notices on return and preserves verified older rows, order, and read state', async () => {
   const readAt = '2026-11-03T13:00:00Z';
-  jest
-    .mocked(api.listNotifications)
-    .mockResolvedValueOnce(page(['first'], cursor('first')))
-    .mockResolvedValueOnce(page(['new', 'first'], cursor('first')));
+  jest.mocked(api.listNotifications).mockResolvedValueOnce(page(['first'], cursor('first')));
   jest
     .mocked(api.revalidateNotifications)
     .mockResolvedValueOnce({
@@ -115,7 +112,10 @@ test('discovers new notices on return and preserves verified older rows, order, 
     })
     .mockResolvedValueOnce({
       notifications: [notice('middle', readAt), notice('first', readAt)],
-      page: undefined,
+      page: {
+        ...page(['new', 'first'], cursor('first')),
+        notifications: [notice('new'), notice('first', readAt)],
+      },
     })
     .mockResolvedValueOnce({
       notifications: [notice('new'), notice('first', readAt), notice('middle', readAt)],
@@ -131,10 +131,12 @@ test('discovers new notices on return and preserves verified older rows, order, 
   await inbox.blur();
   expect(inbox.cards()[1].props.accessibilityLabel).toBe('Checking notification');
   await inbox.focus();
-  expect(api.listNotifications).toHaveBeenCalledTimes(2);
+  expect(api.listNotifications).toHaveBeenCalledTimes(1);
   expect(api.revalidateNotifications).toHaveBeenLastCalledWith(
     ['first', 'middle', 'boundary'],
     'me',
+    undefined,
+    true,
   );
   expect(inbox.cards()).toHaveLength(3);
   expect(inbox.cards()[0].props.accessibilityLabel).toContain('Private reason new');
@@ -157,10 +159,7 @@ test('discovers new notices on return and preserves verified older rows, order, 
 test.each([true, false])(
   'foreground resets to the newest cursor when the loaded range has no overlap (old rows still visible: %p)',
   async (stillVisible) => {
-    jest
-      .mocked(api.listNotifications)
-      .mockResolvedValueOnce(page(['first'], cursor('first')))
-      .mockResolvedValueOnce(page(['fresh', 'new'], cursor('new')));
+    jest.mocked(api.listNotifications).mockResolvedValueOnce(page(['first'], cursor('first')));
     jest
       .mocked(api.revalidateNotifications)
       .mockResolvedValueOnce({
@@ -169,7 +168,7 @@ test.each([true, false])(
       })
       .mockResolvedValueOnce({
         notifications: stillVisible ? [notice('first'), notice('boundary')] : [],
-        page: undefined,
+        page: page(['fresh', 'new'], cursor('new')),
       })
       .mockResolvedValueOnce({
         notifications: [notice('fresh'), notice('new')],
@@ -229,7 +228,6 @@ test('clears cached cancellation reasons when foreground revalidation fails and 
   jest
     .mocked(api.listNotifications)
     .mockResolvedValueOnce(page(['first'], cursor('first')))
-    .mockResolvedValueOnce(page(['new']))
     .mockResolvedValueOnce(page(['fresh']));
   jest
     .mocked(api.revalidateNotifications)
@@ -270,5 +268,127 @@ test('drops mounted rows immediately when the account changes', async () => {
   mockViewer = 'different-account';
   await act(async () => inbox.tree.update(<InboxScreen />));
   expect(inbox.cards()).toHaveLength(0);
+  await inbox.finish();
+});
+
+test('Activity uses authorized photo references and falls back to initials', async () => {
+  const avatarRef = { userId: 'alex', revision: 1 };
+  jest.mocked(api.listNotifications).mockResolvedValueOnce({
+    ...page([]),
+    notifications: [
+      {
+        ...notice('alex'),
+        type: 'friend_request',
+        activity: { actorId: 'alex', actorName: 'Alex', avatarRef },
+      },
+      {
+        ...notice('jordan'),
+        type: 'friend_accepted',
+        activity: { actorId: 'jordan', actorName: 'Jordan' },
+      },
+    ],
+  });
+  const inbox = await mount();
+  const avatars = inbox.tree.root.findAllByType('test-Avatar');
+  expect(avatars[0].props).toMatchObject({ name: 'Alex', avatarRef });
+  expect(avatars[1].props.name).toBe('Jordan');
+  expect(avatars[1].props.avatarRef).toBeUndefined();
+  expect(inbox.cards()[0].props.accessibilityLabel).toContain('Alex sent you a friend request.');
+  expect(inbox.cards()[1].props.accessibilityLabel).toContain(
+    'Jordan accepted your friend request.',
+  );
+  await inbox.finish();
+});
+
+test('the refreshed Hang group shows the authorized actor, count and unread state as one row', async () => {
+  const row: NotificationRow = {
+    ...notice('first', '2026-11-03T13:00:00Z'),
+    type: 'hang_rsvp',
+    pickId: null,
+    payload: { hangId: 'hang' },
+    activity: {
+      actorId: 'jordan',
+      actorName: 'Jordan',
+      avatarRef: { userId: 'jordan', revision: 2 },
+      replyStatus: 'down',
+      replyCount: 2,
+      hangName: 'Coffee',
+    },
+  };
+  const changed: NotificationRow = {
+    ...row,
+    activityAt: notice('fresh').createdAt,
+    readAt: null,
+    activity: {
+      actorId: 'maya',
+      actorName: 'Maya',
+      replyStatus: 'maybe',
+      replyCount: 1,
+      hangName: 'Coffee',
+    },
+  };
+  jest.mocked(api.listNotifications).mockResolvedValueOnce({
+    ...page([], cursor('first')),
+    notifications: [row],
+    orderVersion: '1',
+  });
+  jest
+    .mocked(api.revalidateNotifications)
+    .mockResolvedValueOnce({
+      notifications: [row],
+      page: { ...page(['middle']), orderVersion: '1' },
+    })
+    .mockResolvedValueOnce({
+      notifications: [changed, notice('middle')],
+      page: { ...page([], cursor('boundary')), notifications: [changed], orderVersion: '2' },
+    });
+  const inbox = await mount();
+  await inbox.loadOlder();
+  expect(inbox.cards()[0].props.accessibilityLabel).toContain('Jordan and 1 other');
+  await inbox.blur();
+  await inbox.focus();
+  expect(inbox.cards()).toHaveLength(1);
+  expect(inbox.cards()[0].props.accessibilityLabel).toContain('Unread');
+  expect(inbox.cards()[0].props.accessibilityLabel).toContain('Maya');
+  expect(inbox.cards()[0].props.accessibilityLabel).not.toContain('Jordan');
+  expect(inbox.cards()[0].props.accessibilityLabel).not.toContain('other');
+  expect(inbox.tree.root.findByType('test-Avatar').props.avatarRef).toBeUndefined();
+  await inbox.finish();
+});
+
+test('load-more restarts at the server head when a Hang moved across the old cursor', async () => {
+  jest.mocked(api.listNotifications).mockResolvedValueOnce({
+    ...page(['first'], `${cursor('first')}|1`),
+    orderVersion: '1',
+  });
+  jest
+    .mocked(api.revalidateNotifications)
+    .mockResolvedValueOnce({
+      notifications: [],
+      page: { ...page(['fresh', 'new'], `${cursor('new')}|2`), orderVersion: '2', reset: true },
+    })
+    .mockResolvedValueOnce({
+      notifications: [notice('fresh'), notice('new')],
+      page: { ...page(['first', 'later']), orderVersion: '2' },
+    });
+
+  const inbox = await mount();
+  await inbox.loadOlder();
+  expect(
+    inbox
+      .cards()
+      .map((card: { props: { accessibilityLabel: string } }) => card.props.accessibilityLabel),
+  ).toEqual([
+    expect.stringContaining('Private reason fresh'),
+    expect.stringContaining('Private reason new'),
+  ]);
+  await inbox.loadOlder();
+  expect(api.revalidateNotifications).toHaveBeenLastCalledWith(
+    ['fresh', 'new'],
+    'me',
+    `${cursor('new')}|2`,
+  );
+  expect(inbox.cards()).toHaveLength(4);
+  expect(inbox.cards()[2].props.accessibilityLabel).toContain('Private reason first');
   await inbox.finish();
 });

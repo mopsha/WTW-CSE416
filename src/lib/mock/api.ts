@@ -943,7 +943,9 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
   }
   const revalidate = method === 'POST' && path === '/notifications/revalidate';
   if (revalidate || (method === 'GET' && path.split('?')[0] === '/notifications')) {
-    const input = revalidate ? (readBody(init) as { ids?: string[]; before?: string }) : null;
+    const input = revalidate
+      ? (readBody(init) as { ids?: string[]; before?: string; includePage?: boolean })
+      : null;
     const cursor = revalidate ? input?.before : new URL(url).searchParams.get('before');
     const [stamp, id] = cursor?.split('|') ?? [];
     const all = [...mockNotifications, ...mockGroupChatNotices(), ...mockDirectNotices()].sort(
@@ -964,7 +966,7 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
       revalidate
         ? {
             notifications: all.filter((n) => input?.ids?.includes(n.id)),
-            ...(input?.before ? { page } : {}),
+            ...(input?.before || input?.includePage ? { page } : {}),
           }
         : page,
     );
