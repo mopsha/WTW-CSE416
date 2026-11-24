@@ -122,14 +122,14 @@ function AvatarImageContent({
         <Text
           style={[
             styles.initials,
-            { fontSize: size * 0.4 },
+            { fontSize: size * 0.4, color: neutral ? colors.text : colors.bg },
             variant === 'social' && {
               fontFamily: fonts.semibold,
               color: colors.text,
               fontSize: (size * 23) / 60,
             },
           ]}
-          maxFontSizeMultiplier={variant === 'social' ? 1.4 : undefined}
+          maxFontSizeMultiplier={1.4}
         >
           {initialsFor(name)}
         </Text>
@@ -221,7 +221,7 @@ export function AvatarStack({
 
 const styles = StyleSheet.create({
   circle: { alignItems: 'center', justifyContent: 'center' },
-  initials: { fontFamily: fonts.bold, color: '#FFFFFF' },
+  initials: { fontFamily: fonts.bold },
   badge: {
     position: 'absolute',
     right: -2,

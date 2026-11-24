@@ -219,6 +219,7 @@ function HangResponseContent({
           post={rsvp.value}
           userId={userId}
           busy={null}
+          singlePost={singlePost}
           disabled={rsvp.uncertain || !canRsvpHang(rsvp.value)}
           pending={rsvp.pending}
           onRespond={(status) => rsvp.choice.choose(status)}

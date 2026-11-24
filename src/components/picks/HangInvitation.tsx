@@ -18,6 +18,7 @@ export function HangInvitation({
   busy,
   disabled = false,
   pending: mutationPending = false,
+  singlePost = false,
   onRespond,
   onStart,
 }: {
@@ -26,12 +27,24 @@ export function HangInvitation({
   busy: string | null;
   disabled?: boolean;
   pending?: boolean;
+  singlePost?: boolean;
   onRespond(status: HangStatus): void;
   onStart(): void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const startAfterDismiss = useRef(false);
   const isHost = post.authorId === userId;
+  const openProfile = (id: string) => {
+    if (id === userId && !singlePost) {
+      router.navigate('/(tabs)/profile');
+      return;
+    }
+    // A standalone Hang stays under the profile so Back returns to the Hang.
+    router.navigate({
+      pathname: '/users/[id]',
+      params: id === userId ? { id } : { id, hangId: post.id },
+    });
+  };
   const author = post.authorName ?? (isHost ? 'You' : 'A friend');
   const canStart =
     isHost &&
@@ -47,9 +60,7 @@ export function HangInvitation({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Open ${author}’s profile`}
-          onPress={() =>
-            router.push({ pathname: '/users/[id]', params: { id: post.authorId, hangId: post.id } })
-          }
+          onPress={() => openProfile(post.authorId)}
           style={s.authorIdentity}
         >
           <Avatar name={author} userId={post.authorId} size={40} />
@@ -109,7 +120,7 @@ export function HangInvitation({
           );
         })}
       </View>
-      <HangAttendees post={post} />
+      <HangAttendees post={post} onOpenProfile={openProfile} />
       <Sheet
         visible={menuOpen && canStart}
         title="Hang options"
@@ -141,7 +152,7 @@ const s = StyleSheet.create({
     backgroundColor: picksTheme.colors.invitation,
     borderRadius: radius.lg,
     padding: space.lg,
-    gap: space.md,
+    gap: space.sm,
   },
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   authorIdentity: {
@@ -173,12 +184,18 @@ const s = StyleSheet.create({
     flex: 1,
     flexBasis: 72,
     minHeight: MIN_TARGET,
-    padding: space.sm,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.xs,
     borderRadius: radius.sm,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  responseText: { ...picksTheme.ui, fontWeight: '500', color: colors.text, textAlign: 'center' },
+  responseText: {
+    ...picksTheme.secondary,
+    fontWeight: '500',
+    color: colors.text,
+    textAlign: 'center',
+  },
   selected: { backgroundColor: colors.primary },
   selectedText: { color: colors.bg, fontWeight: '600' },
   pressed: { opacity: 0.75 },
