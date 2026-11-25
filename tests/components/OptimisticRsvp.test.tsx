@@ -355,3 +355,60 @@ test('scheduled RSVP carries the revision the participant saw when choosing', as
   expect(api.rsvp).toHaveBeenCalledWith('pick', 'going', 'A', 3);
   await act(async () => first.resolve({ status: 'ok' }));
 });
+
+test('Hang refresh reconciles the selected RSVP, both counts, and the attendee tab together', async () => {
+  const viewer = { userId: 'A', displayName: 'Alex', username: 'alex' };
+  const friend = { userId: 'B', displayName: 'Blair', username: 'blair' };
+  const initial: HangPost = {
+    ...post(),
+    viewer,
+    downCount: 1,
+    maybeCount: 1,
+    attendees: [
+      { ...friend, status: 'down' },
+      { ...viewer, status: 'maybe' },
+    ],
+  };
+  const write = deferred<{ status: 'ok' }>();
+  jest.mocked(api.respondHang).mockReturnValueOnce(write.promise);
+  jest
+    .mocked(api.getHang)
+    .mockResolvedValue({ posts: [initial], sharedAvailable: true, notice: '' });
+  await act(async () => {
+    tree = create(<HangCard />);
+  });
+  const control = (label: string) =>
+    tree.root
+      .findAllByProps({ accessibilityLabel: label })
+      .find((node: any) => typeof node.props.onPress === 'function');
+  expect(control('Maybe, Walk').props.accessibilityState.selected).toBe(true);
+  expect(control('View attendees, 1 down, 1 maybe')).toBeDefined();
+  await act(async () => control("I'm in, Walk").props.onPress());
+  expect(control("I'm in, Walk").props.accessibilityState.selected).toBe(true);
+  await act(async () => control('View attendees, 2 down, 0 maybe').props.onPress());
+  expect(control('Open Alex’s profile, @alex')).toBeDefined();
+  await act(async () => control('Maybe, 0').props.onPress());
+  expect(control('Open Alex’s profile, @alex')).toBeUndefined();
+
+  const confirmed: HangPost = {
+    ...initial,
+    myStatus: 'down',
+    downCount: 1,
+    maybeCount: 1,
+    attendees: [
+      { ...viewer, status: 'down' },
+      { ...friend, status: 'maybe' },
+    ],
+  };
+  jest
+    .mocked(api.getHang)
+    .mockResolvedValue({ posts: [confirmed], sharedAvailable: true, notice: '' });
+  await act(async () => write.resolve({ status: 'ok' }));
+  expect(control("I'm in, Walk").props.accessibilityState.selected).toBe(true);
+  expect(control('Maybe, Walk').props.accessibilityState.selected).toBe(false);
+  expect(control('View attendees, 1 down, 1 maybe')).toBeDefined();
+  expect(control('Open Blair’s profile, @blair')).toBeDefined();
+  await act(async () => control('Down, 1').props.onPress());
+  expect(control('Open Alex’s profile, @alex')).toBeDefined();
+  expect(control('Open Blair’s profile, @blair')).toBeUndefined();
+});

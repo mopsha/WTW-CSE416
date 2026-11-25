@@ -1,19 +1,31 @@
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import type { UserProfile } from '@shared/api/userProfiles.ts';
 import { Avatar } from '../Avatar';
-import { colors, fonts, profileTheme, space } from '../theme';
+import { Card } from '../Card';
+import { colors, fonts, profileTheme, radius, space, type } from '../theme';
 
 export function ProfileHero({
   name,
   profile,
   userId,
+  username = profile?.username,
 }: {
   name: string;
   profile: UserProfile | null;
   userId?: string;
+  username?: string | null;
 }) {
+  const friends = profile?.friendsCount ?? 0;
+  const groups = profile?.groupsCount ?? 0;
   return (
     <View style={s.hero}>
       <View style={s.avatarFrame}>
@@ -23,65 +35,54 @@ export function ProfileHero({
           userId={profile?.id ?? userId}
           avatarRef={profile?.avatarRef}
           neutral
-          size={96}
+          size={64}
         />
       </View>
       <View style={s.identity}>
-        <Text style={s.name}>{name}</Text>
-        {profile?.username ? <Text style={s.username}>@{profile.username}</Text> : null}
+        <Text style={s.name} accessibilityRole="header">
+          {name}
+        </Text>
+        {username ? <Text style={s.username}>@{username}</Text> : null}
         {profile?.metadataVisible ? (
-          <View style={s.stats}>
-            <View
-              style={s.stat}
-              accessible
-              accessibilityLabel={`${profile.friendsCount ?? 0} friends`}
-            >
-              <Text style={s.number}>{profile.friendsCount ?? 0}</Text>
-              <Text style={s.statLabel}>friends</Text>
-            </View>
-            <View style={s.statDivider} />
-            <View
-              style={s.stat}
-              accessible
-              accessibilityLabel={`${profile.groupsCount ?? 0} groups`}
-            >
-              <Text style={s.number}>{profile.groupsCount ?? 0}</Text>
-              <Text style={s.statLabel}>groups</Text>
-            </View>
-          </View>
+          <Text style={s.stats}>
+            {`${friends} ${friends === 1 ? 'friend' : 'friends'} · ${groups} ${groups === 1 ? 'group' : 'groups'}`}
+          </Text>
         ) : null}
       </View>
     </View>
   );
 }
 export function ProfileFavorites({ profile }: { profile: UserProfile }) {
+  const { fontScale } = useWindowDimensions();
   if (!profile.metadataVisible)
     return <Text style={s.secondary}>Profile details are private.</Text>;
   if (!profile.favoriteCuisine && !profile.favoriteActivity && !profile.mutualGroups.length)
     return null;
+  const favorites = [
+    { label: 'Favorite cuisine', value: profile.favoriteCuisine, icon: 'restaurant-outline' },
+    { label: 'Favorite activity', value: profile.favoriteActivity, icon: 'sparkles-outline' },
+  ] as const;
+
   return (
     <View style={s.favorites}>
-      {profile.favoriteCuisine ? (
-        <View style={s.favorite}>
-          <Ionicons name="restaurant-outline" size={19} color={colors.primary} />
-          <View style={s.labels}>
-            <Text style={s.secondary}>Favorite cuisine</Text>
-            <Text style={s.favoriteValue}>{profile.favoriteCuisine}</Text>
-          </View>
-        </View>
-      ) : null}
-      {profile.favoriteActivity ? (
-        <View style={s.favorite}>
-          <Ionicons name="sparkles-outline" size={19} color={colors.primary} />
-          <View style={s.labels}>
-            <Text style={s.secondary}>Favorite activity</Text>
-            <Text style={s.favoriteValue}>{profile.favoriteActivity}</Text>
-          </View>
-        </View>
+      {favorites.some(({ value }) => value) ? (
+        <Card variant="flat" style={s.favoriteCard}>
+          {favorites.map(({ label, value, icon }) =>
+            value ? (
+              <View key={label} style={[s.favorite, { flexBasis: 104 * fontScale }]}>
+                <Ionicons name={icon} size={18} color={colors.primary} accessible={false} />
+                <Text style={s.secondary}>{label}</Text>
+                <Text style={s.favoriteValue}>{value}</Text>
+              </View>
+            ) : null,
+          )}
+        </Card>
       ) : null}
       {profile.mutualGroups.length ? (
         <View style={{ gap: space.sm, paddingVertical: space.md }}>
-          <Text style={s.secondary}>Mutual groups</Text>
+          <Text style={s.secondary} accessibilityRole="header">
+            Mutual groups
+          </Text>
           {profile.mutualGroups.map((g) => (
             <ProfileRow
               key={g.id}
@@ -147,56 +148,29 @@ export function ProfileRow({
   );
 }
 const s = StyleSheet.create({
-  hero: { flexDirection: 'row', alignItems: 'center', paddingVertical: space.lg, gap: space.lg },
+  hero: { flexDirection: 'row', alignItems: 'center', paddingVertical: space.xs, gap: space.md },
   identity: { flex: 1, minWidth: 0, gap: space.xs },
   avatarFrame: {
     padding: space.xs,
-    borderRadius: 64,
+    borderRadius: radius.pill,
     backgroundColor: profileTheme.avatarBacking,
   },
-  name: {
-    flexShrink: 1,
-    fontFamily: fonts.bold,
-    fontSize: 22,
-    lineHeight: 29,
-    letterSpacing: -0.5,
-    color: colors.text,
-  },
-  username: {
-    fontSize: 16,
-    lineHeight: 23,
-    fontWeight: '500',
-    color: colors.text,
-  },
-  stats: {
+  name: { ...type.heading, color: colors.text },
+  username: { ...type.caption, color: colors.muted },
+  stats: { ...type.caption, fontFamily: fonts.medium, color: colors.text },
+  favorites: { gap: space.md },
+  favoriteCard: {
+    backgroundColor: profileTheme.surface,
+    borderRadius: radius.md,
     flexDirection: 'row',
     flexWrap: 'wrap',
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    marginTop: space.sm,
-    gap: space.lg,
-  },
-  stat: { alignItems: 'flex-start', minWidth: 60, gap: 2 },
-  number: { fontSize: 21, lineHeight: 27, fontWeight: '700', color: colors.text },
-  statLabel: { fontSize: 14, lineHeight: 20, color: colors.muted },
-  statDivider: { width: StyleSheet.hairlineWidth, height: 30, backgroundColor: colors.border },
-  favorites: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    columnGap: space.xl,
-    rowGap: space.sm,
-  },
-  favorite: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: space.md,
-    paddingVertical: space.xs,
-    flexGrow: 1,
-    flexBasis: 140,
+    padding: space.md,
   },
+  favorite: { flexGrow: 1, flexShrink: 1, minWidth: 0, gap: space.xs },
   labels: { flex: 1, gap: space.xs },
-  favoriteValue: { fontSize: 15, lineHeight: 22, fontWeight: '500', color: colors.text },
-  secondary: { fontSize: 13, lineHeight: 19, color: colors.muted },
+  favoriteValue: { ...type.body, fontFamily: fonts.medium, color: colors.text },
+  secondary: { ...type.caption, color: colors.muted },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -251,3 +251,35 @@ test('same-focus refresh retains authorized details through transient errors and
     jest.useRealTimers();
   }
 });
+
+test.each([
+  ['Japanese', null, 'Favorite cuisine'],
+  [null, 'Bowling', 'Favorite activity'],
+])(
+  'renders a single favorite and preserves the Mutual groups heading (%s, %s)',
+  async (favoriteCuisine, favoriteActivity, label) => {
+    let tree: any;
+    await act(async () => {
+      tree = create(
+        <ProfileFavorites
+          profile={{
+            ...profile,
+            favoriteCuisine,
+            favoriteActivity,
+            mutualGroups: [{ id: 'group', name: 'Weekend crew' }],
+          }}
+        />,
+      );
+    });
+    const text = JSON.stringify(tree.toJSON());
+    expect(text).toContain(label);
+    expect(text).toContain(favoriteCuisine ?? favoriteActivity);
+    expect(text).not.toContain(favoriteCuisine ? 'Favorite activity' : 'Favorite cuisine');
+    expect(
+      tree.root
+        .findAllByProps({ accessibilityRole: 'header' })
+        .some((node: any) => node.props.children === 'Mutual groups'),
+    ).toBe(true);
+    await act(async () => tree.unmount());
+  },
+);

@@ -88,7 +88,7 @@ test('same-target refreshing keeps authorized identity; late responses and denia
   await act(async () => tree.root.findByType('test-screen').props.onRefresh());
   expect(text()).not.toContain('Authorized First');
   expect(loading()).toBe(false);
-  expect(tree.root.findByType('test-error').props.message).toBe('Unavailable');
+  expect(tree.root.findByType('test-error').props.message).toBe('This profile is unavailable.');
   await act(async () => older.resolve(profile('first', 'Stale private identity')));
   expect(text()).not.toContain('Stale private identity');
   jest.mocked(api.getUserProfile).mockRejectedValueOnce(new Error('Offline'));
@@ -123,5 +123,45 @@ test('a Hang can open a nonfriend identity only while the authorized projection 
   jest.mocked(api.getHangPost).mockResolvedValueOnce({ ...hang, attendees: [] });
   await act(async () => tree.root.findByType('test-screen').props.onRefresh());
   expect(text()).not.toContain('Hang attendee');
-  expect(tree.root.findByType('test-error').props.message).toBe('Profile not found');
+  expect(tree.root.findByType('test-error').props.message).toBe('This profile is unavailable.');
+});
+
+test.each([403, 404])(
+  'unavailable Hang profiles render a back-enabled error without an identity (%s)',
+  async (status) => {
+    mockHangId = 'shared-hang';
+    jest
+      .mocked(api.getUserProfile)
+      .mockRejectedValueOnce(Object.assign(new Error('Denied'), { status }));
+    jest
+      .mocked(api.getHangPost)
+      .mockRejectedValueOnce(Object.assign(new Error('Hang unavailable'), { status: 404 }));
+    await act(async () => {
+      tree = create(<UserProfileScreen />);
+    });
+    expect(tree.root.findByType('test-screen').props.back).toBe(true);
+    expect(tree.root.findByType('test-error').props.message).toBe('This profile is unavailable.');
+    expect(tree.root.findAllByProps({ accessibilityRole: 'header' })).toHaveLength(0);
+    if (status === 403) expect(api.getHangPost).not.toHaveBeenCalled();
+  },
+);
+
+test('a profile renders a long name, initials, and singular counts without a username or photo', async () => {
+  const name = 'Alexandria Montgomery With a Long Display Name';
+  jest.mocked(api.getUserProfile).mockResolvedValueOnce({
+    ...profile('first', name),
+    metadataVisible: true,
+    username: null,
+    avatarUrl: null,
+    friendsCount: 1,
+    groupsCount: 1,
+  });
+  await act(async () => {
+    tree = create(<UserProfileScreen />);
+  });
+  expect(api.getUserProfile).toHaveBeenCalledWith('first');
+  expect(text()).toContain(name);
+  expect(text()).toContain('AN');
+  expect(text()).toContain('1 friend · 1 group');
+  expect(text()).not.toContain('@first');
 });

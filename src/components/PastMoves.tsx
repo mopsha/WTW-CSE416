@@ -83,21 +83,10 @@ export function PastMoves({
       ) : !data.visible ? (
         <Text style={s.caption}>Past Moves are private.</Text>
       ) : !data.pastMoves.length ? (
-        variant === 'profile' ? (
-          <View style={s.empty}>
-            <View style={s.emptyHeading}>
-              <Ionicons name="sparkles-outline" size={18} color={colors.muted} accessible={false} />
-              <Text style={s.emptyTitle}>Your memories start here.</Text>
-            </View>
-            <Text style={s.emptyBody}>
-              Confirmed outings appear here. Answer “Did you go?” on a past Pick.
-            </Text>
-          </View>
-        ) : (
-          <Text style={s.caption}>
-            No Past Moves to show yet. Attendance is confirmed with “Did you go?” on a past Pick.
-          </Text>
-        )
+        <View style={s.empty}>
+          <Ionicons name="sparkles-outline" size={18} color={colors.primary} accessible={false} />
+          <Text style={s.emptyTitle}>No Past Moves yet.</Text>
+        </View>
       ) : (
         <>
           {data.pastMoves.slice(0, expanded ? 50 : 5).map((move) => (
@@ -121,11 +110,11 @@ const s = StyleSheet.create({
     borderRadius: radius.md,
     paddingHorizontal: space.lg,
     paddingVertical: space.md,
-    gap: space.xs,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
   },
-  emptyHeading: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   emptyTitle: { ...type.body, fontFamily: fonts.semibold, color: colors.text, flex: 1 },
-  emptyBody: { ...type.caption, fontSize: 14, lineHeight: 21, color: colors.muted },
   section: { paddingTop: space.xs },
   memory: {
     backgroundColor: profileTheme.memory,
