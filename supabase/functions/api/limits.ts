@@ -17,13 +17,16 @@ export async function checkUserLimit(scope: LimitScope, userId: string, pickId?:
   if (data !== true) throw new ApiError(429, 'RATE_LIMITED', 'Request limit reached');
 }
 
-export const googleHttp = budgetedHttp(async () => {
-  // Conservative default; 0 explicitly disables all paid calls. Invalid config fails closed.
-  const cap = Number(Deno.env.get('GOOGLE_DAILY_CALL_CAP') ?? 100);
-  if (!Number.isSafeInteger(cap) || cap < 0) return false;
-  const { data, error } = await createServiceClient().rpc('consume_provider_call', {
-    p_limit: cap,
+function googleBudget(rpc: 'consume_provider_call' | 'consume_location_provider_call') {
+  return budgetedHttp(async () => {
+    // Conservative default; 0 explicitly disables all paid calls. Invalid config fails closed.
+    const cap = Number(Deno.env.get('GOOGLE_DAILY_CALL_CAP') ?? 100);
+    if (!Number.isInteger(cap) || cap < 0 || cap > 2_147_483_647) return false;
+    const { data, error } = await createServiceClient().rpc(rpc, { p_limit: cap });
+    if (error) throw new ApiError(503, 'LIMITS_UNAVAILABLE', 'Provider usage unavailable');
+    return data === true;
   });
-  if (error) throw new ApiError(503, 'LIMITS_UNAVAILABLE', 'Provider usage unavailable');
-  return data === true;
-});
+}
+
+export const googleHttp = googleBudget('consume_provider_call');
+export const googleLocationHttp = googleBudget('consume_location_provider_call');

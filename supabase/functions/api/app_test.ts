@@ -1218,6 +1218,7 @@ Deno.test(
     blocked = false;
     providerAvailable = false;
     equal((await suggest('Springfield')).status, 503);
+    equal((await resolve('illinois')).status, 503);
     equal(calls, before);
   },
 );
