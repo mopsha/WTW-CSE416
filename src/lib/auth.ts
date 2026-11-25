@@ -103,7 +103,7 @@ const supabaseAuth: AuthService = {
     if (error?.code === 'otp_disabled' && mode === 'login') {
       throw new AuthError(
         'unknown',
-        'No account uses that email. Check the spelling, or choose Sign Up.',
+        'Couldn’t send a sign-in code for that email. Check the address, try your usual sign-in method, or choose Sign Up.',
       );
     }
     if (error) throw toAuthError(error);
