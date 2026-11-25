@@ -78,7 +78,7 @@ export const mockAuth: AuthService = {
     if (mode === 'login' && !accounts.has(email))
       throw new AuthError(
         'unknown',
-        'Could not send a login code. Check your email or choose Sign Up.',
+        'No account uses that email. Check the spelling, or choose Sign Up.',
       );
     attempt = { email, mode };
   },

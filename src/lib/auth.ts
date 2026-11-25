@@ -100,10 +100,10 @@ const supabaseAuth: AuthService = {
       email,
       options: { shouldCreateUser: mode === 'signup' },
     });
-    if (error?.code === 'signup_disabled' && mode === 'login') {
+    if (error?.code === 'otp_disabled' && mode === 'login') {
       throw new AuthError(
         'unknown',
-        'Could not send a login code. Check your email or choose Sign Up.',
+        'No account uses that email. Check the spelling, or choose Sign Up.',
       );
     }
     if (error) throw toAuthError(error);

@@ -24,3 +24,12 @@ test('provider rate limiting still surfaces to the caller', async () => {
     code: 'rate_limited',
   });
 });
+test('logging in with an email that has no account points to Sign Up', async () => {
+  // Supabase's answer when shouldCreateUser is false and nobody has that email.
+  mockOtp.mockResolvedValue({
+    error: { code: 'otp_disabled', status: 422, message: 'Signups not allowed for otp' },
+  });
+  await expect(auth.sendCode('nobody@example.com', 'login')).rejects.toThrow(
+    /No account uses that email.*Sign Up/,
+  );
+});
