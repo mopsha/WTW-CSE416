@@ -29,7 +29,7 @@ export function createSweepStore(): SweepStore {
       }));
     },
     async planTargets(now) {
-      const { data, error } = await createServiceClient().rpc('pick_plan_targets', {
+      const { data, error } = await createServiceClient().rpc('pick_plan_targets_with_revision', {
         p_now: now,
       });
       if (error) throw new Error('Plan query failed');
@@ -37,9 +37,15 @@ export function createSweepStore(): SweepStore {
         (data ?? []) as {
           pick_id: string;
           kind: 'plan_reminder' | 'did_you_go';
+          schedule_revision: number;
           user_ids: string[];
         }[]
-      ).map((r) => ({ pickId: r.pick_id, kind: r.kind, userIds: r.user_ids }));
+      ).map((r) => ({
+        pickId: r.pick_id,
+        kind: r.kind,
+        userIds: r.user_ids,
+        scheduleRevision: r.schedule_revision,
+      }));
     },
   };
 }

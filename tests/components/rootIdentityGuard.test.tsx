@@ -1,4 +1,7 @@
 import React from 'react';
+import { router } from 'expo-router';
+import { api } from '@/lib/api';
+import { onNotificationTap } from '@/lib/notify';
 import RootLayout from '../../app/_layout';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -23,8 +26,9 @@ jest.mock('@/hooks/useProfile', () => ({
 }));
 jest.mock('@/lib/notify', () => ({
   configureNotifications: jest.fn(),
-  onNotificationTap: () => () => {},
+  onNotificationTap: jest.fn(() => () => {}),
 }));
+jest.mock('@/lib/api', () => ({ api: { markNotificationRead: jest.fn() } }));
 jest.mock('@/lib/push', () => ({ registerForPush: jest.fn() }));
 jest.mock('@/lib/pendingJoin', () => ({ takePendingJoin: () => null }));
 jest.mock('@/lib/pendingInvite', () => ({ takePendingInvite: async () => null }));
@@ -83,5 +87,32 @@ test('a restarted account with identity and skipped birthday does not loop throu
     false,
     true,
   ]);
+  await act(async () => tree.unmount());
+});
+
+test('an OS tap marks only the identified signed-in inbox row and still navigates if the write fails', async () => {
+  jest.mocked(useAuth).mockReturnValue({
+    session: { user: { id: 'me', email: 'me@example.com' }, accessToken: 'token' },
+    loading: false,
+  });
+  jest.mocked(useProfile).mockReturnValue({
+    displayName: 'Me',
+    username: 'valid_user',
+    loading: false,
+    optionalSetupPending: false,
+  } as ReturnType<typeof useProfile>);
+  jest.mocked(api.markNotificationRead).mockRejectedValueOnce(new Error('offline'));
+  let tree!: ReturnType<typeof create>;
+  await act(async () => {
+    tree = create(<RootLayout />);
+  });
+  const tap = jest.mocked(onNotificationTap).mock.calls.at(-1)![0];
+  const id = '00000000-0000-4000-8000-000000000001';
+  await act(async () => tap('/friends?requests=1', id));
+  expect(api.markNotificationRead).toHaveBeenCalledWith(id, 'me');
+  expect(router.push).toHaveBeenCalledWith('/friends?requests=1');
+  await act(async () => tap('/pick/older-push'));
+  expect(api.markNotificationRead).toHaveBeenCalledTimes(1);
+  expect(router.push).toHaveBeenCalledWith('/pick/older-push');
   await act(async () => tree.unmount());
 });

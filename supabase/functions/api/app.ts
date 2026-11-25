@@ -87,6 +87,7 @@ import {
   listNotifications,
   markNotificationRead,
   registerPushToken,
+  revalidateNotifications,
   unregisterPushToken,
   type NotifyStore,
 } from '../_shared/api/notify.ts';
@@ -510,7 +511,7 @@ export function createApp(
       const ready = await deps.lifecycleStore.load(created.pickId, user.id);
       await deps.lifecycleStore.notifier?.(
         ready?.participantIds.filter((id) => id !== user.id) ?? [],
-        'added_to_pick',
+        'pick_started',
         created.pickId,
       );
       return c.json({ ...created, state: 'swiping' as const }, 201);
@@ -688,7 +689,22 @@ export function createApp(
     const targetId = parseFriendId(typeof body?.targetId === 'string' ? body.targetId : '');
     if (!store.requestUsername)
       throw new ApiError(503, 'NOT_CONFIGURED', 'Username requests unavailable');
-    return c.json(await store.requestUsername(user.id, username, targetId));
+    const { notificationId, ...result } = await store.requestUsername(user.id, username, targetId);
+    if (notificationId && deps.lifecycleStore.notifier) {
+      const delivery = deps.lifecycleStore.notifier(
+        [targetId],
+        'friend_request',
+        null,
+        {},
+        {
+          inboxRecorded: true,
+          notificationId,
+        },
+      );
+      if (deps.runInBackground) deps.runInBackground(delivery);
+      else await delivery;
+    }
+    return c.json(result);
   });
   app.get('/friends', async (c) => {
     c.header('Cache-Control', 'private, no-store');
@@ -720,6 +736,11 @@ export function createApp(
     c.header('Cache-Control', 'private, no-store');
     const user = await deps.getUser(c.req.raw);
     return c.json(await listNotifications(requireNotify(), user.id, c.req.query('before')));
+  });
+  app.post('/notifications/revalidate', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const user = await deps.getUser(c.req.raw);
+    return c.json(await revalidateNotifications(requireNotify(), user.id, await readJsonBody(c)));
   });
   app.post('/notifications/:id/read', async (c) => {
     const user = await deps.getUser(c.req.raw);

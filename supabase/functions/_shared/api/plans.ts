@@ -100,7 +100,7 @@ export async function setPlanTime(
 ) {
   const planAt = parsePlanTime(body);
   const others = await store.setPlanTime(pickId, userId, planAt);
-  await store.notifier?.(others, 'plan_time_set', pickId);
+  await store.notifier?.(others, 'plan_time_set', pickId, { planAt });
   return { planAt };
 }
 

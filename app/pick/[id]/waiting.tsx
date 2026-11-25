@@ -3,8 +3,8 @@ import { useMotionPreference } from '@/hooks/useMotionPreference';
 // check, the deadline countdown, and the host's Close now / Cancel. Never anyone's answers.
 // When the Pick closes (host, threshold or deadline) everyone moves to the reveal by themselves.
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef } from 'react';
-import { AppState, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown, LinearTransition, ZoomIn } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -33,7 +33,6 @@ import { useProgressToasts } from '@/hooks/useProgressToasts';
 import { api } from '@/lib/api';
 import { confirmAction } from '@/lib/confirm';
 import { haptic } from '@/lib/haptics';
-import { notifyLater } from '@/lib/notify';
 import { progressLine } from '@/lib/pickUi';
 
 export default function WaitingScreen() {
@@ -58,21 +57,6 @@ export default function WaitingScreen() {
       router.replace({ pathname: '/pick/[id]/swipe', params: { id: pickId } });
     }
   }, [live.state, me, pickId]);
-
-  // Results came in while the app was in the background: a nudge to come back.
-  const lastState = useRef(live.state);
-  useEffect(() => {
-    const closed = lastState.current === 'swiping' && live.state && live.state !== 'swiping';
-    lastState.current = live.state;
-    if (closed && AppState.currentState !== 'active') {
-      void notifyLater(
-        'The results are in',
-        'Tap to see what the group picked.',
-        `/pick/${pickId}`,
-        1,
-      );
-    }
-  }, [live.state, pickId]);
 
   const closeNow = async () => {
     // Everyone's done, so nobody is cut off: no need to ask.

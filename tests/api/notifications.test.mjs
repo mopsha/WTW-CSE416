@@ -12,6 +12,7 @@ test(
     const config = localConfig();
     const run = randomUUID();
     const users = [];
+    const picks = [];
     const db = (path, options = {}) =>
       request(config, `/rest/v1/${path}`, {
         ...options,
@@ -50,14 +51,46 @@ test(
       );
       return { id: created.id, token: session.access_token };
     }
+    function canceledPick(hostId) {
+      const id = randomUUID();
+      picks.push(id);
+      return {
+        id,
+        host_id: hostId,
+        state: 'canceled',
+        category: 'food',
+        center_lat: 40,
+        center_lng: -73,
+        radius_m: 1000,
+      };
+    }
     try {
       const owner = await user('owner');
       const other = await user('other');
+      const subjects = Array.from({ length: 102 }, () => canceledPick(owner.id));
+      const otherSubject = canceledPick(other.id);
+      requireStatus(
+        await db('picks', { method: 'POST', body: [...subjects, otherSubject] }),
+        201,
+        'seed canceled Picks',
+      );
+      requireStatus(
+        await db('pick_participants', {
+          method: 'POST',
+          body: [...subjects, otherSubject].map(({ id, host_id }) => ({
+            pick_id: id,
+            user_id: host_id,
+          })),
+        }),
+        201,
+        'seed Pick participation',
+      );
       // 55 identical microsecond timestamps force an ID tie-break across page one.
       const fixtures = Array.from({ length: 101 }, (_, i) => ({
         id: randomUUID(),
         user_id: owner.id,
-        type: 'reminder',
+        type: 'pick_canceled',
+        pick_id: subjects[i].id,
         payload: {},
         created_at:
           i < 55
@@ -68,7 +101,8 @@ test(
       const foreign = {
         id: randomUUID(),
         user_id: other.id,
-        type: 'reminder',
+        type: 'pick_canceled',
+        pick_id: otherSubject.id,
         payload: {},
         created_at: '2031-01-01T00:00:00Z',
       };
@@ -99,6 +133,14 @@ test(
         200,
         'mark page boundary read',
       );
+      requireStatus(
+        await request(config, `/functions/v1/api/notifications/${foreign.id}/read`, {
+          method: 'POST',
+          token: owner.token,
+        }),
+        404,
+        'foreign notification ID cannot be marked read',
+      );
       // A newer insertion must not shift the cursor and repeat/skip older rows.
       requireStatus(
         await db('notifications', {
@@ -106,7 +148,8 @@ test(
           body: {
             id: randomUUID(),
             user_id: owner.id,
-            type: 'reminder',
+            type: 'pick_canceled',
+            pick_id: subjects.at(-1).id,
             payload: {},
             created_at: '2030-01-01T00:00:00Z',
           },
@@ -148,6 +191,7 @@ test(
         theirs.notifications.map((n) => n.id),
         [foreign.id],
       );
+      assert.equal(theirs.notifications[0].readAt, null);
       const crossUser = requireStatus(
         await inbox(other.token, first.nextCursor),
         200,
@@ -168,6 +212,17 @@ test(
       requireStatus(await inbox(undefined, 'bad'), 401, 'authenticate before cursor validation');
     } finally {
       let failed = false;
+      if (picks.length) {
+        try {
+          requireStatus(
+            await db(`picks?id=in.(${picks.join(',')})`, { method: 'DELETE' }),
+            204,
+            'delete fixture Picks',
+          );
+        } catch {
+          failed = true;
+        }
+      }
       for (const id of users) {
         try {
           requireStatus(

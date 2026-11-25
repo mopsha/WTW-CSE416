@@ -1,4 +1,4 @@
-// Local notifications (work in Expo Go on iOS and Android; no push server needed).
+// Device notification presentation and tap routing.
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
@@ -36,19 +36,6 @@ export async function ensureNotificationPermission(): Promise<boolean> {
   }
 }
 
-/** Fire a local notification after `seconds`; tapping it opens `url` (an in-app route). */
-export async function notifyLater(title: string, body: string, url: string, seconds = 3) {
-  if (!supported || !(await ensureNotificationPermission())) return;
-  try {
-    await Notifications.scheduleNotificationAsync({
-      content: { title, body, data: { url }, sound: true },
-      trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds },
-    });
-  } catch {
-    // Demo nicety only.
-  }
-}
-
 /**
  * Whether the OS currently lets us notify (never prompts). Same check as onboarding, so
  * iOS provisional (quiet) permission counts as allowed. Never throws.
@@ -58,8 +45,7 @@ export async function notificationsAllowed(): Promise<boolean> {
 }
 
 /**
- * The in-app route a notification opens: our local ones carry a `url`; server pushes
- * (Alan's notify()) carry only a `pickId`, which opens that Pick wherever it is now.
+ * Pick pushes open the live Pick entry; older device notifications can carry a URL.
  */
 export function routeForNotification(data: unknown): string | null {
   if (typeof data !== 'object' || data === null) return null;
@@ -73,13 +59,20 @@ export function routeForNotification(data: unknown): string | null {
       ? `/groups/${encodeURIComponent(groupId)}?section=chat`
       : null;
   }
-  if ((data as { type?: unknown }).type === 'hang_invite') {
+  const type = (data as { type?: unknown }).type;
+  if (type === 'hang_invite' || type === 'hang_rsvp') {
     const { hangId } = data as { hangId?: unknown };
     return typeof hangId === 'string' && hangId.trim()
       ? `/hang/${encodeURIComponent(hangId)}`
       : '/';
   }
-  if ((data as { type?: unknown }).type === 'group_invite') return '/friends';
+  if (type === 'group_invite' || type === 'friend_request') return '/friends?requests=1';
+  if (type === 'friend_accepted') {
+    const { actorId } = data as { actorId?: unknown };
+    return typeof actorId === 'string' && actorId
+      ? `/users/${encodeURIComponent(actorId)}`
+      : '/friends';
+  }
   const { url, pickId } = data as { url?: unknown; pickId?: unknown };
   if (typeof url === 'string' && url.startsWith('/')) return url;
   if (typeof pickId === 'string' && pickId) return `/pick/${encodeURIComponent(pickId)}`;
@@ -93,15 +86,24 @@ export function onNotificationReceived(listener: () => void): () => void {
   return () => sub.remove();
 }
 
-/**
- * Calls `open(route)` when the user taps one of our notifications, including the tap that
- * launched the app from closed. Returns an unsubscribe.
- */
-export function onNotificationTap(open: (route: string) => void): () => void {
+export function notificationTap(data: unknown): { route: string; notificationId?: string } | null {
+  const route = routeForNotification(data);
+  if (!route) return null;
+  const { notificationId } = data as { notificationId?: unknown };
+  return typeof notificationId === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(notificationId)
+    ? { route, notificationId }
+    : { route };
+}
+
+/** Open both warm and cold-start taps and consume the stored launch response. */
+export function onNotificationTap(
+  open: (route: string, notificationId?: string) => void,
+): () => void {
   if (!supported) return () => {};
   const handle = (response: Notifications.NotificationResponse | null) => {
-    const route = routeForNotification(response?.notification.request.content.data);
-    if (route) open(route);
+    const tap = notificationTap(response?.notification.request.content.data);
+    if (tap) open(tap.route, tap.notificationId);
   };
   try {
     handle(Notifications.getLastNotificationResponse());

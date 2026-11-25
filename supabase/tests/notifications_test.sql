@@ -59,6 +59,7 @@ select throws_ok(
 
 -- ---------------------------------------------------------------- reading (as clients)
 reset role;
+update picks set state = 'completed' where id = (select id from pk where name = 'main');
 set local role authenticated;
 set local request.jwt.claims to '{"sub":"92222222-2222-4222-8222-222222222222","role":"authenticated"}';
 select is((select count(*)::int from notifications), 1, 'a user reads only their own notifications');

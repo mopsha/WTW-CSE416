@@ -16,7 +16,7 @@ import { photoBase64 } from './photoBytes';
 import { photoChanged } from './photoEvents';
 import { API_BASE_URL, USE_MOCK } from './config';
 import { MOCK_API_BASE_URL, mockFetch } from './mock/api';
-import type { NotificationRow } from '@shared/api/notify.ts';
+import type { ActivityPage, NotificationRow } from '@shared/api/notify.ts';
 import type { HistoryItem, PlanSummary, RsvpStatus } from '@shared/api/plans.ts';
 import type { CreatePickInput } from '@shared/domain/createPick.ts';
 import type { FriendsList } from '@shared/api/friends.ts';
@@ -754,15 +754,22 @@ export function createApiClient({
       photoChanged(userId);
       return result;
     },
-    /** A page of notifications, newest first. Older builds may omit nextCursor. */
-    listNotifications: (before?: string) =>
-      request<{
-        notifications: NotificationRow[];
-        unreadCount: number;
-        nextCursor?: string | null;
-      }>('GET', `/notifications${before ? `?before=${encodeURIComponent(before)}` : ''}`),
-    markNotificationRead: (id: string) =>
-      request<StatusResponse>('POST', `/notifications/${encodeURIComponent(id)}/read`),
+    /** A page of notifications, newest first.  */
+    listNotifications: (before?: string, viewer?: string) =>
+      request<ActivityPage>(
+        'GET',
+        `/notifications${before ? `?before=${encodeURIComponent(before)}` : ''}`,
+        { viewer },
+      ),
+    revalidateNotifications(ids: string[], viewer: string, before?: string, includePage?: boolean) {
+      return request<{ notifications: NotificationRow[]; page?: ActivityPage }>(
+        'POST',
+        '/notifications/revalidate',
+        { viewer, body: { ids, before, includePage } },
+      );
+    },
+    markNotificationRead: (id: string, viewer?: string) =>
+      request<StatusResponse>('POST', `/notifications/${encodeURIComponent(id)}/read`, { viewer }),
 
     // After the winner (Alan): plan time, RSVP, "Did you go?", reasons, history, Pick again.
     getTimeSuggestions: (id: string, viewer: string) =>

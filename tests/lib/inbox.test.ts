@@ -90,7 +90,7 @@ test('group invitations open request cards and keep private names out of generic
     pickId: null,
     payload: { inviteId: 'private-id' },
   });
-  expect(inboxRoute(invitation)).toBe('/friends');
+  expect(inboxRoute(invitation)).toBe('/friends?requests=1');
   expect(inboxText(invitation)).toEqual({
     title: 'Group invitation',
     body: 'Someone invited you to a group. Open WTW to respond.',
@@ -101,4 +101,50 @@ test('Hang inbox rows route to the same card as the push', () => {
   expect(inboxRoute(row({ type: 'hang_invite', pickId: null, payload: { hangId: 'h21' } }))).toBe(
     '/hang/h21',
   );
+});
+
+test('social wording uses the authorized projection and keeps message previews generic', () => {
+  expect(
+    inboxText(
+      row({
+        type: 'group_invite',
+        activity: { actorName: 'Alex', groupName: 'Friday Crew' },
+        payload: { groupName: 'Untrusted name' },
+      }),
+    ).title,
+  ).toBe('Alex invited you to Friday Crew.');
+  expect(
+    inboxText(
+      row({
+        type: 'direct_message',
+        activity: { actorName: 'Jordan' },
+        payload: { body: 'Private message contents' },
+      }),
+    ),
+  ).toEqual({ title: 'Jordan sent you a message.', body: '' });
+  expect(inboxText(row({ activity: { winnerName: 'Joe’s Pizza' } })).title).toBe(
+    'Your group picked Joe’s Pizza!',
+  );
+  expect(inboxText(row({ activity: {} })).title).toBe('Your group picked a winner!');
+});
+
+test('friend and Hang activity routes to the request, profile, or Hang', () => {
+  expect(inboxRoute(row({ type: 'friend_request', pickId: null }))).toBe('/friends?requests=1');
+  expect(
+    inboxRoute(
+      row({
+        type: 'friend_accepted',
+        pickId: null,
+        activity: { actorId: 'friend' },
+      }),
+    ),
+  ).toBe('/users/friend');
+  const hang = row({
+    type: 'hang_rsvp',
+    pickId: null,
+    payload: { hangId: 'h21' },
+    activity: { actorName: 'Alex', hangName: 'Coffee', replyCount: 3, replyStatus: 'down' },
+  });
+  expect(inboxRoute(hang)).toBe('/hang/h21');
+  expect(inboxText(hang).title).toBe('Alex and 2 others are Down for Coffee.');
 });

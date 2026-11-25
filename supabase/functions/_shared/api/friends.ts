@@ -51,7 +51,7 @@ export interface FriendsStore {
     viewer: string,
     username: string,
     targetId: string,
-  ): Promise<{ status: 'sent'; relationship?: 'requested' | 'friends' }>;
+  ): Promise<{ status: 'sent'; relationship?: 'requested' | 'friends'; notificationId?: string }>;
   list(userId: string): Promise<FriendRow[]>;
   request(userId: string, email: string): Promise<FriendRequestResult>;
   accept(userId: string, friendId: string): Promise<void>;

@@ -708,6 +708,49 @@ const untouched: FriendsStore = {
   takeFriendRequestLimit: async () => true,
 };
 
+Deno.test('username requests push only the freshly recorded incoming activity row', async () => {
+  const delivered: unknown[][] = [];
+  const requested: unknown[][] = [];
+  const notificationId = '92222222-2222-4222-8222-222222222222';
+  const app = createApp({
+    store,
+    poolBuilder,
+    closingStore,
+    lifecycleStore: {
+      ...lifecycleStore,
+      notifier: async (...args) => {
+        delivered.push(args);
+      },
+    },
+    getUser: async () => ({ id: ANN }),
+    friendsStore: {
+      ...untouched,
+      async requestUsername(...args) {
+        requested.push(args);
+        return {
+          status: 'sent',
+          relationship: 'requested',
+          ...(requested.length === 1 ? { notificationId } : {}),
+        };
+      },
+    },
+  });
+  for (let retry = 0; retry < 2; retry++) {
+    const response = await app.request('/friends/username-requests', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ username: 'bob', targetId: BO, userId: 'untrusted' }),
+    });
+    equal(response.status, 200);
+    equal(await response.json(), { status: 'sent', relationship: 'requested' });
+  }
+  equal(requested, [
+    [ANN, 'bob', BO],
+    [ANN, 'bob', BO],
+  ]);
+  equal(delivered, [[[BO], 'friend_request', null, {}, { inboxRecorded: true, notificationId }]]);
+});
+
 Deno.test('friends: 401 without a token, before touching the database', async () => {
   const app = friendsApp(untouched);
   equal((await app.request('/friends')).status, 401);
@@ -924,11 +967,11 @@ function notifyApp(user: string | null) {
   const calls: unknown[][] = [];
   const notifyStore: NotifyStore = {
     insert: async () => [],
-    tokensFor: async () => [],
+    pushTargets: async () => [],
     deleteTokens: async () => {},
-    list: async (userId) => {
-      calls.push(['list', userId]);
-      return [];
+    snapshot: async (userId, ids, limit) => {
+      calls.push(['snapshot', userId, ids, limit]);
+      return { page: [], notifications: [], orderVersion: '0', reset: false };
     },
     markRead: async (id, userId) => {
       calls.push(['markRead', id, userId]);
@@ -969,6 +1012,12 @@ Deno.test('notifications: always the verified caller, never a body-supplied user
   equal(await inbox.json(), { notifications: [], unreadCount: 0, nextCursor: null });
   const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
   equal((await app.request(`/notifications/${id}/read`, { method: 'POST' })).status, 200);
+  const revalidated = await app.request('/notifications/revalidate', {
+    method: 'POST',
+    body: JSON.stringify({ ids: [id, id], userId: 'someone' }),
+  });
+  equal(revalidated.status, 200);
+  equal(await revalidated.json(), { notifications: [] });
   const token = await app.request('/push-tokens', {
     method: 'POST',
     body: JSON.stringify({ token: 'ExponentPushToken[abc]', platform: 'ios', userId: 'someone' }),
@@ -980,11 +1029,28 @@ Deno.test('notifications: always the verified caller, never a body-supplied user
   });
   equal(removed.status, 200);
   equal(calls, [
-    ['list', 'me'],
+    ['snapshot', 'me', [], 51],
     ['markRead', id, 'me'],
+    ['snapshot', 'me', [id], undefined],
     ['registerToken', 'me', 'ExponentPushToken[abc]', 'ios'],
     ['removeToken', 'me', 'ExponentPushToken[abc]'],
   ]);
+});
+
+Deno.test('notifications: refresh with a page uses one owner-scoped snapshot', async () => {
+  const { app, calls } = notifyApp('me');
+  const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
+  const response = await app.request('/notifications/revalidate', {
+    method: 'POST',
+    body: JSON.stringify({ ids: [id, id], includePage: true, userId: 'someone' }),
+  });
+  equal(response.status, 200);
+  equal(response.headers.get('cache-control'), 'private, no-store');
+  equal(await response.json(), {
+    notifications: [],
+    page: { notifications: [], unreadCount: 0, nextCursor: null },
+  });
+  equal(calls, [['snapshot', 'me', [id], 51]]);
 });
 
 Deno.test('notifications: bad token 400; not configured 503', async () => {

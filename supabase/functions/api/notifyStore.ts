@@ -1,5 +1,5 @@
 import { ApiError } from '../_shared/api/errors.ts';
-import type { NotificationRow, NotifyStore } from '../_shared/api/notify.ts';
+import type { ActivityDetails, NotificationRow, NotifyStore } from '../_shared/api/notify.ts';
 import { createServiceClient } from './serviceClient.ts';
 
 function fail(error: { code: string }): never {
@@ -21,14 +21,29 @@ interface Row {
   pick_id: string | null;
   payload: Record<string, unknown>;
   created_at: string;
+  activity_at: string | null;
   read_at: string | null;
+  activity?: ActivityDetails;
+}
+
+function mapRows(data: Row[] | null): NotificationRow[] {
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    type: r.type,
+    pickId: r.pick_id,
+    payload: r.payload,
+    createdAt: r.created_at,
+    ...(r.activity_at ? { activityAt: r.activity_at } : {}),
+    readAt: r.read_at,
+    ...(r.activity ? { activity: r.activity } : {}),
+  }));
 }
 
 /** Service-role adapter for 0009_notifications.sql. */
 export function createNotifyStore(): NotifyStore {
   return {
     async insert(userIds, type, pickId, payload) {
-      const { data, error } = await createServiceClient().rpc('notify_insert', {
+      const { data, error } = await createServiceClient().rpc('notification_record', {
         p_user_ids: userIds,
         p_type: type,
         p_pick_id: pickId,
@@ -37,13 +52,14 @@ export function createNotifyStore(): NotifyStore {
       if (error) fail(error);
       return (data ?? []) as string[];
     },
-    async tokensFor(userIds) {
-      const { data, error } = await createServiceClient()
-        .from('push_tokens')
-        .select('token')
-        .in('user_id', userIds);
+    async pushTargets(ids, hang) {
+      const { data, error } = await createServiceClient().rpc('notification_push_targets', {
+        p_ids: ids,
+        p_hang_id: hang?.id ?? null,
+        p_hang_users: hang?.userIds ?? null,
+      });
       if (error) fail(error);
-      return (data ?? []).map((r: { token: string }) => r.token);
+      return data ?? [];
     },
     async deleteTokens(tokens) {
       const { error } = await createServiceClient()
@@ -52,28 +68,22 @@ export function createNotifyStore(): NotifyStore {
         .in('token', tokens);
       if (error) fail(error);
     },
-    async list(userId, limit, before) {
-      let query = createServiceClient()
-        .from('notifications')
-        .select('id, type, pick_id, payload, created_at, read_at')
-        .eq('user_id', userId);
-      if (before)
-        query = query.or(
-          `created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})`,
-        );
-      const { data, error } = await query
-        .order('created_at', { ascending: false })
-        .order('id', { ascending: false })
-        .limit(limit);
+    async snapshot(userId, ids, limit, before) {
+      const { data, error } = await createServiceClient().rpc('activity_snapshot', {
+        p_user: userId,
+        p_ids: ids,
+        p_limit: limit ?? null,
+        p_before: before?.createdAt ?? null,
+        p_before_id: before?.id ?? null,
+        p_version: before?.orderVersion ?? null,
+      });
       if (error) fail(error);
-      return ((data ?? []) as Row[]).map((r) => ({
-        id: r.id,
-        type: r.type,
-        pickId: r.pick_id,
-        payload: r.payload,
-        createdAt: r.created_at,
-        readAt: r.read_at,
-      }));
+      return {
+        notifications: mapRows(data.notifications),
+        page: mapRows(data.page),
+        orderVersion: data.orderVersion,
+        reset: data.reset,
+      };
     },
     async markRead(id, userId) {
       const { error } = await createServiceClient().rpc('notification_mark_read', {

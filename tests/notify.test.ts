@@ -16,12 +16,16 @@ import { castVote, type VoteSnapshot, type VotingStore } from '@shared/api/votin
 
 const TOKEN = (i: number) => `ExponentPushToken[tok${i}]`;
 
+const target = (token: string) => ({ token, notification_id: 'notice-a', deadline: null });
+
 function notifyStore(over: Partial<NotifyStore> = {}) {
   return {
     insert: jest.fn().mockImplementation(async (ids: string[]) => ids),
-    tokensFor: jest.fn().mockResolvedValue([TOKEN(1)]),
+    pushTargets: jest.fn().mockResolvedValue([target(TOKEN(1))]),
     deleteTokens: jest.fn().mockResolvedValue(undefined),
-    list: jest.fn().mockResolvedValue([]),
+    snapshot: jest
+      .fn()
+      .mockResolvedValue({ page: [], notifications: [], orderVersion: '0', reset: false }),
     markRead: jest.fn().mockResolvedValue(undefined),
     registerToken: jest.fn().mockResolvedValue(undefined),
     removeToken: jest.fn().mockResolvedValue(undefined),
@@ -48,7 +52,7 @@ describe('createNotifier', () => {
       to: TOKEN(1),
       sound: 'default',
       ...PUSH_TEXT.pick_canceled,
-      data: { type: 'pick_canceled', pickId: 'p1' },
+      data: { type: 'pick_canceled', pickId: 'p1', notificationId: 'notice-a' },
     });
     expect(init.body).not.toContain('Rained out');
   });
@@ -57,13 +61,13 @@ describe('createNotifier', () => {
     const store = notifyStore({ insert: jest.fn().mockResolvedValue([]) });
     const fetchFn = jest.fn();
     await createNotifier(store, fetchFn)(['a'], 'reminder', 'p1');
-    expect(store.tokensFor).not.toHaveBeenCalled();
+    expect(store.pushTargets).not.toHaveBeenCalled();
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
   test('batches 100 tokens per request and deletes DeviceNotRegistered tokens', async () => {
     const tokens = Array.from({ length: 150 }, (_, i) => TOKEN(i));
-    const store = notifyStore({ tokensFor: jest.fn().mockResolvedValue(tokens) });
+    const store = notifyStore({ pushTargets: jest.fn().mockResolvedValue(tokens.map(target)) });
     const fetchFn = jest
       .fn()
       .mockResolvedValueOnce(
@@ -98,6 +102,86 @@ describe('createNotifier', () => {
       createNotifier(notifyStore(), offline, log)(['a'], 'pick_started', 'p1'),
     ).resolves.toBe(undefined);
     expect(log).toHaveBeenCalledWith('push batch failed', 'Error');
+  });
+
+  test('records the inbox item even when no device is eligible for push', async () => {
+    const store = notifyStore({ pushTargets: jest.fn().mockResolvedValue([]) });
+    const fetchFn = jest.fn();
+    await createNotifier(store, fetchFn)(['a'], 'added_to_pick', 'p1');
+    expect(store.insert).toHaveBeenCalledTimes(1);
+    expect(store.pushTargets).toHaveBeenCalledWith(['a'], undefined);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  test('a lookup failure preserves the inserted inbox row and a retry does not push it twice', async () => {
+    const store = notifyStore({
+      insert: jest.fn().mockResolvedValueOnce(['saved-row']).mockResolvedValueOnce([]),
+      pushTargets: jest.fn().mockRejectedValueOnce(new Error('lookup failed after commit')),
+    });
+    const fetchFn = jest.fn();
+    const log = jest.fn();
+    const notify = createNotifier(store, fetchFn, log);
+    await notify(['a'], 'pick_started', 'p1');
+    await notify(['a'], 'pick_started', 'p1');
+    expect(store.insert).toHaveBeenCalledTimes(2);
+    expect(store.pushTargets).toHaveBeenCalledTimes(1);
+    expect(store.pushTargets).toHaveBeenCalledWith(['saved-row'], undefined);
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith('notify failed', 'pick_started', 'Error');
+  });
+
+  test('uses the exact inbox ID for each device and omits an already-expired target', async () => {
+    const store = notifyStore({
+      pushTargets: jest.fn().mockResolvedValue([
+        { ...target(TOKEN(1)), notification_id: 'row-a' },
+        { ...target(TOKEN(2)), notification_id: 'row-b', deadline: '2099-01-01T00:00:00Z' },
+        { ...target(TOKEN(3)), notification_id: 'row-c', deadline: '2000-01-01T00:00:00Z' },
+      ]),
+    });
+    const fetchFn = jest.fn().mockResolvedValue(ok([]));
+    await createNotifier(store, fetchFn)(['a', 'b', 'c'], 'reminder', 'p1');
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body)).toMatchObject([
+      { to: TOKEN(1), data: { notificationId: 'row-a' } },
+      {
+        to: TOKEN(2),
+        data: { notificationId: 'row-b' },
+        expiration: Date.parse('2099-01-01T00:00:00Z') / 1000,
+      },
+    ]);
+  });
+
+  test('uses the newly recorded Hang recipients without inserting another row', async () => {
+    const store = notifyStore();
+    const fetchFn = jest.fn().mockResolvedValue(ok([]));
+    await createNotifier(store, fetchFn)(
+      ['a'],
+      'hang_invite',
+      null,
+      { hangId: 'hang' },
+      { inboxRecorded: true },
+    );
+    expect(store.insert).not.toHaveBeenCalled();
+    expect(store.pushTargets).toHaveBeenCalledWith([], { id: 'hang', userIds: ['a'] });
+  });
+
+  test('friend request push uses its persisted ID and keeps in-app social events out of push', async () => {
+    const store = notifyStore();
+    const send = jest.fn().mockResolvedValue(ok([]));
+    const notify = createNotifier(store, send);
+    await notify(
+      ['a'],
+      'friend_request',
+      null,
+      { actorName: 'Private Name' },
+      { inboxRecorded: true, notificationId: 'recorded-friend' },
+    );
+    await notify(['a'], 'friend_accepted', null);
+    await notify(['a'], 'hang_rsvp', null);
+    expect(store.insert).not.toHaveBeenCalled();
+    expect(store.pushTargets).toHaveBeenCalledTimes(1);
+    expect(store.pushTargets).toHaveBeenCalledWith(['recorded-friend'], undefined);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][1].body).not.toContain('Private Name');
   });
 
   test('nobody to tell does nothing', async () => {
@@ -149,13 +233,18 @@ describe('routes', () => {
   test('inbox counts unread', async () => {
     const row = { type: 'pick_started', pickId: 'p', payload: {}, createdAt: 'x' } as const;
     const store = notifyStore({
-      list: jest.fn().mockResolvedValue([
-        { ...row, id: '1', readAt: null },
-        { ...row, id: '2', readAt: 'y' },
-      ]),
+      snapshot: jest.fn().mockResolvedValue({
+        notifications: [],
+        orderVersion: '0',
+        reset: false,
+        page: [
+          { ...row, id: '1', readAt: null },
+          { ...row, id: '2', readAt: 'y' },
+        ],
+      }),
     });
     expect((await listNotifications(store, 'u')).unreadCount).toBe(1);
-    expect(store.list).toHaveBeenCalledWith('u', 51, undefined);
+    expect(store.snapshot).toHaveBeenCalledWith('u', [], 51, undefined);
   });
 
   test('mark read: a malformed id is a 404 without a query', async () => {
@@ -351,7 +440,12 @@ test('group message push uses existing delivery with group route IDs and no mess
     messageId: 'message-1',
   });
   const [message] = JSON.parse(fetchFn.mock.calls[0][1].body);
-  expect(message.data).toEqual({ type: 'group_message', pickId: null, groupId: 'group-1' });
+  expect(message.data).toEqual({
+    type: 'group_message',
+    pickId: null,
+    groupId: 'group-1',
+    notificationId: 'notice-a',
+  });
   expect(message.body).toBe(PUSH_TEXT.group_message.body);
   expect(message).not.toHaveProperty('messageId');
 });
@@ -368,6 +462,7 @@ test('direct-message push carries only the conversation route ID and generic tex
     type: 'direct_message',
     pickId: null,
     conversationId: 'conversation-1',
+    notificationId: 'notice-a',
   });
   expect(message.body).toBe(PUSH_TEXT.direct_message.body);
   expect(message.data).not.toHaveProperty('messageId');
@@ -383,13 +478,17 @@ test('51 newer message notices cannot make an older Pick event inaccessible', as
     readAt: null,
   }));
   const store = notifyStore({
-    list: jest.fn(async (_u, limit, before) =>
-      rows.filter((n) => !before || n.id < before.id).slice(0, limit),
-    ),
+    snapshot: jest.fn(async (_u, _ids, limit, before) => ({
+      page: rows.filter((n) => !before || n.id < before.id).slice(0, limit),
+      notifications: [],
+      orderVersion: '7',
+      reset: false,
+    })),
   });
   const first = await listNotifications(store, 'user');
   expect(first.notifications).toHaveLength(50);
   expect(first.nextCursor).toContain('.123456+00:00|');
+  expect(first.nextCursor).toMatch(/\|7$/);
   const second = await listNotifications(store, 'user', first.nextCursor!);
   expect(second.notifications.map((n) => n.type)).toEqual(['group_message', 'vote_needed']);
   expect(second.nextCursor).toBeNull();
@@ -402,5 +501,5 @@ test.each([
 ])('invalid cursor %s fails before database query', async (cursor) => {
   const store = notifyStore();
   await expect(listNotifications(store, 'user', cursor)).rejects.toMatchObject({ status: 400 });
-  expect(store.list).not.toHaveBeenCalled();
+  expect(store.snapshot).not.toHaveBeenCalled();
 });
