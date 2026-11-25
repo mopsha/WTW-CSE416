@@ -1,7 +1,7 @@
 import React from 'react';
 import { router } from 'expo-router';
 import { redirectSystemPath } from '../../app/+native-intent';
-import { takePendingFriends } from '@/lib/pendingFriends';
+import { bindPendingFriends, clearPendingFriends, hasPendingFriends } from '@/lib/pendingFriends';
 import RootLayout from '../../app/_layout';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -116,13 +116,13 @@ describe('Friends invitations', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    takePendingFriends();
+    clearPendingFriends();
     mockPathname = redirectSystemPath({ path: 'wtw://friends', initial: true });
   });
 
   afterEach(() => {
     mockPathname = '/';
-    takePendingFriends();
+    clearPendingFriends();
   });
 
   test('native intent rewrites only the fixed Friends link', () => {
@@ -153,7 +153,7 @@ describe('Friends invitations', () => {
     mockPathname = '/friends';
     await act(async () => tree.update(<RootLayout />));
     expect(router.navigate).not.toHaveBeenCalled();
-    expect(takePendingFriends()).toBe(false);
+    expect(hasPendingFriends()).toBe(false);
     await act(async () => tree.unmount());
   });
 
@@ -167,6 +167,12 @@ describe('Friends invitations', () => {
     expect(router.replace).toHaveBeenCalledWith('/sign-in');
     expect(router.navigate).not.toHaveBeenCalled();
 
+    mockPathname = '/sign-in';
+    jest.mocked(useAuth).mockReturnValue({ session: null, loading: true });
+    await act(async () => tree.update(<RootLayout />));
+    expect(hasPendingFriends()).toBe(true);
+
+    bindPendingFriends(session.user.id);
     jest.mocked(useAuth).mockReturnValue({ session, loading: false });
     mockPathname = '/welcome';
     await act(async () => tree.update(<RootLayout />));
@@ -191,4 +197,34 @@ describe('Friends invitations', () => {
     expect(router.navigate).toHaveBeenCalledTimes(1);
     await act(async () => tree.unmount());
   });
+
+  test.each(['/intro', '/join/ABCD', '/i/token', '/p/id', '/pick/123/lobby'])(
+    'leaving signed-out sign-in for %s abandons the Friends invitation',
+    async (path) => {
+      jest.mocked(useAuth).mockReturnValue({ session: null, loading: false });
+      profile(null);
+      let tree!: ReturnType<typeof create>;
+      await act(async () => {
+        tree = create(<RootLayout />);
+      });
+      expect(hasPendingFriends()).toBe(true);
+      mockPathname = '/sign-in';
+      await act(async () => tree.update(<RootLayout />));
+      expect(hasPendingFriends()).toBe(true);
+
+      mockPathname = path;
+      await act(async () => tree.update(<RootLayout />));
+      expect(hasPendingFriends()).toBe(false);
+      expect(router.replace).toHaveBeenCalledTimes(1);
+      expect(router.dismissTo).not.toHaveBeenCalled();
+
+      mockPathname = '/';
+      bindPendingFriends(session.user.id);
+      jest.mocked(useAuth).mockReturnValue({ session, loading: false });
+      profile('recipient');
+      await act(async () => tree.update(<RootLayout />));
+      expect(router.navigate).not.toHaveBeenCalled();
+      await act(async () => tree.unmount());
+    },
+  );
 });

@@ -23,7 +23,7 @@ import { ProfileProvider, useProfile } from '@/hooks/useProfile';
 import { auth } from '@/lib/auth';
 import { hasSeenIntro, markIntroSeen } from '@/lib/intro';
 import { configureNotifications, onNotificationTap } from '@/lib/notify';
-import { setPendingFriends, takePendingFriends } from '@/lib/pendingFriends';
+import { clearPendingFriends, setPendingFriends, takePendingFriends } from '@/lib/pendingFriends';
 import { takePendingInvite, setPendingInvite } from '@/lib/pendingInvite';
 import { takePendingJoin } from '@/lib/pendingJoin';
 import { registerForPush } from '@/lib/push';
@@ -76,6 +76,7 @@ function RootStack() {
   const pathname = usePathname();
   useAvatarLifecycle(session?.user.id, pathname, session?.user.email);
   const offered = useRef<string | null>(null);
+  const friendsRoute = useRef<'new' | 'pending' | 'leaving'>('new');
   const resuming = useRef(false);
   const mounted = useRef(true);
   const [resumeRetry, setResumeRetry] = useState(0);
@@ -104,11 +105,21 @@ function RootStack() {
   }, [ready, inApp]);
 
   useEffect(() => {
-    if (!ready || pathname !== '/friend-invite') return;
-    setPendingFriends();
-    if (!session) router.replace('/sign-in');
-    else if (needsName) router.replace('/welcome');
-  }, [ready, pathname, session, needsName]);
+    if (pathname !== '/friend-invite') {
+      friendsRoute.current = 'new';
+      if (ready && !userId && pathname !== '/sign-in') clearPendingFriends();
+      return;
+    }
+    if (!ready || friendsRoute.current === 'leaving') return;
+    if (friendsRoute.current === 'new') {
+      friendsRoute.current = 'pending';
+      setPendingFriends(userId ?? null);
+    }
+    if (!userId || needsName) {
+      friendsRoute.current = 'leaving';
+      router.replace(userId ? '/welcome' : '/sign-in');
+    }
+  }, [ready, pathname, userId, needsName]);
 
   // Resume links after the authenticated stack and first-run setup are ready.
   useEffect(() => {
@@ -160,11 +171,14 @@ function RootStack() {
         },
         userId,
       );
-      if (openedProfile || retry || !current || profile.optionalSetupPending) return;
+      if (openedProfile || retry || !current || profile.optionalSetupPending || !userId) return;
       // Stay out of active Pick, join, group invite and profile destinations.
-      if (pathname === '/friend-invite' && takePendingFriends()) router.dismissTo('/friends');
-      else if (pathname === '/' && takePendingFriends()) router.navigate('/friends');
-      else if (pathname === '/friends') takePendingFriends();
+      if (pathname === '/friend-invite') {
+        if (friendsRoute.current === 'leaving') return;
+        friendsRoute.current = 'leaving';
+        router.dismissTo(takePendingFriends(userId) ? '/friends' : '/');
+      } else if (pathname === '/' && takePendingFriends(userId)) router.navigate('/friends');
+      else if (pathname === '/friends') takePendingFriends(userId);
     })()
       .catch(() => {
         /* Keep navigation failures from becoming unhandled rejections. */

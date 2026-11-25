@@ -1,13 +1,38 @@
-// A Friends link contains no account identity or parameters. Keep the fixed intent
-// through the current sign-in and first-run flow, just like an incoming join code.
-let pending = false;
+// A signed-out link belongs to the current auth flow. The first session binds it
+// to that account before profile loading or onboarding can delay navigation.
+let pending: { owner: string | null } | null = null;
+const listeners = new Set<() => void>();
 
-export function setPendingFriends() {
-  pending = true;
+export function hasPendingFriends() {
+  return pending !== null;
 }
 
-export function takePendingFriends(): boolean {
-  const requested = pending;
-  pending = false;
+export function subscribePendingFriends(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function setPendingFriends(owner: string | null) {
+  pending = { owner };
+  listeners.forEach((listener) => listener());
+}
+
+export function clearPendingFriends() {
+  if (!pending) return;
+  pending = null;
+  listeners.forEach((listener) => listener());
+}
+
+export function bindPendingFriends(userId: string | null) {
+  if (!pending) return;
+  if (pending.owner === null) pending.owner = userId;
+  else if (pending.owner !== userId) clearPendingFriends();
+}
+
+export function takePendingFriends(userId: string): boolean {
+  const requested = pending?.owner === userId;
+  if (requested) clearPendingFriends();
   return requested;
 }
