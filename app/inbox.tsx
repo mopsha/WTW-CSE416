@@ -23,7 +23,7 @@ import {
   type,
 } from '@/components';
 import { useAuth } from '@/hooks/useAuth';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { messageOf } from '@/lib/errors';
 import { inboxLabel, inboxRoute, inboxText } from '@/lib/inbox';
 import { timeAgo } from '@/lib/time';
@@ -48,7 +48,10 @@ const ICONS: Record<NotificationType, keyof typeof Ionicons.glyphMap> = {
   did_you_go: 'help-circle-outline',
 };
 
-type Load = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready' };
+type Mode = 'focus' | 'refresh' | 'older';
+type Load =
+  | { status: 'loading' | 'ready' }
+  | { status: 'error'; kind: 'initial' | 'refresh' | 'older'; message: string; retry: Mode };
 
 export default function InboxScreen() {
   const viewer = useAuth().session?.user.id;
@@ -112,13 +115,14 @@ function Inbox({ viewer }: { viewer: string }) {
   const [page, setPage] = useState(emptyPage);
   const current = useRef(emptyPage);
   const [load, setLoad] = useState<Load>({ status: 'loading' });
-  const [pending, setPending] = useState<'focus' | 'refresh' | 'older' | null>(null);
+  const [pending, setPending] = useState<Mode | null>(null);
   const [checking, setChecking] = useState(true);
   const latest = useRef(0);
   const inFlight = useRef<'older' | 'newest' | null>(null);
+  const hasLoaded = useRef(false);
 
   const fetchRows = useCallback(
-    async (mode: 'focus' | 'refresh' | 'older' = 'focus') => {
+    async (mode: Mode = 'focus') => {
       const previous = current.current;
       if (
         mode === 'older' ? inFlight.current || !previous.nextCursor : inFlight.current === 'newest'
@@ -128,12 +132,24 @@ function Inbox({ viewer }: { viewer: string }) {
       const request = ++latest.current;
       setPending(mode);
       setChecking(true);
+      setLoad({ status: 'loading' });
+      const ids =
+        previous.rows.length <= INBOX_REVALIDATE_LIMIT ? previous.rows.map((row) => row.id) : [];
+      const revalidating = mode === 'older' || (previous.olderLoaded && ids.length > 0);
+      const kind =
+        mode === 'older'
+          ? 'older'
+          : hasLoaded.current || mode === 'refresh'
+            ? 'refresh'
+            : 'initial';
+      const save = (next: InboxPage) => {
+        current.current = next;
+        setPage(next);
+      };
       try {
         let next: InboxPage;
         // Keep all rendered rows within one authorized database snapshot. Beyond
         // the request limit, continue paging in a fresh window.
-        const ids =
-          previous.rows.length <= INBOX_REVALIDATE_LIMIT ? previous.rows.map((row) => row.id) : [];
         if (mode === 'older') {
           const result = await api.revalidateNotifications(
             ids,
@@ -153,7 +169,7 @@ function Inbox({ viewer }: { viewer: string }) {
             for (const row of result.page.notifications) rows.set(row.id, row);
             next = { ...firstPage(result.page), rows: [...rows.values()], olderLoaded: true };
           }
-        } else if (previous.olderLoaded && ids.length) {
+        } else if (revalidating) {
           const result = await api.revalidateNotifications(ids, viewer, undefined, true);
           if (!result.page) throw new Error('Missing activity page');
           next = mergeNewest(
@@ -165,14 +181,48 @@ function Inbox({ viewer }: { viewer: string }) {
           next = firstPage(await api.listNotifications(undefined, viewer));
         }
         if (request !== latest.current) return;
-        current.current = next;
-        setPage(next);
+        save(next);
+        hasLoaded.current = true;
         setLoad({ status: 'ready' });
       } catch (error) {
         if (request !== latest.current) return;
-        current.current = emptyPage;
-        setPage(emptyPage);
-        setLoad({ status: 'error', message: messageOf(error) });
+        let message = messageOf(error);
+        let retry: Mode = kind === 'initial' ? 'focus' : 'refresh';
+        let next = emptyPage;
+        try {
+          if (revalidating && error instanceof ApiError && error.status === 404) {
+            // An older API can serve a page but cannot authorize a merged window.
+            next = firstPage(
+              await api.listNotifications(
+                mode === 'older' ? (previous.nextCursor ?? undefined) : undefined,
+                viewer,
+              ),
+            );
+            if (request !== latest.current) return;
+            save(next);
+            hasLoaded.current = true;
+            setLoad({ status: 'ready' });
+            return;
+          }
+          if (mode === 'older' && ids.length === previous.rows.length) {
+            // Recover the displayed range independently of the failed page query.
+            const { notifications } = await api.revalidateNotifications(ids, viewer);
+            const verified = new Map(notifications.map((row) => [row.id, row]));
+            next = {
+              ...previous,
+              rows: ids.flatMap((id) => {
+                const row = verified.get(id);
+                return row ? [row] : [];
+              }),
+            };
+            retry = 'older';
+          }
+        } catch (recoveryError) {
+          message = messageOf(recoveryError);
+        }
+        if (request !== latest.current) return;
+        save(next);
+        setLoad({ status: 'error', kind, message, retry });
       } finally {
         if (request === latest.current) {
           inFlight.current = null;
@@ -207,6 +257,7 @@ function Inbox({ viewer }: { viewer: string }) {
 
   const refresh = () => void fetchRows('refresh');
   const { rows, nextCursor } = page;
+  const error = !checking && load.status === 'error' ? load : null;
   const today = new Date().toDateString();
   const open = (n: NotificationRow, route: string) => {
     if (checking) return;
@@ -225,8 +276,19 @@ function Inbox({ viewer }: { viewer: string }) {
 
   return (
     <Screen title="Activity" back onRefresh={refresh} refreshing={pending === 'refresh'}>
-      {load.status === 'error' && rows.length === 0 ? (
-        <ErrorState message={load.message} onRetry={refresh} />
+      {checking && rows.length > 0 ? (
+        <Text accessibilityLiveRegion="polite" style={styles.checking}>
+          Checking activity…
+        </Text>
+      ) : null}
+      {error && error.kind !== 'older' ? (
+        <ErrorState
+          variant={error.kind === 'initial' ? 'full' : 'banner'}
+          message={
+            error.kind === 'refresh' ? `Couldn’t refresh activity. ${error.message}` : error.message
+          }
+          onRetry={() => void fetchRows(error.retry)}
+        />
       ) : load.status === 'ready' && rows.length === 0 && !checking ? (
         <EmptyState
           icon="notifications-outline"
@@ -237,14 +299,12 @@ function Inbox({ viewer }: { viewer: string }) {
         rows.map((n, index) => {
           if (checking) {
             return (
-              <Card
+              <View
                 key={n.id}
-                variant="flat"
-                style={styles.activityCard}
-                accessibilityLabel="Checking notification"
-              >
-                <View style={styles.placeholder} />
-              </Card>
+                style={[styles.activityCard, styles.placeholder]}
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+              />
             );
           }
           const route = inboxRoute(n);
@@ -298,7 +358,13 @@ function Inbox({ viewer }: { viewer: string }) {
           );
         })
       )}
-      {nextCursor ? (
+      {error?.kind === 'older' ? (
+        <ErrorState
+          variant="banner"
+          message={`Couldn’t load older activity. ${error.message}`}
+          onRetry={() => void fetchRows(error.retry)}
+        />
+      ) : nextCursor ? (
         <Button
           label="Load older activity"
           variant="secondary"
@@ -317,7 +383,8 @@ function activitySection(value: string, today: string) {
 }
 
 const styles = StyleSheet.create({
-  placeholder: { minHeight: 46 },
+  checking: { ...type.caption, color: colors.muted },
+  placeholder: { minHeight: 46 + 2 * space.md },
   section: { ...type.heading, color: colors.text, marginTop: space.xs },
   activityCard: { padding: space.md, borderRadius: radius.md, backgroundColor: colors.bg },
   unreadCard: { backgroundColor: colors.card },

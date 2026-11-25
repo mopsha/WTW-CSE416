@@ -3,15 +3,26 @@
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import time
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--dsn", required=True, help="Disposable PostgreSQL connection string")
 args = parser.parse_args()
-if not ("host=/tmp/" in args.dsn or "host=/private/tmp/" in args.dsn):
-    parser.error("Use a temporary local PostgreSQL Unix socket.")
+dsn = urlsplit(args.dsn)
+loopback = (
+    dsn.scheme in ("postgres", "postgresql")
+    and dsn.hostname in ("localhost", "127.0.0.1", "::1")
+    and not dsn.query
+)
+socket_host = dict(
+    part.split("=", 1) for part in shlex.split(args.dsn) if "=" in part
+).get("host", "")
+if not (loopback or socket_host.startswith(("/tmp/", "/private/tmp/"))):
+    parser.error("Use a disposable local database over a temporary Unix socket or loopback TCP.")
 
 command = ["psql", "-XqAt", args.dsn, "-v", "ON_ERROR_STOP=1"]
 
@@ -44,8 +55,8 @@ def overlap(first, second):
                 """) != "1":
                     assert waiter.poll() is None and time.monotonic() < deadline, label
                     time.sleep(0.05)
-            finally:
                 holder.stdin.write("commit;\n")
+            finally:
                 holder.stdin.close()
             output, error = waiter.communicate(timeout=10)
             assert waiter.returncode == 0, error
@@ -57,6 +68,7 @@ owner, guest, extra = (str(uuid4()) for _ in range(3))
 owner_name, guest_name = (f"act_{uuid4().hex[:12]}" for _ in range(2))
 try:
     query(f"""
+        begin;
         insert into auth.users(id,email) values
           ('{owner}','{owner}@example.invalid'),('{guest}','{guest}@example.invalid'),
           ('{extra}','{extra}@example.invalid');
@@ -64,6 +76,7 @@ try:
         update public.profiles set username='{guest_name}' where id='{guest}';
         insert into public.friendships(requester_id,addressee_id,status,accepted_at)
         values ('{owner}','{extra}','accepted',now());
+        commit;
     """)
     request = f"select public.friend_request_activity('{owner}', '{guest_name}', '{guest}');"
     first, second = overlap(request, request)

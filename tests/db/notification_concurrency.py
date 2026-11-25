@@ -2,36 +2,49 @@
 
 import argparse
 import os
+import shlex
 import subprocess
 import time
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--dsn", required=True, help="Disposable PostgreSQL connection string")
 args = parser.parse_args()
-if not ("host=/tmp/" in args.dsn or "host=/private/tmp/" in args.dsn):
-    parser.error("Use a temporary local PostgreSQL Unix socket.")
+dsn = urlsplit(args.dsn)
+loopback = (
+    dsn.scheme in ("postgres", "postgresql")
+    and dsn.hostname in ("localhost", "127.0.0.1", "::1")
+    and not dsn.query
+)
+socket_host = dict(
+    part.split("=", 1) for part in shlex.split(args.dsn) if "=" in part
+).get("host", "")
+if not (loopback or socket_host.startswith(("/tmp/", "/private/tmp/"))):
+    parser.error("Use a disposable local database over a temporary Unix socket or loopback TCP.")
 command = ["psql", "-XqAt", args.dsn, "-v", "ON_ERROR_STOP=1"]
 host, guest, place = (str(uuid4()) for _ in range(3))
 starter_name = f"notification-start-{uuid4()}"
 
 
 def query(sql):
-    return subprocess.run(
-        command, input=sql, capture_output=True, text=True, timeout=10, check=True
-    ).stdout.strip()
+    result = subprocess.run(command, input=sql, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
 
 
-pick = query(f"""
-    insert into auth.users(id,email) values
-      ('{host}','{host}@example.invalid'),('{guest}','{guest}@example.invalid');
-    insert into public.friendships(requester_id,addressee_id,status,accepted_at)
-      values ('{host}','{guest}','accepted',now());
-    insert into public.push_tokens(token,user_id,platform)
-      values ('ExpoPushToken[{guest}]','{guest}','ios');
-    select public.pick_create('{host}','food',40,-73,1000,5,null,100)->>'id';
-""")
 try:
+    pick = query(f"""
+        begin;
+        insert into auth.users(id,email) values
+          ('{host}','{host}@example.invalid'),('{guest}','{guest}@example.invalid');
+        insert into public.friendships(requester_id,addressee_id,status,accepted_at)
+          values ('{host}','{guest}','accepted',now());
+        insert into public.push_tokens(token,user_id,platform)
+          values ('ExpoPushToken[{guest}]','{guest}','ios');
+        select public.pick_create('{host}','food',40,-73,1000,5,null,100)->>'id';
+        commit;
+    """)
     with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as invite:
         invite.stdin.write(
             "set statement_timeout='8s'; begin;\n"
@@ -81,4 +94,4 @@ try:
     assert not query(f"select public.notification_record(array['{guest}']::uuid[], 'pick_started', '{pick}', '{{}}');")
     print("Concurrent explicit invite remained inbox-only after start; the start notice alone could push.")
 finally:
-    query(f"delete from public.picks where id='{pick}'; delete from auth.users where id in ('{host}','{guest}');")
+    query(f"delete from public.picks where host_id='{host}'; delete from auth.users where id in ('{host}','{guest}');")

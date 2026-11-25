@@ -2,7 +2,7 @@ import React from 'react';
 import { AppState } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import InboxScreen from '../../app/inbox';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import type { NotificationRow } from '@shared/api/notify.ts';
 
 const { create, act } = jest.requireActual('react-test-renderer');
@@ -13,6 +13,7 @@ jest.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({ session: { user: { id: mockViewer } } }),
 }));
 jest.mock('@/lib/api', () => ({
+  ApiError: jest.requireActual('@/lib/api').ApiError,
   api: {
     listNotifications: jest.fn(),
     revalidateNotifications: jest.fn(),
@@ -129,7 +130,10 @@ test('discovers new notices on return and preserves verified older rows, order, 
   expect(api.markNotificationRead).toHaveBeenCalledWith('middle', 'me');
   expect(router.push).toHaveBeenCalledWith('/pick/pick-middle');
   await inbox.blur();
-  expect(inbox.cards()[1].props.accessibilityLabel).toBe('Checking notification');
+  expect(inbox.cards()).toHaveLength(0);
+  expect(
+    inbox.tree.root.findAllByProps({ accessibilityElementsHidden: true }).length,
+  ).toBeGreaterThan(0);
   await inbox.focus();
   expect(api.listNotifications).toHaveBeenCalledTimes(1);
   expect(api.revalidateNotifications).toHaveBeenLastCalledWith(
@@ -216,7 +220,7 @@ test('a newer refresh supersedes load-more, and foreground coalesces with the re
   const change = jest.mocked(AppState.addEventListener).mock.calls.at(-1)![1];
   await act(async () => change('active'));
   expect(api.listNotifications).toHaveBeenCalledTimes(2);
-  expect(inbox.cards()[0].props.accessibilityLabel).toBe('Checking notification');
+  expect(inbox.cards()).toHaveLength(0);
   await act(async () => finishNewest(page(['fresh'])));
   await act(async () => finishOlder({ notifications: [notice('first')], page: page(['later']) }));
   expect(inbox.cards()).toHaveLength(1);
@@ -239,18 +243,14 @@ test('clears cached cancellation reasons when foreground revalidation fails and 
     await inbox.loadOlder();
     const change = listener.mock.calls.at(-1)![1];
     await act(async () => change('background'));
-    expect(
-      inbox
-        .cards()
-        .every(
-          (card: { props: { accessibilityLabel: string } }) =>
-            !card.props.accessibilityLabel.includes('Private reason'),
-        ),
-    ).toBe(true);
+    expect(inbox.cards()).toHaveLength(0);
     await act(async () => change('active'));
     expect(inbox.cards()).toHaveLength(0);
     const error = inbox.tree.root.findByType('test-ErrorState');
-    expect(error.props.message).toBe('Revalidation failed');
+    expect(error.props).toMatchObject({
+      message: 'Couldn’t refresh activity. Revalidation failed',
+      variant: 'banner',
+    });
     await act(async () => error.props.onRetry());
     expect(api.listNotifications).toHaveBeenLastCalledWith(undefined, 'me');
     expect(inbox.cards()).toHaveLength(1);
@@ -391,4 +391,131 @@ test('load-more restarts at the server head when a Hang moved across the old cur
   expect(inbox.cards()).toHaveLength(4);
   expect(inbox.cards()[2].props.accessibilityLabel).toContain('Private reason first');
   await inbox.finish();
+});
+
+test('failed pagination keeps only separately authorized rows and retries the same cursor', async () => {
+  jest
+    .mocked(api.listNotifications)
+    .mockResolvedValueOnce(page(['first', 'boundary'], cursor('boundary')));
+  jest
+    .mocked(api.revalidateNotifications)
+    .mockRejectedValueOnce(new Error('Page failed'))
+    .mockResolvedValueOnce({ notifications: [notice('first')] })
+    .mockResolvedValueOnce({ notifications: [notice('first')], page: page(['later']) });
+  const inbox = await mount();
+  try {
+    await inbox.loadOlder();
+    expect(api.revalidateNotifications).toHaveBeenLastCalledWith(['first', 'boundary'], 'me');
+    expect(inbox.cards()).toHaveLength(1);
+    expect(inbox.cards()[0].props.accessibilityLabel).toContain('Private reason first');
+    const error = inbox.tree.root.findByType('test-ErrorState');
+    expect(error.props).toMatchObject({
+      variant: 'banner',
+      message: 'Couldn’t load older activity. Page failed',
+    });
+    await act(async () => error.props.onRetry());
+    expect(api.revalidateNotifications).toHaveBeenLastCalledWith(
+      ['first'],
+      'me',
+      cursor('boundary'),
+    );
+    expect(inbox.cards()).toHaveLength(2);
+    expect(inbox.cards()[1].props.accessibilityLabel).toContain('Private reason later');
+    expect(inbox.tree.root.findAllByType('test-ErrorState')).toHaveLength(0);
+  } finally {
+    await inbox.finish();
+  }
+});
+
+test('when pagination and its access check fail, retry starts with a fresh page', async () => {
+  jest
+    .mocked(api.listNotifications)
+    .mockResolvedValueOnce(page(['first'], cursor('first')))
+    .mockResolvedValueOnce(page(['fresh']));
+  jest
+    .mocked(api.revalidateNotifications)
+    .mockRejectedValueOnce(new Error('Page failed'))
+    .mockRejectedValueOnce(new Error('Access check failed'));
+  const inbox = await mount();
+  try {
+    await inbox.loadOlder();
+    expect(inbox.cards()).toHaveLength(0);
+    const error = inbox.tree.root.findByType('test-ErrorState');
+    expect(error.props).toMatchObject({
+      variant: 'banner',
+      message: 'Couldn’t load older activity. Access check failed',
+    });
+    await act(async () => error.props.onRetry());
+    expect(api.listNotifications).toHaveBeenLastCalledWith(undefined, 'me');
+    expect(inbox.cards()[0].props.accessibilityLabel).toContain('Private reason fresh');
+  } finally {
+    await inbox.finish();
+  }
+});
+
+test('an API without revalidation displays only the freshly fetched page', async () => {
+  jest
+    .mocked(api.listNotifications)
+    .mockResolvedValueOnce(page(['first'], cursor('first')))
+    .mockResolvedValueOnce(page(['later']));
+  jest
+    .mocked(api.revalidateNotifications)
+    .mockRejectedValueOnce(new ApiError('NOT_FOUND', 'Route not found', 404));
+  const inbox = await mount();
+  try {
+    await inbox.loadOlder();
+    expect(api.listNotifications).toHaveBeenLastCalledWith(cursor('first'), 'me');
+    expect(inbox.cards()).toHaveLength(1);
+    expect(inbox.cards()[0].props.accessibilityLabel).toContain('Private reason later');
+    expect(inbox.tree.root.findAllByType('test-ErrorState')).toHaveLength(0);
+  } finally {
+    await inbox.finish();
+  }
+});
+
+test('initial failure gets a full error and retries the initial load', async () => {
+  jest
+    .mocked(api.listNotifications)
+    .mockRejectedValueOnce(new Error('Offline'))
+    .mockResolvedValueOnce(page(['first']));
+  const inbox = await mount();
+  try {
+    const error = inbox.tree.root.findByType('test-ErrorState');
+    expect(error.props).toMatchObject({ variant: 'full', message: 'Offline' });
+    await act(async () => error.props.onRetry());
+    expect(inbox.cards()).toHaveLength(1);
+  } finally {
+    await inbox.finish();
+  }
+});
+
+test('an account switch discards a pending pagination recovery', async () => {
+  let authorize!: (result: Awaited<ReturnType<typeof api.revalidateNotifications>>) => void;
+  jest
+    .mocked(api.listNotifications)
+    .mockResolvedValueOnce(page(['first'], cursor('first')))
+    .mockResolvedValueOnce(page(['fresh']));
+  jest
+    .mocked(api.revalidateNotifications)
+    .mockRejectedValueOnce(new Error('Page failed'))
+    .mockReturnValueOnce(
+      new Promise((resolve) => {
+        authorize = resolve;
+      }),
+    );
+  const inbox = await mount();
+  try {
+    await inbox.loadOlder();
+    await inbox.blur();
+    mockViewer = 'another-account';
+    await act(async () => inbox.tree.update(<InboxScreen />));
+    await inbox.focus();
+    await act(async () => authorize({ notifications: [notice('first')] }));
+    expect(api.listNotifications).toHaveBeenLastCalledWith(undefined, 'another-account');
+    expect(inbox.cards()).toHaveLength(1);
+    expect(inbox.cards()[0].props.accessibilityLabel).toContain('Private reason fresh');
+    expect(inbox.tree.root.findAllByType('test-ErrorState')).toHaveLength(0);
+  } finally {
+    await inbox.finish();
+  }
 });
