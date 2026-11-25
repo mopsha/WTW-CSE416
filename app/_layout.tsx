@@ -23,6 +23,7 @@ import { ProfileProvider, useProfile } from '@/hooks/useProfile';
 import { auth } from '@/lib/auth';
 import { hasSeenIntro, markIntroSeen } from '@/lib/intro';
 import { configureNotifications, onNotificationTap } from '@/lib/notify';
+import { clearPendingFriends, setPendingFriends, takePendingFriends } from '@/lib/pendingFriends';
 import { takePendingInvite, setPendingInvite } from '@/lib/pendingInvite';
 import { takePendingJoin } from '@/lib/pendingJoin';
 import { registerForPush } from '@/lib/push';
@@ -75,6 +76,7 @@ function RootStack() {
   const pathname = usePathname();
   useAvatarLifecycle(session?.user.id, pathname, session?.user.email);
   const offered = useRef<string | null>(null);
+  const friendsRoute = useRef<'new' | 'pending' | 'leaving'>('new');
   const resuming = useRef(false);
   const mounted = useRef(true);
   const [resumeRetry, setResumeRetry] = useState(0);
@@ -102,7 +104,24 @@ function RootStack() {
     return onNotificationTap((route) => router.push(route as never));
   }, [ready, inApp]);
 
-  // A join link that arrived signed out: once required identity is available, finish joining.
+  useEffect(() => {
+    if (pathname !== '/friend-invite') {
+      friendsRoute.current = 'new';
+      if (ready && !userId && pathname !== '/sign-in') clearPendingFriends();
+      return;
+    }
+    if (!ready || friendsRoute.current === 'leaving') return;
+    if (friendsRoute.current === 'new') {
+      friendsRoute.current = 'pending';
+      setPendingFriends(userId ?? null);
+    }
+    if (!userId || needsName) {
+      friendsRoute.current = 'leaving';
+      router.replace(userId ? '/welcome' : '/sign-in');
+    }
+  }, [ready, pathname, userId, needsName]);
+
+  // Resume links after the authenticated stack and first-run setup are ready.
   useEffect(() => {
     if (!session) {
       offered.current = null;
@@ -112,10 +131,16 @@ function RootStack() {
     if (!profile.optionalSetupPending) offered.current = null;
     if (profile.optionalSetupPending && offered.current !== userId) {
       offered.current = userId ?? null;
-      if (pathname !== '/onboarding' && !pathname.startsWith('/p/')) router.push('/onboarding');
+      if (pathname === '/friend-invite') router.replace('/onboarding');
+      else if (pathname !== '/onboarding' && !pathname.startsWith('/p/'))
+        router.push('/onboarding');
       return;
     }
     if (pathname === '/onboarding') return;
+    if (profile.optionalSetupPending && pathname === '/friend-invite') {
+      router.dismissTo('/onboarding');
+      return;
+    }
     const code = takePendingJoin();
     if (code) {
       router.push({ pathname: '/join/[code]', params: { code } });
@@ -135,15 +160,25 @@ function RootStack() {
         }
         return;
       }
+      let openedProfile = false;
       retry = await resumePendingProfile(
         () => current,
         (id) => {
+          openedProfile = true;
           const route = { pathname: '/p/[id]' as const, params: { id } };
           if (pathname.startsWith('/p/')) router.replace(route);
           else router.push(route);
         },
         userId,
       );
+      if (openedProfile || retry || !current || profile.optionalSetupPending || !userId) return;
+      // Stay out of active Pick, join, group invite and profile destinations.
+      if (pathname === '/friend-invite') {
+        if (friendsRoute.current === 'leaving') return;
+        friendsRoute.current = 'leaving';
+        router.dismissTo(takePendingFriends(userId) ? '/friends' : '/');
+      } else if (pathname === '/' && takePendingFriends(userId)) router.navigate('/friends');
+      else if (pathname === '/friends') takePendingFriends(userId);
     })()
       .catch(() => {
         /* Keep navigation failures from becoming unhandled rejections. */
@@ -245,6 +280,7 @@ function RootStack() {
         <Stack.Screen name="join/[code]" options={{ animation: reducedMotion ? 'none' : 'fade' }} />
         <Stack.Screen name="p/[id]" options={{ animation: reducedMotion ? 'none' : 'fade' }} />
         <Stack.Screen name="i/[token]" options={{ animation: reducedMotion ? 'none' : 'fade' }} />
+        <Stack.Screen name="friend-invite" />
       </Stack>
     </>
   );
