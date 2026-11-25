@@ -34,7 +34,14 @@ import {
 import { parseGroupIdea, type GroupIdeasStore } from '../_shared/api/groupIdeas.ts';
 import { parseId } from '../_shared/api/groups.ts';
 import { cleanupCache, type CacheCleanupStore } from '../_shared/api/cacheCleanup.ts';
-import { parseHang, respondHang, hangPick, type HangStore } from '../_shared/api/hang.ts';
+import {
+  parseHang,
+  respondHang,
+  hangPick,
+  isHangPost,
+  validHangPosts,
+  type HangStore,
+} from '../_shared/api/hang.ts';
 import {
   discover,
   DISCOVER_PHOTO_NAME,
@@ -313,7 +320,7 @@ export function createApp(
     if (!deps.hangStore) throw new ApiError(503, 'HANG_UNAVAILABLE', 'Hang posts unavailable');
     c.header('Cache-Control', 'private, no-store');
     return c.json({
-      posts: await deps.hangStore.listOwn(user.id, new Date().toISOString()),
+      posts: validHangPosts(await deps.hangStore.listOwn(user.id, new Date().toISOString())),
       sharedAvailable: true,
       notice: '',
     });
@@ -323,7 +330,7 @@ export function createApp(
     if (!deps.hangStore) throw new ApiError(503, 'HANG_UNAVAILABLE', 'Hang posts unavailable');
     c.header('Cache-Control', 'private, no-store');
     const post = await deps.hangStore.load(c.req.param('id'), user.id);
-    if (!post) throw new ApiError(404, 'HANG_NOT_FOUND', 'Hang post not found');
+    if (!isHangPost(post)) throw new ApiError(404, 'HANG_NOT_FOUND', 'Hang post not found');
     return c.json(post);
   });
   app.post('/hang', async (c) => {

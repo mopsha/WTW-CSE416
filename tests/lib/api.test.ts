@@ -41,6 +41,33 @@ describe('parseErrorBody', () => {
 });
 
 describe('createApiClient', () => {
+  test('keeps valid Hang cards and drops malformed entries from the feed', async () => {
+    const post = {
+      id: 'hang',
+      authorId: 'author',
+      activity: 'Coffee',
+      startsAt: '2026-11-24T17:00:00Z',
+      expiresAt: '2026-11-24T18:00:00Z',
+      audience: 'all_friends',
+      groupId: null,
+    };
+    const response = {
+      posts: [null, {}, post, { ...post, attendees: [null] }, { ...post, activity: {} }],
+      sharedAvailable: true,
+      notice: '',
+    };
+    const fetch: FetchLike = async () => jsonResponse(200, response);
+    await expect(client(fetch).getHang()).resolves.toEqual({ ...response, posts: [post] });
+  });
+
+  test('treats a null Hang detail payload as unavailable', async () => {
+    const fetch: FetchLike = async () => jsonResponse(200, null);
+    await expect(client(fetch).getHangPost('hang')).rejects.toMatchObject({
+      code: 'HANG_NOT_FOUND',
+      status: 404,
+    });
+  });
+
   test('POSTs the swipe with the bearer token and JSON body', async () => {
     const fetch = jest.fn<ReturnType<FetchLike>, Parameters<FetchLike>>(async () =>
       jsonResponse(200, { status: 'ok' }),
