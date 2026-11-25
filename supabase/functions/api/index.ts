@@ -28,7 +28,13 @@ import { createNotifyStore } from './notifyStore.ts';
 import { createPlansStore } from './plansStore.ts';
 import { createNotifier } from '../_shared/api/notify.ts';
 import { refreshCandidateHours } from './hours.ts';
-import { pickPlaces, pickPoolBuilder, placesPoolBuilder, resolveDiscoverPhoto } from './places.ts';
+import {
+  discoverLocations,
+  pickPlaces,
+  pickPoolBuilder,
+  placesPoolBuilder,
+  resolveDiscoverPhoto,
+} from './places.ts';
 import { createDiscoverStore } from './discoverStore.ts';
 import { checkUserLimit } from './limits.ts';
 import { createCacheCleanupStore } from './placeCacheStore.ts';
@@ -71,6 +77,7 @@ const app = createApp(
     winnerDetails,
     discoverPool: placesPoolBuilder,
     discoverPhoto: resolveDiscoverPhoto,
+    discoverLocations,
     discoverStore: createDiscoverStore(),
     checkLimit: checkUserLimit,
     joinStore: createJoinStore(),

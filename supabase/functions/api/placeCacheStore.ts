@@ -60,6 +60,10 @@ export function createCacheCleanupStore(): CacheCleanupStore {
       });
       // Old password-login attempt counters (0057): buckets are 15 minutes, kept for a day.
       const { error: loginError } = await createServiceClient().rpc('purge_login_limits');
+      // Discover location quotas expire at UTC midnight, independently of the cache claim.
+      const { error: discoverLocationError } = await createServiceClient().rpc(
+        'purge_discover_location_limits',
+      );
       // Signals learned from Google places' types are kept 30 days at most (0056).
       const { error: tasteError } = await createServiceClient().rpc('purge_google_taste', {
         p_cutoff: new Date(Date.parse(`${day}T00:00:00Z`) - 27 * 86_400_000).toISOString(),
@@ -69,6 +73,7 @@ export function createCacheCleanupStore(): CacheCleanupStore {
       if (purgeError) throw new Error('Google coordinate cleanup failed');
       if (tasteError) throw new Error('Google taste cleanup failed');
       if (loginError) throw new Error('Login limit cleanup failed');
+      if (discoverLocationError) throw new Error('Discover location limit cleanup failed');
       return data as { removed: number; ran: boolean };
     },
   };

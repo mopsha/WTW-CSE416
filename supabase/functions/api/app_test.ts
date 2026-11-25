@@ -7,6 +7,9 @@ import './directChat_test.ts';
 import './groupChat_test.ts';
 // Include feature route coverage in the existing CI entry point.
 import './groupIdeas_test.ts';
+import { GoogleProvider } from '../_shared/places/GoogleProvider.ts';
+import { budgetedHttp } from '../_shared/places/budget.ts';
+import { MemoryPlaceCache } from '../_shared/places/cache.ts';
 import { createPoolBuilder } from '../_shared/places/pool.ts';
 import { createApp } from './app.ts';
 import { ApiError } from '../_shared/api/errors.ts';
@@ -1055,6 +1058,277 @@ Deno.test(
 );
 
 Deno.test(
+  'Discover applies distance and sort at the requested center and isolates cached pools',
+  async () => {
+    const west = { lat: 40, lng: -74 };
+    const east = { lat: 42, lng: -71 };
+    const fixtures = [
+      { ...west, placeId: 'west' },
+      { ...east, placeId: 'east' },
+      { ...east, lat: east.lat + 0.01, placeId: 'east-walk' },
+    ];
+    let providerCalls = 0;
+    const discoverPool = createPoolBuilder(
+      {
+        search: async () => {
+          ++providerCalls;
+          return fixtures.map((p) => ({
+            ...p,
+            name: p.placeId,
+            category: 'food' as const,
+          }));
+        },
+      },
+      { cache: new MemoryPlaceCache() },
+    );
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async () => ({ id: 'josh' }),
+      discoverPool,
+      discoverStore: {
+        preferences: async () => ({}),
+        saved: async () => [],
+        save: async () => {},
+        remove: async () => {},
+      },
+    });
+    const ids = async ({ lat, lng }: typeof west, radiusM: number) => {
+      const response = await app.request(
+        `/discover?lat=${lat}&lng=${lng}&category=food&radiusM=${radiusM}&sort=nearest&photos=lazy`,
+      );
+      equal(response.status, 200);
+      const body = await response.json();
+      return body.places.map((p: { placeId: string }) => p.placeId).join(',');
+    };
+    equal(await ids(west, 800), 'west');
+    equal(await ids(east, 800), 'east');
+    equal(await ids(west, 800), 'west');
+    equal(await ids(east, 800), 'east');
+    equal(providerCalls, 2);
+    equal(await ids(east, 1500), 'east,east-walk');
+  },
+);
+
+Deno.test(
+  'Discover locations authenticate and apply limits before a bounded geographic lookup',
+  async () => {
+    let charges = 0;
+    let calls = 0;
+    let blocked = false;
+    let providerAvailable = true;
+    const prediction = (id: string, detail: string, types = ['locality']) => ({
+      placePrediction: {
+        placeId: id,
+        types,
+        structuredFormat: { mainText: { text: 'Springfield' }, secondaryText: { text: detail } },
+      },
+    });
+    const google = new GoogleProvider(
+      'private-key',
+      budgetedHttp(
+        async () => providerAvailable,
+        async (url, init) => {
+          ++calls;
+          equal(new Headers(init.headers).get('X-Goog-Api-Key'), 'private-key');
+          equal(url.includes('private-key'), false);
+          if (url.endsWith('places:autocomplete')) {
+            equal(JSON.parse(String(init.body)).input, 'Springfield');
+            return Response.json({
+              suggestions: [
+                prediction('illinois', 'Illinois, USA'),
+                prediction('mass', 'Massachusetts, USA'),
+                prediction('business', 'Shop', ['store', 'establishment']),
+                prediction('invalid/id', 'Bad ID'),
+                prediction('illinois', 'Duplicate'),
+                prediction('out-of-bound', 'Sixth result'),
+              ],
+            });
+          }
+          const id = url.split('/').at(-1);
+          return Response.json({
+            id: id === 'wrong' ? 'another' : id,
+            formattedAddress: ' Springfield, Illinois, USA ',
+            types: id === 'business' ? ['establishment', 'premise'] : ['locality'],
+            location: {
+              latitude: id === 'invalid' ? 91 : id === 'string' ? '40' : 40,
+              longitude: -89,
+            },
+          });
+        },
+      ),
+    );
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      getUser: async (req) => {
+        if (!req.headers.has('authorization'))
+          throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in');
+        return { id: 'me' };
+      },
+      checkLimit: async (scope, user) => {
+        equal(scope, 'discover_location');
+        equal(user, 'me');
+        ++charges;
+        if (blocked) throw new ApiError(429, 'RATE_LIMITED', 'Request limit reached');
+      },
+      discoverLocations: {
+        suggest: (query, signal) => google.suggestDiscoverLocations(query, signal),
+        resolve: (id, signal) => google.resolveDiscoverLocation(id, signal),
+      },
+    });
+    const headers = { authorization: 'Bearer test', 'content-type': 'application/json' };
+    const suggest = (query: string, authenticated = true) =>
+      app.request('/discover/locations', {
+        method: 'POST',
+        body: JSON.stringify({ query }),
+        headers: authenticated ? headers : undefined,
+      });
+    equal((await suggest('Springfield', false)).status, 401);
+    equal((await app.request('/discover/locations/illinois')).status, 401);
+    equal((await suggest('long'.repeat(41))).status, 400);
+    equal((await suggest('a'.repeat(2100))).status, 400);
+    equal(charges, 0);
+    equal(calls, 0);
+    const result = await suggest('  Springfield ');
+    equal(result.status, 200);
+    equal(result.headers.get('cache-control'), 'private, no-store');
+    const { suggestions } = await result.json();
+    equal(
+      suggestions.map((hit: { detail: string }) => hit.detail).join(';'),
+      'Illinois, USA;Massachusetts, USA',
+    );
+    equal(calls, 1);
+    const resolve = (id: string) => app.request(`/discover/locations/${id}`, { headers });
+    const valid = await resolve('illinois');
+    equal(valid.status, 200);
+    equal((await valid.json()).location.label, 'Springfield, Illinois, USA');
+    for (const id of ['wrong', 'invalid', 'string', 'business'])
+      equal((await resolve(id)).status, 404);
+    equal((await resolve('invalid%2Fid')).status, 400);
+    const before = calls;
+    blocked = true;
+    equal((await suggest('Springfield')).status, 429);
+    equal((await resolve('illinois')).status, 429);
+    equal(calls, before);
+    blocked = false;
+    providerAvailable = false;
+    equal((await suggest('Springfield')).status, 503);
+    equal((await resolve('illinois')).status, 503);
+    equal(calls, before);
+  },
+);
+
+Deno.test('Discover location cancellation reaches the in-flight provider lookup', async () => {
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => (started = resolve));
+  let providerSignal: AbortSignal | null | undefined;
+  const google = new GoogleProvider('private-key', async (_url, { signal }) => {
+    providerSignal = signal;
+    const interrupted = new Promise<never>((_, reject) => {
+      signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    });
+    started();
+    return interrupted;
+  });
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async () => ({ id: 'me' }),
+    checkLimit: async () => {},
+    discoverLocations: {
+      suggest: (query, signal) => google.suggestDiscoverLocations(query, signal),
+      resolve: (id, signal) => google.resolveDiscoverLocation(id, signal),
+    },
+  });
+  const controller = new AbortController();
+  const pending = app.request('/discover/locations', {
+    method: 'POST',
+    body: JSON.stringify({ query: 'Boston' }),
+    signal: controller.signal,
+  });
+  await ready;
+  controller.abort();
+  equal((await pending).status, 503);
+  equal(providerSignal?.aborted, true);
+});
+
+Deno.test(
+  'Discover bypasses cache reads and writes for precise centers and all manual selections',
+  async () => {
+    const cache = new MemoryPlaceCache();
+    let reads = 0;
+    let writes = 0;
+    let providerCalls = 0;
+    const discoverPool = createPoolBuilder(
+      {
+        search: async (request) => {
+          ++providerCalls;
+          return [
+            {
+              ...request.center,
+              placeId: String(request.center.lat),
+              name: 'At center',
+              category: 'food',
+            },
+          ];
+        },
+      },
+      {
+        cache: {
+          get: (key) => {
+            ++reads;
+            return cache.get(key);
+          },
+          set: (entry) => {
+            ++writes;
+            return cache.set(entry);
+          },
+        },
+      },
+    );
+    const app = createApp({
+      store,
+      lifecycleStore,
+      poolBuilder,
+      closingStore,
+      discoverPool,
+      getUser: async () => ({ id: 'me' }),
+      discoverStore: {
+        preferences: async () => ({}),
+        saved: async () => [],
+        save: async () => {},
+        remove: async () => {},
+      },
+    });
+    const query = async (lat: number, manual = false) => {
+      const result = await app.request(
+        `/discover?lat=${lat}&lng=-74&category=food&radiusM=800${manual ? '&centerMode=manual' : ''}`,
+      );
+      equal(result.status, 200);
+      return (await result.json()).places[0].placeId;
+    };
+    equal(await query(40), '40');
+    equal(await query(40), '40');
+    equal(providerCalls, 1);
+    equal(reads, 2);
+    equal(writes, 1);
+    equal(await query(40.0001, true), '40.0001');
+    equal(await query(40.0002), '40.0002');
+    equal(await query(40, true), '40');
+    equal(providerCalls, 4);
+    equal(reads, 2);
+    equal(writes, 1);
+  },
+);
+
+Deno.test(
   'Saved routes derive identity from auth, DELETE works with CORS, and do not persist content',
   async () => {
     const writes: unknown[] = [];
@@ -1889,6 +2163,43 @@ Deno.test(
     equal(count, 1);
   },
 );
+Deno.test('Sweep reports quota cleanup failure and continues other maintenance', async () => {
+  const phases: string[] = [];
+  const app = createApp({
+    store,
+    lifecycleStore,
+    poolBuilder,
+    closingStore,
+    getUser: async () => ({ id: 'josh' }),
+    cronSecret: 'test',
+    sweepStore: {
+      expiredPage: async (phase) => {
+        phases.push(phase);
+        return [];
+      },
+    },
+    cacheCleanupStore: {
+      deleteExpiredOnce: async () => {
+        phases.push('cache');
+        throw new Error('Discover location limit cleanup failed');
+      },
+    },
+    retryAccountDeletions: async () => {
+      phases.push('account deletion');
+      return { attempted: 1, failed: 0 };
+    },
+  });
+  const response = await app.request('/internal/sweep', {
+    method: 'POST',
+    headers: { 'x-cron-secret': 'test' },
+  });
+  equal(response.status, 503);
+  const result = await response.json();
+  equal(result.cacheCleanup.status, 'partial_failure');
+  equal(result.cacheCleanup.reason, 'CACHE_CLEANUP_FAILED');
+  equal(phases.join(','), 'swiping,final_vote,cache,account deletion');
+});
+
 Deno.test(
   'Hang routes authenticate, derive author and report missing teammate capabilities',
   async () => {

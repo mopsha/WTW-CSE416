@@ -17,6 +17,7 @@ import { ProviderTimeoutError, withTimeout } from './timeout.ts';
 /** Structurally identical to Alan's lifecycle branch. */
 export interface PoolRequest extends PlaceFilters {
   discovery?: DiscoverConstraints;
+  skipCache?: boolean;
   center: LatLng;
   radiusM: number;
   category: Category;
@@ -90,10 +91,11 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
       if (!validFilters(request)) throw new RangeError('Invalid place filters');
       if (!Number.isInteger(request.poolSize) || request.poolSize < 1 || request.poolSize > 30)
         throw new RangeError('poolSize must be 1..30');
-      const key = `${mode}:${cacheKey(request)}`,
-        query = queryIdentity(request);
+      const cache = request.skipCache ? undefined : options.cache;
+      const key = cache ? `${mode}:${cacheKey(request)}` : '';
+      const query = cache ? queryIdentity(request) : '';
       try {
-        const cached = await options.cache?.get(key);
+        const cached = await cache?.get(key);
         if (
           mode === 'mock' &&
           cached?.provider === 'mock' &&
@@ -158,8 +160,8 @@ export function createPoolBuilder(provider: PlaceProvider, options: PoolOptions 
       }));
       try {
         // Never cache fallback under the Google key, so recovery is attempted next request.
-        if (!usedFallback)
-          await options.cache?.set(cacheEntry(key, query, candidates, source, fetchedAt));
+        if (cache && !usedFallback)
+          await cache.set(cacheEntry(key, query, candidates, source, fetchedAt));
       } catch {
         log('cache_failed');
       }

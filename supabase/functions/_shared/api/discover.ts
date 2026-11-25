@@ -47,6 +47,7 @@ export function parseDiscover(params: URLSearchParams): PoolRequest[] {
     lng = params.get('lng');
   const radiusM = Number(params.get('radiusM') ?? 5000);
   const category = params.get('category') ?? 'all';
+  const centerMode = params.get('centerMode');
   // Older app builds send a maximum price; it keeps its old meaning, for food only.
   const priceMax = params.has('priceMax') ? Number(params.get('priceMax')) : null;
   const open = params.get('openNow');
@@ -77,6 +78,7 @@ export function parseDiscover(params: URLSearchParams): PoolRequest[] {
     Math.abs(Number(lat)) > 90 ||
     !Number.isFinite(Number(lng)) ||
     Math.abs(Number(lng)) > 180 ||
+    (centerMode !== null && centerMode !== 'manual') ||
     !Number.isInteger(radiusM) ||
     radiusM < 200 ||
     radiusM > 50000 ||
@@ -89,6 +91,13 @@ export function parseDiscover(params: URLSearchParams): PoolRequest[] {
   ) {
     throw new ApiError(400, 'INVALID_INPUT', 'Invalid Discover location or filters');
   }
+  const center = { lat: Number(lat), lng: Number(lng) };
+  // Manual locations are never stored in the shared cache. Precision is also checked
+  // independently so clients omitting the mode cannot persist a precise query.
+  const skipCache =
+    centerMode === 'manual' ||
+    [center.lat, center.lng].some((value) => Number(value.toFixed(3)) !== value);
+
   return (
     category === 'all' ? (['food', 'activities'] as const) : [category as 'food' | 'activities']
   ).map((category) => {
@@ -96,7 +105,8 @@ export function parseDiscover(params: URLSearchParams): PoolRequest[] {
     const shared: DiscoverConstraints = { ...discovery };
     delete shared.prices;
     return {
-      center: { lat: Number(lat), lng: Number(lng) },
+      center,
+      ...(skipCache ? { skipCache: true } : {}),
       radiusM,
       category,
       poolSize: 30,

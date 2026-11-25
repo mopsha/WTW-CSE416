@@ -34,6 +34,8 @@ import { mockPickPool } from './placePool';
 import { mockHang } from './hang';
 import { savedPlaces } from './saved';
 import { DISCOVER_PLACES } from '../discover';
+import { MOCK_LOCATIONS } from './locations';
+import { parseLocationQuery, MAX_LOCATION_SUGGESTIONS } from '@shared/api/discoverLocation.ts';
 import { discover, parseDiscover } from '@shared/api/discover.ts';
 import { errorResponse } from '@shared/api/errors.ts';
 import { createPoolBuilder } from '@shared/places/pool.ts';
@@ -743,6 +745,28 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
       });
   });
   if (hangResponse) return hangResponse;
+  if (method === 'POST' && path === '/discover/locations') {
+    try {
+      const query = parseLocationQuery(readBody(init)).toLowerCase();
+      const suggestions = MOCK_LOCATIONS.filter((hit) =>
+        `${hit.label} ${hit.detail}`.toLowerCase().includes(query),
+      )
+        .slice(0, MAX_LOCATION_SUGGESTIONS)
+        .map(({ id, label, detail }) => ({ id, label, detail }));
+      return json(200, { suggestions });
+    } catch (error) {
+      const response = errorResponse(error);
+      return json(response.status, response.body);
+    }
+  }
+  if (method === 'GET' && path.startsWith('/discover/locations/')) {
+    const hit = MOCK_LOCATIONS.find(({ id }) => id === path.slice('/discover/locations/'.length));
+    return hit
+      ? json(200, {
+          location: { id: hit.id, label: `${hit.label}, ${hit.detail}`, center: hit.center },
+        })
+      : fail(404, 'LOCATION_NOT_FOUND', 'That location is unavailable');
+  }
   if (method === 'GET' && path.startsWith('/discover?')) {
     try {
       const result = await discover(

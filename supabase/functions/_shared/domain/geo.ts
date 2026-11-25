@@ -6,6 +6,16 @@ export interface LatLng {
   lng: number;
 }
 
+export function validCenter(center: LatLng | null | undefined): center is LatLng {
+  return (
+    !!center &&
+    Number.isFinite(center.lat) &&
+    Math.abs(center.lat) <= 90 &&
+    Number.isFinite(center.lng) &&
+    Math.abs(center.lng) <= 180
+  );
+}
+
 const EARTH_RADIUS_M = 6_371_000;
 
 const toRad = (deg: number): number => (deg * Math.PI) / 180;

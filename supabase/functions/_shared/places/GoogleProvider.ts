@@ -5,7 +5,13 @@ import {
   validDiscovery,
   type DiscoverConstraints,
 } from '../domain/discoverFilters.ts';
-import { boundingBox } from '../domain/geo.ts';
+import {
+  MAX_LOCATION_SUGGESTIONS,
+  validDiscoverLocationId,
+  type DiscoverLocationSuggestion,
+  type ResolvedDiscoverLocation,
+} from '../api/discoverLocation.ts';
+import { boundingBox, validCenter } from '../domain/geo.ts';
 import type { OpeningHours, HoursPoint } from '../domain/openingHours.ts';
 import { categoryMap, matchesCategory } from './categoryMap.ts';
 import type { Candidate, Category, PlaceProvider, PlaceSearch } from './types.ts';
@@ -61,6 +67,32 @@ const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+
+// Business and point-of-interest predictions are unsuitable as geographic centers.
+const CENTER_TYPES = new Set([
+  'locality',
+  'sublocality',
+  'neighborhood',
+  'postal_town',
+  'postal_code',
+  'administrative_area_level_1',
+  'administrative_area_level_2',
+  'administrative_area_level_3',
+  'street_address',
+  'premise',
+  'subpremise',
+  'route',
+  'intersection',
+]);
+
+function isGeographicCenter(value: unknown): boolean {
+  const types = strings(value);
+  return (
+    !types.includes('establishment') &&
+    !types.includes('point_of_interest') &&
+    types.some((type) => CENTER_TYPES.has(type) || /^sublocality_level_[1-5]$/.test(type))
+  );
+}
 
 function hoursPoint(v: unknown): HoursPoint | null {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
@@ -301,6 +333,82 @@ export class GoogleProvider implements PlaceProvider {
       3000,
       signal,
     );
+  }
+
+  async suggestDiscoverLocations(
+    query: string,
+    signal?: AbortSignal,
+  ): Promise<DiscoverLocationSuggestion[]> {
+    const raw = record(
+      await this.request(
+        'places:autocomplete',
+        'suggestions.placePrediction.placeId,suggestions.placePrediction.text.text,suggestions.placePrediction.structuredFormat.mainText.text,suggestions.placePrediction.structuredFormat.secondaryText.text,suggestions.placePrediction.types',
+        { method: 'POST', body: JSON.stringify({ input: query }) },
+        signal,
+      ),
+    );
+    const suggestions = new Map<string, DiscoverLocationSuggestion>();
+    for (const item of Array.isArray(raw.suggestions)
+      ? raw.suggestions.slice(0, MAX_LOCATION_SUGGESTIONS)
+      : []) {
+      const prediction = record(record(item).placePrediction);
+      const id = prediction.placeId;
+      const format = record(prediction.structuredFormat);
+      const full = str(record(prediction.text).text)?.trim();
+      const label = str(record(format.mainText).text)?.trim() ?? full;
+      const detail =
+        str(record(format.secondaryText).text)?.trim() ?? (full !== label ? full : undefined);
+      if (
+        !validDiscoverLocationId(id) ||
+        !isGeographicCenter(prediction.types) ||
+        !label ||
+        label.length > 256 ||
+        (detail && detail.length > 512)
+      )
+        continue;
+      if (!suggestions.has(id)) suggestions.set(id, { id, label, detail: detail ?? '' });
+    }
+    return [...suggestions.values()];
+  }
+
+  async resolveDiscoverLocation(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<ResolvedDiscoverLocation | null> {
+    if (!validDiscoverLocationId(id)) throw new Error('Invalid place ID');
+    const place = record(
+      await this.request(
+        `places/${encodeURIComponent(id)}`,
+        'id,formattedAddress,location,types,attributions',
+        { method: 'GET' },
+        signal,
+      ),
+    );
+    const location = record(place.location);
+    const { latitude, longitude } = location;
+    const label = str(place.formattedAddress)?.trim();
+    if (
+      place.id !== id ||
+      !isGeographicCenter(place.types) ||
+      !label ||
+      label.length > 512 ||
+      !finite(latitude) ||
+      !finite(longitude)
+    )
+      return null;
+    const center = { lat: latitude === 0 ? 0 : latitude, lng: longitude === 0 ? 0 : longitude };
+    if (!validCenter(center)) return null;
+    const attributions = Array.isArray(place.attributions)
+      ? place.attributions.flatMap((value) => {
+          const { provider, providerUri } = record(value);
+          const name = str(provider);
+          const uri = str(providerUri);
+          return name
+            ? [{ provider: name, ...(uri?.startsWith('https://') ? { providerUri: uri } : {}) }]
+            : [];
+        })
+      : [];
+    return { id, label, center, ...(attributions.length ? { attributions } : {}) };
   }
 
   async search(

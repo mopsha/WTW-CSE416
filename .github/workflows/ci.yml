@@ -29,7 +29,7 @@ jobs:
   integration:
     name: Local database and API
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 29
     env:
       PLACES_PROVIDER: mock
     steps:
@@ -90,6 +90,23 @@ jobs:
           PYDIAG
             exit "$result"
           fi
+      - name: Test the Discover location quota upgrade
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          umask 077
+          prior_version=
+          for file in supabase/migrations/*.sql; do
+            version=${file##*/}
+            version=${version%%_*}
+            if [[ "$version" < 0061 ]]; then prior_version=$version; fi
+          done
+          test -n "$prior_version"
+          if ! timeout 150 supabase db reset --local --version "$prior_version" --no-seed > "$RUNNER_TEMP/supabase-discover-upgrade.log" 2>&1; then
+            echo '::error::Pre-0061 local database reset failed or timed out'
+            exit 1
+          fi
+          timeout 60 python3 tests/db/discover_location_upgrade.py --pre-migrated --dsn 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
       - name: Reset local database and apply migrations and seed
         timeout-minutes: 4
         shell: bash
@@ -142,7 +159,7 @@ jobs:
           fi
           result=0
           timeout 120 supabase stop --no-backup > /dev/null 2>&1 || result=$?
-          rm -f "$RUNNER_TEMP/supabase-start.log" "$RUNNER_TEMP/supabase-reset.log" "$RUNNER_TEMP/supabase-api.log" "$RUNNER_TEMP/supabase-api.pid"
+          rm -f "$RUNNER_TEMP/supabase-start.log" "$RUNNER_TEMP/supabase-discover-upgrade.log" "$RUNNER_TEMP/supabase-reset.log" "$RUNNER_TEMP/supabase-api.log" "$RUNNER_TEMP/supabase-api.pid"
           if [ "$result" -ne 0 ]; then
             echo '::error::Local Supabase cleanup failed or timed out'
             exit "$result"

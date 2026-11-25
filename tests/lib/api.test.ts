@@ -203,3 +203,28 @@ test('Discover photos never borrow a replacement account token', async () => {
     }),
   );
 });
+
+test('Discover refuses a replacement account token and aborts before dispatch during lookup', async () => {
+  type Session = NonNullable<
+    Awaited<ReturnType<NonNullable<Parameters<typeof createApiClient>[0]['getSession']>>>
+  >;
+  let finish!: (session: Session) => void;
+  const getSession = jest.fn(() => new Promise<Session>((resolve) => (finish = resolve)));
+  const fetch = jest.fn<ReturnType<FetchLike>, Parameters<FetchLike>>();
+  const api = createApiClient({
+    baseUrl: BASE,
+    fetch,
+    getSession,
+    getAccessToken: async () => 'unscoped',
+  });
+  const first = caught(api.discover({ lat: 40, lng: -70, centerMode: 'manual' }, 'A'));
+  finish({ user: { id: 'B' }, accessToken: 'B-jwt' } as Session);
+  expect((await first).code).toBe('account_changed');
+
+  const controller = new AbortController();
+  const second = caught(api.discover({ lat: 40, lng: -70 }, 'A', controller.signal));
+  controller.abort();
+  finish({ user: { id: 'A' }, accessToken: 'A-jwt' } as Session);
+  expect((await second).code).toBe('request_canceled');
+  expect(fetch).not.toHaveBeenCalled();
+});

@@ -32,6 +32,10 @@ import { photoSource, photoState, releasePhotos, type PhotoSource } from '@/lib/
 import { usePhotoRequests } from '@/hooks/usePhotoRequests';
 import { discoverPlace } from '@/lib/discoverFeed';
 import { isAccessDenied, messageOf } from '@/lib/errors';
+import {
+  DiscoverLocationAttribution,
+  DiscoverLocationSheet,
+} from '@/components/DiscoverLocationSheet';
 import { DiscoverFilterSheet } from '@/components/DiscoverFilterSheet';
 import {
   activeFilterCount,
@@ -69,8 +73,8 @@ const FILTERS = [
 type PhotoPlace = DiscoverPlace & {
   photoSource?: PhotoSource;
   photoScope?: string;
-  /** Miles measured from the device rather than campus. */
-  fromDevice?: boolean;
+  /** True for the Stony Brook fallback, where short distances read “on campus”. */
+  fromCampus?: boolean;
 };
 type LazyPlace = PhotoPlace & { photoPending?: boolean };
 
@@ -123,7 +127,7 @@ function PlaceTile({
   busy: boolean;
   ready: boolean;
 }) {
-  const details = [place.kind, milesLabel(place.miles, !place.fromDevice)].join(' · ');
+  const details = [place.kind, milesLabel(place.miles, place.fromCampus)].join(' · ');
   const price = formatPriceLevel(place.priceLevel ?? null);
   return (
     <View style={styles.tile}>
@@ -240,7 +244,7 @@ function PlaceSheet({
                   place.kind,
                   formatRating(place.rating),
                   formatPriceLevel(place.priceLevel ?? null),
-                  milesLabel(place.miles, !place.fromDevice),
+                  milesLabel(place.miles, place.fromCampus),
                 ]
                   .filter(Boolean)
                   .map((t) => (
@@ -302,7 +306,17 @@ function DiscoverFeed({ userId }: { userId: string }) {
     hoursUnknown: number;
     hoursUnverified: boolean;
   } | null>(null);
-  const area = useDiscoverArea();
+  const {
+    area,
+    revision: areaRevision,
+    selectManual,
+    selectCurrent,
+    selectFallback,
+    storageError,
+    restoreError,
+    retryRestore,
+  } = useDiscoverArea(userId);
+  const [locationOpen, setLocationOpen] = useState(false);
   const [retry, setRetry] = useState(0);
   const [applied, setApplied] = useState(defaultDiscoverFilters);
   const [sort, setSort] = useState<DiscoverSort>('recommended');
@@ -349,22 +363,24 @@ function DiscoverFeed({ userId }: { userId: string }) {
     ) : null;
   useLayoutEffect(() => {
     if (saved.undo) saved.dismissUndo(saved.undo.token);
-  }, [saved, filter, query, sort, applied, open?.placeId]);
+  }, [saved, filter, query, sort, applied, open?.placeId, areaRevision]);
 
   const params = useMemo(
     () => ({
       lat: area?.center.lat ?? NaN,
       lng: area?.center.lng ?? NaN,
       category: filter,
+      ...(area?.mode === 'manual' ? { centerMode: 'manual' as const } : {}),
       ...discoverFilterParams(applied, filter),
       ...(sort !== 'recommended' ? { sort } : {}),
     }),
-    [applied, filter, sort, area?.center.lat, area?.center.lng],
+    [applied, filter, sort, area?.center.lat, area?.center.lng, area?.mode],
   );
   const fromDevice = area?.device ?? false;
-  // The center is part of scope; this only holds the first search until the area is known.
+  const fromCampus = area?.mode === 'current' && !fromDevice;
+  // Wait for restoration before making the first request.
   const areaReady = area !== null;
-  const scope = JSON.stringify([params, userId]);
+  const scope = JSON.stringify([params, userId, areaRevision]);
   const requestKey = JSON.stringify([scope, retry]);
   const viewScope = JSON.stringify([scope, query]);
   const current = response?.key === requestKey ? response : null;
@@ -407,10 +423,11 @@ function DiscoverFeed({ userId }: { userId: string }) {
   useEffect(() => {
     if (!userId || !areaReady) return;
     let active = true;
+    const controller = new AbortController();
     const [requestParams] = JSON.parse(scope) as [Parameters<typeof api.discover>[0], string];
     const center = { lat: requestParams.lat, lng: requestParams.lng };
     api
-      .discover(requestParams)
+      .discover(requestParams, userId, controller.signal)
       .then((result) => {
         if (active)
           setResponse({
@@ -420,7 +437,7 @@ function DiscoverFeed({ userId }: { userId: string }) {
               const { photoName, ...place } = discoverPlace(p, center);
               return {
                 ...place,
-                fromDevice,
+                fromCampus,
                 ...(photoName ? { photoSource: photoSource(photoName, userId) } : {}),
               };
             }),
@@ -446,8 +463,9 @@ function DiscoverFeed({ userId }: { userId: string }) {
       });
     return () => {
       active = false;
+      controller.abort();
     };
-  }, [requestKey, scope, userId, areaReady, fromDevice]);
+  }, [requestKey, scope, userId, areaReady, fromCampus]);
 
   const places = useMemo(
     () => filterDiscover(feed, { category: filter, query }),
@@ -481,6 +499,7 @@ function DiscoverFeed({ userId }: { userId: string }) {
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <FlatList
+        key={areaRevision}
         data={displayed}
         extraData={savedRevision}
         keyExtractor={(p) => p.placeId}
@@ -510,10 +529,34 @@ function DiscoverFeed({ userId }: { userId: string }) {
               <Text style={styles.h1} accessibilityRole="header">
                 Discover
               </Text>
-              <View style={styles.location}>
-                <Ionicons name="location-outline" size={14} color={colors.muted} />
-                <Text style={styles.eyebrow}>{areaEyebrow(area)}</Text>
-              </View>
+              <Pressable
+                style={styles.location}
+                accessibilityRole="button"
+                accessibilityLabel="Change search location"
+                accessibilityValue={{ text: areaEyebrow(area) }}
+                onPress={() => {
+                  haptic.tap();
+                  setLocationOpen(true);
+                }}
+              >
+                <Ionicons name="location-outline" size={16} color={colors.primary} />
+                <Text style={styles.eyebrow} numberOfLines={2}>
+                  {areaEyebrow(area)}
+                </Text>
+                <Ionicons name="chevron-down" size={14} color={colors.primary} />
+              </Pressable>
+              {area?.mode === 'manual' ? (
+                <DiscoverLocationAttribution providers={area.attributions} />
+              ) : null}
+              {restoreError ? (
+                <ErrorState
+                  message="Couldn’t restore your saved search location."
+                  onRetry={retryRestore}
+                />
+              ) : null}
+              {storageError ? (
+                <ErrorState message="Couldn’t save your search location on this device." />
+              ) : null}
             </View>
 
             <View style={styles.search}>
@@ -677,6 +720,30 @@ function DiscoverFeed({ userId }: { userId: string }) {
           <ErrorState message={saveError} onRetry={() => setRetry((n) => n + 1)} />
         </View>
       ) : null}
+      {locationOpen ? (
+        <DiscoverLocationSheet
+          area={area}
+          viewer={userId}
+          restoreError={restoreError}
+          onClose={() => setLocationOpen(false)}
+          onSelect={(location) => {
+            if (!selectManual(location)) return false;
+            setOpen(null);
+            setVisibleItems([]);
+            return true;
+          }}
+          onFallback={() => {
+            selectFallback();
+            setOpen(null);
+            setVisibleItems([]);
+          }}
+          onCurrent={(center) => {
+            selectCurrent(center);
+            setOpen(null);
+            setVisibleItems([]);
+          }}
+        />
+      ) : null}
       {filtersOpen ? (
         <DiscoverFilterSheet
           tab={filter}
@@ -730,7 +797,15 @@ function DiscoverFeed({ userId }: { userId: string }) {
 const styles = StyleSheet.create({
   feedHeader: { gap: space.sm, marginBottom: space.md },
   heading: { gap: space.xs },
-  location: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  location: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    minHeight: MIN_TARGET,
+    minWidth: MIN_TARGET,
+    maxWidth: '100%',
+    gap: space.xs,
+  },
   categories: { flexDirection: 'row', gap: space.sm, paddingRight: space.xs },
   categoryControl: {
     backgroundColor: colors.card,
@@ -818,7 +893,8 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '500',
     letterSpacing: 0.6,
-    color: colors.muted,
+    color: colors.primary,
+    flexShrink: 1,
   },
   h1: {
     fontFamily: fonts.bold,
